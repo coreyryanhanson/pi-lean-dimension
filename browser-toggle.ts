@@ -42,6 +42,9 @@ interface BrowserToggleState {
 	enabled: boolean;
 }
 
+/** Last known toggle state — used by status bar */
+let _lastToggleState = true;
+
 // ---- Helpers ---------------------------------------------------
 
 /**
@@ -77,6 +80,7 @@ function isBrowserEnabled(pi: ExtensionAPI): boolean {
 function applyBrowserState(pi: ExtensionAPI, enable: boolean): void {
 	const registered = new Set(getRegisteredBrowserTools(pi));
 	if (registered.size === 0) return;
+	_lastToggleState = enable;
 
 	if (enable) {
 		// Merge browser tools back into whatever is currently active
@@ -123,6 +127,19 @@ function restoreFromBranch(pi: ExtensionAPI, ctx: ExtensionContext): void {
 // Helper functions are exported for testing while the default export
 // wires the toggle into pi-browser's runtime.
 
+/**
+ * Return the last known toggle state (true = enabled, false = disabled).
+ * Returns true initially at startup (browser tools start enabled).
+ */
+export function getToggleState(): boolean {
+	return _lastToggleState;
+}
+
+/** @internal Exported for testing only: reset the toggle tracker to its default */
+export function _resetToggleStateForTest(): void {
+	_lastToggleState = true;
+}
+
 export {
 	getRegisteredBrowserTools,
 	isBrowserEnabled,
@@ -164,6 +181,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				}
 				applyBrowserState(pi, true);
 				persistState(pi, true);
+				ctx.ui.setStatus("browser", "🌐 idle");
 				ctx.ui.notify(
 					"🌐 Browser tools enabled (saves ~1500–2000 tokens when off)",
 					"info",
@@ -175,6 +193,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				}
 				applyBrowserState(pi, false);
 				persistState(pi, false);
+				ctx.ui.setStatus("browser", "○ web off");
 				ctx.ui.notify(
 					"🌐 Browser tools disabled. Use  /web on  to re-enable.",
 					"info",

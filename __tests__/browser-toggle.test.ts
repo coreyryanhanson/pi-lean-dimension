@@ -21,6 +21,8 @@ import browserToggle, {
 	applyBrowserState,
 	persistState,
 	restoreFromBranch,
+	getToggleState,
+	_resetToggleStateForTest,
 	type BrowserToggleState,
 } from "../browser-toggle";
 
@@ -385,6 +387,56 @@ describe("persistState", () => {
 });
 
 // ==================================================================
+//  getToggleState
+// ==================================================================
+describe("getToggleState", () => {
+	beforeEach(() => {
+		_resetToggleStateForTest();
+	});
+
+	it("returns true by default (browser tools start enabled)", () => {
+		expect(getToggleState()).toBe(true);
+	});
+
+	it("returns false after disabling via applyBrowserState", () => {
+		const pi = mockPi({
+			tools: ALL_BROWSER_TOOLS,
+			activeTools: ALL_BROWSER_TOOLS.map((t) => t.name),
+		});
+		applyBrowserState(pi, false);
+		expect(getToggleState()).toBe(false);
+	});
+
+	it("returns true after re-enabling via applyBrowserState", () => {
+		const pi = mockPi({
+			tools: ALL_BROWSER_TOOLS,
+			activeTools: NON_BROWSER_TOOLS.map((t) => t.name),
+		});
+		applyBrowserState(pi, true);
+		expect(getToggleState()).toBe(true);
+	});
+
+	it("is not affected by persistState", () => {
+		persistState(mockPi(), true);
+		// persistState doesn't call applyBrowserState, so state is unchanged
+		expect(getToggleState()).toBe(true);
+	});
+
+	it("reflects the most recent call to applyBrowserState", () => {
+		const pi = mockPi({
+			tools: ALL_BROWSER_TOOLS,
+			activeTools: ALL_BROWSER_TOOLS.map((t) => t.name),
+		});
+		applyBrowserState(pi, false);
+		expect(getToggleState()).toBe(false);
+		applyBrowserState(pi, true);
+		expect(getToggleState()).toBe(true);
+		applyBrowserState(pi, false);
+		expect(getToggleState()).toBe(false);
+	});
+});
+
+// ==================================================================
 //  restoreFromBranch
 // ==================================================================
 describe("restoreFromBranch", () => {
@@ -542,7 +594,9 @@ describe("command handler dispatch (via factory closure)", () => {
 			activeTools: NON_BROWSER_TOOLS.map((t) => t.name), // browsers off
 		});
 		pi.registerCommand = vi.fn((_name, opts) => {
-			opts.handler("on", { ui: { notify: vi.fn() } } as any);
+			opts.handler("on", {
+				ui: { notify: vi.fn(), setStatus: vi.fn() },
+			} as any);
 		}) as any;
 		pi.setActiveTools = vi.fn();
 
@@ -560,7 +614,9 @@ describe("command handler dispatch (via factory closure)", () => {
 		});
 		pi.setActiveTools = vi.fn();
 		pi.registerCommand = vi.fn((_name, opts) => {
-			opts.handler("on", { ui: { notify: vi.fn() } } as any);
+			opts.handler("on", {
+				ui: { notify: vi.fn(), setStatus: vi.fn() },
+			} as any);
 		}) as any;
 
 		browserToggle(pi);
@@ -577,7 +633,9 @@ describe("command handler dispatch (via factory closure)", () => {
 		});
 		pi.setActiveTools = vi.fn();
 		pi.registerCommand = vi.fn((_name, opts) => {
-			opts.handler("off", { ui: { notify: vi.fn() } } as any);
+			opts.handler("off", {
+				ui: { notify: vi.fn(), setStatus: vi.fn() },
+			} as any);
 		}) as any;
 
 		browserToggle(pi);
@@ -591,7 +649,9 @@ describe("command handler dispatch (via factory closure)", () => {
 		});
 		pi.setActiveTools = vi.fn();
 		pi.registerCommand = vi.fn((_name, opts) => {
-			opts.handler("off", { ui: { notify: vi.fn() } } as any);
+			opts.handler("off", {
+				ui: { notify: vi.fn(), setStatus: vi.fn() },
+			} as any);
 		}) as any;
 
 		browserToggle(pi);
@@ -605,7 +665,9 @@ describe("command handler dispatch (via factory closure)", () => {
 		});
 		pi.setActiveTools = vi.fn();
 		pi.registerCommand = vi.fn((_name, opts) => {
-			opts.handler("xyz", { ui: { notify: vi.fn() } } as any);
+			opts.handler("xyz", {
+				ui: { notify: vi.fn(), setStatus: vi.fn() },
+			} as any);
 		}) as any;
 
 		browserToggle(pi);
@@ -615,7 +677,9 @@ describe("command handler dispatch (via factory closure)", () => {
 	it("handles missing pi-browser — does not throw", () => {
 		const pi = mockPi({ tools: NON_BROWSER_TOOLS });
 		pi.registerCommand = vi.fn((_name, opts) => {
-			opts.handler("on", { ui: { notify: vi.fn() } } as any);
+			opts.handler("on", {
+				ui: { notify: vi.fn(), setStatus: vi.fn() },
+			} as any);
 		}) as any;
 		// Should not throw even though no browser tools exist
 		expect(() => browserToggle(pi)).not.toThrow();
@@ -628,7 +692,7 @@ describe("command handler dispatch (via factory closure)", () => {
 		});
 		pi.setActiveTools = vi.fn();
 		pi.registerCommand = vi.fn((_name, opts) => {
-			opts.handler("", { ui: { notify: vi.fn() } } as any);
+			opts.handler("", { ui: { notify: vi.fn(), setStatus: vi.fn() } } as any);
 		}) as any;
 
 		browserToggle(pi);

@@ -7,7 +7,7 @@ import { webFetch, cleanupFetchTempFiles } from "./backend/fetch-backend";
 import { cleanupAll as cleanupPlaywright } from "./backend/playwright-backend";
 import { cleanupAll as cleanupStealth } from "./backend/stealth-backend";
 import { sessionManager } from "./utils/session-manager";
-import initBrowserToggle from "./browser-toggle";
+import initBrowserToggle, { getToggleState } from "./browser-toggle";
 
 // ============================================================
 // Status bar update helper
@@ -15,7 +15,12 @@ import initBrowserToggle from "./browser-toggle";
 function updateFooterStatus(ctx: {
 	ui: { setStatus: (key: string, label: string) => void };
 }): void {
-	ctx.ui.setStatus("browser", sessionManager.getStatus());
+	const toggleState = getToggleState();
+	if (toggleState === false) {
+		ctx.ui.setStatus("browser", "○ web off");
+	} else {
+		ctx.ui.setStatus("browser", sessionManager.getStatus());
+	}
 }
 
 // ─── Helper to get a stable taskId from tool call context ──────
