@@ -3,7 +3,7 @@ import { Type, StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { accessSync, constants } from "node:fs";
 import * as router from "./backend/router";
-import { cleanupFetchTempFiles } from "./backend/router";
+import { webFetch, cleanupFetchTempFiles } from "./backend/fetch-backend";
 import { cleanupAll as cleanupPlaywright } from "./backend/playwright-backend";
 import { cleanupAll as cleanupStealth } from "./backend/stealth-backend";
 import { sessionManager } from "./utils/session-manager";
@@ -47,26 +47,25 @@ const browserNavigateTool = defineTool({
 	label: "Browse Web",
 	description:
 		"Navigate a browser to a URL and return the page as an accessibility tree with @e1, @e2 element references. " +
-		"Auto-selects the best backend: simple HTTP fetch for static sites, " +
-		"Playwright Chromium for JS-heavy pages, or stealth Firefox for bot-protected sites.",
+		"Auto-selects the best backend: Playwright Chromium for JS-heavy pages, " +
+		"or stealth Firefox for bot-protected sites. For stateless HTTP fetches without interactive elements, use web-fetch instead.",
 	promptSnippet: "Fetch and read web pages in text form",
 	promptGuidelines: [
-		"Use browser-navigate when you need to read a web page's content.",
-		"The tool converts HTML to Markdown for readability.",
-		"If the page seems empty or JS-dependent, try strategy='chromium' when the Playwright backend is available.",
+		"Use browser-navigate when you need to interact with a web page using @e1/@e2 element references (click, type, scroll, etc.).",
+		"If you just need the page content as Markdown without interactive elements, use web-fetch instead.",
+		"If the page seems empty or JS-dependent, try strategy='chromium'.",
 		"Use @e1, @e2 references from the accessibility tree with browser-click and browser-type to interact with page elements.",
-		"If snapshot or interaction returns 'No active session', the page was fetched via HTTP. Calling browser-snapshot now will auto-launch an interactive browser and navigate to the last URL.",
+		"If snapshot or interaction returns 'No active session', the previous navigation was in a different context. Use browser-navigate first to establish a session.",
 		"After auto-launch, @e refs may have changed — a fresh accessibility tree is returned automatically. Use the new refs for interaction.",
-		"When the fetch result mentions a temp file with full content, use the read tool with offset/limit to access specific sections — do not read the entire file at once.",
-		"Fetch results are truncated to ~4K chars inline. If you need more content, either read the temp file in sections or re-navigate with strategy='chromium' for interactive access.",
 	],
 	parameters: Type.Object({
 		url: Type.String({ description: "The URL to navigate to" }),
 		strategy: Type.Optional(
-			StringEnum(["auto", "fetch", "chromium", "stealth"] as const, {
+			StringEnum(["auto", "chromium", "stealth"] as const, {
 				description:
-					'Backend strategy: "auto" (default) tries fetch first, escalates as needed; ' +
-					'"fetch" uses plain HTTP; "chromium" uses Playwright Chromium; "stealth" uses invisible Playwright Firefox (anti-detection)',
+					'Backend strategy: "auto" (default) uses Chromium, escalates to stealth if bot detection is triggered; ' +
+					'"chromium" uses Playwright Chromium; "stealth" uses invisible Playwright Firefox (anti-detection). ' +
+					"For stateless HTTP fetches, use web-fetch instead.",
 			}),
 		),
 		timeout: Type.Optional(
@@ -124,16 +123,11 @@ const browserNavigateTool = defineTool({
 			};
 		}
 
-		// Safety net: if this is an interactive backend (a11y tree, not fetch markdown)
-		// and the content somehow escaped truncation, enforce a cap here.
+		// Safety net: if the content somehow escaped truncation, enforce a cap here.
 		// This prevents unbounded context flooding even if a code path in router.ts
 		// forgets to call compactSnapshot().
 		let contentText = result.content;
-		if (
-			result.elementCount !== undefined &&
-			result.backendUsed !== "fetch" &&
-			contentText.length > 8000
-		) {
+		if (result.elementCount !== undefined && contentText.length > 8000) {
 			// Interactive a11y tree content should never exceed 8K chars after truncation.
 			// If it does, something went wrong — cap it at the compact limit.
 			let cut = contentText.lastIndexOf("\n", 4000);
@@ -153,8 +147,6 @@ const browserNavigateTool = defineTool({
 			result.botDetectionWarning
 				? `⚠ Bot detection triggered — may need stealth backend.`
 				: "",
-			// filePath and totalChars are embedded in the content by router.ts for
-			// fetch results, but we include them in details for downstream use.
 			"",
 			contentText,
 		];
@@ -167,8 +159,6 @@ const browserNavigateTool = defineTool({
 				backendUsed: result.backendUsed,
 				elementCount: result.elementCount,
 				botDetectionWarning: result.botDetectionWarning,
-				...(result.filePath ? { filePath: result.filePath } : {}),
-				...(result.totalChars ? { totalChars: result.totalChars } : {}),
 			},
 		};
 	},
@@ -1006,6 +996,138 @@ const browserConsoleTool = defineTool({
 });
 
 // ============================================================
+// Tool: web-fetch
+// ============================================================
+const webFetchTool = defineTool({
+	name: "web-fetch",
+	label: "Web Fetch",
+	description:
+		"Perform a stateless HTTP fetch of a URL and return its content as Markdown. " +
+		"Auto-detects JS-only shells and bot challenge pages. " +
+		"For interactive browsing with @e1/@e2 element references, use browser-navigate instead.",
+	promptSnippet: "Fetch a URL via stateless HTTP and get Markdown content",
+	promptGuidelines: [
+		"Use web-fetch for quick, stateless page retrieval when you don't need JavaScript or interactive elements.",
+		"The tool returns page content as Markdown, truncated to ~4K chars inline.",
+		"If the result mentions a temp file with full content, use the read tool with offset/limit to access specific sections.",
+		"If the result indicates the page needs JavaScript, switch to browser-navigate with strategy='chromium'.",
+		"If bot detection is triggered, use browser-navigate with strategy='stealth' instead.",
+		"This tool does NOT create a browser session — it's a simple HTTP fetch.",
+	],
+	parameters: Type.Object({
+		url: Type.String({ description: "The URL to fetch" }),
+		timeout: Type.Optional(
+			Type.Number({
+				description: "Timeout in seconds (default: 30, max: 120)",
+				minimum: 1,
+				maximum: 120,
+			}),
+		),
+	}),
+
+	async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+		const { url, timeout = 30 } = params as {
+			url: string;
+			timeout?: number;
+		};
+
+		const result = await webFetch({
+			url,
+			timeout,
+			...(signal ? { signal } : {}),
+		});
+
+		if (!result.success) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Fetch failed: ${result.error ?? "unknown error"}`,
+					},
+				],
+				details: {
+					error: true,
+					url: result.url,
+					statusCode: result.statusCode,
+				},
+			};
+		}
+
+		const lines = [
+			result.title ? `Title: ${result.title}` : "",
+			`URL: ${result.url}`,
+			`Backend: ${result.backendUsed}`,
+			result.statusCode ? `HTTP ${result.statusCode}` : "",
+			result.needsJavaScript
+				? "⚠ This page appears to need JavaScript for full rendering."
+				: "",
+			result.botDetected
+				? "⚠ Bot detection triggered — may need stealth backend."
+				: "",
+			"",
+			result.content,
+		];
+
+		return {
+			content: [{ type: "text", text: lines.filter(Boolean).join("\n") }],
+			details: {
+				title: result.title,
+				url: result.url,
+				backendUsed: result.backendUsed,
+				statusCode: result.statusCode,
+				needsJavaScript: result.needsJavaScript,
+				botDetected: result.botDetected,
+				...(result.filePath ? { filePath: result.filePath } : {}),
+				...(result.totalChars ? { totalChars: result.totalChars } : {}),
+			},
+		};
+	},
+
+	renderCall(args, theme, _context) {
+		const parts: string[] = [theme.fg("toolTitle", theme.bold("web-fetch "))];
+		parts.push(theme.fg("accent", `"${args.url}"`));
+		return new Text(parts.join(" "), 0, 0);
+	},
+
+	renderResult(result, { expanded, isPartial }, theme, _context) {
+		if (isPartial) return new Text(theme.fg("warning", "Fetching…"), 0, 0);
+		const d = result.details as Record<string, unknown> | undefined;
+		if (d?.error)
+			return new Text(
+				theme.fg(
+					"error",
+					`Fetch failed: ${(result.content?.[0] as any)?.text ?? "?"}`,
+				),
+				0,
+				0,
+			);
+
+		const title = (d?.title as string) || "(no title)";
+		const url = (d?.url as string) || "";
+		const statusCode = d?.statusCode as number | undefined;
+		const needsJS = d?.needsJavaScript as boolean | undefined;
+		const botDetected = d?.botDetected as boolean | undefined;
+
+		let text = theme.fg("accent", theme.bold(`📡 ${title}`));
+		text += `\n${theme.fg("dim", url)}`;
+		if (statusCode) text += ` · HTTP ${statusCode}`;
+		if (needsJS) text += ` ${theme.fg("warning", "⚠ needs JS")}`;
+		if (botDetected) text += ` ${theme.fg("warning", "⚠ bot detected")}`;
+
+		const content = (result.content?.[0] as any)?.text ?? "";
+		if (expanded) {
+			const preview = content.replace(/\n{3,}/g, "\n\n").slice(0, 500);
+			text += `\n\n${theme.fg("dim", preview)}`;
+			if (content.length > 500)
+				text += `\n${theme.fg("muted", `… ${content.length - 500} more chars`)}`;
+		} else {
+			text += `\n${theme.fg("muted", `${content.length} chars (expand)`)}`;
+		}
+		return new Text(text, 0, 0);
+	},
+});
+
+// ============================================================
 // Command: /browser-status
 // ============================================================
 const browserStatusCommand = {
@@ -1017,7 +1139,7 @@ const browserStatusCommand = {
 
 		// Backend availability
 		const pw = sessionManager.getPlaywrightBrowser();
-		const backends: string[] = ["fetch"];
+		const backends: string[] = [];
 		if (pw?.isConnected()) backends.push("chromium");
 		else backends.push("chromium (offline)");
 		// Check stealth availability
@@ -1027,13 +1149,13 @@ const browserStatusCommand = {
 		} catch {
 			backends.push("stealth (offline)");
 		}
-		msg += `\nBackends: ${backends.join(", ")}`;
+		msg += `\nInteractive backends: ${backends.join(", ")}`;
+		msg += `\nUse web-fetch for stateless HTTP fetches.`;
 
 		if (active.length > 0) {
 			msg += `\nActive sessions: ${active.length}`;
 			for (const s of active) {
-				const levelEmoji =
-					s.level === "stealth" ? "🦊" : s.level === "chromium" ? "🔧" : "📡";
+				const levelEmoji = s.level === "stealth" ? "🦊" : "🔧";
 				msg += `\n  ${levelEmoji} [${s.level}] ${s.currentUrl || "(pending)"}`;
 				if (s.currentTitle) msg += ` — ${s.currentTitle}`;
 			}
@@ -1047,6 +1169,7 @@ const browserStatusCommand = {
 // ============================================================
 export default function (pi: ExtensionAPI) {
 	// Register tools
+	pi.registerTool(webFetchTool);
 	pi.registerTool(browserNavigateTool);
 	pi.registerTool(browserSnapshotTool);
 	pi.registerTool(browserClickTool);
@@ -1064,7 +1187,7 @@ export default function (pi: ExtensionAPI) {
 	// --- Startup --------------------------------------------------
 	pi.on("session_start", async (_event, ctx) => {
 		ctx.ui.notify(
-			"🌐 Browser extension loaded (fetch → chromium → stealth). Try: navigate to a URL or browse interactively.",
+			"🌐 Browser extension loaded (web-fetch → chromium → stealth). Try: web-fetch for static pages or browser-navigate for interactive browsing.",
 			"info",
 		);
 		updateFooterStatus(ctx);
