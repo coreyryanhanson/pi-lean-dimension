@@ -7,10 +7,12 @@
  * - State queries (isBrowserEnabled)
  * - State mutations (applyBrowserState, persistState)
  * - Branch-aware restoration (restoreFromBranch)
+ * - Config-driven default (readBrowserToggleConfig, applyConfigDefault)
  * - Command registration and handler dispatch
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -23,8 +25,17 @@ import browserToggle, {
 	restoreFromBranch,
 	getToggleState,
 	_resetToggleStateForTest,
+	readBrowserToggleConfig,
+	applyConfigDefault,
 	type BrowserToggleState,
 } from "../browser-toggle";
+
+// Mock node:fs so readBrowserToggleConfig and applyConfigDefault can be
+// tested without touching the real filesystem.
+vi.mock("node:fs", () => ({
+	existsSync: vi.fn(),
+	readFileSync: vi.fn(),
+}));
 
 // ─── Fixtures ────────────────────────────────────────────────────
 
@@ -697,5 +708,222 @@ describe("command handler dispatch (via factory closure)", () => {
 
 		browserToggle(pi);
 		expect(pi.setActiveTools).not.toHaveBeenCalled();
+	});
+});
+
+// ==================================================================
+//  readBrowserToggleConfig
+// ==================================================================
+describe("readBrowserToggleConfig", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("returns true when neither settings file exists (default)", () => {
+		vi.mocked(existsSync).mockReturnValue(false);
+		expect(readBrowserToggleConfig()).toBe(true);
+	});
+
+	it("returns true when settings files exist but have no browserToggle key", () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ theme: "dark" }));
+		expect(readBrowserToggleConfig()).toBe(true);
+	});
+
+	it("returns false when browserToggle.defaultEnabled is false (global)", () => {
+		vi.mocked(existsSync).mockImplementation(
+			(path) => typeof path === "string" && path.includes("settings.json"),
+		);
+		vi.mocked(readFileSync).mockImplementation((path: unknown) =>
+			typeof path === "string" && path.includes(".pi/agent/settings")
+				? JSON.stringify({ browserToggle: { defaultEnabled: false } })
+				: JSON.stringify({ theme: "light" }),
+		);
+		expect(readBrowserToggleConfig()).toBe(false);
+	});
+
+	it("returns true when browserToggle.defaultEnabled is true (global)", () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(readFileSync).mockImplementation((path: unknown) =>
+			typeof path === "string" && path.includes(".pi/agent/settings")
+				? JSON.stringify({ browserToggle: { defaultEnabled: true } })
+				: JSON.stringify({}),
+		);
+		expect(readBrowserToggleConfig()).toBe(true);
+	});
+
+	it("project settings override global settings", () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(readFileSync).mockImplementation((path: unknown) =>
+			typeof path === "string" && path.includes(".pi/agent/settings")
+				? JSON.stringify({ browserToggle: { defaultEnabled: true } })
+				: JSON.stringify({ browserToggle: { defaultEnabled: false } }),
+		);
+		expect(readBrowserToggleConfig()).toBe(false);
+	});
+
+	it("returns true on malformed JSON", () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(readFileSync).mockReturnValue("not valid json");
+		expect(readBrowserToggleConfig()).toBe(true);
+	});
+
+	it("returns true when browserToggle.defaultEnabled is not a boolean", () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(readFileSync).mockImplementation((path: unknown) =>
+			typeof path === "string" && path.includes(".pi/agent/settings")
+				? JSON.stringify({ browserToggle: { defaultEnabled: "yes" } })
+				: JSON.stringify({}),
+		);
+		expect(readBrowserToggleConfig()).toBe(true);
+	});
+
+	it("returns true when browserToggle is not an object", () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(readFileSync).mockImplementation((path: unknown) =>
+			typeof path === "string" && path.includes(".pi/agent/settings")
+				? JSON.stringify({ browserToggle: "on" })
+				: JSON.stringify({}),
+		);
+		expect(readBrowserToggleConfig()).toBe(true);
+	});
+
+	it("returns true when settings file content is not an object", () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(readFileSync).mockReturnValue("[]");
+		expect(readBrowserToggleConfig()).toBe(true);
+	});
+});
+
+// ==================================================================
+//  applyConfigDefault
+// ==================================================================
+describe("applyConfigDefault", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("calls applyBrowserState with the config value (true)", () => {
+		// Config says enabled
+		vi.mocked(existsSync).mockImplementation(
+			(path) => typeof path === "string" && path.includes("settings.json"),
+		);
+		vi.mocked(readFileSync).mockImplementation((path: unknown) =>
+			typeof path === "string" && path.includes(".pi/agent/settings")
+				? JSON.stringify({ browserToggle: { defaultEnabled: true } })
+				: JSON.stringify({}),
+		);
+
+		const pi = mockPi({
+			tools: [...ALL_BROWSER_TOOLS, ...NON_BROWSER_TOOLS],
+			activeTools: NON_BROWSER_TOOLS.map((t) => t.name), // browsers off
+		});
+		vi.spyOn(pi, "setActiveTools");
+
+		applyConfigDefault(pi);
+
+		expect(pi.setActiveTools).toHaveBeenCalledWith(
+			expect.arrayContaining(ALL_BROWSER_TOOLS.map((t) => t.name)),
+		);
+	});
+
+	it("calls applyBrowserState with the config value (false)", () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(readFileSync).mockImplementation((path: unknown) =>
+			typeof path === "string" && path.includes(".pi/agent/settings")
+				? JSON.stringify({ browserToggle: { defaultEnabled: false } })
+				: JSON.stringify({}),
+		);
+
+		const pi = mockPi({
+			tools: [...ALL_BROWSER_TOOLS, ...NON_BROWSER_TOOLS],
+			activeTools: [
+				...NON_BROWSER_TOOLS.map((t) => t.name),
+				...ALL_BROWSER_TOOLS.map((t) => t.name),
+			],
+		});
+		vi.spyOn(pi, "setActiveTools");
+
+		applyConfigDefault(pi);
+
+		const calledWith = (pi.setActiveTools as ReturnType<typeof vi.fn>).mock
+			.calls[0]![0] as string[];
+		expect(calledWith).not.toContain("web-fetch");
+		expect(calledWith).not.toContain("browser-navigate");
+	});
+
+	it("persists the applied state", () => {
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(readFileSync).mockReturnValue(
+			JSON.stringify({ browserToggle: { defaultEnabled: true } }),
+		);
+
+		const pi = mockPi({
+			tools: ALL_BROWSER_TOOLS,
+			activeTools: ALL_BROWSER_TOOLS.map((t) => t.name),
+		});
+
+		applyConfigDefault(pi);
+
+		expect(pi.appendEntry).toHaveBeenCalledWith(
+			"browser-toggle-state",
+			expect.objectContaining({ enabled: true }),
+		);
+	});
+
+	it("is a no-op when no browser tools are registered", () => {
+		const pi = mockPi({
+			tools: NON_BROWSER_TOOLS,
+			activeTools: NON_BROWSER_TOOLS.map((t) => t.name),
+		});
+		vi.spyOn(pi, "setActiveTools");
+
+		applyConfigDefault(pi);
+
+		expect(pi.setActiveTools).not.toHaveBeenCalled();
+	});
+});
+
+// ==================================================================
+//  restoreFromBranch — updated return value
+// ==================================================================
+describe("restoreFromBranch (return value)", () => {
+	it("returns true when saved state was found and applied", () => {
+		const pi = mockPi({
+			tools: ALL_BROWSER_TOOLS,
+			activeTools: NON_BROWSER_TOOLS.map((t) => t.name),
+		});
+		const ctx = mockContext([
+			{
+				type: "custom",
+				customType: "browser-toggle-state",
+				data: { enabled: true } satisfies BrowserToggleState,
+			},
+		]);
+		expect(restoreFromBranch(pi, ctx)).toBe(true);
+	});
+
+	it("returns false when no saved state in branch", () => {
+		const pi = mockPi({
+			tools: ALL_BROWSER_TOOLS,
+			activeTools: ALL_BROWSER_TOOLS.map((t) => t.name),
+		});
+		const ctx = mockContext([
+			{ type: "message", data: { role: "user" } },
+			{ type: "message", data: { role: "assistant" } },
+		]);
+		expect(restoreFromBranch(pi, ctx)).toBe(false);
+	});
+
+	it("returns false when no browser tools are registered", () => {
+		const pi = mockPi({ tools: NON_BROWSER_TOOLS });
+		const ctx = mockContext([
+			{
+				type: "custom",
+				customType: "browser-toggle-state",
+				data: { enabled: false },
+			},
+		]);
+		expect(restoreFromBranch(pi, ctx)).toBe(false);
 	});
 });

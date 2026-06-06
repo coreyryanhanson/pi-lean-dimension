@@ -2,6 +2,9 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 /**
  * Browser Toggle — integrated into pi-browser extension.
@@ -21,6 +24,15 @@ import type {
  */
 
 // ---- Constants -------------------------------------------------
+
+/** Global pi settings path */
+const GLOBAL_SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
+
+/** Project pi settings path (relative to current working dir) */
+const PROJECT_SETTINGS_PATH = ".pi/settings.json";
+
+/** Default toggle config key */
+const CONFIG_KEY = "browserToggle";
 
 /** Names of every tool registered by pi-browser's index.ts */
 const BROWSER_TOOL_NAMES = new Set([
@@ -103,9 +115,13 @@ function persistState(pi: ExtensionAPI, enabled: boolean): void {
 
 // ---- Branch-aware restoration ----------------------------------
 
-function restoreFromBranch(pi: ExtensionAPI, ctx: ExtensionContext): void {
+/**
+ * Restore toggle state from the session branch.
+ * Returns `true` if a saved state was found and applied, `false` otherwise.
+ */
+function restoreFromBranch(pi: ExtensionAPI, ctx: ExtensionContext): boolean {
 	const registered = getRegisteredBrowserTools(pi);
-	if (registered.length === 0) return;
+	if (registered.length === 0) return false;
 
 	let savedState: BrowserToggleState | undefined;
 
@@ -120,7 +136,21 @@ function restoreFromBranch(pi: ExtensionAPI, ctx: ExtensionContext): void {
 
 	if (savedState !== undefined) {
 		applyBrowserState(pi, savedState.enabled);
+		return true;
 	}
+
+	return false;
+}
+
+/**
+ * Apply the config-file default on a fresh session (no branch state found).
+ * Reads `browserToggle.defaultEnabled` from pi's settings.json files.
+ */
+function applyConfigDefault(pi: ExtensionAPI): void {
+	const enabled = readBrowserToggleConfig();
+	applyBrowserState(pi, enabled);
+	// Persist so subsequent branch navigation sees this as the initial state
+	persistState(pi, enabled);
 }
 
 // ---- Unit-test exports -----------------------------------------
@@ -140,12 +170,61 @@ export function _resetToggleStateForTest(): void {
 	_lastToggleState = true;
 }
 
+// ---- Config-file support -----------------------------------------
+
+/**
+ * Read the browser toggle default from pi's settings.json files.
+ *
+ * Looks for `browserToggle.defaultEnabled` in:
+ *   1. `~/.pi/agent/settings.json` (global)
+ *   2. `.pi/settings.json` (project-local, overrides global)
+ *
+ * Returns the config value, or `true` if unset (backward-compatible default).
+ * Silently returns `true` on missing files, parse errors, or type mismatches.
+ */
+function readBrowserToggleConfig(): boolean {
+	const global = readSettingsFile(GLOBAL_SETTINGS_PATH);
+	const project = readSettingsFile(PROJECT_SETTINGS_PATH);
+
+	// Project overrides global
+	const merged = { ...global, ...project };
+	const segment = merged[CONFIG_KEY];
+
+	if (
+		segment &&
+		typeof segment === "object" &&
+		!Array.isArray(segment) &&
+		typeof (segment as Record<string, unknown>).defaultEnabled === "boolean"
+	) {
+		return (segment as Record<string, unknown>).defaultEnabled as boolean;
+	}
+
+	return true; // default: enabled
+}
+
+/** Read and parse a JSON settings file. Returns {} on any failure. */
+function readSettingsFile(path: string): Record<string, unknown> {
+	try {
+		if (!existsSync(path)) return {};
+		const raw = readFileSync(path, "utf-8");
+		const parsed = JSON.parse(raw);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			return parsed as Record<string, unknown>;
+		}
+		return {};
+	} catch {
+		return {};
+	}
+}
+
 export {
 	getRegisteredBrowserTools,
 	isBrowserEnabled,
 	applyBrowserState,
 	persistState,
 	restoreFromBranch,
+	readBrowserToggleConfig,
+	applyConfigDefault,
 };
 export type { BrowserToggleState };
 
@@ -216,9 +295,16 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 	// ── State restoration across session boundaries ────────────
 	// Ensures the toggle survives /reload, /resume, /fork, and
 	// /tree navigation without "forgetting" whether we're on or off.
+	//
+	// For fresh sessions (no branch state), falls back to the config
+	// default from settings.json (`browserToggle.defaultEnabled`).
 
 	pi.on("session_start", async (_event, ctx) => {
-		restoreFromBranch(pi, ctx);
+		const restored = restoreFromBranch(pi, ctx);
+		if (!restored) {
+			// No persisted state in this branch → apply config file default
+			applyConfigDefault(pi);
+		}
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
