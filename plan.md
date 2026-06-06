@@ -1,9 +1,9 @@
 # pi-browser Extension — Plugin Architecture Analysis
 
 > Date: 2026-06-05  
-> Updated: 2026-06-05 (post-oracle review — fetch decoupling, gap fixes)  
+> Updated: 2026-06-06 (Phase 1a — fetch decoupling implemented)  
 > Scope: `startup_scripts/firecracker/config/pi/extensions/pi-browser/`  
-> Status: Investigation / Planning (not yet implemented)
+> Status: Partially Implemented (Phase 1a fetch decoupling done; Phases 1b–4 planned)
 
 ---
 
@@ -11,20 +11,23 @@
 
 | File | Lines | Role |
 |------|-------|------|
-| `index.ts` | 817 | Tool definitions (10 tools + 1 command), extension entry point, session lifecycle |
-| `backend/router.ts` | 767 | Auto-escalation logic: fetch → chromium → stealth dispatch (**fetch path to be decoupled**) |
-| `backend/playwright-backend.ts` | 689 | Standard Playwright Chromium backend (current "Level 2") |
-| `backend/stealth-backend.ts` | 596 | Invisible Playwright stealth via JSON-RPC Python subprocess (current "Level 3") |
-| `backend/fetch-backend.ts` | 212 | HTTP fetch with JS detection (**to be decoupled as separate tool**) |
+| `index.ts` | 1212 | Tool definitions (11 tools + 1 command), extension entry point, session lifecycle |
+| `backend/router.ts` | 764 | Auto-escalation logic: chromium → stealth dispatch (**fetch removed**) |
+| `backend/playwright-backend.ts` | 689 | Standard Playwright Chromium backend ("Level 2") |
+| `backend/stealth-backend.ts` | 749 | Invisible Playwright stealth via JSON-RPC Python subprocess ("Level 3") |
+| `backend/fetch-backend.ts` | 463 | **Decoupled** HTTP fetch → Markdown with `webFetch()` entry point, URL safety, JS detection, bot detection, content capping |
 | `backend/stealth_bridge.py` | ~200 | Python JSON-RPC bridge to `invisible_playwright` (Firefox) |
-| `utils/accessibility-tree.ts` | 242 | Parse Playwright's YAML a11y tree → @e refs + cached node lookup |
-| `utils/bot-detection.ts` | 104 | Cloudflare/CAPTCHA/heuristics to trigger escalation |
+| `utils/accessibility-tree.ts` | 335 | Parse Playwright's YAML a11y tree → @e refs + cached node lookup |
+| `utils/bot-detection.ts` | 104 | Cloudflare/CAPTCHA/heuristics (shared by fetch & browser) |
 | `utils/cdp-supervisor.ts` | 155 | Chrome DevTools Protocol console capture (chromium backend only) |
-| `utils/session-manager.ts` | 178 | Session lifecycle with `BackendLevel = "chromium" \| "stealth"` |
+| `utils/session-manager.ts` | 204 | Session lifecycle with `BackendLevel = "chromium" \| "stealth"` (no "fetch") |
 | `utils/url-safety.ts` | 161 | URL validation (block localhost/loopback, validate scheme) |
-| `package.json` | ~10 | Dependencies: `node-html-parser`, `playwright`, `turndown` |
+| `__tests__/url-safety.test.ts` | 188 | 46 tests: SSRF, scheme, secret, malformed URL validation |
+| `__tests__/fetch-backend.test.ts` | 382 | 24 tests: `webFetch()` core fetch, JS detection, bot detection, content capping |
+| `__tests__/helpers/test-server.ts` | 38 | HTTP test server helper for deterministic fixtures |
+| `package.json` | ~10 | Dependencies: `node-html-parser`, `playwright`, `turndown`, `vitest` (dev) |
 
-**Total**: ~3921 lines of TypeScript + Python bridge.
+**Total**: ~5054 lines of TypeScript + Python bridge + tests.
 
 ---
 
@@ -43,13 +46,13 @@ async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 }
 ```
 
-Same pattern for all 10 tools (navigate, snapshot, click, type, scroll, screenshot, getImages, back, press, console). No tool knows about backend specifics.
+Same pattern for all 10 interactive tools (navigate, snapshot, click, type, scroll, screenshot, getImages, back, press, console). A separate `web-fetch` tool (see `index.ts` — `webFetchTool`) calls `fetch-backend.webFetch()` directly, bypassing the router entirely.
 
-**Note**: `browser-navigate` currently handles the `strategy="fetch"` case by routing through the same router dispatch. Under the decoupled architecture (Section 11), fetch becomes a separate `web-fetch` tool with its own execute handler — it never enters the interactive browser router.
+**Note (updated June 2026)**: Fetch has been decoupled into a separate `web-fetch` tool as described in Section 11. The `browser-navigate` tool no longer handles `strategy="fetch"` — that option has been removed from the strategy enum.
 
 ### 2.2 Router Dispatch — Hand-Written if/else per Backend Type
 
-From `backend/router.ts`:
+From `backend/router.ts` (fetch dispatch removed):
 
 ```typescript
 // Level 2 dispatch
@@ -69,7 +72,7 @@ if (strategy === "stealth") {
 }
 ```
 
-The same if/else pattern repeats for **every operation** (click, type, scroll, screenshot, goBack, press, getImages, getConsoleMessages, evaluate). There are ~13 operation dispatchers, each with 2-3 backend branches.
+The same if/else pattern repeats for **every operation** (click, type, scroll, screenshot, goBack, press, getImages, getConsoleMessages, evaluate). There are ~13 operation dispatchers, each with 2 backend branches (chromium/stealth only — fetch removed by Phase 1a).
 
 ### 2.3 Each Backend Defines Its Own Result Types
 
@@ -136,15 +139,18 @@ Every **interactive browser** backend must implement these **13 operations**. In
 
 ### 4.1 Where Backends Actually Diverge
 
-| Aspect | Chromium (PW) | Stealth (IPW/Firefox) |
-|--------|---------------|----------------------|
-| **Screenshot format** | PNG (default) | JPEG at 80% quality |
-| **Full-page screenshot** | Supported (`{fullPage: true}`) | NOT supported (bridge has no `full_page` param) |
-| **Scroll method** | `page.mouse.wheel(0, delta)` — native wheel event | Same API but Firefox implementation differs |
-| **Wait strategy** | `waitUntil: "networkidle"` or "load" | Same via JSON-RPC params |
-| **Process model** | Single shared Browser, per-task Contexts | Per-task subprocess (JSON-RPC bridge) |
-| **Console capture** | CDP session-based (`cdp-supervisor.ts`) | N/A — no CDP in Firefox; not implemented yet |
-| **Bot detection signal** | Response headers + a11y analysis | Same heuristics, checked post-snapshot |
+| Aspect | Chromium (PW) | Stealth (IPW/Firefox) | Fetch (via `web-fetch`) |
+|--------|---------------|----------------------|-------------------------|
+| **Output** | a11y tree with @e refs | a11y tree with @e refs | Markdown text |
+| **State** | Stateful session | Stateful session | Stateless (one-shot) |
+| **Interactivity** | click, type, scroll, press | click, type, scroll, press | None |
+| **Screenshot format** | PNG (default) | JPEG at 80% quality | N/A |
+| **Full-page screenshot** | Supported (`{fullPage: true}`) | NOT supported (bridge has no `full_page` param) | N/A |
+| **Scroll method** | `page.mouse.wheel(0, delta)` — native wheel event | Same API but Firefox implementation differs | N/A |
+| **Wait strategy** | `waitUntil: "networkidle"` or "load" | Same via JSON-RPC params | N/A |
+| **Process model** | Single shared Browser, per-task Contexts | Per-task subprocess (JSON-RPC bridge) | HTTP client |
+| **Console capture** | CDP session-based (`cdp-supervisor.ts`) | N/A — no CDP in Firefox; not implemented yet | N/A |
+| **Bot detection signal** | Response headers + a11y analysis | Same heuristics, checked post-snapshot | Body text heuristics (inline) |
 
 ### 4.2 Proposed Quirks Interface
 
@@ -211,6 +217,8 @@ async function screenshot(taskId: string, opts?: { fullPage?: boolean }): Promis
 
 **What is NOT a quirk**: Category-level capability differences (e.g., "doesn't support interactivity") are not quirks — they indicate the backend belongs to a different abstraction entirely. Fetch is the canonical example: it cannot implement `click()`, `type()`, etc., so it must not implement `BrowserPlugin`.
 
+> **Post-implementation confirmation (June 2026)**: Fetch has been decoupled into its own `web-fetch` tool, with a `WebFetchResult` type that has no overlap with `NavigateResult` or any `BrowserPlugin` interface. This confirms the architectural decision — fetch is categorically different, not a "quirky" browser backend.
+
 ---
 
 ## 5. Shared Code That Would Be Centralized
@@ -267,18 +275,27 @@ This stays with the chromium plugin only — not shared. Stealth has no CDP equi
 
 ## 6. Maintenance Burden Analysis
 
-### 6.1 Adding a New Operation (e.g., browser-console was added to index.ts)
+### 6.1 Adding a New Operation (current state)
 
-**Current state** — touched 4 files:
+**Interactive operation** — touched 3 files (fetch backend excluded):
 
 | File | Lines Added/Modified | What Changed |
 |------|---------------------|--------------|
 | `index.ts` | ~80 | Tool definition, parameter schema, execute handler, renderers |
 | `router.ts` | ~40 | `getConsoleMessages()`, `clearConsole()` functions + dispatch per backend level |
-| `backend/playwright-backend.ts` | ~60 | `getConsoleMessages()` (CDP integration), `clearConsole()`, types for message format |
-| `backend/stealth-backend.ts` | ~30 | `getConsoleMessages()` (stub — not fully implemented), `clearConsole()`, JSON-RPC calls |
+| `backend/playwright-backend.ts` | ~60 | Implementation |
+| `backend/stealth-backend.ts` | ~30 | Implementation (may be partial/stub) |
 
 **Total**: ~210 lines across 4 files. The router dispatch grows by ~4-8 lines per new backend type.
+
+**Stateless operation** (`web-fetch` was the example):
+
+| File | Lines Added/Modified | What Changed |
+|------|---------------------|--------------|
+| `index.ts` | ~80 | Tool definition, parameter schema, execute handler, renderers |
+| `backend/fetch-backend.ts` | ~50 | New export function, no router involvement |
+
+**Total**: ~130 lines across 2 files. No router dispatch needed.
 
 ### 6.2 With Plugin Architecture
 
@@ -354,6 +371,8 @@ pi-browser/
 > export * from '../core/shared/accessibility-tree';
 > ```
 > Remove the shims once all consumers are migrated.
+
+> **Post-implementation note (June 2026)**: Phase 1a did not include directory restructuring — all files remain in their original locations (`backend/`, `utils/`). The `__tests__/` directory is the only new top-level addition.
 
 ---
 
@@ -452,42 +471,52 @@ No changes needed to the Python build pipeline.
 
 ### Recommended Incremental Approach:
 
-**Phase 1 — Foundation (low risk, reversible):**
-1. Extract `BrowserPlugin` interface from existing code (~80 lines in `core/plugin-api.ts`)
-2. Define unified result types (consolidate `PlaywrightNavigateResult`, `StealthNavigateResult`, etc.)
-3. Define error handling contract for plugins (see Section 12)
-4. Add `init()` lifecycle hook to `BrowserPlugin` (see Section 12)
-5. Add thin adapter wrappers so both existing backends satisfy the interface
-6. Replace scattered if/else in router with a typed registry map
-7. Decouple fetch into a separate `web-fetch` tool (see Section 11)
+**Phase 1a — Fetch decoupling (✅ DONE):**
+1. ✅ Decouple fetch into a separate `web-fetch` tool (see Section 11, `FETCH_DECOUPLING_PLAN.md`)
+2. ✅ Remove `"fetch"` strategy from `browser-navigate` and the router
+3. ✅ Add `webFetch()` entry point in `fetch-backend.ts` with URL safety, JS detection, bot detection, content capping
+4. ✅ Add test infrastructure (Vitest) with 70 tests for URL safety and fetch-backend
+5. ✅ Remove deprecated `BackendUsed` alias and `navigate()` backward-compat export
+
+**Phase 1b — BrowserPlugin interface (pending):**
+6. Extract `BrowserPlugin` interface from existing code (~80 lines in `core/plugin-api.ts`)
+7. Define unified result types (consolidate `PlaywrightNavigateResult`, `StealthNavigateResult`, etc.)
+8. Define error handling contract for plugins (see Section 12)
+9. Add `init()` lifecycle hook to `BrowserPlugin` (see Section 12)
+10. Add thin adapter wrappers so both existing backends satisfy the interface
+11. Replace scattered if/else in router with a typed registry map
 
 **Phase 2 — Shared code consolidation:**
-8. Move `accessibility-tree.ts` and `bot-detection.ts` to `core/shared/` (they're already identical between backends)
-9. Update import paths in both backends
-10. Add deprecated re-exports (with `console.warn`) in `utils/` — not silent symlinks
+- Move `accessibility-tree.ts` and `bot-detection.ts` to `core/shared/` (they're already identical between backends)
+- Update import paths in both backends
+- Add deprecated re-exports (with `console.warn`) in `utils/` — not silent symlinks
 
 **Phase 3 — Quirks support:**
-11. Add the `quirks` optional interface with current known quirks (screenshot format, fullPage not supported)
-12. Router wraps known quirks transparently
-13. Document quirk promotion criteria (promote when 2+ plugins share the same quirk pattern)
+- Add the `quirks` optional interface with current known quirks (screenshot format, fullPage not supported)
+- Router wraps known quirks transparently
+- Document quirk promotion criteria (promote when 2+ plugins share the same quirk pattern)
 
 **Phase 4 — Community readiness (when a 3rd plugin arrives):**
-14. Full directory restructuring per proposed layout
-15. Remove deprecated `utils/` re-exports once all consumers migrated
-16. Document contribution guide in `backends/community/README.md`
-17. Create `BrowserPlugin` test harness for community contributors (see Section 12)
+- Full directory restructuring per proposed layout
+- Remove deprecated `utils/` re-exports once all consumers migrated
+- Document contribution guide in `backends/community/README.md`
+- Create `BrowserPlugin` test harness for community contributors (see Section 12)
 
 ### Bottom Line:
 Build the interface **now** but keep Phase 1 minimal (interface + adapters + registry map + fetch decoupling). Don't do the full directory restructuring until a 3rd plugin is imminent or you have a concrete community contributor ready to go. The plugin architecture solves a real problem when you move past 2 backends, and starting now means the work compounds rather than creating technical debt to refactor later.
 
-**The fetch decoupling is the single most important architectural decision** — it resolves the plan's biggest contradiction (fetch being "Level 1" but not implementing BrowserPlugin) and simplifies both the router and the agent's mental model. Do it in Phase 1 alongside the interface extraction; the two changes are interdependent.
+**✅ Fetch decoupling is done (Phase 1a, June 2026)** — it resolved the plan's biggest contradiction (fetch being "Level 1" but not implementing BrowserPlugin) and simplified both the router and the agent's mental model. The remaining Phase 1 work (BrowserPlugin interface extraction) is now cleaner to tackle.
 
 ---
 
 ## 11. Fetch Decoupling — Architectural Decision
 
-> **Status**: Decided (post-oracle review)
+> **Status**: ✅ **Implemented** (Phase 1a, June 2026)
 > **Decision**: Decouple fetch into a separate `web-fetch` tool within the same extension. Fetch is NOT a BrowserPlugin, NOT a Level 1 backend, and NOT part of the browser escalation chain.
+>
+> **Implementation details**: See `FETCH_DECOUPLING_PLAN.md` for the original plan, `STATE.md` for implementation tracking, and the actual code in `backend/fetch-backend.ts` and `index.ts` (the `web-fetch` tool).
+>
+> **Test coverage**: 46 URL safety tests + 24 fetch-backend tests using Vitest (70 total).
 
 ### 11.1 The Problem
 
@@ -559,11 +588,11 @@ The `strategy` parameter on `browser-navigate` changes semantics:
 | Strategy | Before | After |
 |----------|--------|-------|
 | `"auto"` | fetch → chromium → stealth | chromium → stealth |
-| `"fetch"` | Use fetch backend | **Removed** — use `web-fetch` tool instead |
+| `"fetch"` | Use fetch backend | **Removed** ✅ — use `web-fetch` tool instead |
 | `"chromium"` | Use chromium | Unchanged |
 | `"stealth"` | Use stealth | Unchanged |
 
-The `"fetch"` strategy value is removed from `browser-navigate`. Agents that want the fast path call `web-fetch` explicitly. This is a **breaking change for existing tool callers** — the agent prompt must be updated to recommend `web-fetch` for content-retrieval tasks.
+The `"fetch"` strategy value has been removed from `browser-navigate`. Agents that want the fast path call `web-fetch` explicitly. This is a **breaking change for existing tool callers** — the agent prompt was updated to recommend `web-fetch` for content-retrieval tasks.
 
 ### 11.6 Hybrid Alternative: Router Pre-Check
 
@@ -585,6 +614,8 @@ This keeps fetch outside the `BrowserPlugin` interface while still allowing the 
 Removing fetch from the `"auto"` strategy means `browser-navigate` always spins up chromium, which is slower and more resource-intensive than a simple HTTP fetch. For simple content-retrieval tasks, this is a regression.
 
 **Mitigation**: Ensure the agent prompt clearly distinguishes between `web-fetch` (fast, read-only) and `browser-navigate` (slower, interactive). The agent should default to `web-fetch` for content-retrieval tasks and only use `browser-navigate` when interaction is needed.
+
+**Actual outcome**: Prompt guidelines were updated in the `web-fetch` tool definition and the `browser-navigate` tool definition to cross-reference each other. The startup notification now says: `"Browser extension loaded (web-fetch → chromium → stealth). Try: web-fetch for static pages or browser-navigate for interactive browsing."`
 
 ---
 
@@ -690,38 +721,40 @@ The original plan proposed symlinks from `utils/` → `core/shared/`. This risks
 
 | File | Imports From | Imports In | Key Dependencies |
 |------|-------------|------------|------------------|
-| `index.ts` | `./backend/router`, `./backend/playwright-backend`, `./backend/stealth-backend`, `./utils/session-manager` | pi-agent SDK (`@earendil-works/pi-coding-agent`) | Pi tool registration, session lifecycle hooks |
-| `router.ts` | 3 backend modules, `../utils/accessibility-tree`, `../utils/session-manager`, `../utils/url-safety` | index.ts (via tools) | Temp file management in `/tmp/pi-browser/` |
+| `index.ts` | `./backend/router`, `./backend/fetch-backend`, `./backend/playwright-backend`, `./backend/stealth-backend`, `./utils/session-manager` | pi-agent SDK (`@earendil-works/pi-coding-agent`) | Pi tool registration, session lifecycle hooks; 11 tools (10 interactive + 1 web-fetch) |
+| `router.ts` | 2 backend modules (chromium + stealth only), `../utils/accessibility-tree`, `../utils/session-manager`, `../utils/url-safety` | index.ts (via interactive browser tools) | No temp file management (moved to fetch-backend) |
 | `playwright-backend.ts` | `../utils/accessibility-tree`, `../utils/cdp-supervisor`, `../utils/session-manager` | router.ts, cleanup in index.ts | Node `playwright` package, CDP protocol |
 | `stealth-backend.ts` | `../utils/accessibility-tree`, `../utils/session-manager` | router.ts, cleanup in index.ts | `node:child_process` (spawn), JSON-RPC protocol |
-| `fetch-backend.ts` | `node:http`, `node:https`, `node:fs`, `node:os`, `node-html-parser`, `turndown` | router.ts | HTTP client, HTML→Markdown conversion |
+| `fetch-backend.ts` | `node:fs`, `node:crypto`, `node:os`, `node-html-parser`, `turndown`, `../utils/url-safety`, `../utils/bot-detection` | **index.ts directly** (via `webFetchTool.execute()`), not router | HTTP `fetch()`, HTML→Markdown conversion; owns temp file lifecycle |
 | `stealth_bridge.py` | `invisible_playwright` (pip package) | spawned by stealth-backend.ts via `child_process.spawn()` | Python virtualenv at `/opt/ipw-pyenv` |
-| `accessibility-tree.ts` | (none — pure utilities) | playwright-backend, stealth-backend, stealth-backend.ts (cacheSnapshot), router.ts (compactSnapshot) | None |
-| `bot-detection.ts` | (none — pure utilities) | playwright-backend (imported but used mainly by router), index.ts | None |
+| `accessibility-tree.ts` | (none — pure utilities) | playwright-backend, stealth-backend, shoulder (cacheSnapshot), router.ts (compactSnapshot) | None |
+| `bot-detection.ts` | (none — pure utilities) | playwright-backend (used by router), **fetch-backend** (inline bot detection), index.ts | None |
 | `cdp-supervisor.ts` | (none) | playwright-backend only | Chrome DevTools Protocol |
 | `session-manager.ts` | (none — class with helpers) | All backends, index.ts | `Browser`, `BrowserContext` types from playwright |
-| `url-safety.ts` | (none — pure utilities) | router.ts | None |
+| `url-safety.ts` | (none — pure utilities) | **router.ts** and **fetch-backend.ts** (both call `validateUrl()` before navigation/fetch) | None |
+| `__tests__/url-safety.test.ts` | `../utils/url-safety`, `../__tests__/helpers/test-server` | — (test file) | Vitest, 46 tests |
+| `__tests__/fetch-backend.test.ts` | `../backend/fetch-backend` | — (test file) | Vitest, `vi.spyOn(global, 'fetch')`, 24 tests |
 
 ---
 
 ## Appendix B: Operation Call Trace for Each Tool
 
-### `web-fetch` tool (new — decoupled from browser):
-1. `index.ts` → `fetchBackend.navigate(url, {timeout, signal})` **directly** (no router, no session)
-2. `fetch-backend.ts` → HTTP fetch, HTML→Markdown conversion, JS-required detection
-3. Returns `{content (Markdown), url, title, jsRequired, botDetected}`
-4. If the agent detects `jsRequired` or `botDetected` in the result, it can follow up with `browser-navigate` to get an interactive session
+### `web-fetch` tool:
+1. `index.ts` → `fetchBackend.webFetch({url, timeout, signal})` **directly** (no router, no session)
+2. `fetch-backend.ts` → full pipeline: URL safety → HTTP fetch → HTML→Markdown conversion → JS-shell detection → bot detection (inline) → content capping + temp file spill
+3. Returns `WebFetchResult {success, url, title, content (Markdown), needsJavaScript?, botDetected?, statusCode?, filePath?, totalChars?}`
+4. If the agent detects `needsJavaScript` or `botDetected` in the result, it can follow up with `browser-navigate` to get an interactive session
 
 ### `browser-navigate` tool:
 1. `index.ts` → `router.navigate(url, {strategy, timeout, taskId})`
 2. `router.ts` → determines level based on strategy + auto-escalation logic:
-   - `strategy === "chromium"` or `"auto"` → `chromiumPlugin.navigate()` → returns a11y snapshot
-     - If bot detected + auto → tries `stealthPlugin.navigate()` as escalation
-   - `strategy === "stealth"` → `stealthPlugin.navigate()` → spawns JSON-RPC subprocess
-   - `strategy === "fetch"` → **no longer supported** — use `web-fetch` tool instead
-3. Returns `{content, backendUsed, elementCount, botDetectionWarning}`
+   - `strategy === "chromium"` or `"auto"` → `playwrightBackend.navigate()` → returns a11y snapshot
+     - If bot detected + auto → tries `stealthBackend.navigate()` as escalation
+   - `strategy === "stealth"` → `stealthBackend.navigate()` → spawns JSON-RPC subprocess
+   - `strategy === "fetch"` → **removed** ✅ — use `web-fetch` tool instead
+3. Returns `NavigateResult {success, url, title, content (a11y tree), backendUsed (chromium|stealth), elementCount?, botDetectionWarning?}`
 
-> **Note**: Under the decoupled architecture, `"auto"` strategy means chromium→stealth (no fetch step). The agent should call `web-fetch` directly when it only needs to read page content.
+> **Note**: `"auto"` strategy means chromium→stealth (no fetch step). The agent should call `web-fetch` directly when it only needs to read page content.
 
 ### `browser-click` / `browser-type` / `browser-scroll` / `browser-press`:
 1. `index.ts` → `router.click(tid, ref)` (or type/scroll/press)
@@ -745,7 +778,7 @@ The original plan proposed symlinks from `utils/` → `core/shared/`. This risks
 1. `index.ts` → reads `sessionManager.getStatus()` + backend availability checks
 2. Checks `/opt/ipw-pyenv/bin/python` exists for stealth availability
 3. Displays active sessions with per-session level emoji (🔧 chromium, 🦊 stealth)
-4. Fetch status is shown separately (📡 fetch available) — not as a session level
+4. Fetch availability is shown separately as a hint: "Use web-fetch for stateless HTTP fetches."
 
 ---
 
