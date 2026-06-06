@@ -4,22 +4,24 @@
 
 ## What This Project Is
 
-pi-browser is a browser automation extension for the `@earendil-works/pi-coding-agent`. It gives AI agents the ability to browse the web through a two-tier escalation system (Playwright Chromium → stealth Firefox) plus a separate stateless `web-fetch` tool for fast content retrieval. The extension registers 11 tools (10 interactive browser tools + 1 stateless fetch tool) and 1 status command with the pi agent runtime.
+pi-browser is a browser automation extension for the `@earendil-works/pi-coding-agent`. It gives AI agents the ability to browse the web through a two-tier escalation system (Playwright Chromium → stealth Firefox) plus a separate stateless `web-fetch` tool for fast content retrieval. The extension registers 11 tools (10 interactive browser tools + 1 stateless fetch tool) and 2 commands (`/browser-status` and `/web`) with the pi agent runtime. The `/web` command allows toggling all browser tools on/off to save tokens when browsing isn't needed.
 
 ## Repository Layout
 
 ```
 pi-browser/
-├── index.ts                    # Tool surface: 11 tools, /browser-status command, extension entry
+├── index.ts                    # Tool surface: 11 tools, /browser-status + /web commands, extension entry
+├── browser-toggle.ts           # /web on|off|status — toggle all browser tools, persist state, config default
 ├── package.json                # deps: playwright, node-html-parser, turndown, vitest (dev)
 ├── tsconfig.json               # strict mode, noEmit (compiled externally by host)
 ├── plan.md                     # Architecture analysis & phased refactor plan
-├── STATE.md                    # Implementation tracking for fetch decoupling
+├── browser-toggle.md           # Browser toggle feature documentation
 ├── vitest.config.ts            # Vitest configuration
 │
 ├── __tests__/
 │   ├── helpers/
 │   │   └── test-server.ts      # HTTP test server helper for deterministic fixtures
+│   ├── browser-toggle.test.ts  # 62 tests: tool toggle, persist/restore, config defaults, command handler
 │   ├── fetch-backend.test.ts   # 24 tests: webFetch(), JS detection, bot detection, content capping
 │   └── url-safety.test.ts      # 46 tests: SSRF, schemes, secrets, malformed URLs
 │
@@ -79,6 +81,15 @@ All element interaction uses **role-based locators** via Playwright's `getByRole
 
 Every interaction tool (click, type, scroll, press, goBack) returns an automatic snapshot of the resulting page state. The calling agent doesn't need a separate `browser-snapshot` call to see what changed.
 
+### Browser Tool Toggle (`/web`)
+
+All 11 browser tools can be toggled on/off via the `/web` command:
+- **`/web off`** — Removes all browser tools from the active tool set (saves ~1500–2000 tokens/turn)
+- **`/web on`** — Restores all browser tools
+- **`/web`** or **`/web status`** — Shows current state
+
+Toggle state is persisted per-session branch and survives `/reload`, `/resume`, `/fork`, and `/tree` navigation. For fresh sessions, the default can be set via `browserToggle.defaultEnabled` in pi's settings.json. When disabled, the LLM cannot see any browser tool descriptions or parameter schemas — the tools effectively don't exist.
+
 ## Tool Surface (index.ts)
 
 All tools follow the same pattern: parse params → call router or backend → wrap result + render.
@@ -135,7 +146,7 @@ Agent calls browser-click("@e5")
 ## Coding Conventions
 
 - **TypeScript strict mode** with `noEmit` — the host compiles, not this project
-- **No tests exist yet** — this is a known gap; be careful with refactors
+- **132 tests across 3 test files** — URL safety (46), fetch-backend (24), browser-toggle (62). No tests yet for the interactive browser backends (playwright-backend, stealth-backend, router).
 - **Compact truncation everywhere**: snapshots capped ~2500 chars inline, fetch content ~4000 chars with temp file fallback for >5KB
 - **Security-first URL handling**: always route through `url-safety.ts` for validation before navigation
 - **Role-based locators only**: never introduce XPath or CSS selector-based interaction; always use `getByRole()`
@@ -151,7 +162,7 @@ Agent calls browser-click("@e5")
 5. **Full-page screenshots broken on stealth** — Parameter is accepted but not supported.
 6. **Hard-coded Python path** — Stealth bridge expects `/opt/ipw-pyenv/bin/python`.
 7. **✅ Fetch decoupled into separate `web-fetch` tool** — Fetch is no longer part of the router. It is a standalone tool with its own `webFetch()` entry point, URL safety, JS detection, bot detection, and content capping.
-8. **Partial test infrastructure** — 70 tests cover URL safety (46) and fetch-backend (24). No tests yet for the interactive browser backends (playwright-backend, stealth-backend, router).
+8. **132 tests** — URL safety (46), fetch-backend (24), browser-toggle (62). No tests yet for the interactive browser backends (playwright-backend, stealth-backend, router).
 
 ## Refactor Roadmap (from plan.md)
 
@@ -177,9 +188,10 @@ Agent calls browser-click("@e5")
 
 - **`backend/router.ts`** — The most complex file; changes here affect all interactive backends. Always read the full dispatcher for an operation before modifying it.
 - **`backend/fetch-backend.ts`** — The decoupled fetch backend. Changes here affect the `web-fetch` tool only.
-- **`index.ts`** — Tool definitions for all 11 tools plus `webFetchTool`. Adding a new tool requires understanding both the interactive (router→backend) and stateless (fetch-backend) patterns.
+- **`index.ts`** — Tool definitions for all 11 tools plus `webFetchTool`, 2 commands (`/browser-status`, `/web`), and `initBrowserToggle(pi)` startup call. Adding a new tool requires understanding both the interactive (router→backend) and stateless (fetch-backend) patterns.
 - **`utils/accessibility-tree.ts`** — Both backends depend on the parser and `buildLocator()`. Changes here can break element interaction across the board.
 - **`backend/stealth_bridge.py`** — The Python bridge runs in a subprocess with limited error recovery. Test manually after any changes.
+- **`browser-toggle.ts`** — Controls tool visibility for the entire extension. Changes here affect which tools the LLM can see. The toggle state is persisted and restored across session lifecycle events.
 
 ## Security Considerations
 
