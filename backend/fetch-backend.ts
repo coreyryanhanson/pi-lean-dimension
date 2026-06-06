@@ -12,7 +12,6 @@
  * - Runs bot-detection heuristics inline
  * - Caps content for inline display + spills to temp files when large
  *
- * The deprecated `navigate()` export is preserved for backward compatibility.
  */
 
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
@@ -22,19 +21,6 @@ import TurndownService from "turndown";
 import { parse as parseHtml } from "node-html-parser";
 import { validateUrl } from "../utils/url-safety";
 import type { BotDetectionResult } from "../utils/bot-detection";
-
-// ─── Existing fetch (deprecated — kept for backward compat) ────────────
-
-export interface FetchNavigateResult {
-	success: boolean;
-	url: string;
-	title: string;
-	content: string; // Markdown
-	needsJavaScript: boolean; // true if page appears to be a JS shell
-	backend: "fetch";
-	statusCode?: number;
-	error?: string;
-}
 
 const DEFAULT_USER_AGENT =
 	"Mozilla/5.0 (compatible; PiBrowser/1.0; +https://pi.ai)";
@@ -89,7 +75,7 @@ function extractTitle(root: ReturnType<typeof parseHtml>): string {
 
 /**
  * Perform the raw HTTP fetch, HTML parsing, and Markdown conversion.
- * Used internally by both `navigate()` (deprecated) and `webFetch()`.
+ * Used internally by `webFetch()` to perform the raw HTTP request.
  */
 async function performFetch(
 	url: string,
@@ -198,64 +184,6 @@ function htmlToMarkdown(html: string): string {
 	});
 
 	return turndown.turndown(root.innerHTML || root.textContent || "").trim();
-}
-
-// ─── Legacy: navigate() (deprecated) ──────────────────────────────────
-
-/**
- * @deprecated Use `webFetch()` instead. This entry point is kept for backward
- * compatibility with callers that import fetch-backend directly. It does NOT
- * run URL safety or bot detection — call those separately before invoking this.
- */
-export async function navigate(
-	url: string,
-	timeoutMs: number = 30_000,
-	signal?: AbortSignal,
-): Promise<FetchNavigateResult> {
-	try {
-		const { html, title, needsJavaScript } = await performFetch(
-			url,
-			timeoutMs,
-			signal,
-		);
-
-		const markdown = htmlToMarkdown(html);
-
-		return {
-			success: true,
-			// We don't have response.url here in the legacy path — caller passes it.
-			url,
-			title,
-			content: markdown,
-			needsJavaScript,
-			backend: "fetch",
-		};
-	} catch (err: unknown) {
-		if (err instanceof DOMException && err.name === "AbortError") {
-			return {
-				success: false,
-				url,
-				title: "",
-				content: "Request timed out or was cancelled",
-				needsJavaScript: false,
-				backend: "fetch",
-				error: "timeout",
-			};
-		}
-
-		const msg = err instanceof Error ? err.message : String(err);
-		const isHttpError = typeof msg === "string" && /^HTTP \d+/.test(msg);
-
-		return {
-			success: false,
-			url,
-			title: "",
-			content: isHttpError ? msg : `Fetch error: ${msg}`,
-			needsJavaScript: false,
-			backend: "fetch",
-			error: isHttpError ? msg : msg,
-		};
-	}
 }
 
 // ─── Decoupled entry point: webFetch() ────────────────────────────────

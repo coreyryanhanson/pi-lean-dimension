@@ -16,9 +16,6 @@ import {
 } from "../utils/session-manager";
 import { validateUrl } from "../utils/url-safety";
 
-/** Backend that was actually used for a navigation. */
-export type BackendUsed = BackendLevel;
-
 // ─── Snapshot truncation constants ────────────────────────────────────
 
 /**
@@ -158,7 +155,7 @@ export interface NavigateResult {
 	title: string;
 	/** Page content — accessibility tree for chromium/stealth */
 	content: string;
-	backendUsed: BackendUsed;
+	backendUsed: BackendLevel;
 	/** Number of interactive elements (for a11y tree) */
 	elementCount?: number;
 	/** Bot detection warning flag */
@@ -209,7 +206,7 @@ async function escalateToStealthIfAuto(
 	title: string;
 	content: string;
 	elementCount?: number;
-	backendUsed: BackendUsed;
+	backendUsed: BackendLevel;
 	botDetectionWarning: boolean;
 	error?: string;
 } | null> {
