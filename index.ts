@@ -7,6 +7,7 @@ import { webFetch, cleanupFetchTempFiles } from "./backend/fetch-backend";
 import { cleanupAll as cleanupPlaywright } from "./backend/playwright-backend";
 import { cleanupAll as cleanupStealth } from "./backend/stealth-backend";
 import { sessionManager } from "./utils/session-manager";
+import initBrowserToggle from "./browser-toggle";
 
 // ============================================================
 // Status bar update helper
@@ -1181,8 +1182,9 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(browserPressTool);
 	pi.registerTool(browserConsoleTool);
 
-	// Register command
+	// Register commands
 	pi.registerCommand("browser-status", browserStatusCommand);
+	initBrowserToggle(pi);
 
 	// --- Startup --------------------------------------------------
 	pi.on("session_start", async (_event, ctx) => {
