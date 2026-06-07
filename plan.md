@@ -1,9 +1,9 @@
 # pi-browser Extension — Plugin Architecture Analysis
 
 > Date: 2026-06-05  
-> Updated: 2026-06-06 (Phase 1a — fetch decoupling implemented)  
+> Updated: 2026-06-07 (Phase 1b recommendations: user-configurable plugin chain, PythonPluginAdapter, MockPlugin test fixture)  
 > Scope: `startup_scripts/firecracker/config/pi/extensions/pi-browser/`  
-> Status: Partially Implemented (Phase 1a fetch decoupling done; Phases 1b–4 planned)
+> Status: Partially Implemented (Phase 1a fetch decoupling done; Phases 1b–4 planned; see `plan_v2.md` for future architecture)
 
 ---
 
