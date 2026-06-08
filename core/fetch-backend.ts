@@ -19,8 +19,8 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import TurndownService from "turndown";
 import { parse as parseHtml } from "node-html-parser";
-import { validateUrl } from "../utils/url-safety";
-import type { BotDetectionResult } from "../utils/bot-detection";
+import { validateUrl } from "./shared/url-safety.js";
+import type { BotDetectionResult } from "./shared/bot-detection.js";
 
 const DEFAULT_USER_AGENT =
 	"Mozilla/5.0 (compatible; PiBrowser/1.0; +https://pi.ai)";

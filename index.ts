@@ -1,13 +1,13 @@
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { accessSync, constants } from "node:fs";
-import * as router from "./backend/router";
-import { webFetch, cleanupFetchTempFiles } from "./backend/fetch-backend";
-import { cleanupAll as cleanupPlaywright } from "./backend/playwright-backend";
-import { cleanupAll as cleanupStealth } from "./backend/stealth-backend";
-import { sessionManager } from "./utils/session-manager";
-import initBrowserToggle, { getToggleState } from "./browser-toggle";
+import * as router from "./core/router.js";
+import { webFetch, cleanupFetchTempFiles } from "./core/fetch-backend.js";
+import { pluginRegistry } from "./core/plugin-registry.js";
+import { loadPluginConfig } from "./core/plugin-config.js";
+import { ChromiumPlugin } from "./backends/chromium/index.js";
+import { sessionManager } from "./core/shared/session-manager.js";
+import initBrowserToggle, { getToggleState } from "./browser-toggle.js";
 
 // ============================================================
 // Status bar update helper
@@ -24,10 +24,7 @@ function updateFooterStatus(ctx: {
 }
 
 // ─── Helper to get a stable taskId from tool call context ──────
-// Each pi session gets one browser session (not one per tool call).
-// ctx.sessionManager.getSessionId() provides a stable per-session key.
-// Fallback to a single shared key if unavailable.
-const _sessionKeys = new Map<string, string>(); // pi sessionId → browser taskId
+const _sessionKeys = new Map<string, string>();
 let _sessionCounter = 0;
 
 function taskId(ctx: {
@@ -41,7 +38,6 @@ function taskId(ctx: {
 		}
 		return _sessionKeys.get(piSessionId)!;
 	}
-	// Fallback: single shared session (better than per-toolCallId)
 	return "browser-default";
 }
 
@@ -53,13 +49,11 @@ const browserNavigateTool = defineTool({
 	label: "Browse Web",
 	description:
 		"Navigate a browser to a URL and return the page as an accessibility tree with @e1, @e2 element references. " +
-		"Auto-selects the best backend: Playwright Chromium for JS-heavy pages, " +
-		"or stealth Firefox for bot-protected sites. For stateless HTTP fetches without interactive elements, use web-fetch instead.",
+		"Uses the configured browser plugin (default: Chromium). For stateless HTTP fetches without interactive elements, use web-fetch instead.",
 	promptSnippet: "Fetch and read web pages in text form",
 	promptGuidelines: [
 		"Use browser-navigate when you need to interact with a web page using @e1/@e2 element references (click, type, scroll, etc.).",
 		"If you just need the page content as Markdown without interactive elements, use web-fetch instead.",
-		"If the page seems empty or JS-dependent, try strategy='chromium'.",
 		"Use @e1, @e2 references from the accessibility tree with browser-click and browser-type to interact with page elements.",
 		"If snapshot or interaction returns 'No active session', the previous navigation was in a different context. Use browser-navigate first to establish a session.",
 		"After auto-launch, @e refs may have changed — a fresh accessibility tree is returned automatically. Use the new refs for interaction.",
@@ -67,10 +61,10 @@ const browserNavigateTool = defineTool({
 	parameters: Type.Object({
 		url: Type.String({ description: "The URL to navigate to" }),
 		strategy: Type.Optional(
-			StringEnum(["auto", "chromium", "stealth"] as const, {
+			StringEnum(["auto", "chromium"] as const, {
 				description:
-					'Backend strategy: "auto" (default) uses Chromium, escalates to stealth if bot detection is triggered; ' +
-					'"chromium" uses Playwright Chromium; "stealth" uses invisible Playwright Firefox (anti-detection). ' +
+					'Backend strategy: "auto" (default) uses the first available plugin; ' +
+					'"chromium" uses Playwright Chromium. ' +
 					"For stateless HTTP fetches, use web-fetch instead.",
 			}),
 		),
@@ -104,12 +98,14 @@ const browserNavigateTool = defineTool({
 			{ once: true },
 		);
 
-		const result = await router.navigate(url, {
-			strategy: strategy as any,
+		const navOptions: router.NavigateOptions = {
+			strategy,
 			timeout,
-			...(signal ? { signal } : {}),
 			taskId: tid,
-		});
+		};
+		if (signal) navOptions.signal = signal;
+
+		const result = await router.navigate(url, navOptions);
 
 		updateFooterStatus(ctx);
 
@@ -129,13 +125,9 @@ const browserNavigateTool = defineTool({
 			};
 		}
 
-		// Safety net: if the content somehow escaped truncation, enforce a cap here.
-		// This prevents unbounded context flooding even if a code path in router.ts
-		// forgets to call compactSnapshot().
-		let contentText = result.content;
+		// Safety net: cap content to prevent unbounded context flooding
+		let contentText = result.snapshot;
 		if (result.elementCount !== undefined && contentText.length > 8000) {
-			// Interactive a11y tree content should never exceed 8K chars after truncation.
-			// If it does, something went wrong — cap it at the compact limit.
 			let cut = contentText.lastIndexOf("\n", 4000);
 			if (cut < 2000) cut = 4000;
 			contentText =
@@ -151,7 +143,7 @@ const browserNavigateTool = defineTool({
 				? `Interactive elements: ${result.elementCount}`
 				: "",
 			result.botDetectionWarning
-				? `⚠ Bot detection triggered — may need stealth backend.`
+				? "⚠ Bot detection triggered — page may be blocked."
 				: "",
 			"",
 			contentText,
@@ -336,7 +328,6 @@ const browserClickTool = defineTool({
 			result.newTitle ? `Title: ${result.newTitle}` : "",
 		].filter(Boolean);
 
-		// Include auto-snapshot in the content so the model sees updated page state
 		let content = lines.join("\n");
 		if (result.snapshot) {
 			content += `\n\n${result.snapshot}`;
@@ -423,7 +414,6 @@ const browserTypeTool = defineTool({
 			};
 		}
 
-		// Include auto-snapshot so the model sees updated page state
 		let content = `Typed "${text}" into ${ref}`;
 		if (result.snapshot) {
 			content += `\n\n${result.snapshot}`;
@@ -496,7 +486,6 @@ const browserScrollTool = defineTool({
 			};
 		}
 
-		// Include auto-snapshot so the model sees updated page state
 		let content = `Scrolled ${direction}`;
 		if (result.snapshot) {
 			content += `\n\n${result.snapshot}`;
@@ -583,14 +572,10 @@ const browserScreenshotTool = defineTool({
 			};
 		}
 
-		// Build content: if a question was provided, include it in the text output
-		// so both vision and text-only models can work with it.
-		// The image is always attached for vision-capable models.
 		const textContent = p?.question
 			? `Screenshot captured. Question: ${p.question}`
 			: "Screenshot captured:";
 
-		// Derive media type from data URI (backends return JPEG at 80% quality)
 		const mediaType = result.dataUri.startsWith("data:image/jpeg")
 			? "image/jpeg"
 			: "image/png";
@@ -608,7 +593,7 @@ const browserScreenshotTool = defineTool({
 	renderCall(args, theme, _context) {
 		if (args.question) {
 			return new Text(
-				`${theme.fg("toolTitle", theme.bold("browser-screenshot"))} ${theme.fg("dim", `“${args.question.slice(0, 60)}”`)}`,
+				`${theme.fg("toolTitle", theme.bold("browser-screenshot"))} ${theme.fg("dim", `"${args.question.slice(0, 60)}"`)}`,
 				0,
 				0,
 			);
@@ -624,7 +609,7 @@ const browserScreenshotTool = defineTool({
 		const d = result.details as Record<string, unknown> | undefined;
 		if (d?.question) {
 			return new Text(
-				`${theme.fg("accent", "📸 Screenshot")} ${theme.fg("dim", `“${(d.question as string).slice(0, 60)}”`)}`,
+				`${theme.fg("accent", "📸 Screenshot")} ${theme.fg("dim", `"${(d.question as string).slice(0, 60)}"`)}`,
 				0,
 				0,
 			);
@@ -665,14 +650,14 @@ const browserGetImagesTool = defineTool({
 			};
 		}
 
-		if (result.count === 0) {
+		if (result.images.length === 0) {
 			return {
 				content: [{ type: "text", text: "No images found on this page." }],
 				details: { count: 0 },
 			};
 		}
 
-		const lines = [`Found ${result.count} image(s):`, ""];
+		const lines = [`Found ${result.images.length} image(s):`, ""];
 		for (const img of result.images) {
 			lines.push(
 				`- ${img.alt ? `"${img.alt}" ` : ""}${img.src} (${img.width}x${img.height})`,
@@ -681,7 +666,7 @@ const browserGetImagesTool = defineTool({
 
 		return {
 			content: [{ type: "text", text: lines.join("\n") }],
-			details: { count: result.count, images: result.images },
+			details: { count: result.images.length, images: result.images },
 		};
 	},
 
@@ -733,7 +718,6 @@ const browserBackTool = defineTool({
 			};
 		}
 
-		// Include auto-snapshot so the model sees the previous page
 		let content = `Went back to: ${result.newUrl || "?"}`;
 		if (result.snapshot) {
 			content += `\n\n${result.snapshot}`;
@@ -804,7 +788,6 @@ const browserPressTool = defineTool({
 			};
 		}
 
-		// Include auto-snapshot so the model sees updated page state
 		let content = `Pressed "${key}"`;
 		if (result.snapshot) {
 			content += `\n\n${result.snapshot}`;
@@ -878,7 +861,6 @@ const browserConsoleTool = defineTool({
 		};
 		const tid = p?.taskId ?? taskId(ctx);
 
-		// Handle clear first (side-effect only)
 		if (p?.clear) {
 			await router.clearConsole(tid);
 			return {
@@ -887,7 +869,6 @@ const browserConsoleTool = defineTool({
 			};
 		}
 
-		// If expression provided, evaluate it
 		if (p?.expression) {
 			const result = await router.evaluate(tid, p.expression);
 
@@ -1017,7 +998,7 @@ const webFetchTool = defineTool({
 		"The tool returns page content as Markdown, truncated to ~4K chars inline.",
 		"If the result mentions a temp file with full content, use the read tool with offset/limit to access specific sections.",
 		"If the result indicates the page needs JavaScript, switch to browser-navigate with strategy='chromium'.",
-		"If bot detection is triggered, use browser-navigate with strategy='stealth' instead.",
+		"If bot detection is triggered, the page may be blocked — try browser-navigate instead.",
 		"This tool does NOT create a browser session — it's a simple HTTP fetch.",
 	],
 	parameters: Type.Object({
@@ -1037,11 +1018,14 @@ const webFetchTool = defineTool({
 			timeout?: number;
 		};
 
-		const result = await webFetch({
-			url,
-			timeout,
-			...(signal ? { signal } : {}),
-		});
+		const fetchOptions: { url: string; timeout: number; signal?: AbortSignal } =
+			{
+				url,
+				timeout,
+			};
+		if (signal) fetchOptions.signal = signal;
+
+		const result = await webFetch(fetchOptions);
 
 		if (!result.success) {
 			return {
@@ -1143,26 +1127,25 @@ const browserStatusCommand = {
 		const active = sessionManager.getActiveSessions();
 		let msg = `🌐 ${status}`;
 
-		// Backend availability
-		const pw = sessionManager.getPlaywrightBrowser();
-		const backends: string[] = [];
-		if (pw?.isConnected()) backends.push("chromium");
-		else backends.push("chromium (offline)");
-		// Check stealth availability
-		try {
-			accessSync("/opt/ipw-pyenv/bin/python", constants.X_OK);
-			backends.push("stealth");
-		} catch {
-			backends.push("stealth (offline)");
+		// List available plugins
+		const available = pluginRegistry.available();
+		const allPlugins = pluginRegistry.availableAll();
+		const backendLines: string[] = [];
+		for (const p of allPlugins) {
+			if (p.enabled) {
+				backendLines.push(p.name);
+			} else {
+				backendLines.push(`${p.name} (disabled)`);
+			}
 		}
-		msg += `\nInteractive backends: ${backends.join(", ")}`;
+		msg += `\nPlugins: ${backendLines.join(", ")}`;
 		msg += `\nUse web-fetch for stateless HTTP fetches.`;
 
 		if (active.length > 0) {
 			msg += `\nActive sessions: ${active.length}`;
 			for (const s of active) {
-				const levelEmoji = s.level === "stealth" ? "🦊" : "🔧";
-				msg += `\n  ${levelEmoji} [${s.level}] ${s.currentUrl || "(pending)"}`;
+				const sym = sessionManager.pluginSymbol(s.pluginName);
+				msg += `\n  ${sym} [${s.pluginName}] ${s.currentUrl || "(pending)"}`;
 				if (s.currentTitle) msg += ` — ${s.currentTitle}`;
 			}
 		}
@@ -1174,7 +1157,52 @@ const browserStatusCommand = {
 // Extension entry point
 // ============================================================
 export default function (pi: ExtensionAPI) {
-	// Register tools
+	// --- Plugin registration ----------------------------------------
+	const { plugins: pluginConfigs, errors: configErrors } = loadPluginConfig();
+
+	// Log config errors
+	for (const err of configErrors) {
+		console.warn(`[pi-browser] Plugin config error: ${err}`);
+	}
+
+	// Register each configured plugin
+	for (const config of pluginConfigs) {
+		if (config.name === "chromium" && config.dir === "chromium") {
+			const plugin = new ChromiumPlugin();
+			pluginRegistry.register(plugin, config);
+			// Init the plugin (lazy — no-op for Chromium currently)
+			plugin.init(config.config).catch((err: unknown) => {
+				console.error(
+					`[pi-browser] Failed to init plugin '${config.name}':`,
+					err,
+				);
+			});
+		} else {
+			// Future: dynamic plugin loading
+			console.warn(
+				`[pi-browser] Plugin '${config.name}' (dir: '${config.dir}') is not yet supported. Only 'chromium' is available in Phase A.`,
+			);
+		}
+	}
+
+	// Fallback: if no plugins were registered, register Chromium as default
+	if (pluginRegistry.size === 0) {
+		const plugin = new ChromiumPlugin();
+		pluginRegistry.register(plugin, {
+			name: "chromium",
+			dir: "chromium",
+			enabled: true,
+			config: {},
+		});
+		plugin.init({}).catch((err: unknown) => {
+			console.error(
+				"[pi-browser] Failed to init default Chromium plugin:",
+				err,
+			);
+		});
+	}
+
+	// --- Register tools ---------------------------------------------
 	pi.registerTool(webFetchTool);
 	pi.registerTool(browserNavigateTool);
 	pi.registerTool(browserSnapshotTool);
@@ -1187,29 +1215,33 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(browserPressTool);
 	pi.registerTool(browserConsoleTool);
 
-	// Register commands
+	// --- Register commands ------------------------------------------
 	pi.registerCommand("browser-status", browserStatusCommand);
 	initBrowserToggle(pi);
 
-	// --- Startup --------------------------------------------------
+	// --- Startup ----------------------------------------------------
 	pi.on("session_start", async (_event, ctx) => {
+		const pluginNames = pluginRegistry.available().join(", ");
 		ctx.ui.notify(
-			"🌐 Browser extension loaded (web-fetch → chromium → stealth). Try: web-fetch for static pages or browser-navigate for interactive browsing.",
+			`🌐 Browser extension loaded (plugins: ${pluginNames}). Try: web-fetch for static pages or browser-navigate for interactive browsing.`,
 			"info",
 		);
 		updateFooterStatus(ctx);
 	});
 
-	// --- Cleanup --------------------------------------------------
+	// --- Cleanup ----------------------------------------------------
 	pi.on("session_shutdown", async (_event, ctx) => {
-		// Clean up the stable session key for this pi session
 		const piSessionId = (ctx as any)?.sessionManager?.getSessionId?.();
 		if (piSessionId) _sessionKeys.delete(piSessionId);
 
-		await cleanupPlaywright().catch(() => {});
-		await cleanupStealth().catch(() => {});
+		// Clean up all registered plugins
+		const ordered = pluginRegistry.getOrdered();
+		for (const { plugin } of ordered) {
+			await plugin.cleanupAll().catch(() => {});
+		}
+
 		await sessionManager.removeAll();
-		cleanupFetchTempFiles(); // remove any spilled fetch temp files
+		cleanupFetchTempFiles();
 		try {
 			ctx?.ui?.setStatus?.("browser", "");
 		} catch {

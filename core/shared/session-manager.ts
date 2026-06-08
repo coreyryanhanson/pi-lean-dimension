@@ -1,20 +1,26 @@
 /**
  * Session manager — tracks browser session lifecycle per task_id.
  *
- * Design: one shared Browser instance (for Level 2/3), one BrowserContext
- * per active taskId. Contexts are created on first use and disposed on
- * task completion or error.
+ * Design: one shared Browser instance, one BrowserContext per active taskId.
+ * Contexts are created on first use and disposed on task completion or error.
+ *
+ * v2 change: `BackendLevel` replaced with `pluginName: string` to support
+ * arbitrary named plugins.  The `processHandle` field has been removed.
  */
 
 import type { Browser, BrowserContext } from "playwright";
 
-/** Which backend level a session is currently using */
+/**
+ * @deprecated Use `pluginName: string` instead of `BackendLevel`.
+ * Kept for backward compatibility during the transition.
+ */
 export type BackendLevel = "chromium" | "stealth";
 
 /** Runtime state of a single browsing session */
 export interface BrowserSession {
 	taskId: string;
-	level: BackendLevel;
+	/** Name of the plugin this session is bound to (set once, never changes) */
+	pluginName: string;
 	/** The URL currently loaded in this session */
 	currentUrl?: string;
 	/** Page title if available */
@@ -23,29 +29,28 @@ export interface BrowserSession {
 	lastActive: number;
 	/** Whether the session has crashed and needs recovery */
 	crashed: boolean;
-	/** Level 2/3: Playwright browser context (undefined for fetch) */
+	/** Playwright browser context (undefined for fetch) */
 	context?: BrowserContext;
-	/** Level 3: Python bridge process handle (opaque) */
-	processHandle?: unknown;
 }
 
-/** Stored last navigation for a task (used to auto-escalate fetch→interactive) */
+/** Stored last navigation for a task (used to auto-recover sessions) */
 interface LastNavEntry {
 	url: string;
 	title: string;
+	/** Plugin name that was used for the original navigation */
+	pluginName: string;
 }
 
 class SessionManager {
 	#sessions = new Map<string, BrowserSession>();
 	#playwrightBrowser: Browser | null = null;
-	#stealthProcess: unknown = null;
 	/** Last navigation URL per task (survives session removal, cleared explicitly) */
 	#lastNav = new Map<string, LastNavEntry>();
 
-	createSession(taskId: string, level: BackendLevel): BrowserSession {
+	createSession(taskId: string, pluginName: string): BrowserSession {
 		const existing = this.#sessions.get(taskId);
 		if (existing) {
-			existing.level = level;
+			existing.pluginName = pluginName;
 			delete existing.currentUrl;
 			delete existing.currentTitle;
 			existing.lastActive = Date.now();
@@ -54,7 +59,7 @@ class SessionManager {
 		}
 		const session: BrowserSession = {
 			taskId,
-			level,
+			pluginName,
 			lastActive: Date.now(),
 			crashed: false,
 		};
@@ -69,7 +74,10 @@ class SessionManager {
 	updateSession(
 		taskId: string,
 		updates: Partial<
-			Pick<BrowserSession, "currentUrl" | "currentTitle" | "level" | "crashed">
+			Pick<
+				BrowserSession,
+				"currentUrl" | "currentTitle" | "pluginName" | "crashed"
+			>
 		>,
 	): void {
 		const session = this.#sessions.get(taskId);
@@ -78,19 +86,25 @@ class SessionManager {
 				session.currentUrl = updates.currentUrl;
 			if (updates.currentTitle !== undefined)
 				session.currentTitle = updates.currentTitle;
-			if (updates.level !== undefined) session.level = updates.level;
+			if (updates.pluginName !== undefined)
+				session.pluginName = updates.pluginName;
 			if (updates.crashed !== undefined) session.crashed = updates.crashed;
 			session.lastActive = Date.now();
 		}
 	}
 
-	// ─── Last navigation storage (for fetch→interactive auto-escalation) ───
+	// ─── Last navigation storage (for session auto-recovery) ───
 
-	setLastNav(taskId: string, url: string, title: string): void {
-		this.#lastNav.set(taskId, { url, title });
+	setLastNav(
+		taskId: string,
+		url: string,
+		title: string,
+		pluginName: string,
+	): void {
+		this.#lastNav.set(taskId, { url, title, pluginName });
 	}
 
-	getLastNav(taskId: string): { url: string; title: string } | undefined {
+	getLastNav(taskId: string): LastNavEntry | undefined {
 		return this.#lastNav.get(taskId);
 	}
 
@@ -98,7 +112,7 @@ class SessionManager {
 		this.#lastNav.delete(taskId);
 	}
 
-	// ─── Session lifecycle ────────────────────────────────────────────────
+	// ─── Session lifecycle ────────────────────────────────────────────
 
 	removeSession(taskId: string): void {
 		const session = this.#sessions.get(taskId);
@@ -123,9 +137,23 @@ class SessionManager {
 			try {
 				await this.#playwrightBrowser.close();
 			} catch {
-				/* ok */
+				/* browser may already be closed */
 			}
 			this.#playwrightBrowser = null;
+		}
+	}
+
+	/**
+	 * Get a display symbol for a plugin name.
+	 * Known plugins get short symbols; unknown plugins get the first 3 chars.
+	 */
+	pluginSymbol(pluginName: string): string {
+		switch (pluginName) {
+			case "chromium":
+				return "PW";
+			default:
+				// Return up to 3 uppercase chars for custom plugins
+				return pluginName.slice(0, 3).toUpperCase();
 		}
 	}
 
@@ -144,16 +172,18 @@ class SessionManager {
 		if (active.length === 1) {
 			const s = active[0]!;
 			const domain = s.currentUrl ? extractDomain(s.currentUrl) : undefined;
-			const sym = levelToSymbol(s.level);
+			const sym = this.pluginSymbol(s.pluginName);
 			let status = domain ? `▶ ${sym}: ${domain}` : `▶ ${sym}`;
 			if (crashed.length > 0) {
 				status += ` · ${crashed.length} crashed`;
 			}
 			return status;
 		}
-		const levels = new Set(active.map((s) => s.level));
-		const levelStr = Array.from(levels).map(levelToSymbol).join(",");
-		let status = `🌐 ${active.length} active (${levelStr})`;
+		const plugins = new Set(active.map((s) => s.pluginName));
+		const pluginStr = Array.from(plugins)
+			.map((p) => this.pluginSymbol(p))
+			.join(",");
+		let status = `🌐 ${active.length} active (${pluginStr})`;
 		if (crashed.length > 0) {
 			status += ` · ${crashed.length} crashed`;
 		}
@@ -176,12 +206,6 @@ class SessionManager {
 	setPlaywrightBrowser(b: Browser | null): void {
 		this.#playwrightBrowser = b;
 	}
-	getStealthProcess(): unknown {
-		return this.#stealthProcess;
-	}
-	setStealthProcess(p: unknown): void {
-		this.#stealthProcess = p;
-	}
 }
 
 function extractDomain(url: string): string {
@@ -189,15 +213,6 @@ function extractDomain(url: string): string {
 		return new URL(url).hostname;
 	} catch {
 		return url;
-	}
-}
-
-function levelToSymbol(level: BackendLevel): string {
-	switch (level) {
-		case "chromium":
-			return "PW";
-		case "stealth":
-			return "IPW";
 	}
 }
 

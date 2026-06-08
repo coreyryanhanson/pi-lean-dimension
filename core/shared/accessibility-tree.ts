@@ -28,7 +28,7 @@ export interface AriaParseResult {
 /**
  * Roles that get @e refs and can be used for interaction.
  */
-const INTERACTIVE_ROLES = new Set([
+export const INTERACTIVE_ROLES = new Set([
 	"button",
 	"link",
 	"textbox",
@@ -85,7 +85,7 @@ const INTERACTIVE_ROLES = new Set([
  * Roles that are shown in the tree but DON'T get @e refs
  * (informational only, not useful click targets).
  */
-const INFORMATIONAL_ROLES = new Set([
+export const INFORMATIONAL_ROLES = new Set([
 	"paragraph",
 	"text",
 	"group",
