@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import TurndownService from "turndown";
 import { parse as parseHtml } from "node-html-parser";
 import { validateUrl } from "./shared/url-safety.js";
-import type { BotDetectionResult } from "./shared/bot-detection.js";
+import { checkPage } from "./shared/bot-detection.js";
 
 const DEFAULT_USER_AGENT =
 	"Mozilla/5.0 (compatible; PiBrowser/1.0; +https://pi.ai)";
@@ -409,18 +409,13 @@ export async function webFetch(
 	// Step 3: Convert to Markdown
 	const markdown = htmlToMarkdown(result.html);
 
-	// Step 4: Bot detection (inline on fetched content)
+	// Step 4: Bot detection via shared utility
 	let botDetected: boolean | undefined;
 	try {
 		const tempRoot = parseHtml(result.html);
 		const bodyText = tempRoot.textContent?.trim() || "";
-		const botResult: BotDetectionResult = {
-			isBlocked: /cloudflare|captcha|verify you are human/i.test(bodyText),
-			confidence: 0,
-		};
-		if (botResult.isBlocked) {
-			botDetected = true;
-		}
+		const detection = checkPage(result.title, bodyText);
+		if (detection.isBlocked) botDetected = true;
 	} catch {
 		/* best-effort — don't fail on bot detection errors */
 	}

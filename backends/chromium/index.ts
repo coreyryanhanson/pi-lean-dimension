@@ -26,6 +26,7 @@ import {
 	clearConsoleLog,
 } from "../../core/shared/cdp-supervisor.js";
 import { sessionManager } from "../../core/shared/session-manager.js";
+import { checkPage } from "../../core/shared/bot-detection.js";
 import type {
 	BrowserPlugin,
 	PluginCapabilities,
@@ -200,37 +201,23 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 	}
 
-	/** Check for bot/anti-automation detection signals. */
+	/**
+	 * Check for bot/anti-automation detection signals via shared utility.
+	 *
+	 * Checks the page TITLE against specific challenge phrases (avoids
+	 * false positives like Wikipedia mentioning "captcha"), and additionally
+	 * checks the BODY against high-specificity patterns that are unique to
+	 * CDN block pages (Akamai reference IDs, Cloudflare challenge URLs, etc.).
+	 */
 	private async checkBotDetection(page: Page): Promise<boolean> {
 		try {
-			const title = (await page.title()).toLowerCase();
+			const title = await page.title();
 			const bodyText = await page.evaluate(
-				() => document.body?.innerText?.toLowerCase() || "",
+				() => document.body?.innerText || "",
 			);
-
-			const signals = [
-				"please verify you are human",
-				"attention required",
-				"cloudflare",
-				"just a moment",
-				"checking your browser",
-				"enable javascript",
-				"captcha",
-				"security check",
-				"ddos protection",
-				"you have been blocked",
-				"access denied",
-				"sorry, you have been blocked",
-				"verify you are human",
-			];
-
-			for (const s of signals) {
-				if (title.includes(s) || bodyText.includes(s)) {
-					return true;
-				}
-			}
-
-			return false;
+			// checkPage handles both: title gets only challenge phrases,
+			// body also gets high-specificity CDN patterns via BODY_ONLY_SIGNALS.
+			return checkPage(title, bodyText).isBlocked;
 		} catch {
 			return false;
 		}
@@ -262,7 +249,10 @@ export class ChromiumPlugin implements BrowserPlugin {
 			for (let attempt = 0; attempt < 2; attempt++) {
 				try {
 					await page.goto(url, {
-						waitUntil: "networkidle",
+						// "load" instead of "networkidle" so Cloudflare challenge pages
+						// finish loading their HTML; "networkidle" hangs on challenge
+						// pages that keep polling via XHR.
+						waitUntil: "load",
 						timeout: timeoutMs,
 					});
 					break; // success
@@ -280,11 +270,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				}
 			}
 
-			// Check for bot detection (Cloudflare, etc.)
-			const botDetected = await this.checkBotDetection(page);
-
 			// Wait for dynamic content to settle
-			await page.waitForLoadState("domcontentloaded");
 			try {
 				await page.waitForFunction(
 					() =>
@@ -302,6 +288,10 @@ export class ChromiumPlugin implements BrowserPlugin {
 			} catch {
 				// Stabilization timed out — proceed with whatever is rendered
 			}
+
+			// Check for bot detection (Cloudflare, etc.) — AFTER DOM stabilizes
+			// so JS-injected challenge content is present when we check.
+			const botDetected = await this.checkBotDetection(page);
 
 			// Take accessibility snapshot
 			const snap = await page.ariaSnapshot();
@@ -338,7 +328,23 @@ export class ChromiumPlugin implements BrowserPlugin {
 			};
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : String(err);
+
+			// Try to check page content even on error — challenge pages may have
+			// loaded their HTML before the timeout.  Without this, Cloudflare
+			// challenges that hang on "load" (rare) or other failures silently
+			// swallow the bot-detection signal.
+			let pageBotDetected = false;
+			try {
+				const currentPage = this.getPage(taskId);
+				if (currentPage) {
+					pageBotDetected = await this.checkBotDetection(currentPage);
+				}
+			} catch {
+				// page may not exist
+			}
+
 			const botDetected =
+				pageBotDetected ||
 				msg.includes("captcha") ||
 				msg.includes("cloudflare") ||
 				msg.includes("blocked") ||
