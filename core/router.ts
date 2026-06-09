@@ -63,9 +63,7 @@ export interface NavigateOptions {
  *
  * Returns null if no session can be established.
  */
-async function requireInteractiveSession(
-	taskId: string,
-): Promise<{
+async function requireInteractiveSession(taskId: string): Promise<{
 	session: BrowserSession;
 	pluginName: string;
 	wasAutoCreated: boolean;
@@ -525,15 +523,26 @@ export async function evaluate(
 
 export async function clearConsole(
 	taskId?: string,
-): Promise<{ success: boolean }> {
+): Promise<{ success: boolean; error?: string }> {
 	const tid = taskId ?? "default";
 	const sr = await requireInteractiveSession(tid);
-	if (!sr) return { success: false };
+	if (!sr) return { success: false, error: "No active session" };
 	const plugin = getPluginForSession(sr.session);
-	if (!plugin) return { success: false };
+	if (!plugin)
+		return {
+			success: false,
+			error: `Plugin '${sr.session.pluginName}' is not available`,
+		};
 
-	await plugin.clearConsole(tid);
-	return { success: true };
+	try {
+		await plugin.clearConsole(tid);
+		return { success: true };
+	} catch (err: unknown) {
+		return {
+			success: false,
+			error: `Clear console failed: ${err instanceof Error ? err.message : String(err)}`,
+		};
+	}
 }
 
 // ─── Error message constants ─────────────────────────────────────────
