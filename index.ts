@@ -4,8 +4,14 @@ import { Text } from "@earendil-works/pi-tui";
 import * as router from "./core/router.js";
 import { webFetch, cleanupFetchTempFiles } from "./core/fetch-backend.js";
 import { pluginRegistry } from "./core/plugin-registry.js";
-import { loadPluginConfig } from "./core/plugin-config.js";
+import {
+	loadPluginConfig,
+	detectPluginType,
+	DEFAULT_BACKENDS_ROOT,
+} from "./core/plugin-config.js";
 import { ChromiumPlugin } from "./backends/chromium/index.js";
+import { PythonPluginAdapter } from "./backends/python-adapter.js";
+import type { PythonBridgeConfig } from "./backends/python-adapter.js";
 import { sessionManager } from "./core/shared/session-manager.js";
 import initBrowserToggle, { getToggleState } from "./browser-toggle.js";
 
@@ -61,10 +67,10 @@ const browserNavigateTool = defineTool({
 	parameters: Type.Object({
 		url: Type.String({ description: "The URL to navigate to" }),
 		strategy: Type.Optional(
-			StringEnum(["auto", "chromium"] as const, {
+			Type.String({
 				description:
 					'Backend strategy: "auto" (default) uses the first available plugin; ' +
-					'"chromium" uses Playwright Chromium. ' +
+					'specify a registered plugin name (e.g. "chromium", "chromium-py") to use that backend. ' +
 					"For stateless HTTP fetches, use web-fetch instead.",
 			}),
 		),
@@ -143,7 +149,9 @@ const browserNavigateTool = defineTool({
 				? `Interactive elements: ${result.elementCount}`
 				: "",
 			result.botDetectionWarning
-				? "⚠ Bot detection triggered — page may be blocked."
+				? "⚠ BOT DETECTION WARNING: This page appears to be protected by " +
+					"anti-automation. The content below may be incomplete or show " +
+					"a challenge page instead of the actual content."
 				: "",
 			"",
 			contentText,
@@ -225,9 +233,6 @@ const browserSnapshotTool = defineTool({
 					"If true, return complete tree instead of compact view (default: false)",
 			}),
 		),
-		taskId: Type.Optional(
-			Type.String({ description: "Session ID (auto-populated)" }),
-		),
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -303,9 +308,6 @@ const browserClickTool = defineTool({
 		ref: Type.String({
 			description: "Element reference like @e5 (from the accessibility tree)",
 		}),
-		taskId: Type.Optional(
-			Type.String({ description: "Session ID (auto-populated)" }),
-		),
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -391,9 +393,6 @@ const browserTypeTool = defineTool({
 				"Element reference like @e5 (must be a textbox, searchbox, or combobox)",
 		}),
 		text: Type.String({ description: "Text to type into the element" }),
-		taskId: Type.Optional(
-			Type.String({ description: "Session ID (auto-populated)" }),
-		),
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -464,9 +463,6 @@ const browserScrollTool = defineTool({
 		direction: StringEnum(["up", "down"] as const, {
 			description: "Scroll direction",
 		}),
-		taskId: Type.Optional(
-			Type.String({ description: "Session ID (auto-populated)" }),
-		),
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -544,9 +540,6 @@ const browserScreenshotTool = defineTool({
 				description:
 					"If true, capture full-page screenshot (default: viewport only)",
 			}),
-		),
-		taskId: Type.Optional(
-			Type.String({ description: "Session ID (auto-populated)" }),
 		),
 	}),
 
@@ -628,11 +621,7 @@ const browserGetImagesTool = defineTool({
 		"Extract all <img> tags from the current page with src, alt, dimensions. " +
 		"Useful for understanding visual content structure without taking a full screenshot. " +
 		"Excludes data URIs.",
-	parameters: Type.Object({
-		taskId: Type.Optional(
-			Type.String({ description: "Session ID (auto-populated)" }),
-		),
-	}),
+	parameters: Type.Object({}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 		const { taskId: tid } = params as { taskId?: string };
@@ -695,11 +684,7 @@ const browserBackTool = defineTool({
 	name: "browser-back",
 	label: "Go Back",
 	description: "Navigate back in browser history.",
-	parameters: Type.Object({
-		taskId: Type.Optional(
-			Type.String({ description: "Session ID (auto-populated)" }),
-		),
-	}),
+	parameters: Type.Object({}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 		const { taskId: tid } = params as { taskId?: string };
@@ -769,9 +754,6 @@ const browserPressTool = defineTool({
 			description:
 				"Key to press (e.g., 'Enter', 'Tab', 'Escape', 'ArrowDown', 'ArrowUp')",
 		}),
-		taskId: Type.Optional(
-			Type.String({ description: "Session ID (auto-populated)" }),
-		),
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -847,9 +829,6 @@ const browserConsoleTool = defineTool({
 				description:
 					"If true, clear the captured console log (no other action)",
 			}),
-		),
-		taskId: Type.Optional(
-			Type.String({ description: "Session ID (auto-populated)" }),
 		),
 	}),
 
@@ -1128,7 +1107,6 @@ const browserStatusCommand = {
 		let msg = `🌐 ${status}`;
 
 		// List available plugins
-		const available = pluginRegistry.available();
 		const allPlugins = pluginRegistry.availableAll();
 		const backendLines: string[] = [];
 		for (const p of allPlugins) {
@@ -1167,20 +1145,62 @@ export default function (pi: ExtensionAPI) {
 
 	// Register each configured plugin
 	for (const config of pluginConfigs) {
-		if (config.name === "chromium" && config.dir === "chromium") {
-			const plugin = new ChromiumPlugin();
-			pluginRegistry.register(plugin, config);
-			// Init the plugin (lazy — no-op for Chromium currently)
-			plugin.init(config.config).catch((err: unknown) => {
+		let detection;
+		try {
+			detection = detectPluginType(config.dir, DEFAULT_BACKENDS_ROOT);
+		} catch (err) {
+			console.error(
+				`[pi-browser] Plugin '${config.name}' (dir: '${config.dir}'): ${err instanceof Error ? err.message : String(err)}`,
+			);
+			continue;
+		}
+
+		if (detection.type === "node") {
+			// Node-based backend — currently only ChromiumPlugin
+			if (config.dir === "chromium") {
+				const plugin = new ChromiumPlugin();
+				pluginRegistry.register(plugin, config);
+				plugin.init(config.config).catch((err: unknown) => {
+					console.error(
+						`[pi-browser] Failed to init plugin '${config.name}':`,
+						err,
+					);
+				});
+			} else {
+				console.warn(
+					`[pi-browser] Node plugin '${config.name}' (dir: '${config.dir}') is not yet supported. Only 'chromium' is available as a Node plugin.`,
+				);
+			}
+		} else if (detection.type === "python") {
+			// Python-based backend via JSON-RPC bridge
+			const bridgeConfig: PythonBridgeConfig = {
+				bridgeScript: detection.entryPoint,
+			};
+			// Merge any user-provided config overrides
+			if (config.config) {
+				const userConfig = config.config as Partial<PythonBridgeConfig>;
+				if (userConfig.pythonPath)
+					bridgeConfig.pythonPath = userConfig.pythonPath;
+				if (userConfig.pythonArgs)
+					bridgeConfig.pythonArgs = userConfig.pythonArgs;
+				if (userConfig.capabilities)
+					bridgeConfig.capabilities = userConfig.capabilities;
+				if (userConfig.transportTimeoutMs)
+					bridgeConfig.transportTimeoutMs = userConfig.transportTimeoutMs;
+			}
+			const adapter = new PythonPluginAdapter(config.name, bridgeConfig);
+			pluginRegistry.register(adapter, config);
+			adapter.init(config.config).catch((err: unknown) => {
 				console.error(
-					`[pi-browser] Failed to init plugin '${config.name}':`,
+					`[pi-browser] Failed to init Python plugin '${config.name}':`,
 					err,
 				);
 			});
 		} else {
-			// Future: dynamic plugin loading
+			// Exhaustiveness guard — PluginType is currently "node" | "python"
+			const _exhaustive: never = detection.type;
 			console.warn(
-				`[pi-browser] Plugin '${config.name}' (dir: '${config.dir}') is not yet supported. Only 'chromium' is available in Phase A.`,
+				`[pi-browser] Plugin '${config.name}' has unknown type '${_exhaustive as string}'.`,
 			);
 		}
 	}

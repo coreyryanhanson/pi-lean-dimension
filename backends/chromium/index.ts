@@ -209,6 +209,55 @@ export class ChromiumPlugin implements BrowserPlugin {
 	 * checks the BODY against high-specificity patterns that are unique to
 	 * CDN block pages (Akamai reference IDs, Cloudflare challenge URLs, etc.).
 	 */
+	/**
+	 * Check if a locator is visually obscured by another element (modal, overlay).
+	 *
+	 * Uses `document.elementFromPoint()` at the locator's center to verify the
+	 * target is the top-most element at that coordinate. Returns the occlusion
+	 * error if obscured, or null if clear to proceed.
+	 */
+	private async checkOcclusion(
+		locator: import("playwright").Locator,
+		ref: string,
+	): Promise<{ success: false; error: string } | null> {
+		try {
+			// Scroll element into view with center alignment so the center
+			// point is within the viewport for elementFromPoint() checking.
+			// Then check occlusion in a single evaluate to avoid layout races.
+			const isObscured = await locator.evaluate((el: Element) => {
+				el.scrollIntoView({ block: "center", inline: "nearest" });
+				const rect = el.getBoundingClientRect();
+				if (rect.width === 0 || rect.height === 0) return true;
+				const x = rect.left + rect.width / 2;
+				const y = rect.top + rect.height / 2;
+				if (
+					y < 0 ||
+					y > (window.innerHeight || document.documentElement.clientHeight) ||
+					x < 0 ||
+					x > (window.innerWidth || document.documentElement.clientWidth)
+				) {
+					return true;
+				}
+				const topEl = document.elementFromPoint(x, y);
+				if (!topEl) return true;
+				// If topEl is our element or a descendant, we're clear
+				return !(topEl === el || el.contains(topEl));
+			});
+
+			if (isObscured) {
+				return {
+					success: false as const,
+					error:
+						`Element ${ref} is obscured by another element (likely a modal/overlay). ` +
+						`Try pressing Escape (browser-press key="Escape") to dismiss the overlay, then retry.`,
+				};
+			}
+		} catch {
+			// If the check itself fails, proceed with click (fail-safe)
+		}
+		return null;
+	}
+
 	private async checkBotDetection(page: Page): Promise<boolean> {
 		try {
 			const title = await page.title();
@@ -416,17 +465,34 @@ export class ChromiumPlugin implements BrowserPlugin {
 			};
 		}
 
-		try {
-			const locator = buildLocator(page, node);
-			if (!locator) {
-				return {
-					success: false,
-					error: `Could not build locator for ${ref} (role: ${node.role})`,
-				};
-			}
+		const locator = buildLocator(page, node);
+		if (!locator) {
+			return {
+				success: false,
+				error: `Could not build locator for ${ref} (role: ${node.role})`,
+			};
+		}
 
-			await locator.waitFor({ state: "visible", timeout: 5000 });
-			await locator.click();
+		// Fast occlusion check — if elementFromPoint says blocked, verify with a
+		// short click attempt to eliminate false positives (Reddit's close button
+		// uses pointer-events: none child elements that confuse elementFromPoint).
+		const occlusionCheck = await this.checkOcclusion(locator, ref);
+
+		if (occlusionCheck) {
+			// Element appears obscured — verify with a quick click attempt
+			try {
+				await locator.click({ timeout: 1500 });
+				// Click succeeded — occlusion was a false positive, continue below
+			} catch {
+				// Confirmed obscured — return the helpful error
+				return occlusionCheck;
+			}
+		}
+
+		try {
+			if (!occlusionCheck) {
+				await locator.click({ timeout: 5000 });
+			}
 
 			// Wait for potential navigation
 			await page.waitForTimeout(300);
@@ -476,17 +542,29 @@ export class ChromiumPlugin implements BrowserPlugin {
 			};
 		}
 
-		try {
-			const locator = buildLocator(page, node);
-			if (!locator) {
-				return {
-					success: false,
-					error: `Could not build locator for ${ref}`,
-				};
-			}
+		const locator = buildLocator(page, node);
+		if (!locator) {
+			return {
+				success: false,
+				error: `Could not build locator for ${ref}`,
+			};
+		}
 
-			await locator.waitFor({ state: "visible", timeout: 5000 });
-			await locator.click(); // Focus first
+		// Fast occlusion check — verify with short click if flagged
+		const occlusionCheck = await this.checkOcclusion(locator, ref);
+
+		if (occlusionCheck) {
+			try {
+				await locator.click({ timeout: 1500 });
+			} catch {
+				return occlusionCheck;
+			}
+		}
+
+		try {
+			if (!occlusionCheck) {
+				await locator.click({ timeout: 5000 }); // Focus first
+			}
 			await locator.fill(text);
 
 			// Auto-snapshot

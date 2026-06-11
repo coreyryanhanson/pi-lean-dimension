@@ -4,17 +4,11 @@
  * Design: one shared Browser instance, one BrowserContext per active taskId.
  * Contexts are created on first use and disposed on task completion or error.
  *
- * v2 change: `BackendLevel` replaced with `pluginName: string` to support
- * arbitrary named plugins.  The `processHandle` field has been removed.
+ * v2 change: Sessions use `pluginName: string` instead of a backend-level enum.
+ * The `processHandle` field has been removed.
  */
 
 import type { Browser, BrowserContext } from "playwright";
-
-/**
- * @deprecated Use `pluginName: string` instead of `BackendLevel`.
- * Kept for backward compatibility during the transition.
- */
-export type BackendLevel = "chromium" | "stealth";
 
 /** Runtime state of a single browsing session */
 export interface BrowserSession {
@@ -25,6 +19,8 @@ export interface BrowserSession {
 	currentUrl?: string;
 	/** Page title if available */
 	currentTitle?: string;
+	/** Stable hash of the last snapshot's accessibility tree (for DOM-change detection) */
+	currentSnapshotFingerprint?: string;
 	/** Timestamp of last activity */
 	lastActive: number;
 	/** Whether the session has crashed and needs recovery */
@@ -76,7 +72,11 @@ class SessionManager {
 		updates: Partial<
 			Pick<
 				BrowserSession,
-				"currentUrl" | "currentTitle" | "pluginName" | "crashed"
+				| "currentUrl"
+				| "currentTitle"
+				| "pluginName"
+				| "crashed"
+				| "currentSnapshotFingerprint"
 			>
 		>,
 	): void {
@@ -89,6 +89,8 @@ class SessionManager {
 			if (updates.pluginName !== undefined)
 				session.pluginName = updates.pluginName;
 			if (updates.crashed !== undefined) session.crashed = updates.crashed;
+			if (updates.currentSnapshotFingerprint !== undefined)
+				session.currentSnapshotFingerprint = updates.currentSnapshotFingerprint;
 			session.lastActive = Date.now();
 		}
 	}

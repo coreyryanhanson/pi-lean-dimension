@@ -202,7 +202,7 @@ export function detectPluginType(
  * Default backends root — relative to this file.
  * core/plugin-config.ts → backends/ is ../../backends/
  */
-const DEFAULT_BACKENDS_ROOT = join(__dirname, "..", "backends");
+export const DEFAULT_BACKENDS_ROOT = join(__dirname, "..", "backends");
 
 /**
  * Load and validate the plugin configuration.

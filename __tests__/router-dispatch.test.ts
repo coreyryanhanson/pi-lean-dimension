@@ -593,4 +593,532 @@ describe("compactSnapshot()", () => {
 		const result = router.compactSnapshot(content, 0);
 		expect(result).not.toMatch(/\d+ elements/);
 	});
+
+	describe("dialog-aware truncation", () => {
+		const DIALOG_LINES = [
+			'💬 dialog "Let us know your cookie preferences"',
+			'  @e742 🔘 button "Accept all cookies"',
+			'  @e743 🔘 button "Reject all"',
+			'  @e744 🔘 button "Customize settings"',
+		];
+		const DIALOG_BLOCK = DIALOG_LINES.join("\n");
+
+		it("includes hidden dialog blocks in very large snapshots", () => {
+			// Build a snapshot with ~3000 chars of content before the dialog block
+			const content = "line content here padding\n".repeat(120); // ~3000 chars
+			const snap = content + "\n" + DIALOG_BLOCK;
+			const result = router.compactSnapshot(snap, 200);
+
+			// Dialog block should appear in the compacted output
+			expect(result).toContain("Let us know your cookie preferences");
+			expect(result).toContain("Accept all cookies");
+			expect(result).toContain("Reject all");
+			expect(result).toContain("Customize settings");
+			// Should still include the truncation hint
+			expect(result).toMatch(/more chars/);
+		});
+
+		it("does NOT duplicate dialog blocks already in the visible top section", () => {
+			// Dialog near the top (within first 2000 chars) — should NOT be duplicated
+			const header = "top content\n".repeat(20); // ~300 chars
+			const snap = header + DIALOG_BLOCK + "\n" + "footer\n".repeat(200); // ~3000 chars beyond
+			const result = router.compactSnapshot(snap, 100);
+
+			// Dialog should appear only once
+			const matches = result.match(/Let us know your cookie preferences/g);
+			expect(matches).toHaveLength(1);
+		});
+
+		it("includes hidden dialog blocks in medium snapshots (2800-8000 chars)", () => {
+			// Build content that's ~3000 chars with a dialog at the end
+			const content = "line content here\n".repeat(120); // ~2160 chars
+			const snap = content + "\n" + DIALOG_BLOCK;
+			const result = router.compactSnapshot(snap, 50);
+
+			// Dialog should be visible
+			expect(result).toContain("Customize settings");
+		});
+
+		it("handles multiple hidden dialog blocks", () => {
+			const dialog2 = ['💬 dialog "Second dialog"', '  @e800 🔘 button "OK"'];
+			const content = "line content\n".repeat(150); // ~2250 chars
+			const snap = content + "\n" + DIALOG_BLOCK + "\n" + dialog2.join("\n");
+			const result = router.compactSnapshot(snap, 300);
+
+			expect(result).toContain("Let us know your cookie preferences");
+			expect(result).toContain("Second dialog");
+			expect(result).toContain("OK");
+		});
+
+		it("handles alertdialog headers too", () => {
+			const alertDialog = [
+				'⚠ alertdialog "Important alert"',
+				'  @e50 🔘 button "Acknowledge"',
+			];
+			const content = "line content\n".repeat(150); // ~2250 chars
+			const snap = content + "\n" + alertDialog.join("\n");
+			const result = router.compactSnapshot(snap, 50);
+
+			expect(result).toContain("Important alert");
+			expect(result).toContain("Acknowledge");
+		});
+
+		it("caps very large dialog blocks", () => {
+			// Build a dialog with many children
+			const largeDialogHeader = '💬 dialog "Large dialog"';
+			const largeDialogLines = [largeDialogHeader];
+			for (let i = 0; i < 100; i++) {
+				largeDialogLines.push(`  @e${i + 100} 🔘 button "Option ${i}"`);
+			}
+			const largeDialogBlock = largeDialogLines.join("\n");
+
+			const content = "line content\n".repeat(150); // ~2250 chars
+			const snap = content + "\n" + largeDialogBlock;
+			const result = router.compactSnapshot(snap, 200);
+
+			// Dialog header should always be visible
+			expect(result).toContain("Large dialog");
+			// First few children should be visible
+			expect(result).toContain("Option 0");
+			// But the whole block should be capped (not all 100 children)
+			expect(result).toContain("more dialog elements");
+		});
+
+		it("no dialogs in snapshot — unchanged behavior", () => {
+			const content = "line content with longer text here\n".repeat(200); // ~5600 chars
+			const result = router.compactSnapshot(content, 30);
+			expect(result.length).toBeLessThan(content.length);
+			expect(result).toContain("30 elements");
+			// No dialog content should appear
+			expect(result).not.toContain("dialog");
+		});
+
+		it("nested dialog (indented) is still detected", () => {
+			// Dialog can be at any indent level, not just top-level
+			const nestedDialogLines = [
+				"  " + DIALOG_LINES[0]!,
+				"    " + DIALOG_LINES[1]!.trim(),
+				"    " + DIALOG_LINES[2]!.trim(),
+			];
+			const nestedBlock = nestedDialogLines.join("\n");
+
+			const content = "line content\n".repeat(150); // ~2250 chars
+			const snap = content + "\n" + nestedBlock;
+			const result = router.compactSnapshot(snap, 50);
+
+			expect(result).toContain("Let us know your cookie preferences");
+			// Nested children should also be visible
+			expect(result).toContain("Accept all cookies");
+			expect(result).toContain("Reject all");
+		});
+	});
+});
+
+// ─── Session persistence across sequential calls ─────────────────
+
+describe("session persistence across sequential calls", () => {
+	let mock: MockPlugin;
+
+	beforeEach(() => {
+		pluginRegistry.clear();
+		mock = new MockPlugin("mock");
+		pluginRegistry.register(mock, makeConfig({ name: "mock", enabled: true }));
+	});
+
+	afterEach(async () => {
+		await sessionManager.removeAll();
+		pluginRegistry.clear();
+	});
+
+	it("navigate then screenshot succeeds with same taskId", async () => {
+		await router.navigate("https://example.com", { taskId: "seq-test-1" });
+
+		const result = await router.screenshot("seq-test-1");
+		expect(result.success).toBe(true);
+		expect(result.dataUri).toMatch(/^data:image\/jpeg;base64,/);
+	});
+
+	it("navigate then snapshot succeeds with same taskId", async () => {
+		await router.navigate("https://example.com", { taskId: "seq-test-2" });
+
+		const result = await router.snapshot("seq-test-2");
+		expect(result.success).toBe(true);
+		expect(result.snapshot).toBeTruthy();
+	});
+
+	it("navigate click type succeed sequentially", async () => {
+		await router.navigate("https://example.com", { taskId: "seq-test-3" });
+
+		const clickResult = await router.click("seq-test-3", "@e1");
+		expect(clickResult.success).toBe(true);
+
+		const typeResult = await router.type("seq-test-3", "@e2", "hello");
+		expect(typeResult.success).toBe(true);
+	});
+
+	it("navigate then goBack succeeds", async () => {
+		await router.navigate("https://example.com", { taskId: "seq-test-4" });
+
+		const result = await router.goBack("seq-test-4");
+		expect(result.success).toBe(true);
+	});
+
+	it("navigate then scroll succeeds", async () => {
+		await router.navigate("https://example.com", { taskId: "seq-test-5" });
+
+		const result = await router.scroll("seq-test-5", "down");
+		expect(result.success).toBe(true);
+	});
+
+	it("navigate then evaluate succeeds", async () => {
+		await router.navigate("https://example.com", { taskId: "seq-test-6" });
+
+		const result = await router.evaluate("seq-test-6", "1 + 1");
+		expect(result.success).toBe(true);
+	});
+
+	it("navigate then press succeeds", async () => {
+		await router.navigate("https://example.com", { taskId: "seq-test-7" });
+
+		const result = await router.press("seq-test-7", "Enter");
+		expect(result.success).toBe(true);
+	});
+
+	it("navigate then getImages succeeds", async () => {
+		await router.navigate("https://example.com", { taskId: "seq-test-8" });
+
+		const result = await router.getImages("seq-test-8");
+		expect(result.success).toBe(true);
+	});
+
+	it("navigate then getConsoleMessages succeeds", async () => {
+		await router.navigate("https://example.com", { taskId: "seq-test-9" });
+
+		const result = await router.getConsoleMessages("seq-test-9");
+		expect(result.success).toBe(true);
+	});
+
+	it("navigate then clearConsole succeeds", async () => {
+		await router.navigate("https://example.com", { taskId: "seq-test-10" });
+
+		const result = await router.clearConsole("seq-test-10");
+		expect(result.success).toBe(true);
+	});
+});
+
+// ─── Occlusion error propagation ────────────────────────────────
+
+describe("occlusion error propagation", () => {
+	let mock: MockPlugin;
+
+	beforeEach(() => {
+		pluginRegistry.clear();
+		mock = new MockPlugin("mock");
+		pluginRegistry.register(mock, makeConfig({ name: "mock", enabled: true }));
+	});
+
+	afterEach(async () => {
+		await sessionManager.removeAll();
+		pluginRegistry.clear();
+	});
+
+	it("passes through occlusion errors from click", async () => {
+		mock.interactResult = {
+			success: false,
+			error:
+				"Element @e1 is obscured by another element (likely a modal/overlay). " +
+				'Try pressing Escape (browser-press key="Escape") to dismiss the overlay, then retry.',
+		};
+
+		await router.navigate("https://example.com", { taskId: "occ-test-1" });
+		const result = await router.click("occ-test-1", "@e1");
+
+		expect(result.success).toBe(false);
+		expect(result.error).toMatch(/obscured/i);
+		expect(result.error).toMatch(/Escape/i);
+	});
+
+	it("passes through occlusion errors from type", async () => {
+		mock.interactResult = {
+			success: false,
+			error:
+				"Element @e1 is obscured by another element (likely a modal/overlay). " +
+				'Try pressing Escape (browser-press key="Escape") to dismiss the overlay, then retry.',
+		};
+
+		await router.navigate("https://example.com", { taskId: "occ-test-2" });
+		const result = await router.type("occ-test-2", "@e1", "hello");
+
+		expect(result.success).toBe(false);
+		expect(result.error).toMatch(/obscured/i);
+		expect(result.error).toMatch(/Escape/i);
+	});
+});
+
+// ─── Bot detection UX ───────────────────────────────────────────
+
+describe("bot detection UX", () => {
+	let mock: MockPlugin;
+
+	beforeEach(() => {
+		pluginRegistry.clear();
+		mock = new MockPlugin("mock");
+		pluginRegistry.register(mock, makeConfig({ name: "mock", enabled: true }));
+	});
+
+	afterEach(async () => {
+		await sessionManager.removeAll();
+		pluginRegistry.clear();
+	});
+
+	describe("downgrade heuristic", () => {
+		it("returns success:false when botDetected and low element count", async () => {
+			mock.navResult = {
+				success: true,
+				url: "https://challenge.example",
+				title: "Just a moment...",
+				snapshot: "- heading 'Just a moment...'",
+				elementCount: 1,
+				botDetected: true,
+			};
+
+			const result = await router.navigate("https://challenge.example");
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/blocked|anti-automation/i);
+			expect(result.botDetectionWarning).toBe(true);
+		});
+
+		it("does NOT downgrade when botDetected but elementCount is high", async () => {
+			mock.navResult = {
+				success: true,
+				url: "https://paginated.example",
+				title: "Page Title",
+				snapshot: "- article 'Post 1'\n- article 'Post 2'\n",
+				elementCount: 120,
+				botDetected: true,
+			};
+
+			const result = await router.navigate("https://paginated.example");
+			expect(result.success).toBe(true);
+			expect(result.botDetectionWarning).toBe(true);
+		});
+
+		it("does NOT downgrade when no bot detection, even with low element count", async () => {
+			// Valid lightweight page (like example.com) with only 2 elements
+			mock.navResult = {
+				success: true,
+				url: "https://example.com",
+				title: "Example Domain",
+				snapshot: "- heading 'Example Domain'\n- link 'More'",
+				elementCount: 2,
+				botDetected: false,
+			};
+
+			const result = await router.navigate("https://example.com");
+			expect(result.success).toBe(true);
+			expect(result.botDetectionWarning).toBeUndefined();
+		});
+	});
+
+	describe("snapshot compaction", () => {
+		it("skips compactSnapshot when botDetected is true", async () => {
+			// Create a long snapshot that would normally be compacted (>2800 chars)
+			const longSnapshot = "line\n".repeat(600); // ~3600 chars
+			mock.navResult = {
+				success: true,
+				url: "https://bot.example",
+				title: "Bot Page",
+				snapshot: longSnapshot,
+				elementCount: 50,
+				botDetected: true,
+			};
+
+			const result = await router.navigate("https://bot.example");
+			expect(result.success).toBe(true);
+			// Snapshot should be the full version, not compacted
+			expect(result.snapshot).toBe(longSnapshot);
+			expect(result.botDetectionWarning).toBe(true);
+		});
+
+		it("still compacts snapshot when botDetected is false", async () => {
+			const longSnapshot = "line\n".repeat(600); // ~3600 chars
+			mock.navResult = {
+				success: true,
+				url: "https://normal.example",
+				title: "Normal Page",
+				snapshot: longSnapshot,
+				elementCount: 50,
+				botDetected: false,
+			};
+
+			const result = await router.navigate("https://normal.example");
+			expect(result.success).toBe(true);
+			// Snapshot should be compacted (longSnapshot is > 2800 chars)
+			expect(result.snapshot).not.toBe(longSnapshot);
+		});
+	});
+
+	describe("downgrade cleans up session", () => {
+		it("removes the session when bot detection causes downgrade", async () => {
+			mock.navResult = {
+				success: true,
+				url: "https://challenge.example",
+				title: "Challenge",
+				snapshot: "- heading 'Challenge'",
+				elementCount: 1,
+				botDetected: true,
+			};
+
+			await router.navigate("https://challenge.example", {
+				taskId: "challenge-test",
+			});
+			const session = sessionManager.getSession("challenge-test");
+			expect(session).toBeUndefined();
+
+			// cleanup should have been called on the plugin
+			expect(mock.calls.get("cleanup")).toBeDefined();
+		});
+	});
+
+	// ─── Snapshot fingerprint — DOM-change detection ────────────
+
+	describe("snapshot fingerprint for DOM-change detection", () => {
+		it("stores fingerprint after navigate", async () => {
+			const rawSnap = '- button "Click"\n- link "More"\n';
+			mock.navResult = { snapshot: rawSnap };
+			await router.navigate("https://example.com");
+
+			const session = sessionManager.getSession("default");
+			expect(session?.currentSnapshotFingerprint).toBeDefined();
+			// Fingerprint should be the hash of the raw snapshot
+			const { snapshotFingerprint } = await import(
+				"../core/shared/accessibility-tree.js"
+			);
+			expect(session!.currentSnapshotFingerprint).toBe(
+				snapshotFingerprint(rawSnap),
+			);
+		});
+
+		it("does not warn when snapshot content is unchanged", async () => {
+			const rawSnap = '- button "Same"\n- link "Same"\n';
+			mock.navResult = { snapshot: rawSnap };
+			// Make click return the same snapshot content as navigate
+			mock.interactResult = { snapshot: rawSnap };
+
+			await router.navigate("https://example.com");
+			const result = await router.click("default", "e1");
+
+			expect(result.success).toBe(true);
+			expect(result.snapshot).not.toContain("content structure changed");
+			expect(result.snapshot).toContain("Same");
+		});
+
+		it("warns when snapshot content changes (simulating DOM change)", async () => {
+			mock.navResult = { snapshot: '- button "Page A"\n' };
+
+			await router.navigate("https://example.com");
+
+			// Click returns a different snapshot, simulating DOM change
+			mock.interactResult = { snapshot: '- link "Page B"\n' };
+			const result = await router.click("default", "e1");
+
+			expect(result.success).toBe(true);
+			expect(result.snapshot).toContain("content structure changed");
+			expect(result.snapshot).toContain(
+				"@e references may point to different elements",
+			);
+		});
+
+		it("stores updated fingerprint after interaction", async () => {
+			const rawSnap = '- button "Initial"\n';
+			const clickSnap = '- link "Updated"\n';
+			mock.navResult = { snapshot: rawSnap };
+
+			await router.navigate("https://example.com");
+
+			// After click with different content, fingerprint should be updated
+			mock.interactResult = { snapshot: clickSnap };
+			await router.click("default", "e1");
+
+			const session = sessionManager.getSession("default");
+			const { snapshotFingerprint } = await import(
+				"../core/shared/accessibility-tree.js"
+			);
+			expect(session!.currentSnapshotFingerprint).toBe(
+				snapshotFingerprint(clickSnap),
+			);
+		});
+
+		it("only warns once — second same interaction does not re-warn", async () => {
+			const snap = '- button "Stable"\n';
+			mock.navResult = { snapshot: '- root "Page"\n' };
+
+			await router.navigate("https://example.com");
+
+			// First interaction with different content → warning
+			mock.interactResult = { snapshot: snap };
+			const first = await router.click("default", "e1");
+			expect(first.snapshot).toContain("content structure changed");
+
+			// Second interaction with same content → no warning (fingerprint matches)
+			mock.interactResult = { snapshot: snap };
+			const second = await router.click("default", "e2");
+			expect(second.snapshot).not.toContain("content structure changed");
+			expect(second.snapshot).toContain("Stable");
+		});
+
+		it("warns again when fingerprint changes again after stabilising", async () => {
+			mock.navResult = { snapshot: '- root "Page"\n' };
+
+			await router.navigate("https://example.com");
+
+			// First change
+			mock.interactResult = { snapshot: '- button "First"\n' };
+			const first = await router.click("default", "e1");
+			expect(first.snapshot).toContain("content structure changed");
+
+			// Same → no warning
+			mock.interactResult = { snapshot: '- button "First"\n' };
+			await router.click("default", "e2");
+
+			// Different again → warning re-appears
+			mock.interactResult = { snapshot: '- link "Second"\n' };
+			const third = await router.click("default", "e3");
+			expect(third.snapshot).toContain("content structure changed");
+		});
+
+		it("stores fingerprint after snapshot() call", async () => {
+			const navSnap = '- button "Init"\n';
+			const snapSnap = '- link "Refreshed"\n';
+			mock.navResult = { snapshot: navSnap };
+			await router.navigate("https://example.com");
+
+			// Override snapshot plugin response
+			mock.snapResult = { snapshot: snapSnap };
+			await router.snapshot("default");
+
+			const session = sessionManager.getSession("default");
+			const { snapshotFingerprint } = await import(
+				"../core/shared/accessibility-tree.js"
+			);
+			expect(session!.currentSnapshotFingerprint).toBe(
+				snapshotFingerprint(snapSnap),
+			);
+		});
+
+		it("no warning on first interaction if navigate fingerprint matches interaction snapshot", async () => {
+			// Navigate to a page with button content
+			const snap = '- button "Consistent"\n- link "More"\n';
+			mock.navResult = { snapshot: snap };
+			// First click returns the SAME snapshot content (DOM didn't change)
+			mock.interactResult = { snapshot: snap };
+
+			await router.navigate("https://example.com");
+			const result = await router.click("default", "e1");
+
+			expect(result.success).toBe(true);
+			expect(result.snapshot).not.toContain("content structure changed");
+			expect(result.snapshot).toContain("Consistent");
+		});
+	});
 });

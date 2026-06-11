@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: pi-browser-bridge
+Version: 0.1.0
+Summary: Shared Python bridge library for pi-browser browser automation plugins
+Requires-Python: >=3.10
+Requires-Dist: playwright>=1.50

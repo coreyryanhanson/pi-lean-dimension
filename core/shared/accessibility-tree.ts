@@ -14,6 +14,8 @@ export interface AriaCachedNode {
 	props: string[];
 	depth: number;
 	raw: string;
+	/** 0-based position among siblings with the same role+name in the snapshot */
+	occurrenceIndex: number;
 }
 
 export interface AriaParseResult {
@@ -108,17 +110,80 @@ export const INFORMATIONAL_ROLES = new Set([
 
 /**
  * Parse the YAML-like output of page.ariaSnapshot().
+ *
+ * Dialog prioritisation: interactive elements inside `dialog`/`alertdialog`
+ * blocks always get @e refs even when that pushes non-dialog elements
+ * beyond the maxElements cap.  This ensures modal/overlay elements are
+ * always clickable regardless of where they appear in the DOM order.
  */
 export function parseSnapshot(
 	snap: string,
 	options?: { maxElements?: number },
 ): AriaParseResult {
+	const maxElements = options?.maxElements ?? 500;
 	const elements = new Map<string, AriaCachedNode>();
 	const outLines: string[] = [];
 	let refCounter = 0;
-	const maxElements = options?.maxElements ?? 500;
+	const occurrenceTracker = new Map<string, number>();
 
 	const lines = snap.split("\n");
+
+	// ── First pass: count interactive elements inside dialogs ─────────
+	// This determines how many @e ref slots to reserve for dialog elements.
+	let dialogRefsNeeded = 0;
+	const countDialogDepthStack: number[] = [];
+
+	for (const rawLine of lines) {
+		if (!rawLine.trim()) continue;
+		const depth = countLeadingSpaces(rawLine);
+		const trimmed = rawLine.trim();
+		if (trimmed.startsWith("/")) continue;
+
+		const parsed = parseLine(trimmed);
+		if (!parsed) continue;
+
+		const { role } = parsed;
+
+		// Close dialogs where current depth ≤ dialog-header depth
+		while (
+			countDialogDepthStack.length > 0 &&
+			depth <= countDialogDepthStack[countDialogDepthStack.length - 1]!
+		) {
+			if (role !== "dialog" && role !== "alertdialog") {
+				countDialogDepthStack.pop();
+			} else {
+				break; // This IS a dialog header — don't close previous
+			}
+		}
+
+		// Open new dialog
+		if (role === "dialog" || role === "alertdialog") {
+			countDialogDepthStack.push(depth);
+			dialogRefsNeeded++; // count the dialog header itself
+			continue;
+		}
+
+		const isInside =
+			countDialogDepthStack.length > 0 &&
+			depth > countDialogDepthStack[countDialogDepthStack.length - 1]!;
+
+		if (
+			isInside &&
+			INTERACTIVE_ROLES.has(role) &&
+			!INFORMATIONAL_ROLES.has(role)
+		) {
+			dialogRefsNeeded++;
+		}
+	}
+
+	// ── Budget ─────────────────────────────────────────────────────
+	// Non-dialog elements compete for the remaining ref slots.
+	const nonDialogBudget = Math.max(0, maxElements - dialogRefsNeeded);
+
+	// ── Second pass: assign refs with dialog priority ──────────────
+	const dialogDepthStack: number[] = [];
+	let totalInteractiveCount = 0; // all interactive elements (even those skipped)
+	let nonDialogAssigned = 0; // non-dialog refs assigned so far
 
 	for (const rawLine of lines) {
 		if (!rawLine.trim()) continue;
@@ -141,6 +206,27 @@ export function parseSnapshot(
 
 		const { role, name, props } = parsed;
 
+		// Close dialogs where current depth ≤ dialog-header depth
+		while (
+			dialogDepthStack.length > 0 &&
+			depth <= dialogDepthStack[dialogDepthStack.length - 1]!
+		) {
+			if (role !== "dialog" && role !== "alertdialog") {
+				dialogDepthStack.pop();
+			} else {
+				break; // This IS a dialog header — it replaces, not closes
+			}
+		}
+
+		// Open new dialog
+		if (role === "dialog" || role === "alertdialog") {
+			dialogDepthStack.push(depth);
+		}
+
+		const isInsideDialog =
+			dialogDepthStack.length > 0 &&
+			depth > dialogDepthStack[dialogDepthStack.length - 1]!;
+
 		// Informational roles: show in tree but no @e ref
 		if (INFORMATIONAL_ROLES.has(role)) {
 			const indent = "  ".repeat(depth);
@@ -156,13 +242,30 @@ export function parseSnapshot(
 			continue;
 		}
 
+		totalInteractiveCount++; // count every interactive element, even skipped
+
+		// Dialog priority: dialog-interior elements always get refs
+		// (within maxElements), non-dialog elements use remaining budget.
+		if (!isInsideDialog) {
+			if (nonDialogAssigned >= nonDialogBudget) {
+				outLines.push(rawLine);
+				continue;
+			}
+		}
+
 		refCounter++;
 		if (refCounter > maxElements) {
 			outLines.push(rawLine);
 			continue;
 		}
 
+		if (!isInsideDialog) nonDialogAssigned++;
+
 		const ref = `e${refCounter}`;
+		const occKey = `${role}||${name}`;
+		const occurrenceIndex = occurrenceTracker.get(occKey) ?? 0;
+		occurrenceTracker.set(occKey, occurrenceIndex + 1);
+
 		const node: AriaCachedNode = {
 			ref,
 			role,
@@ -170,6 +273,7 @@ export function parseSnapshot(
 			props,
 			depth,
 			raw: trimmed,
+			occurrenceIndex,
 		};
 		elements.set(ref, node);
 
@@ -185,7 +289,7 @@ export function parseSnapshot(
 	return {
 		text: outLines.join("\n"),
 		elements,
-		count: refCounter,
+		count: totalInteractiveCount,
 	};
 }
 
@@ -223,7 +327,11 @@ export function buildLocator(
 			}
 		}
 
-		return page.getByRole(node.role as any, opts);
+		const locator = page.getByRole(node.role as any, opts);
+		// Always use .nth(occurrenceIndex) to avoid strict-mode violations
+		// when multiple elements share the same role+name.  For unique elements
+		// (occurrenceIndex = 0) this is equivalent to the bare locator.
+		return locator.nth(node.occurrenceIndex);
 	} catch {
 		if (node.name) {
 			return page.getByText(node.name, { exact: node.name.length < 60 });
@@ -283,48 +391,74 @@ function countLeadingSpaces(s: string): number {
 
 function roleIcon(role: string): string {
 	const icons: Record<string, string> = {
-		button: "🔘 ",
-		link: "🔗 ",
-		textbox: "📝 ",
-		searchbox: "🔍 ",
-		combobox: "📋 ",
-		checkbox: "☑ ",
-		radio: "○ ",
-		heading: "📌 ",
-		listbox: "📋 ",
-		option: "• ",
-		tab: "📑 ",
-		switch: "🔀 ",
-		slider: "🔧 ",
-		spinbutton: "🔢 ",
-		img: "🖼 ",
-		figure: "🖼 ",
-		table: "📊 ",
-		grid: "📊 ",
-		cell: "▫ ",
-		dialog: "💬 ",
+		alert: "🔔 ",
 		alertdialog: "⚠ ",
-		navigation: "🧭 ",
+		article: "📰 ",
 		banner: "📰 ",
-		main: "📄 ",
+		blockquote: "💬 ",
+		button: "🔘 ",
+		cell: "▫ ",
+		checkbox: "☑ ",
+		code: "💻 ",
+		columnheader: "📊 ",
+		combobox: "📋 ",
+		comment: "💬 ",
 		complementary: "📎 ",
 		contentinfo: "ℹ ",
+		definition: "📖 ",
+		deletion: "❌ ",
+		dialog: "💬 ",
+		figure: "🖼 ",
 		form: "📝 ",
-		search: "🔍 ",
+		grid: "📊 ",
+		gridcell: "▫ ",
 		group: "📦 ",
-		toolbar: "🔧 ",
+		heading: "📌 ",
+		img: "🖼 ",
+		insertion: "➕ ",
+		link: "🔗 ",
+		list: "📋 ",
+		listbox: "📋 ",
+		listitem: "• ",
+		log: "📋 ",
+		main: "📄 ",
+		mark: "🖍️ ",
+		marquee: "📜 ",
+		math: "🧮 ",
 		menu: "📋 ",
 		menubar: "📋 ",
-		paragraph: "📃 ",
-		article: "📰 ",
-		section: "📄 ",
-		list: "📋 ",
-		listitem: "• ",
+		menuitem: "📋 ",
+		menuitemcheckbox: "☑ ",
+		menuitemradio: "○ ",
+		meter: "📊 ",
+		navigation: "🧭 ",
 		note: "📝 ",
-		alert: "🔔 ",
+		option: "• ",
+		paragraph: "📃 ",
+		progressbar: "⏳ ",
+		radio: "○ ",
+		region: "📦 ",
+		rowheader: "📊 ",
+		search: "🔍 ",
+		searchbox: "🔍 ",
+		scrollbar: "📜 ",
+		section: "📄 ",
+		slider: "🔧 ",
+		spinbutton: "🔢 ",
 		status: "📊 ",
-		code: "💻 ",
-		blockquote: "💬 ",
+		suggestion: "💡 ",
+		switch: "🔀 ",
+		tab: "📑 ",
+		table: "📊 ",
+		tabpanel: "📑 ",
+		term: "📖 ",
+		text: "📝 ",
+		textbox: "📝 ",
+		timer: "⏱️ ",
+		toolbar: "🔧 ",
+		tooltip: "💡 ",
+		treegrid: "📊 ",
+		treeitem: "• ",
 	};
 	return icons[role] || "";
 }
@@ -332,4 +466,27 @@ function roleIcon(role: string): string {
 function truncate(s: string, max: number): string {
 	if (s.length <= max) return s;
 	return s.slice(0, max - 1) + "…";
+}
+
+/**
+ * Compute a stable, lightweight fingerprint of an accessibility snapshot.
+ *
+ * Uses the first 200 characters of the snapshot to produce a short hash.
+ * Same snapshot → same fingerprint. Different content → different fingerprint.
+ * The fingerprint captures enough structural information to detect significant
+ * DOM changes (SPA navigation, dynamic content loading) while being cheap to
+ * compute (O(200) with no allocations).
+ *
+ * The hash is a DJB2 digest of the first 200 chars, returned as a base-36
+ * string for compactness.
+ */
+export function snapshotFingerprint(snapshot: string): string {
+	const sample = snapshot.slice(0, 200);
+	let hash = 5381;
+	for (let i = 0; i < sample.length; i++) {
+		hash = (hash << 5) + hash + sample.charCodeAt(i);
+		hash = hash & hash;
+	}
+	// Use unsigned 32-bit to avoid negative toString(36) output
+	return (hash >>> 0).toString(36);
 }

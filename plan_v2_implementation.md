@@ -134,12 +134,12 @@ These phases replace `plan_v2.md` §9. References to `plan_v2.md` section number
 | B6 | Test Chromium-Py against contract harness | `__tests__/chromium-py.test.ts` | Low — validates B1–B3 |
 | B7 | Python adapter production hardening (crash recovery, heartbeat, error messages) | `backends/python-adapter.ts` | Medium — robustness |
 
-**Validation gate**: After Phase B:
-- All Phase A tests still pass
-- Chromium-Py passes the plugin contract test harness
-- Manual: `browser-navigate https://example.com strategy=chromium-py` works (after enabling in config)
-- Python adapter survives bridge process crash (auto-restart)
-- Element cache (`@e` refs) is consistent between Chromium and Chromium-Py
+**Validation gate** (✅ verified June 2026):
+- ✅ All Phase A tests still pass (233 baseline → 386 after Phase B)
+- ✅ Chromium-Py passes the plugin contract test harness (60 behavioral tests in `__tests__/chromium-py.test.ts`)
+- ✅ Manual: `browser-navigate https://example.com strategy=chromium-py` works (after enabling in config)
+- ✅ Python adapter survives bridge process crash (auto-restart via heartbeat miss detection + `_killProcess` + `ensureRunning` lazy restart)
+- ✅ Element cache (`@e` refs) is consistent between Chromium and Chromium-Py (shared two-pass dialog priority, occurrence tracking, identical role sets)
 
 ### Phase C — Production Stealth Backends
 

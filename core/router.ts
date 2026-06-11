@@ -19,6 +19,7 @@ import { pluginRegistry } from "./plugin-registry.js";
 import { sessionManager } from "./shared/session-manager.js";
 import type { BrowserSession } from "./shared/session-manager.js";
 import { validateUrl } from "./shared/url-safety.js";
+import { snapshotFingerprint } from "./shared/accessibility-tree.js";
 import type {
 	NavigateResult,
 	SnapshotResult,
@@ -42,6 +43,9 @@ const COMPACT_SNAPSHOT_VERY_LARGE = 8000;
 
 /** How much of the tree top to preserve for very large pages. */
 const COMPACT_SNAPSHOT_TOP_LIMIT = 2000;
+
+/** Max chars for a dialog block appended after truncation. */
+const DIALOG_BLOCK_MAX = 500;
 
 // ─── Exported types ──────────────────────────────────────────────────
 
@@ -114,11 +118,113 @@ function getPluginForSession(
 }
 
 /**
+ * Extract dialog/alertdialog blocks from a snapshot text.
+ *
+ * Walks the lines and collects each dialog header followed by its
+ * indented children (elements at greater indent than the header).
+ * Returns blocks that were *entirely* beyond the character `cutPoint`
+ * and thus hidden from the top portion of a compacted snapshot.
+ */
+interface DialogBlock {
+	/** Full block text (header + children). */
+	text: string;
+	/** Character position where this block starts in the full snapshot. */
+	startChar: number;
+}
+
+function extractDialogBlocks(snapshot: string, cutPoint: number): string[] {
+	const lines = snapshot.split("\n");
+	const blocks: DialogBlock[] = [];
+	let currentLines: string[] | null = null;
+	let headerIndent = -1;
+	let charPos = 0;
+	let startChar = 0;
+
+	for (const rawLine of lines) {
+		const trimmed = rawLine.trim();
+		const lineLen = rawLine.length + 1; // +1 for the newline
+		const isDialogHeader =
+			trimmed.includes("💬 dialog") ||
+			trimmed.includes("⚠ alertdialog") ||
+			// Also detect raw YAML format (beyond maxElements cap)
+			/^-\s+(alert)?dialog\b/.test(trimmed);
+
+		if (isDialogHeader) {
+			// Close any previous dialog
+			if (currentLines) {
+				const blockText = currentLines.join("\n");
+				if (startChar + blockText.length > cutPoint)
+					blocks.push({ text: blockText, startChar });
+			}
+			currentLines = [rawLine];
+			startChar = charPos;
+			headerIndent = rawLine.search(/\S/);
+			if (headerIndent === -1) headerIndent = 0;
+		} else if (currentLines) {
+			// Check if this line is at the same or lower indent than the header
+			const lineIndent = rawLine.search(/\S/);
+			const effectiveIndent = lineIndent === -1 ? 0 : lineIndent;
+
+			if (effectiveIndent > headerIndent || trimmed === "") {
+				// Child of the dialog or blank line within
+				currentLines.push(rawLine);
+			} else {
+				// Dialog ended — close and finalise
+				const blockText = currentLines.join("\n");
+				if (startChar + blockText.length > cutPoint)
+					blocks.push({ text: blockText, startChar });
+				currentLines = null;
+			}
+		}
+
+		charPos += lineLen;
+	}
+
+	// Close any dangling dialog at end of file
+	if (currentLines) {
+		const blockText = currentLines.join("\n");
+		if (startChar + blockText.length > cutPoint)
+			blocks.push({ text: blockText, startChar });
+	}
+
+	// Cap each block
+	return blocks.map((b) =>
+		b.text.length > DIALOG_BLOCK_MAX
+			? truncateDialogBlock(b.text, DIALOG_BLOCK_MAX)
+			: b.text,
+	);
+}
+
+/**
+ * Truncate a dialog block to at most `maxChars` while keeping the
+ * header line visible.
+ */
+function truncateDialogBlock(block: string, maxChars: number): string {
+	if (block.length <= maxChars) return block;
+	const lines = block.split("\n");
+	const header = lines[0]!;
+	let result = header;
+	for (let i = 1; i < lines.length; i++) {
+		if (result.length + lines[i]!.length + 1 > maxChars - 60) {
+			const remainingCount = lines.length - i;
+			result += `\n… ${remainingCount} more dialog element${remainingCount === 1 ? "" : "s"} (use full=true for complete tree)`;
+			break;
+		}
+		result += "\n" + lines[i]!;
+	}
+	return result;
+}
+
+/**
  * Compact a snapshot to a manageable size for LLM consumption.
  *
  * - Under ~2800 chars: no truncation
  * - ~2800-8000 chars: cut at a natural breakpoint near 2500 chars
  * - Over ~8000 chars: preserve top ~2000 chars + summary
+ *
+ * Dialog-aware: if any `💬 dialog`/`⚠ alertdialog` blocks fall entirely
+ * beyond the cut point, they are included after the top section so the
+ * agent can see and interact with modal/dialog elements.
  */
 export function compactSnapshot(
 	snapshot: string,
@@ -134,20 +240,35 @@ export function compactSnapshot(
 			topCut = COMPACT_SNAPSHOT_TOP_LIMIT;
 
 		const topSection = snapshot.slice(0, topCut);
+		const dialogBlocks = extractDialogBlocks(snapshot, topCut);
+
+		let result = topSection;
+		for (const block of dialogBlocks) {
+			result += "\n" + block;
+		}
+
 		const bottomHint = remaining
-			? `\n… ${snapshot.length - topCut} more chars, ${remaining} elements total (use full=true for complete tree)`
-			: `\n… ${snapshot.length - topCut} more chars (use full=true for complete tree)`;
-		return topSection + bottomHint;
+			? `\n… ${snapshot.length - result.length} more chars, ${remaining} elements total (use full=true for complete tree)`
+			: `\n… ${snapshot.length - result.length} more chars (use full=true for complete tree)`;
+		return result + bottomHint;
 	}
 
 	let cut = snapshot.lastIndexOf("\n", COMPACT_SNAPSHOT_LIMIT);
 	if (cut < COMPACT_SNAPSHOT_LIMIT / 2) cut = COMPACT_SNAPSHOT_LIMIT;
 
-	const tail = remaining
-		? `\n… ${snapshot.length - cut} more chars, ${remaining} elements total (use full=true for complete tree)`
-		: `\n… ${snapshot.length - cut} more chars (use full=true for complete tree)`;
+	const topSection = snapshot.slice(0, cut);
+	const dialogBlocks = extractDialogBlocks(snapshot, cut);
 
-	return snapshot.slice(0, cut) + tail;
+	let result = topSection;
+	for (const block of dialogBlocks) {
+		result += "\n" + block;
+	}
+
+	const tail = remaining
+		? `\n… ${snapshot.length - result.length} more chars, ${remaining} elements total (use full=true for complete tree)`
+		: `\n… ${snapshot.length - result.length} more chars (use full=true for complete tree)`;
+
+	return result + tail;
 }
 
 /**
@@ -182,10 +303,31 @@ async function refBasedInteractionOrSnapshot(
 
 /** Apply compact truncation to auto-snapshots in interaction results */
 function compactInteractionResult(
+	taskId: string,
 	result: InteractionResult,
 ): InteractionResult {
 	if (result.success && result.snapshot && result.elementCount !== undefined) {
-		result.snapshot = compactSnapshot(result.snapshot, result.elementCount);
+		const compacted = compactSnapshot(result.snapshot, result.elementCount);
+
+		// Check for DOM changes since the last snapshot (SPA navigation, dynamic content).
+		// If the fingerprint changed, warn the agent that @e refs may be stale.
+		const session = sessionManager.getSession(taskId);
+		if (session) {
+			const newFingerprint = snapshotFingerprint(result.snapshot);
+			if (
+				session.currentSnapshotFingerprint !== undefined &&
+				session.currentSnapshotFingerprint !== newFingerprint
+			) {
+				result.snapshot =
+					compacted +
+					"\n\n⚠️ Page content structure changed since last interaction. Previously stored @e references may point to different elements. Use fresh @e refs from this tree for reliable interactions.";
+			} else {
+				result.snapshot = compacted;
+			}
+			session.currentSnapshotFingerprint = newFingerprint;
+		} else {
+			result.snapshot = compacted;
+		}
 	}
 	return result;
 }
@@ -275,12 +417,43 @@ export async function navigate(
 		session.currentUrl = result.url;
 		session.currentTitle = result.title;
 
+		// Store snapshot fingerprint for DOM-change detection (SPA navigation etc.)
+		session.currentSnapshotFingerprint = snapshotFingerprint(result.snapshot);
+
 		// Store as last-nav for auto-recovery
 		sessionManager.setLastNav(taskId, result.url, result.title, plugin.name);
 
 		const botWarn = result.botDetected ?? false;
+
+		// If bot detection triggered AND the page has very few elements,
+		// it's likely a challenge/block page. Downgrade to failure so the
+		// agent gets a clear signal rather than a misleading partial page.
+		if (botWarn && result.elementCount < 5) {
+			await plugin.cleanup(taskId).catch(() => {});
+			sessionManager.removeSession(taskId);
+			return {
+				success: false,
+				url: result.url,
+				title: result.title,
+				snapshot: "",
+				elementCount: 0,
+				error:
+					"Page appears to be blocked by anti-automation protection. " +
+					"The page may require JavaScript execution or browser interaction to render.",
+				backendUsed: plugin.name,
+				botDetectionWarning: true,
+			} as NavigateResult & {
+				backendUsed: string;
+				botDetectionWarning?: boolean;
+			};
+		}
+
+		// Don't compact snapshot when bot-detected — the agent needs
+		// the full content to assess whether the page is a false positive.
 		const snapshotContent = result.snapshot
-			? compactSnapshot(result.snapshot, result.elementCount)
+			? botWarn
+				? result.snapshot
+				: compactSnapshot(result.snapshot, result.elementCount)
 			: "";
 
 		const successResult: NavigateResult & {
@@ -348,8 +521,15 @@ export async function snapshot(
 	}
 
 	const result = await plugin.snapshot(tid);
-	if (result.success && !full) {
-		result.snapshot = compactSnapshot(result.snapshot, result.elementCount);
+	if (result.success) {
+		// Update snapshot fingerprint for DOM-change detection
+		const session = sessionManager.getSession(tid);
+		if (session) {
+			session.currentSnapshotFingerprint = snapshotFingerprint(result.snapshot);
+		}
+		if (!full) {
+			result.snapshot = compactSnapshot(result.snapshot, result.elementCount);
+		}
 	}
 	return result;
 }
@@ -370,7 +550,7 @@ export async function click(
 		tid,
 		sr.wasAutoCreated,
 		plugin,
-		async () => compactInteractionResult(await plugin.click(tid, ref)),
+		async () => compactInteractionResult(tid, await plugin.click(tid, ref)),
 	);
 }
 
@@ -389,7 +569,8 @@ export async function type(
 		tid,
 		sr.wasAutoCreated,
 		plugin,
-		async () => compactInteractionResult(await plugin.type(tid, ref, text)),
+		async () =>
+			compactInteractionResult(tid, await plugin.type(tid, ref, text)),
 	);
 }
 
@@ -407,7 +588,8 @@ export async function scroll(
 		tid,
 		sr.wasAutoCreated,
 		plugin,
-		async () => compactInteractionResult(await plugin.scroll(tid, direction)),
+		async () =>
+			compactInteractionResult(tid, await plugin.scroll(tid, direction)),
 	);
 }
 
@@ -422,7 +604,7 @@ export async function goBack(taskId?: string): Promise<InteractionResult> {
 		tid,
 		sr.wasAutoCreated,
 		plugin,
-		async () => compactInteractionResult(await plugin.goBack(tid)),
+		async () => compactInteractionResult(tid, await plugin.goBack(tid)),
 	);
 }
 
@@ -440,7 +622,7 @@ export async function press(
 		tid,
 		sr.wasAutoCreated,
 		plugin,
-		async () => compactInteractionResult(await plugin.press(tid, key)),
+		async () => compactInteractionResult(tid, await plugin.press(tid, key)),
 	);
 }
 
