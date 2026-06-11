@@ -1,201 +1,139 @@
 # AGENTS.md — pi-browser
 
-> Guide for AI coding agents working on this repository.
+> Compact instruction file for an agent working on this repo.
 
-## What This Project Is
+## What This Is
 
-pi-browser is a browser automation extension for the `@earendil-works/pi-coding-agent`. It gives AI agents the ability to browse the web through a two-tier escalation system (Playwright Chromium → stealth Firefox) plus a separate stateless `web-fetch` tool for fast content retrieval. The extension registers 11 tools (10 interactive browser tools + 1 stateless fetch tool) and 2 commands (`/browser-status` and `/web`) with the pi agent runtime. The `/web` command allows toggling all browser tools on/off to save tokens when browsing isn't needed.
+A browser automation extension for `@earendil-works/pi-coding-agent`. Registers 11 tools + 2 commands (`/browser-status`, `/web`). Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
 
-## Repository Layout
+## Current Architecture (Post-V2 Refactor)
 
 ```
 pi-browser/
-├── index.ts                    # Tool surface: 11 tools, /browser-status + /web commands, extension entry
-├── browser-toggle.ts           # /web on|off|status — toggle all browser tools, persist state, config default
-├── package.json                # deps: playwright, node-html-parser, turndown, vitest (dev)
-├── tsconfig.json               # strict mode, noEmit (compiled externally by host)
-├── plan.md                     # Architecture analysis & phased refactor plan
-├── browser-toggle.md           # Browser toggle feature documentation
-├── vitest.config.ts            # Vitest configuration
+├── index.ts                    # Entry: registers tools, loads plugins from config, startup/shutdown
+├── browser-toggle.ts           # /web on|off|status — toggle all browser tools, persist state
 │
-├── __tests__/
-│   ├── helpers/
-│   │   └── test-server.ts      # HTTP test server helper for deterministic fixtures
-│   ├── browser-toggle.test.ts  # 62 tests: tool toggle, persist/restore, config defaults, command handler
-│   ├── fetch-backend.test.ts   # 24 tests: webFetch(), JS detection, bot detection, content capping
-│   └── url-safety.test.ts      # 46 tests: SSRF, schemes, secrets, malformed URLs
+├── backends/
+│   ├── chromium/index.ts       # ChromiumPlugin — Node/Playwright backend (~750 lines)
+│   ├── python-adapter.ts       # PythonPluginAdapter — JSON-RPC over subprocess stdin/stdout
+│   ├── chromium-py/            # Python bridge (bridge.py, ~950 lines)
+│   │   └── bridge.py           #   Validates Python adapter; disabled by default
+│   └── python-base/            # Shared Python package: pi_browser_bridge (pyproject.toml)
+│       └── pi_browser_bridge/  #   BrowserBridge base class
 │
-├── backend/
-│   ├── router.ts               # Central dispatch: auto-escalation + per-operation routing
-│   │                           # (interactive backends only — chromium/stealth)
-│   ├── fetch-backend.ts        # Stateless HTTP fetch → Markdown (decoupled, used by web-fetch tool)
-│   ├── playwright-backend.ts   # Level 2: Playwright Chromium automation
-│   ├── stealth-backend.ts      # Level 3: JSON-RPC → Python subprocess (Invisible Playwright)
-│   └── stealth_bridge.py       # Python side of the stealth JSON-RPC bridge
+├── core/
+│   ├── plugin-api.ts           # BrowserPlugin interface + 13 typed result types + capabilities
+│   ├── plugin-registry.ts      # PluginRegistry — register, resolve, order (stealth levels)
+│   ├── plugin-config.ts        # Reads browser.plugins from settings.json, type detection
+│   ├── router.ts               # Plugin dispatch (replaces old if/else router)
+│   ├── fetch-backend.ts        # Stateless HTTP → Markdown (used by web-fetch only)
+│   └── shared/                 # Moved from old utils/
+│       ├── accessibility-tree.ts   # @e1/@e2 ref parsing + buildLocator(getByRole)
+│       ├── bot-detection.ts        # Cloudflare/CAPTCHA heuristics
+│       ├── session-manager.ts      # Per-task BrowserSession lifecycle
+│       ├── url-safety.ts           # SSRF/secrets/scheme validation
+│       └── cdp-supervisor.ts       # CDP dialog dismiss + console capture
 │
-└── utils/
-    ├── accessibility-tree.ts   # Parse Playwright ariaSnapshot → @e1/@e2 refs + element map
-    ├── bot-detection.ts        # Cloudflare/CAPTCHA heuristic signals (shared by fetch & browser)
-    ├── session-manager.ts      # Session lifecycle (create/update/remove per taskId)
-    ├── url-safety.ts           # SSRF prevention, secret detection, scheme validation
-    └── cdp-supervisor.ts       # Chrome DevTools Protocol: dialog auto-dismiss + console capture
+└── __tests__/                  # ~314 tests across 9+ test files (see below)
 ```
 
-## Key Concepts
+## Plugin Architecture (BrowserPlugin Interface)
 
-### Two-Tier Auto-Escalation (Interactive Backends)
-
-When `strategy="auto"` (the default), navigation follows this escalation path:
-
-1. **Chromium** — Full Playwright Chromium session. Runs JS, takes accessibility-tree snapshots.
-2. **Stealth** — Invisible Playwright (Firefox) via Python subprocess. Anti-bot evasion.
-
-Escalation triggers:
-- Chromium → Stealth: when bot detection signals are found (Cloudflare, CAPTCHAs)
-
-Each tier can also be requested explicitly via the `strategy` parameter.
-
-### Stateless Fetch (Separate Tool)
-
-For quick content retrieval without interaction, use the **`web-fetch`** tool instead. It performs a plain HTTP fetch, converts HTML to Markdown, and returns the content inline. It does NOT create a browser session, has no `@e` refs, and is not part of the escalation chain. The agent decides which tool to use based on whether it needs to interact with the page.
-
-| Aspect | `web-fetch` | `browser-navigate` |
-|--------|-------------|--------------------|
-| **Output** | Markdown text | Accessibility tree with `@e` refs |
-| **State** | Stateless (one-shot) | Stateful session |
-| **Interactivity** | None | click, type, scroll, press |
-| **Speed** | Fast (HTTP only) | Slower (browser launch) |
-
-### Session Model
-
-- **One shared Chromium Browser** process, per-task `BrowserContext` + `Page`
-- **Per-task Python subprocess** for stealth (complete process isolation)
-- Sessions are created on first navigate, auto-recover from crashes, cleaned up on shutdown
-- `lastNav` tracking survives session removal — enables `browser-snapshot` to auto-create a session
-
-### @e References
-
-All element interaction uses **role-based locators** via Playwright's `getByRole()`. The accessibility tree parser assigns `@e1`, `@e2`, etc. references to interactive elements. Agents use these refs to click, type, and interact. No XPath or CSS selectors are exposed.
-
-### Auto-Snapshots
-
-Every interaction tool (click, type, scroll, press, goBack) returns an automatic snapshot of the resulting page state. The calling agent doesn't need a separate `browser-snapshot` call to see what changed.
-
-### Browser Tool Toggle (`/web`)
-
-All 11 browser tools can be toggled on/off via the `/web` command:
-- **`/web off`** — Removes all browser tools from the active tool set (saves ~1500–2000 tokens/turn)
-- **`/web on`** — Restores all browser tools
-- **`/web`** or **`/web status`** — Shows current state
-
-Toggle state is persisted per-session branch and survives `/reload`, `/resume`, `/fork`, and `/tree` navigation. For fresh sessions, the default can be set via `browserToggle.defaultEnabled` in pi's settings.json. When disabled, the LLM cannot see any browser tool descriptions or parameter schemas — the tools effectively don't exist.
-
-## Tool Surface (index.ts)
-
-All tools follow the same pattern: parse params → call router or backend → wrap result + render.
-
-| Tool | Purpose |
-|------|---------|
-| `web-fetch` | Stateless HTTP fetch → Markdown (fast, no JS, no session) |
-| `browser-navigate` | Open URL with strategy selection and auto-escalation |
-| `browser-snapshot` | Refresh accessibility tree, get fresh @e refs |
-| `browser-click` | Click element by @e ref |
-| `browser-type` | Type text into element by @e ref |
-| `browser-scroll` | Scroll page up/down |
-| `browser-screenshot` | Capture JPEG screenshot (data URI) |
-| `browser-get-images` | Extract all `<img>` tags from page |
-| `browser-back` | Navigate back in history |
-| `browser-press` | Press a keyboard key |
-| `browser-console` | Evaluate JS or read captured console output |
-
-## Architecture & Data Flow
+All interactive backends implement `BrowserPlugin` (in `core/plugin-api.ts`) with 13 operations + capabilities:
 
 ```
-Agent calls web-fetch("https://example.com/page")
-  │
-  ▼ index.ts execute handler
-  │
-  ▼ fetch-backend.ts webFetch() — direct call, no router, no session
-  │   ├─ URL safety validation
-  │   ├─ HTTP fetch → HTML → Markdown conversion
-  │   ├─ JS-shell detection
-  │   ├─ Bot-detection heuristics
-  │   └─ Content capping (inline + temp file spill for large pages)
-  │
-  ▲ returns WebFetchResult {content, title, needsJavaScript?, botDetected?, ...}
-
----
-
-Agent calls browser-click("@e5")
-  │
-  ▼ index.ts execute handler
-  │
-  ▼ router.click(taskId, "@e5")
-  │   ├─ requireInteractiveSession() — find or create session
-  │   ├─ refBasedInteractionOrSnapshot() — skip if stale refs from auto-escalation
-  │   └─ dispatch to chromium or stealth backend
-  │       ├─ getElementCache(taskId).get("e5") → buildLocator(page, node)
-  │       ├─ locator.waitFor({state:"visible"}) → locator.click()
-  │       └─ auto-snapshot after interaction
-  │
-  ▲ router returns {success, snapshot?, elementCount?}
-  │
-  ▲ index.ts wraps in tool response + auto-attaches fresh snapshot
+navigate, snapshot, click, type, scroll, goBack, press,
+screenshot, getImages, getConsoleMessages, clearConsole,
+evaluate, cleanup  (+ lifecycle: init, cleanupAll)
 ```
 
-## Coding Conventions
+Capabilities advertise quirks (e.g. `supportsAbortSignal: false` on Python bridge). The router respects them.
 
-- **TypeScript strict mode** with `noEmit` — the host compiles, not this project
-- **132 tests across 3 test files** — URL safety (46), fetch-backend (24), browser-toggle (62). No tests yet for the interactive browser backends (playwright-backend, stealth-backend, router).
-- **Compact truncation everywhere**: snapshots capped ~2500 chars inline, fetch content ~4000 chars with temp file fallback for >5KB
-- **Security-first URL handling**: always route through `url-safety.ts` for validation before navigation
-- **Role-based locators only**: never introduce XPath or CSS selector-based interaction; always use `getByRole()`
-- **Backend results are not unified**: chromium and stealth return different result types; the router normalizes them. See plan.md Phase 1 for the intended `BrowserPlugin` interface
-- **Decoupled fetch**: `webFetch()` in `fetch-backend.ts` is self-contained (URL safety → fetch → JS detection → bot detection → content capping). No router involvement, no sessions.
+Plugins are configured in `~/.pi/agent/settings.json` under `browser.plugins`. Each entry has `{name, dir, enabled, config}`. The `dir` maps to `backends/<dir>/`, where the entry point is either `index.ts` (Node) or `bridge.py` (Python) — auto-detected.
 
-## Known Technical Debt
+Two active plugins at time of writing:
+- **`chromium`** (Node/Playwright, always enabled) — full-featured, registered as default
+- **`chromium-py`** (Python/Playwright, disabled by default) — validates Python adapter infrastructure
 
-1. **No backend abstraction** — The router uses hand-written if/else dispatch across 13 operations. Adding a new backend means touching every dispatcher. The `BrowserPlugin` interface in plan.md Phase 1 is the intended fix.
-2. **Router is the bottleneck** — ~764 lines of procedural if/else. Each new operation adds ~40 lines.
-3. **Element cache inconsistency** — Chromium stores full `AriaCachedNode`; stealth stores simplified `{role, name, level}`. The stealth parser manually extracts level from props strings.
-4. **Console capture only on Chromium** — Stealth backend has stubs for `getConsoleMessages`/`clearConsole`. No CDP equivalent exists for Firefox.
-5. **Full-page screenshots broken on stealth** — Parameter is accepted but not supported.
-6. **Hard-coded Python path** — Stealth bridge expects `/opt/ipw-pyenv/bin/python`.
-7. **✅ Fetch decoupled into separate `web-fetch` tool** — Fetch is no longer part of the router. It is a standalone tool with its own `webFetch()` entry point, URL safety, JS detection, bot detection, and content capping.
-8. **132 tests** — URL safety (46), fetch-backend (24), browser-toggle (62). No tests yet for the interactive browser backends (playwright-backend, stealth-backend, router).
+## Router
 
-## Refactor Roadmap (from plan.md)
+`core/router.ts` dispatches via `PluginRegistry.resolveStrategy(strategy)`:
+- `"auto"` → first enabled plugin in config order
+- `"<name>"` → named plugin (e.g. `"chromium-py"`)
 
-| Phase | Goal | Key Change | Status |
-|-------|------|------------|--------|
-| 1a | ✅ **Fetch decoupled into `web-fetch` tool** | Separate stateless HTTP tool, router simplified, no fetch in escalation chain | **DONE** |
-| 1b | Extract `BrowserPlugin` interface | Unified result types, typed plugin registry, remove if/else dispatch | Pending |
-| 2 | Restructure shared utilities | Move to `core/shared/`, add deprecated re-exports in `utils/` | Pending |
-| 3 | Add quirks interface | Backend-specific capability differences (e.g., no full-page screenshot on stealth) | Pending |
-| 4 | Community readiness | Full test harness, contribution guide | Pending |
+Cross-cutting concerns in the router, not plugins:
+- Snapshot truncation (compactSnapshot — dialog-aware, DOM-change fingerprinting)
+- URL safety (validateUrl)
+- Session lifecycle (sessionManager.create/remove/update)
+- Bot-detection downgrade heuristic (fail navigate when `botDetected && elementCount < 5`)
 
-**Fetch decoupling is done** — Phase 1a completed June 2026. The rest of Phase 1 (BrowserPlugin interface extraction) can proceed independently now that the fetch contradiction is resolved.
+## Key Tools: web-fetch vs Interactive Browsing
 
-## Reading Order for New Contributors
+| Tool | Use Case | State | Speed |
+|------|----------|-------|-------|
+| `web-fetch` | Static page → Markdown, no JS needed | Stateless | Fast |
+| `browser-navigate` | Interactive page → accessibility tree with @e refs | Stateful session | Slower |
 
-1. `index.ts` — understand the 11 tools and how they call the router or fetch-backend directly
-2. `backend/router.ts` — understand dispatch and escalation (start with `navigate()`)
-3. `backend/fetch-backend.ts` — understand the decoupled `webFetch()` pipeline
-4. `utils/accessibility-tree.ts` — understand how @e refs are generated and how locators are built
-5. `plan.md` — understand the intended architecture and refactor rationale
+## Known Constraints & Debt
 
-## Important Files to Tread Lightly Around
+- **Console capture only on Chromium** — Python adapter's `BridgeBase` has console capture but the `chromium-py` bridge doesn't call it yet
+- **AbortSignal not supported on Python bridge** — `supportsAbortSignal: false`
+- **Sessions are per taskId** — created on first navigate, cleaned up on shutdown
+- **Compact truncation everywhere**: snapshots ~2500 chars inline, fetch content ~4000 chars with temp file spill
+- **Role-based locators only**: never XPath/CSS — always `getByRole()` via `buildLocator()`
+- **All URLs go through `url-safety.ts`** — blocks localhost, private IPs, dangerous schemes
+- **Screenshot quality**: JPEG 80% quality, max 1024px wide
+- **Toggle state** (`/web`) persisted per-session branch, survives `/reload`, `/resume`, `/fork`
+- **`browser_finetuning.md`** contains the occlusion/dialog/timing hardening strategy — read it before touching the ChromiumPlugin click/snapshot logic
+- **`plan_v2.md`** is the full architecture doc for the plugin refactor — read before adding a new plugin type or changing the registry
 
-- **`backend/router.ts`** — The most complex file; changes here affect all interactive backends. Always read the full dispatcher for an operation before modifying it.
-- **`backend/fetch-backend.ts`** — The decoupled fetch backend. Changes here affect the `web-fetch` tool only.
-- **`index.ts`** — Tool definitions for all 11 tools plus `webFetchTool`, 2 commands (`/browser-status`, `/web`), and `initBrowserToggle(pi)` startup call. Adding a new tool requires understanding both the interactive (router→backend) and stateless (fetch-backend) patterns.
-- **`utils/accessibility-tree.ts`** — Both backends depend on the parser and `buildLocator()`. Changes here can break element interaction across the board.
-- **`backend/stealth_bridge.py`** — The Python bridge runs in a subprocess with limited error recovery. Test manually after any changes.
-- **`browser-toggle.ts`** — Controls tool visibility for the entire extension. Changes here affect which tools the LLM can see. The toggle state is persisted and restored across session lifecycle events.
+## Tests
 
-## Security Considerations
+```
+__tests__/
+├── router-dispatch.test.ts     # 88 tests — strategy resolution, session lifecycle, navigation flow
+├── browser-toggle.test.ts      # 62 tests — toggle on/off, persist/restore, config defaults
+├── plugin-registry.test.ts     # 47 tests — registration, validation, resolution, ordering
+├── python-adapter.test.ts      # 40 tests — JSON-RPC transport, heartbeat, error handling, sessions
+├── fetch-backend.test.ts       # 24 tests — webFetch(), JS detection, bot detection, content capping
+├── accessibility-tree.test.ts  # 19 tests — @e ref parsing, buildLocator, duplicate resolution
+├── url-safety.test.ts          # 14 tests — SSRF, schemes, secrets, malformed URLs
+├── plugin-loading.test.ts      # 12 tests — config loading, type detection, error handling
+├── occlusion-live.test.ts      # 8 tests — real-browser occlusion detection (requires Chromium)
+├── chromium-py.test.ts         # Contract tests for Python bridge (skipped if no venv)
+└── plugin-contract.test.ts     # Contract test harness validation against MockPlugin
+```
 
-- All URLs must pass through `url-safety.ts` validation (blocks localhost, private IPs, dangerous schemes)
-- Secret detection runs on both raw and percent-decoded URLs
-- Bot detection is intentionally soft — it warns and escalates but never silently swaps results
-- JS dialogs are auto-dismissed to prevent agent blocking
+### Running Tests
+
+```bash
+npm test              # vitest run — all tests
+npx vitest run __tests__/router-dispatch.test.ts  # single file
+```
+
+Integration tests (`occlusion-live.test.ts`, `chromium-py.test.ts`) require Playwright Chromium installed. They skip automatically in CI.
+
+## What Changed (V1 → V2)
+
+- **V2 refactor done**: BrowserPlugin interface extracted, PluginRegistry implemented, router rewritten, fetch decoupled. The old `backend/` and `utils/` are gone.
+- **Python bridge infrastructure added**: `PythonPluginAdapter` (JSON-RPC over stdin/stdout), `python-base/pi_browser_bridge/` shared library, `chromium-py` bridge
+- **Contract test harness**: `runContractTests()` validates any BrowserPlugin — structural (always) and behavioral (real browser opt-in)
+- **Config-driven plugin loading**: from `browser.plugins` in settings.json; fallback to single chromium
+- **Capability system**: plugins advertise what they support, router adapts
+
+## Reading Order
+
+1. `index.ts` — extension entry, plugin registration, tool definitions
+2. `core/plugin-api.ts` — BrowserPlugin interface, result types, capabilities
+3. `core/plugin-registry.ts` — registration, strategy resolution, ordering
+4. `core/router.ts` — dispatch, session lifecycle, truncation (compactSnapshot)
+5. `backends/chromium/index.ts` — reference implementation of BrowserPlugin
+6. `backends/python-adapter.ts` — Python subprocess bridge pattern
+
+## `backends/` vs `core/` Boundaries
+
+- `backends/` — plugin-specific implementations (Node or Python)
+- `core/` — framework: plugin API, registry, config loader, router, shared utilities
+- `core/shared/` — utilities used by both framework and plugins (accessibility, bot detection, URL safety, sessions, CDP)
+- Plugins import from `../../core/plugin-api.js` and `../../core/shared/*.js`
+- The router imports from `../../core/plugin-api.js` and `../../core/shared/*.js`
