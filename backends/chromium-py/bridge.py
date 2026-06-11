@@ -197,6 +197,13 @@ class ChromiumPyBridge(BrowserBridge):
         super().__init__()
         self._pw = None
         self._browser = None
+        # Read verify-click timeout from env (default: 1500ms)
+        try:
+            self._verify_click_timeout = int(
+                os.environ.get("PY_BRIDGE_VERIFY_CLICK_TIMEOUT_MS", "1500")
+            )
+        except (ValueError, TypeError):
+            self._verify_click_timeout = 1500
 
     # ── Shared Playwright lifecycle ────────────────────────────
 
@@ -686,7 +693,7 @@ class ChromiumPyBridge(BrowserBridge):
         occlusion_check: str = "verified"
         if occlusion is not None:
             try:
-                locator.click(timeout=1_500)
+                locator.click(timeout=self._verify_click_timeout)
                 occlusion_check = "blocked_verify_ok"
                 # Succeeded — false positive, proceed below
             except Exception:
@@ -783,7 +790,7 @@ class ChromiumPyBridge(BrowserBridge):
         occlusion_check: str = "verified"
         if occlusion is not None:
             try:
-                locator.click(timeout=1_500)
+                locator.click(timeout=self._verify_click_timeout)
                 occlusion_check = "blocked_verify_ok"
             except Exception:
                 _log("type", taskId=task_id, ref=ref, role=_role, name=_name,

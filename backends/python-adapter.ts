@@ -137,6 +137,12 @@ export interface PythonBridgeConfig {
 	 * process (default: 3).  Ignored when heartbeat is disabled.
 	 */
 	heartbeatMissesBeforeRestart?: number;
+
+	/**
+	 * Override the verify-click occlusion fallback timeout in ms
+	 * (default: 1500).  Passed to the bridge via environment variable.
+	 */
+	verifyClickTimeoutMs?: number;
 }
 
 // ─── Default capabilities ─────────────────────────────────────────────
@@ -193,6 +199,9 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	// ── Stderr capture ─────────────────────────────────────────
 	private _stderrAccumulated = "";
 
+	// ── Verify-click timeout (for occlusion fallback) ──────────
+	private readonly _verifyClickTimeoutMs: number;
+
 	// ── Heartbeat ───────────────────────────────────────────────
 	private readonly _heartbeatIntervalMs: number;
 	private readonly _maxHeartbeatMisses: number;
@@ -241,6 +250,9 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			config.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
 		this._maxHeartbeatMisses =
 			config.heartbeatMissesBeforeRestart ?? DEFAULT_HEARTBEAT_MISSES;
+
+		// Verify-click timeout (passed to bridge via env var)
+		this._verifyClickTimeoutMs = config.verifyClickTimeoutMs ?? 1500;
 
 		// Merge capabilities
 		this.capabilities = {
@@ -323,7 +335,13 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				[this._bridgeScript, ...this._pythonArgs],
 				{
 					stdio: ["pipe", "pipe", "pipe"],
-					env: { ...process.env, PYTHONUNBUFFERED: "1" },
+					env: {
+						...process.env,
+						PYTHONUNBUFFERED: "1",
+						PY_BRIDGE_VERIFY_CLICK_TIMEOUT_MS: String(
+							this._verifyClickTimeoutMs,
+						),
+					},
 				},
 			);
 

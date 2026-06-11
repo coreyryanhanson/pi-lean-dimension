@@ -82,10 +82,19 @@ export class ChromiumPlugin implements BrowserPlugin {
 	/** Per-task element cache (ref → AriaCachedNode) */
 	private _elementCache = new Map<string, Map<string, AriaCachedNode>>();
 
+	/** Timeout (ms) for verify-click occlusion fallback. Default: 1500. */
+	private _verifyClickTimeoutMs = 1500;
+
 	// ── Lifecycle ───────────────────────────────────────────────
 
-	async init(_config?: Record<string, unknown>): Promise<void> {
-		// Nothing to do at init — browser is lazy-launched on first use
+	async init(config?: Record<string, unknown>): Promise<void> {
+		// Accept verifyClickTimeoutMs from config for Experiment 2
+		if (config?.verifyClickTimeoutMs != null) {
+			const v = Number(config.verifyClickTimeoutMs);
+			if (Number.isFinite(v) && v > 0) {
+				this._verifyClickTimeoutMs = v;
+			}
+		}
 	}
 
 	async cleanupAll(): Promise<void> {
@@ -622,7 +631,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 		if (occlusionCheck) {
 			// Element appears obscured — verify with a quick click attempt
 			try {
-				await locator.click({ timeout: 1500 });
+				await locator.click({ timeout: this._verifyClickTimeoutMs });
 				// Click succeeded — occlusion was a false positive, continue below
 				occlusionStatus = "blocked_verify_ok";
 			} catch {
@@ -766,7 +775,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 		let occlusionStatus = "verified";
 		if (occlusionCheck) {
 			try {
-				await locator.click({ timeout: 1500 });
+				await locator.click({ timeout: this._verifyClickTimeoutMs });
 				occlusionStatus = "blocked_verify_ok";
 			} catch {
 				this._log("type", {
