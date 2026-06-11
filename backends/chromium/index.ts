@@ -20,6 +20,7 @@ import {
 	type AriaCachedNode,
 } from "../../core/shared/accessibility-tree.js";
 import {
+	getDialogLog,
 	installDialogHandlers,
 	formatDialogLog,
 	getConsoleLog as getRawConsoleLog,
@@ -27,6 +28,8 @@ import {
 } from "../../core/shared/cdp-supervisor.js";
 import { sessionManager } from "../../core/shared/session-manager.js";
 import { checkPage } from "../../core/shared/bot-detection.js";
+import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 import type {
 	BrowserPlugin,
 	PluginCapabilities,
@@ -56,6 +59,16 @@ const CHROMIUM_CAPABILITIES: PluginCapabilities = {
 export class ChromiumPlugin implements BrowserPlugin {
 	readonly name = "chromium";
 	readonly capabilities = CHROMIUM_CAPABILITIES;
+
+	/** Enable structured debug logging via BROWSER_DEBUG env var */
+	private readonly _debug = process.env.BROWSER_DEBUG === "1";
+
+	/** Log a structured debug line to stderr when BROWSER_DEBUG=1 */
+	private _log(event: string, data: Record<string, unknown>): void {
+		if (this._debug) {
+			process.stderr.write(`[browser] ${event}: ${JSON.stringify(data)}\n`);
+		}
+	}
 
 	/** Shared browser instance (lazy-initialised) */
 	private _browser: Browser | null = null;
@@ -145,6 +158,26 @@ export class ChromiumPlugin implements BrowserPlugin {
 				"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 		});
 
+		// Start Playwright trace capture if BROWSER_TRACE_DIR is set.
+		// Traces include screenshots, DOM snapshots, and source for debugging.
+		const traceDir = process.env.BROWSER_TRACE_DIR;
+		if (traceDir) {
+			try {
+				await context.tracing.start({
+					screenshots: true,
+					snapshots: true,
+					sources: true,
+				});
+				this._log("tracing", {
+					taskId,
+					action: "start",
+					dir: traceDir,
+				});
+			} catch {
+				// Best-effort — trace is diagnostic only
+			}
+		}
+
 		const page = await context.newPage();
 		this._contexts.set(taskId, { context, page });
 		this._elementCache.set(taskId, new Map());
@@ -202,14 +235,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 	}
 
 	/**
-	 * Check for bot/anti-automation detection signals via shared utility.
-	 *
-	 * Checks the page TITLE against specific challenge phrases (avoids
-	 * false positives like Wikipedia mentioning "captcha"), and additionally
-	 * checks the BODY against high-specificity patterns that are unique to
-	 * CDN block pages (Akamai reference IDs, Cloudflare challenge URLs, etc.).
-	 */
-	/**
 	 * Check if a locator is visually obscured by another element (modal, overlay).
 	 *
 	 * Uses `document.elementFromPoint()` at the locator's center to verify the
@@ -245,19 +270,49 @@ export class ChromiumPlugin implements BrowserPlugin {
 			});
 
 			if (isObscured) {
-				return {
+				const occlusionResult = {
 					success: false as const,
 					error:
 						`Element ${ref} is obscured by another element (likely a modal/overlay). ` +
 						`Try pressing Escape (browser-press key="Escape") to dismiss the overlay, then retry.`,
 				};
+
+				this._log("occlusion", {
+					ref,
+					isObscured: true,
+					verifyClick: "skipped",
+					reason: "elementFromPoint",
+				});
+
+				return occlusionResult;
 			}
+
+			this._log("occlusion", {
+				ref,
+				isObscured: false,
+				verifyClick: "skipped",
+				reason: "elementFromPoint",
+			});
 		} catch {
 			// If the check itself fails, proceed with click (fail-safe)
+			this._log("occlusion", {
+				ref,
+				isObscured: false,
+				verifyClick: "skipped",
+				reason: "elementFromPoint",
+			});
 		}
 		return null;
 	}
 
+	/**
+	 * Check for bot/anti-automation detection signals via shared utility.
+	 *
+	 * Checks the page TITLE against specific challenge phrases (avoids
+	 * false positives like Wikipedia mentioning "captcha"), and additionally
+	 * checks the BODY against high-specificity patterns that are unique to
+	 * CDN block pages (Akamai reference IDs, Cloudflare challenge URLs, etc.).
+	 */
 	private async checkBotDetection(page: Page): Promise<boolean> {
 		try {
 			const title = await page.title();
@@ -280,6 +335,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 		timeoutMs: number = 30_000,
 		options?: { signal?: AbortSignal },
 	): Promise<NavigateResult> {
+		const _start = performance.now();
 		try {
 			const { page } = await this.getOrCreateContext(taskId);
 
@@ -367,6 +423,15 @@ export class ChromiumPlugin implements BrowserPlugin {
 				pluginName: "chromium",
 			});
 
+			this._log("navigate", {
+				url: page.url(),
+				plugin: "chromium",
+				success: true,
+				botDetected: botDetected ?? false,
+				elementCount: parsed.count,
+				time: Math.round(performance.now() - _start),
+			});
+
 			return {
 				success: true,
 				url: page.url(),
@@ -399,6 +464,16 @@ export class ChromiumPlugin implements BrowserPlugin {
 				msg.includes("blocked") ||
 				msg.includes("challenge");
 
+			this._log("navigate", {
+				url,
+				plugin: "chromium",
+				success: false,
+				botDetected: botDetected ?? false,
+				elementCount: 0,
+				error: msg,
+				time: Math.round(performance.now() - _start),
+			});
+
 			return {
 				success: false,
 				url,
@@ -412,8 +487,17 @@ export class ChromiumPlugin implements BrowserPlugin {
 	}
 
 	async snapshot(taskId: string): Promise<SnapshotResult> {
+		const _start = performance.now();
 		const page = this.getPage(taskId);
 		if (!page) {
+			this._log("snapshot", {
+				taskId,
+				success: false,
+				elementCount: 0,
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
+
 			return {
 				success: false,
 				snapshot: "",
@@ -432,12 +516,34 @@ export class ChromiumPlugin implements BrowserPlugin {
 				this.getElementCache(taskId).set(ref, node);
 			}
 
+			// Count auto-dismissed dialog entries for the log
+			// The dialog info is NOT embedded in parsed.text in this path
+			// (unlike takeSnapshot/navigate which format it), so check via supervisor.
+			const dialogBlocks = getDialogLog(taskId).length;
+
+			this._log("snapshot", {
+				taskId,
+				success: true,
+				elementCount: parsed.count,
+				dialogBlocks,
+				fingerprint: parsed.text.slice(0, 16),
+				time: Math.round(performance.now() - _start),
+			});
+
 			return {
 				success: true,
 				snapshot: parsed.text,
 				elementCount: parsed.count,
 			};
 		} catch (err: unknown) {
+			this._log("snapshot", {
+				taskId,
+				success: false,
+				elementCount: 0,
+				error: err instanceof Error ? err.message : String(err),
+				time: Math.round(performance.now() - _start),
+			});
+
 			return {
 				success: false,
 				snapshot: "",
@@ -450,8 +556,20 @@ export class ChromiumPlugin implements BrowserPlugin {
 	// ── Interaction ────────────────────────────────────────────
 
 	async click(taskId: string, ref: string): Promise<InteractionResult> {
+		const _start = performance.now();
+		const phases: Record<string, number> = {};
 		const page = this.getPage(taskId);
 		if (!page) {
+			this._log("click", {
+				taskId,
+				ref,
+				role: "(none)",
+				name: "(none)",
+				occlusionCheck: "skipped",
+				result: "fail",
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -459,6 +577,16 @@ export class ChromiumPlugin implements BrowserPlugin {
 		const node = this.getElementCache(taskId).get(key);
 
 		if (!node) {
+			this._log("click", {
+				taskId,
+				ref,
+				role: "(none)",
+				name: "(none)",
+				occlusionCheck: "skipped",
+				result: "fail",
+				error: `Element ${ref} not found in accessibility tree`,
+				time: Math.round(performance.now() - _start),
+			});
 			return {
 				success: false,
 				error: `Element ${ref} not found in accessibility tree. Refresh with browser-snapshot first.`,
@@ -467,24 +595,49 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 		const locator = buildLocator(page, node);
 		if (!locator) {
+			this._log("click", {
+				taskId,
+				ref,
+				role: node.role,
+				name: node.name,
+				occlusionCheck: "skipped",
+				result: "fail",
+				error: `Could not build locator (role: ${node.role})`,
+				time: Math.round(performance.now() - _start),
+			});
 			return {
 				success: false,
 				error: `Could not build locator for ${ref} (role: ${node.role})`,
 			};
 		}
+		phases.locate = Math.round(performance.now() - _start);
 
 		// Fast occlusion check — if elementFromPoint says blocked, verify with a
 		// short click attempt to eliminate false positives (Reddit's close button
 		// uses pointer-events: none child elements that confuse elementFromPoint).
 		const occlusionCheck = await this.checkOcclusion(locator, ref);
+		phases.occlusion = Math.round(performance.now() - _start);
 
+		let occlusionStatus = "verified";
 		if (occlusionCheck) {
 			// Element appears obscured — verify with a quick click attempt
 			try {
 				await locator.click({ timeout: 1500 });
 				// Click succeeded — occlusion was a false positive, continue below
+				occlusionStatus = "blocked_verify_ok";
 			} catch {
 				// Confirmed obscured — return the helpful error
+				this._log("click", {
+					taskId,
+					ref,
+					role: node.role,
+					name: node.name,
+					occlusionCheck: "blocked",
+					result: "fail",
+					error: `Occlusion blocked: ${occlusionCheck.error}`,
+					timings: phases,
+					time: Math.round(performance.now() - _start),
+				});
 				return occlusionCheck;
 			}
 		}
@@ -493,9 +646,11 @@ export class ChromiumPlugin implements BrowserPlugin {
 			if (!occlusionCheck) {
 				await locator.click({ timeout: 5000 });
 			}
+			phases.click = Math.round(performance.now() - _start);
 
 			// Wait for potential navigation
 			await page.waitForTimeout(300);
+			phases.wait = Math.round(performance.now() - _start);
 
 			const newUrl = page.url();
 			const newTitle = await page.title();
@@ -506,6 +661,18 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 			// Auto-snapshot
 			const snapResult = await this.takeSnapshot(taskId, page);
+			phases.snapshot = Math.round(performance.now() - _start);
+
+			this._log("click", {
+				taskId,
+				ref,
+				role: node.role,
+				name: node.name,
+				occlusionCheck: occlusionStatus,
+				result: "success",
+				timings: phases,
+				time: Math.round(performance.now() - _start),
+			});
 
 			return {
 				success: true,
@@ -515,6 +682,18 @@ export class ChromiumPlugin implements BrowserPlugin {
 				elementCount: snapResult.elementCount,
 			};
 		} catch (err: unknown) {
+			this._log("click", {
+				taskId,
+				ref,
+				role: node.role,
+				name: node.name,
+				occlusionCheck: occlusionStatus,
+				result: "fail",
+				error: err instanceof Error ? err.message : String(err),
+				timings: phases,
+				time: Math.round(performance.now() - _start),
+			});
+
 			return {
 				success: false,
 				error: `Click failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -527,8 +706,19 @@ export class ChromiumPlugin implements BrowserPlugin {
 		ref: string,
 		text: string,
 	): Promise<InteractionResult> {
+		const _start = performance.now();
 		const page = this.getPage(taskId);
 		if (!page) {
+			this._log("type", {
+				taskId,
+				ref,
+				role: "(none)",
+				name: "(none)",
+				occlusionCheck: "skipped",
+				result: "fail",
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -536,6 +726,16 @@ export class ChromiumPlugin implements BrowserPlugin {
 		const node = this.getElementCache(taskId).get(key);
 
 		if (!node) {
+			this._log("type", {
+				taskId,
+				ref,
+				role: "(none)",
+				name: "(none)",
+				occlusionCheck: "skipped",
+				result: "fail",
+				error: `Element ${ref} not found in accessibility tree`,
+				time: Math.round(performance.now() - _start),
+			});
 			return {
 				success: false,
 				error: `Element ${ref} not found in accessibility tree. Refresh with browser-snapshot first.`,
@@ -544,6 +744,16 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 		const locator = buildLocator(page, node);
 		if (!locator) {
+			this._log("type", {
+				taskId,
+				ref,
+				role: node.role,
+				name: node.name,
+				occlusionCheck: "skipped",
+				result: "fail",
+				error: `Could not build locator (role: ${node.role})`,
+				time: Math.round(performance.now() - _start),
+			});
 			return {
 				success: false,
 				error: `Could not build locator for ${ref}`,
@@ -553,10 +763,22 @@ export class ChromiumPlugin implements BrowserPlugin {
 		// Fast occlusion check — verify with short click if flagged
 		const occlusionCheck = await this.checkOcclusion(locator, ref);
 
+		let occlusionStatus = "verified";
 		if (occlusionCheck) {
 			try {
 				await locator.click({ timeout: 1500 });
+				occlusionStatus = "blocked_verify_ok";
 			} catch {
+				this._log("type", {
+					taskId,
+					ref,
+					role: node.role,
+					name: node.name,
+					occlusionCheck: "blocked",
+					result: "fail",
+					error: `Occlusion blocked: ${occlusionCheck.error}`,
+					time: Math.round(performance.now() - _start),
+				});
 				return occlusionCheck;
 			}
 		}
@@ -570,12 +792,33 @@ export class ChromiumPlugin implements BrowserPlugin {
 			// Auto-snapshot
 			const snapResult = await this.takeSnapshot(taskId, page);
 
+			this._log("type", {
+				taskId,
+				ref,
+				role: node.role,
+				name: node.name,
+				occlusionCheck: occlusionStatus,
+				result: "success",
+				elementCount: snapResult.elementCount,
+				time: Math.round(performance.now() - _start),
+			});
+
 			return {
 				success: true,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
 			};
 		} catch (err: unknown) {
+			this._log("type", {
+				taskId,
+				ref,
+				role: node.role,
+				name: node.name,
+				occlusionCheck: occlusionStatus,
+				result: "fail",
+				error: err instanceof Error ? err.message : String(err),
+				time: Math.round(performance.now() - _start),
+			});
 			return {
 				success: false,
 				error: `Type failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -587,8 +830,16 @@ export class ChromiumPlugin implements BrowserPlugin {
 		taskId: string,
 		direction: "up" | "down",
 	): Promise<InteractionResult> {
+		const _start = performance.now();
 		const page = this.getPage(taskId);
 		if (!page) {
+			this._log("scroll", {
+				taskId,
+				direction,
+				success: false,
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -601,12 +852,27 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 			const snapResult = await this.takeSnapshot(taskId, page);
 
+			this._log("scroll", {
+				taskId,
+				direction,
+				success: true,
+				elementCount: snapResult.elementCount,
+				time: Math.round(performance.now() - _start),
+			});
+
 			return {
 				success: true,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
 			};
 		} catch (err: unknown) {
+			this._log("scroll", {
+				taskId,
+				direction,
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+				time: Math.round(performance.now() - _start),
+			});
 			return {
 				success: false,
 				error: `Scroll failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -615,8 +881,15 @@ export class ChromiumPlugin implements BrowserPlugin {
 	}
 
 	async goBack(taskId: string): Promise<InteractionResult> {
+		const _start = performance.now();
 		const page = this.getPage(taskId);
 		if (!page) {
+			this._log("goBack", {
+				taskId,
+				success: false,
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -633,6 +906,13 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 			const snapResult = await this.takeSnapshot(taskId, page);
 
+			this._log("goBack", {
+				taskId,
+				success: true,
+				elementCount: snapResult.elementCount,
+				time: Math.round(performance.now() - _start),
+			});
+
 			return {
 				success: true,
 				newUrl,
@@ -641,6 +921,12 @@ export class ChromiumPlugin implements BrowserPlugin {
 				elementCount: snapResult.elementCount,
 			};
 		} catch (err: unknown) {
+			this._log("goBack", {
+				taskId,
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+				time: Math.round(performance.now() - _start),
+			});
 			return {
 				success: false,
 				error: `GoBack failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -649,8 +935,16 @@ export class ChromiumPlugin implements BrowserPlugin {
 	}
 
 	async press(taskId: string, key: string): Promise<InteractionResult> {
+		const _start = performance.now();
 		const page = this.getPage(taskId);
 		if (!page) {
+			this._log("press", {
+				taskId,
+				key,
+				success: false,
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -660,12 +954,27 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 			const snapResult = await this.takeSnapshot(taskId, page);
 
+			this._log("press", {
+				taskId,
+				key,
+				success: true,
+				elementCount: snapResult.elementCount,
+				time: Math.round(performance.now() - _start),
+			});
+
 			return {
 				success: true,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
 			};
 		} catch (err: unknown) {
+			this._log("press", {
+				taskId,
+				key,
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+				time: Math.round(performance.now() - _start),
+			});
 			return {
 				success: false,
 				error: `Press failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -780,6 +1089,24 @@ export class ChromiumPlugin implements BrowserPlugin {
 	async cleanup(taskId: string): Promise<void> {
 		const entry = this._contexts.get(taskId);
 		if (entry) {
+			// Stop and save Playwright trace if BROWSER_TRACE_DIR is set.
+			// Traces are stored as trace-{taskId}-{timestamp}.zip.
+			const traceDir = process.env.BROWSER_TRACE_DIR;
+			if (traceDir) {
+				try {
+					mkdirSync(traceDir, { recursive: true });
+					await entry.context.tracing.stop({
+						path: join(traceDir, `trace-${taskId}-${Date.now()}.zip`),
+					});
+					this._log("tracing", {
+						taskId,
+						action: "stop",
+						dir: traceDir,
+					});
+				} catch {
+					// Best-effort — trace is diagnostic only
+				}
+			}
 			try {
 				await entry.page.close();
 			} catch {
