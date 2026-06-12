@@ -47,7 +47,7 @@ Signature unchanged: `(snapshot: string, elementCount: number) → string`. No `
 
 Disk caching, `maxChars` post-processing, DOM text formatting, and cache notice construction all live in the router. `compactSnapshot()` truncates; the router decides what to do with the result. This is the same pattern `web-fetch` uses — `capFetchContent()` wraps the raw fetch, not the other way around.
 
-**Complexity note.** The router (`core/router.ts`) is currently ~370 lines. After Features A–C it will likely reach 600–700 lines. This is manageable — the router already handles session lifecycle, truncation, bot-detection downgrade, auto-recovery, and stale @e ref handling — but the added logic (disk caching, maxChars post-processing, element query dispatch, text extraction dispatch, @e ref correlation) concentrates a lot of concern in one file. Consider extracting `browser-inspect` dispatch into its own module (`core/shared/inspect-dispatch.ts`) if the router exceeds ~650 lines.
+**Complexity note.** The router (`core/router.ts`) is currently ~370 lines. After Features A–C it will likely reach 600–700 lines. This is manageable — the router already handles session lifecycle, truncation, bot-detection downgrade, auto-recovery, and stale @e ref handling — but the added logic (disk caching, maxChars post-processing, element query dispatch, text extraction dispatch, @e ref correlation, staleness field tracking, parent-stack-based subtree resolution) concentrates a lot of concern in one file. Consider extracting `browser-inspect` dispatch into its own module (`core/shared/inspect-dispatch.ts`) if the router exceeds ~650 lines.
 
 ### P3: The ARIA tree is for interaction, the DOM walker is for reading
 
@@ -94,7 +94,11 @@ Key design points:
 - Keep last 2 files per task (timestamped filenames)
 - Try-catch on writeFileSync — graceful degradation to inline only
 - Cache notice includes fingerprint for staleness detection
-- **Cache before compacting.** The router saves `result.snapshot` to a local variable before calling `compactInteractionResult()` so the raw (un-truncated) snapshot is available for caching. This applies to all interaction results (click, type, press, scroll) that navigate to a new page — the raw snapshot is captured at the compaction boundary, not after.
+- **Cache before compacting.** The router saves `result.snapshot` to a local variable before compacting, then passes the raw value to `cacheSnapshot()`. This covers three paths:
+  - **`navigate()`**: snapshot is in `result.snapshot` before `compactSnapshot()` is called — save to local, cache, then compact.
+  - **`compactInteractionResult()`**: used by click/type/press/scroll/goBack. Save `result.snapshot` to local before compacting in-place.
+  - **`refBasedInteractionOrSnapshot()`**: when the session was auto-created, a fresh snapshot is taken for the agent. This snapshot should also be cached before being passed to `compactSnapshot()`.
+- **`web-fetch` temp file sharing.** The disk cache pattern (write temp file, format notice, cleanup) parallels `capFetchContent()` in `core/fetch-backend.ts`. The two are intentionally independent — `web-fetch` uses its own temp file naming and `node-html-parser` output — but future refactors could extract a shared `temp-file.ts` utility if both converge on the same pattern.
 - Cleanup on session removal
 
 New module: `core/shared/snapshot-cache.ts` with `cacheSnapshot()`, `removeSnapshotFiles()`, `removeAllSnapshotFiles()`, `formatCacheNotice()`.
@@ -118,14 +122,28 @@ When both modes are used together (`text=true` + filters), the DOM walker runs a
 |-------|------|-------------|
 | `role` | `string?` | Filter by ARIA role. Comma-separated for multiple. E.g. `"link,button"` |
 | `name` | `string?` | Filter by accessible name (case-insensitive substring match) |
-| `ref` | `string?` | Look up a specific @e ref. E.g. `"e5"` or `"e42"` |
+| `ref` | `string?` | Look up a specific @e ref. E.g. `"e5"` or `"e42"`. When combined with `text=true`, the DOM walker scopes to the subtree under that element (or returns an error if the ref is non-interactive with no subtree). |
 | `subtree` | `string?` | Scope to elements inside a container role. E.g. `"dialog"`, `"navigation"` |
 | `text` | `boolean?` | Include text content from DOM walker. Default: false |
 | `maxChars` | `number?` | Max output characters. 0 = no limit. Default: auto (~2500) |
 
 #### Dispatch Logic
 
+#### Session Requirement
+
+`browser-inspect` requires an active session (same as all other interactive tools). The router checks `requireInteractiveSession()` before dispatch. If no session exists, returns:
 ```
+No active session — use browser-navigate to visit a page first, then retry
+```
+
+#### Dispatch Logic
+
+```
+// 1. Session check
+if no active session:
+    return session error
+
+// 2. Route by params
 if text === true:
     Run DOM walker via plugin.evaluate(taskId, EXTRACTOR_SCRIPT)
     Cross-reference output with element cache for @e ref annotations
@@ -133,14 +151,27 @@ if text === true:
     Apply maxChars truncation
     Return structured text output
 
+else if ref + text === true:
+    Scopes DOM walker to the element's subtree
+
 else if role || name || ref || subtree:
     Query in-memory element cache (synchronous)
     Apply filters
     Return element list with @e refs
 
 else:
-    Return summary of what's available
+    Return a count breakdown by role:
+    "5 links, 3 buttons, 2 textboxes, 1 combobox available. "
+    "Use role=, name=, or text=true to query further."
 ```
+
+#### Empty / missing cache case
+
+If the element cache has not been populated yet (no snapshot taken, or session setup is incomplete), the router returns an empty result with a clear message rather than throwing:
+```
+No elements cached yet — use browser-snapshot to populate element cache
+```
+This mirrors the empty-session check but applies when the session exists but the cache is empty.
 
 #### Element Query Output
 
@@ -199,7 +230,7 @@ After the DOM walker returns its structured data, the router cross-references it
 2. If a single match is found, annotate the text output with the `@e` ref
 3. **If multiple elements match the same role+name** (e.g., three "Submit" buttons), annotate with **all** matching `@e` refs: `@e5, @e12, @e23 🔘 button "Submit"`. The agent can disambiguate by position or by reading the cached full snapshot
 4. For non-interactive text (paragraphs, body copy), check if the text is a child/sibling of an interactive element in the cache, and annotate with the nearest parent/sibling `@e` ref
-5. **If the element cache is potentially stale** (last snapshot predates the last interaction), append a staleness notice: `⚠ Element refs may be stale — consider browser-snapshot before clicking.`
+5. **If the element cache is potentially stale** (the router's `cachePopulatedAt` timestamp predates `lastInteractionAt` on `BrowserSession`), append a staleness notice: `⚠ Element refs may be stale — consider browser-snapshot before clicking.`
 
 This is fuzzy matching — it works best on well-structured pages where `aria-label` and visible text align. It can miss on custom widgets or dynamically generated names. ~80-90% accuracy on typical pages, which is a vast improvement over zero.
 
@@ -212,6 +243,8 @@ The correlation logic lives in `core/shared/dom-extractor.ts` as a pure function
 Add `maxChars` to `browser-navigate`, `browser-snapshot`, and `browser-inspect`. Applied as router post-processing after `compactSnapshot()`, not inside it.
 
 The `full` parameter on `browser-snapshot` is deprecated. `maxChars=0` replaces `full=true`. Both continue to work during a deprecation period, with `maxChars` taking precedence if both are set.
+
+**Hint text update.** `compactSnapshot()` currently embeds `"use full=true for complete tree"` in its truncation tail messages. These strings must be updated to `"use maxChars=0 for complete tree"` at the same time as adding the `maxChars` parameter — otherwise new agents will see the old hint and use the deprecated `full=true` parameter. See Phase 3, step 4.
 
 ### Feature D: `web-guide` Tool + Auto-Hint
 
@@ -228,6 +261,8 @@ Independent of Features A-C. Can be implemented in parallel. No architectural co
 ### `getElementCache(taskId: string): Map<string, AriaCachedNode>` — Add to interface
 
 Each plugin owns its element cache. The router needs access for `browser-inspect` element queries. This is the only new interface method.
+
+**Side effect note.** In the Chromium plugin, `getElementCache()` auto-creates an empty cache entry on miss (`this._elementCache.set(taskId, new Map())`). The router MUST guard calls behind the session existence check — otherwise a stale/no-session call can produce an empty but existing cache entry, masking the real error.
 
 ### `getText()` — NOT added
 
@@ -312,7 +347,9 @@ The `subtree` parameter scopes results to elements inside a container role (e.g.
 
 ### `parentRef` in `AriaCachedNode` (from the start)
 
-Rather than shipping a depth-based approximation and later migrating to exact parent tracking, add `parentRef: string?` to `AriaCachedNode` from Phase 2. This is cheap incremental work — `parseSnapshot()` in `accessibility-tree.ts` already has the parent stack available during its second pass, so populating `parentRef` requires a single field addition per node. The Python `accessibility.py` parser gets the same change.
+Rather than shipping a depth-based approximation and later migrating to exact parent tracking, add `parentRef: string?` to `AriaCachedNode` from Phase 2.
+
+**Implementation complexity.** The current `parseSnapshot()` only maintains a `dialogDepthStack` that tracks dialog boundaries. To populate `parentRef` for *every* element, a proper depth-based parent stack must be added to the second-pass loop, tracking the most recent `AriaCachedNode` at each depth level. On each new interactive element, the node at depth-1 becomes its parent. This is more than "a single field addition" — it requires a new stack data structure with push/pop logic as depth changes. The Python `accessibility.py` parser has the same dialog-only stack and needs the same work.
 
 With `parentRef` available, subtree queries work exactly:
 1. Find all elements matching the subtree role (e.g., all `dialog` roots)
@@ -325,6 +362,22 @@ This avoids shipping a depth-based approximation that is known to fail on pages 
 
 ## 7. Freshness and Staleness
 
+### BrowserSession staleness fields
+
+Two new fields on `BrowserSession` enable precise staleness detection:
+- `cachePopulatedAt: number` — timestamp of when the element cache was last populated (set on navigate/snapshot responses)
+- `lastInteractionAt: number` — timestamp of the last click/type/press/scroll that might have mutated the DOM
+
+Both are set by the router on each operation. Default to `Date.now()` on session creation.
+
+The staleness check in `correlateElements()` compares them:
+```
+cacheFresh = session.cachePopulatedAt > session.lastInteractionAt
+```
+If `lastInteractionAt > cachePopulatedAt`, the cache is stale.
+
+### Staleness scenarios
+
 | Scenario | Element cache freshness | Text extraction freshness | Correlation accuracy |
 |----------|----------------------|--------------------------|----------------------|
 | After `navigate` or `snapshot` | Fresh (populated from response) | N/A (only runs on demand) | Accurate |
@@ -334,7 +387,7 @@ This avoids shipping a depth-based approximation that is known to fail on pages 
 
 The cache notice on snapshots includes the fingerprint so the agent can detect staleness. For element queries after interactions, the agent should take a fresh snapshot first if it's unsure. This is documented in the tool description.
 
-**Correlation staleness indicator.** When the router detects that the element cache predates the last interaction, it sets `cacheFresh: false` when calling `correlateElements()`, which appends a staleness notice to the `browser-inspect` output. The agent can then decide to take a fresh snapshot before clicking.
+**Correlation staleness indicator.** When the router detects that `cachePopulatedAt <= lastInteractionAt`, it sets `cacheFresh: false` when calling `correlateElements()`, which appends a staleness notice to the `browser-inspect` output. The agent can then decide to take a fresh snapshot before clicking.
 
 For Python plugins specifically, the adapter's local element cache is populated from navigate/snapshot responses. After interactions, it may be stale. The `browser.getElementCache` RPC method exists for on-demand refresh, and the router calls it before element queries when the Python adapter is in use.
 
@@ -347,15 +400,14 @@ For Python plugins specifically, the adapter's local element cache is populated 
 | `core/shared/snapshot-cache.ts` | **New** — disk cache logic, formatCacheNotice, cleanup | A |
 | `core/shared/dom-extractor.ts` | **New** — TS wrapper, correlation logic, boilerplate blocklist, `ExtractResult` interface | B |
 | `core/shared/dom-extractor-script.js` | **New** — the extractor JS script, read at runtime via `fs.readFileSync()` | B |
-| `core/shared/accessibility-tree.ts` | Export `roleIcon()`; add `parentRef` to `AriaCachedNode` | B |
+| `core/shared/accessibility-tree.ts` | Export `roleIcon()`; add `parentRef` to `AriaCachedNode` (requires a full depth-based parent stack in the second pass of `parseSnapshot()`, not just a field add) | B |
 | `core/plugin-api.ts` | Add `getElementCache(taskId)` to `BrowserPlugin` interface; add `supportsJavaScriptEvaluate` capability | B |
-| `core/router.ts` | Disk cache wiring (cache before compact), browser-inspect dispatch, maxChars post-processing | A-C |
-| `core/shared/session-manager.ts` | Snapshot file cleanup on session removal | A |
-| `backends/chromium/index.ts` | Make `getElementCache()` public; set `supportsJavaScriptEvaluate: true` | B |
-| `backends/python-adapter.ts` | Local element cache + getElementCache + _fetchElementCache | B |
+| `core/router.ts` | Disk cache wiring (cache before compact for navigate, compactInteractionResult, and refBasedInteractionOrSnapshot); update `compactSnapshot()` hint text from `"use full=true"` to `"use maxChars=0"`; browser-inspect dispatch; staleness field management; maxChars post-processing | A-C |
+| `core/shared/session-manager.ts` | Snapshot file cleanup on session removal; add `cachePopulatedAt` and `lastInteractionAt` fields to `BrowserSession` | A-B |
+| `backends/chromium/index.ts` | Make `getElementCache()` public (note: auto-creates empty cache entry on miss — router must guard); set `supportsJavaScriptEvaluate: true` | B |
+| `backends/python-adapter.ts` | Local element cache + `getElementCache()` + `_fetchElementCache()`; set `supportsJavaScriptEvaluate: true` | B |
 | `backends/python-base/.../bridge.py` | `browser.getElementCache` RPC + elements in responses + `parentRef` field | B |
-| `backends/python-adapter.ts` | Set `supportsJavaScriptEvaluate: true` | B |
-| `index.ts` | Register browser-inspect + web-guide, add maxChars params, deprecate `full`, add error paths | B-D |
+| `index.ts` | Register `browser-inspect` + `web-guide`, add `maxChars` params, deprecate `full`, add error paths (missing session, empty cache, evaluate failure, stale cache notice) | B-D |
 | `__tests__/snapshot-cache.test.ts` | **New** — temp file creation, cleanup, error handling | A |
 | `__tests__/browser-inspect.test.ts` | **New** — element query, text extraction, correlation, subtree, duplicate role+name, staleness | B |
 | `AGENTS.md` | Document new tools, disk caching, maxChars, correlation limits | ongoing |
@@ -369,8 +421,8 @@ For Python plugins specifically, the adapter's local element cache is populated 
 The highest-priority change — eliminates information loss entirely with no new tools or parameters.
 
 1. Create `core/shared/snapshot-cache.ts`
-2. Wire into router's `navigate()`, `snapshot()` — cache the raw snapshot **before** calling `compactInteractionResult()` so the untruncated tree is available
-3. Wire into `compactInteractionResult()` — save `result.snapshot` to a local variable before compacting, then pass it to `cacheSnapshot()`
+2. Wire into router's `navigate()` — save `result.snapshot` to local variable BEFORE `compactSnapshot()`, then pass raw value to `cacheSnapshot()`. Also wire into `refBasedInteractionOrSnapshot()` — its auto-created-session snapshot must also be cached.
+3. Wire into `compactInteractionResult()` — save `result.snapshot` to a local variable before compacting in-place, then pass to `cacheSnapshot()`
 4. Wire cleanup into session manager
 5. Update `index.ts` — keep safety-net cap with explanatory comment
 6. Tests
@@ -395,8 +447,8 @@ Trivial once the disk cache infrastructure exists.
 
 1. Add `maxChars` param to `browser-navigate`, `browser-snapshot`, `browser-inspect`
 2. Router post-processing after `compactSnapshot()`
-3. Deprecate `full` parameter
-4. Update cache notice and hint text
+3. Update `compactSnapshot()` hint text from `"use full=true for complete tree"` to `"use maxChars=0 for complete tree"`
+4. Deprecate `full` parameter
 5. Tests
 
 ### Phase 4: `web-guide` (Feature D)
@@ -424,7 +476,7 @@ Independent — can be done in parallel with Phase 2 or 3.
 | `compactSnapshot()` signature | Stays pure — `(snapshot, elementCount) → string`. |
 | `buildLocator()` | Maps @e refs to Playwright locators. Unchanged. |
 | 13 core `BrowserPlugin` operations | Unchanged — `getElementCache()` is additive. |
-| `parseSnapshot()` core logic | Unchanged — `parentRef` is an additive field (populated from existing parent stack). Correlation and text extraction are external layers. |
+| `parseSnapshot()` core logic | Unchanged — `parentRef` is an additive field, but the implementation requires a new depth-based parent stack in the second pass (not just a field add). Correlation and text extraction are external layers. |
 
 ---
 
@@ -434,15 +486,20 @@ Independent — can be done in parallel with Phase 2 or 3.
 |------|----------|-----------|
 | Stale cached file after SPA mutation | Medium | Cache notice includes fingerprint + scoped validity warning. Agent should re-snapshot after mutations. |
 | @e ref correlation is fuzzy (~80-90%) | Medium | Better than zero correlation. Agent can always fall back to querying the element cache by name. Document the limitation. |
-| **@e ref correlation wrong after SPA mutations** | **Medium** | Staleness indicator appended to `browser-inspect` output when cache predates last interaction. Agent can take fresh snapshot before clicking. |
+| **@e ref correlation wrong after SPA mutations** | **Medium** | Staleness indicator appended to `browser-inspect` output when `cachePopulatedAt <= lastInteractionAt`. Agent can take fresh snapshot before clicking. |
 | **@e ref correlation on duplicate role+name** | **Medium** | All matching @e refs are annotated (e.g., `@e5, @e12, @e23`). Agent disambiguates by position or reads cached full snapshot. Documented in tool description. |
-| **`page.evaluate()` throws on strict CSP** | Low | Playwright bypasses CSP (DevTools-level injection). Document that `supportsJavaScriptEvaluate: true` is required. Future backends without eval support get clear error. |
+| **`page.evaluate()` throws on strict CSP** | Low | Playwright bypasses CSP (DevTools-level injection). Document that `supportsJavaScriptEvaluate: true` is required. Future backends without eval support get clear error. Some hardened pages with sandboxed iframes may still resist — the error message `Text extraction failed: ...` covers this case. |
 | **Element cache size on complex pages (O(n·m) correlation)** | Low | Bounded by `maxElements` (default 500). Acceptable in practice. |
 | **DOM extractor returns non-structured data** | Low | Router catches error, returns clear message. Falls back to element-only query. |
 | **Race between cache write and agent read** | Low | MAX_FILES_PER_TASK=2 with timestamped filenames mitigates. Rapid 3+ snapshots lose older files — acceptable trade-off. |
 | **`full=true` + `maxChars=N` conflict** | Low | `maxChars` takes precedence. Explicitly handled in execute function with early return. |
 | Disk I/O exceptions | Low | Try-catch in `cacheSnapshot()` — graceful degradation to inline only. |
+| **`compactSnapshot()` hint text points to deprecated `full=true`** | **Medium** | Must be updated to `"use maxChars=0"` when adding `maxChars` param. See Phase 3, step 3. |
 | Element cache stale after interactions (Python adapter) | Low | `_fetchElementCache()` async refresh called by router before element queries. |
+| **Staleness detection requires `cachePopulatedAt` / `lastInteractionAt` fields** | **Medium** | Without these fields on `BrowserSession`, the `correlateElements()` function cannot determine staleness. These must be added in Phase B. |
+| **`parentRef` parent stack implementation is underestimated** | **Medium** | The current `parseSnapshot()` only has a `dialogDepthStack`, not a general parent stack. Building a full depth-based parent stack for all elements is more work than "a single field addition". Budget accordingly in Phase B. |
+| **`browser-inspect` with no args — undefined behavior** | Low | Return a count-by-role summary instead of an error. The summary example in the dispatch logic covers this. |
+| **`ref` + `text=true` combined semantics** | Low | Scopes DOM walker to the element's subtree. If the ref is non-interactive with no subtree, return an error. Documented in `ref` parameter description. |
 | Temp file accumulation | Low | Per-task tracking, MAX_FILES_PER_TASK=2, cleanup on session removal. |
 | Schema cost of `browser-inspect` + `web-guide` | Low | ~250-300 tokens/turn combined. `/web off` toggle exists as escape valve. Far cheaper than loading full snapshots (15-25KB). |
 | DOM extractor returns minimal content on Cloudflare pages | Low | Consistent with bot detection signal. Agent sees little text, which correctly indicates the page is blocked. |
