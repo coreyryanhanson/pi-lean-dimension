@@ -44,9 +44,6 @@ const COMPACT_SNAPSHOT_VERY_LARGE = 8000;
 /** How much of the tree top to preserve for very large pages. */
 const COMPACT_SNAPSHOT_TOP_LIMIT = 2000;
 
-/** Max chars for a dialog block appended after truncation. */
-const DIALOG_BLOCK_MAX = 500;
-
 // ─── Exported types ──────────────────────────────────────────────────
 
 export interface NavigateOptions {
@@ -118,113 +115,11 @@ function getPluginForSession(
 }
 
 /**
- * Extract dialog/alertdialog blocks from a snapshot text.
- *
- * Walks the lines and collects each dialog header followed by its
- * indented children (elements at greater indent than the header).
- * Returns blocks that were *entirely* beyond the character `cutPoint`
- * and thus hidden from the top portion of a compacted snapshot.
- */
-interface DialogBlock {
-	/** Full block text (header + children). */
-	text: string;
-	/** Character position where this block starts in the full snapshot. */
-	startChar: number;
-}
-
-function extractDialogBlocks(snapshot: string, cutPoint: number): string[] {
-	const lines = snapshot.split("\n");
-	const blocks: DialogBlock[] = [];
-	let currentLines: string[] | null = null;
-	let headerIndent = -1;
-	let charPos = 0;
-	let startChar = 0;
-
-	for (const rawLine of lines) {
-		const trimmed = rawLine.trim();
-		const lineLen = rawLine.length + 1; // +1 for the newline
-		const isDialogHeader =
-			trimmed.includes("💬 dialog") ||
-			trimmed.includes("⚠ alertdialog") ||
-			// Also detect raw YAML format (beyond maxElements cap)
-			/^-\s+(alert)?dialog\b/.test(trimmed);
-
-		if (isDialogHeader) {
-			// Close any previous dialog
-			if (currentLines) {
-				const blockText = currentLines.join("\n");
-				if (startChar + blockText.length > cutPoint)
-					blocks.push({ text: blockText, startChar });
-			}
-			currentLines = [rawLine];
-			startChar = charPos;
-			headerIndent = rawLine.search(/\S/);
-			if (headerIndent === -1) headerIndent = 0;
-		} else if (currentLines) {
-			// Check if this line is at the same or lower indent than the header
-			const lineIndent = rawLine.search(/\S/);
-			const effectiveIndent = lineIndent === -1 ? 0 : lineIndent;
-
-			if (effectiveIndent > headerIndent || trimmed === "") {
-				// Child of the dialog or blank line within
-				currentLines.push(rawLine);
-			} else {
-				// Dialog ended — close and finalise
-				const blockText = currentLines.join("\n");
-				if (startChar + blockText.length > cutPoint)
-					blocks.push({ text: blockText, startChar });
-				currentLines = null;
-			}
-		}
-
-		charPos += lineLen;
-	}
-
-	// Close any dangling dialog at end of file
-	if (currentLines) {
-		const blockText = currentLines.join("\n");
-		if (startChar + blockText.length > cutPoint)
-			blocks.push({ text: blockText, startChar });
-	}
-
-	// Cap each block
-	return blocks.map((b) =>
-		b.text.length > DIALOG_BLOCK_MAX
-			? truncateDialogBlock(b.text, DIALOG_BLOCK_MAX)
-			: b.text,
-	);
-}
-
-/**
- * Truncate a dialog block to at most `maxChars` while keeping the
- * header line visible.
- */
-function truncateDialogBlock(block: string, maxChars: number): string {
-	if (block.length <= maxChars) return block;
-	const lines = block.split("\n");
-	const header = lines[0]!;
-	let result = header;
-	for (let i = 1; i < lines.length; i++) {
-		if (result.length + lines[i]!.length + 1 > maxChars - 60) {
-			const remainingCount = lines.length - i;
-			result += `\n… ${remainingCount} more dialog element${remainingCount === 1 ? "" : "s"} (use full=true for complete tree)`;
-			break;
-		}
-		result += "\n" + lines[i]!;
-	}
-	return result;
-}
-
-/**
  * Compact a snapshot to a manageable size for LLM consumption.
  *
  * - Under ~2800 chars: no truncation
  * - ~2800-8000 chars: cut at a natural breakpoint near 2500 chars
  * - Over ~8000 chars: preserve top ~2000 chars + summary
- *
- * Dialog-aware: if any `💬 dialog`/`⚠ alertdialog` blocks fall entirely
- * beyond the cut point, they are included after the top section so the
- * agent can see and interact with modal/dialog elements.
  */
 export function compactSnapshot(
 	snapshot: string,
@@ -240,35 +135,21 @@ export function compactSnapshot(
 			topCut = COMPACT_SNAPSHOT_TOP_LIMIT;
 
 		const topSection = snapshot.slice(0, topCut);
-		const dialogBlocks = extractDialogBlocks(snapshot, topCut);
-
-		let result = topSection;
-		for (const block of dialogBlocks) {
-			result += "\n" + block;
-		}
-
 		const bottomHint = remaining
-			? `\n… ${snapshot.length - result.length} more chars, ${remaining} elements total (use full=true for complete tree)`
-			: `\n… ${snapshot.length - result.length} more chars (use full=true for complete tree)`;
-		return result + bottomHint;
+			? `\n… ${snapshot.length - topSection.length} more chars, ${remaining} elements total (use full=true for complete tree)`
+			: `\n… ${snapshot.length - topSection.length} more chars (use full=true for complete tree)`;
+		return topSection + bottomHint;
 	}
 
 	let cut = snapshot.lastIndexOf("\n", COMPACT_SNAPSHOT_LIMIT);
 	if (cut < COMPACT_SNAPSHOT_LIMIT / 2) cut = COMPACT_SNAPSHOT_LIMIT;
 
 	const topSection = snapshot.slice(0, cut);
-	const dialogBlocks = extractDialogBlocks(snapshot, cut);
-
-	let result = topSection;
-	for (const block of dialogBlocks) {
-		result += "\n" + block;
-	}
-
 	const tail = remaining
-		? `\n… ${snapshot.length - result.length} more chars, ${remaining} elements total (use full=true for complete tree)`
-		: `\n… ${snapshot.length - result.length} more chars (use full=true for complete tree)`;
+		? `\n… ${snapshot.length - topSection.length} more chars, ${remaining} elements total (use full=true for complete tree)`
+		: `\n… ${snapshot.length - topSection.length} more chars (use full=true for complete tree)`;
 
-	return result + tail;
+	return topSection + tail;
 }
 
 /**
@@ -308,25 +189,12 @@ function compactInteractionResult(
 ): InteractionResult {
 	if (result.success && result.snapshot && result.elementCount !== undefined) {
 		const compacted = compactSnapshot(result.snapshot, result.elementCount);
+		const newFingerprint = snapshotFingerprint(result.snapshot);
+		result.snapshot = compacted + `\nfingerprint:${newFingerprint}`;
 
-		// Check for DOM changes since the last snapshot (SPA navigation, dynamic content).
-		// If the fingerprint changed, warn the agent that @e refs may be stale.
 		const session = sessionManager.getSession(taskId);
 		if (session) {
-			const newFingerprint = snapshotFingerprint(result.snapshot);
-			if (
-				session.currentSnapshotFingerprint !== undefined &&
-				session.currentSnapshotFingerprint !== newFingerprint
-			) {
-				result.snapshot =
-					compacted +
-					"\n\n⚠️ Page content structure changed since last interaction. Previously stored @e references may point to different elements. Use fresh @e refs from this tree for reliable interactions.";
-			} else {
-				result.snapshot = compacted;
-			}
 			session.currentSnapshotFingerprint = newFingerprint;
-		} else {
-			result.snapshot = compacted;
 		}
 	}
 	return result;
@@ -417,7 +285,7 @@ export async function navigate(
 		session.currentUrl = result.url;
 		session.currentTitle = result.title;
 
-		// Store snapshot fingerprint for DOM-change detection (SPA navigation etc.)
+		// Store snapshot fingerprint (passive — surfaced in output)
 		session.currentSnapshotFingerprint = snapshotFingerprint(result.snapshot);
 
 		// Store as last-nav for auto-recovery
@@ -450,10 +318,12 @@ export async function navigate(
 
 		// Don't compact snapshot when bot-detected — the agent needs
 		// the full content to assess whether the page is a false positive.
+		const fp = session.currentSnapshotFingerprint!;
 		const snapshotContent = result.snapshot
-			? botWarn
-				? result.snapshot
-				: compactSnapshot(result.snapshot, result.elementCount)
+			? (botWarn
+					? result.snapshot
+					: compactSnapshot(result.snapshot, result.elementCount)) +
+				`\nfingerprint:${fp}`
 			: "";
 
 		const successResult: NavigateResult & {
@@ -522,13 +392,16 @@ export async function snapshot(
 
 	const result = await plugin.snapshot(tid);
 	if (result.success) {
-		// Update snapshot fingerprint for DOM-change detection
+		// Update snapshot fingerprint (passive — surfaced in output)
 		const session = sessionManager.getSession(tid);
+		const fp = snapshotFingerprint(result.snapshot);
 		if (session) {
-			session.currentSnapshotFingerprint = snapshotFingerprint(result.snapshot);
+			session.currentSnapshotFingerprint = fp;
 		}
 		if (!full) {
-			result.snapshot = compactSnapshot(result.snapshot, result.elementCount);
+			result.snapshot =
+				compactSnapshot(result.snapshot, result.elementCount) +
+				`\nfingerprint:${fp}`;
 		}
 	}
 	return result;
