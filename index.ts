@@ -13,6 +13,10 @@ import { ChromiumPlugin } from "./backends/chromium/index.js";
 import { PythonPluginAdapter } from "./backends/python-adapter.js";
 import type { PythonBridgeConfig } from "./backends/python-adapter.js";
 import { sessionManager } from "./core/shared/session-manager.js";
+import {
+	removeSnapshotFiles,
+	removeAllSnapshotFiles,
+} from "./core/shared/snapshot-cache.js";
 import initBrowserToggle, { getToggleState } from "./browser-toggle.js";
 
 // ============================================================
@@ -99,6 +103,7 @@ const browserNavigateTool = defineTool({
 			"abort",
 			() => {
 				sessionManager.removeSession(tid);
+				removeSnapshotFiles(tid);
 				updateFooterStatus(ctx);
 			},
 			{ once: true },
@@ -131,14 +136,19 @@ const browserNavigateTool = defineTool({
 			};
 		}
 
-		// Safety net: cap content to prevent unbounded context flooding
+		// Safety net: prevent extreme context flooding (fires below the router's
+		// very-large-page strategy, which kicks in at 8000 chars; this is a
+		// secondary cap at 4000 chars for rare edge cases). The snapshot cache
+		// preserves the full original — use `read` on the cache file path to
+		// access all elements.
 		let contentText = result.snapshot;
 		if (result.elementCount !== undefined && contentText.length > 8000) {
 			let cut = contentText.lastIndexOf("\n", 4000);
 			if (cut < 2000) cut = 4000;
 			contentText =
 				contentText.slice(0, cut) +
-				`\n… ${contentText.length - cut} more chars (auto-truncated)`;
+				`\n… ${contentText.length - cut} more chars (auto-truncated). ` +
+				`Read cached snapshot for full content.`;
 		}
 
 		const lines = [
@@ -1261,6 +1271,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		await sessionManager.removeAll();
+		removeAllSnapshotFiles();
 		cleanupFetchTempFiles();
 		try {
 			ctx?.ui?.setStatus?.("browser", "");

@@ -20,6 +20,12 @@ import { sessionManager } from "./shared/session-manager.js";
 import type { BrowserSession } from "./shared/session-manager.js";
 import { validateUrl } from "./shared/url-safety.js";
 import { snapshotFingerprint } from "./shared/accessibility-tree.js";
+import {
+	cacheSnapshot,
+	formatCacheNotice,
+	removeSnapshotFiles,
+	type CacheResult,
+} from "./shared/snapshot-cache.js";
 import type {
 	NavigateResult,
 	SnapshotResult,
@@ -101,6 +107,7 @@ async function requireInteractiveSession(taskId: string): Promise<{
 	// Failed — clean up
 	await plugin.cleanup(taskId).catch(() => {});
 	sessionManager.removeSession(taskId);
+	removeSnapshotFiles(taskId);
 	return null;
 }
 
@@ -167,11 +174,24 @@ async function refBasedInteractionOrSnapshot(
 		const snap = await plugin.snapshot(taskId);
 		if (snap.success) {
 			const session = sessionManager.getSession(taskId);
+
+			// Cache the auto-snapshot before compaction
+			const truncated = snap.snapshot.length > COMPACT_SNAPSHOT_NO_TRUNCATE;
+			const fingerprint = snapshotFingerprint(snap.snapshot);
+			const cacheResult = cacheSnapshot(
+				taskId,
+				snap.snapshot,
+				fingerprint,
+				false /* botDetected — auto-recovery runs post-nav */,
+			);
+
 			return {
 				success: true,
 				snapshot:
 					"Page loaded interactively. Previous element references are stale. Use the following accessibility tree to interact:\n\n" +
-					compactSnapshot(snap.snapshot, snap.elementCount),
+					compactSnapshot(snap.snapshot, snap.elementCount) +
+					formatCacheNotice(cacheResult, snap.snapshot.length, truncated) +
+					`\nfingerprint:${fingerprint}`,
 				elementCount: snap.elementCount,
 				...(session?.currentUrl ? { newUrl: session.currentUrl } : {}),
 				...(session?.currentTitle ? { newTitle: session.currentTitle } : {}),
@@ -188,13 +208,31 @@ function compactInteractionResult(
 	result: InteractionResult,
 ): InteractionResult {
 	if (result.success && result.snapshot && result.elementCount !== undefined) {
-		const compacted = compactSnapshot(result.snapshot, result.elementCount);
-		const newFingerprint = snapshotFingerprint(result.snapshot);
-		result.snapshot = compacted + `\nfingerprint:${newFingerprint}`;
+		const rawSnapshot = result.snapshot;
+		const newFingerprint = snapshotFingerprint(rawSnapshot);
+
+		// Cache (before compacting) — no bot detection here because interaction
+		// tools only run after navigation succeeded.
+		const truncated = rawSnapshot.length > COMPACT_SNAPSHOT_NO_TRUNCATE;
+		const cacheResult = cacheSnapshot(
+			taskId,
+			rawSnapshot,
+			newFingerprint,
+			false /* botDetected — interaction tools run post-nav */,
+		);
+
+		const compacted = compactSnapshot(rawSnapshot, result.elementCount);
+		result.snapshot =
+			compacted +
+			formatCacheNotice(cacheResult, rawSnapshot.length, truncated) +
+			`\nfingerprint:${newFingerprint}`;
 
 		const session = sessionManager.getSession(taskId);
 		if (session) {
 			session.currentSnapshotFingerprint = newFingerprint;
+			if (cacheResult) {
+				session.cachePopulatedAt = Date.now();
+			}
 		}
 	}
 	return result;
@@ -299,6 +337,7 @@ export async function navigate(
 		if (botWarn && result.elementCount < 5) {
 			await plugin.cleanup(taskId).catch(() => {});
 			sessionManager.removeSession(taskId);
+			removeSnapshotFiles(taskId);
 			return {
 				success: false,
 				url: result.url,
@@ -319,12 +358,27 @@ export async function navigate(
 		// Don't compact snapshot when bot-detected — the agent needs
 		// the full content to assess whether the page is a false positive.
 		const fp = session.currentSnapshotFingerprint!;
-		const snapshotContent = result.snapshot
+
+		// --- Cache the raw snapshot before compaction ---
+		const rawSnapshot = result.snapshot;
+		const isTruncated = rawSnapshot.length > COMPACT_SNAPSHOT_NO_TRUNCATE;
+		const cacheResult: CacheResult | null = rawSnapshot
+			? cacheSnapshot(taskId, rawSnapshot, fp, botWarn)
+			: null;
+		// ---
+
+		const snapshotContent = rawSnapshot
 			? (botWarn
-					? result.snapshot
-					: compactSnapshot(result.snapshot, result.elementCount)) +
+					? rawSnapshot
+					: compactSnapshot(rawSnapshot, result.elementCount)) +
+				formatCacheNotice(cacheResult, rawSnapshot.length, isTruncated) +
 				`\nfingerprint:${fp}`
 			: "";
+
+		// Track cache population time for staleness detection (Phase 2)
+		if (cacheResult) {
+			session.cachePopulatedAt = Date.now();
+		}
 
 		const successResult: NavigateResult & {
 			backendUsed: string;
@@ -344,6 +398,7 @@ export async function navigate(
 	// Navigation failed — clean up
 	await plugin.cleanup(taskId).catch(() => {});
 	sessionManager.removeSession(taskId);
+	removeSnapshotFiles(taskId);
 
 	const failResult: NavigateResult & {
 		backendUsed: string;

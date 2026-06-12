@@ -9,7 +9,7 @@ A pi extension that registers **11 tools + 2 commands** for web browsing. Archit
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 422 tests across 13 files (all pass)
+npm test              # vitest run — 450 tests across 14 files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npm run test:watch    # vitest in watch mode
 npx tsx scripts/dialog-gate.ts        # side-by-side backend comparison
@@ -34,7 +34,7 @@ pi-browser/
 │   ├── plugin-config.ts      # Reads browser.plugins from settings.json
 │   ├── router.ts             # Dispatch, session lifecycle, truncation
 │   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
-│   └── shared/               # session-manager, url-safety, bot-detection, cdp-supervisor, accessibility-tree
+│   └── shared/               # session-manager, url-safety, bot-detection, cdp-supervisor, accessibility-tree, snapshot-cache
 ├── scripts/                  # dialog-gate.ts, experiment reports
 └── __tests__/                # 13 test files + helpers/
 ```
@@ -93,7 +93,7 @@ Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-
 
 ## Testing
 
-### Test files (13 files, 422 tests passing)
+### Test files (14 files, 450 tests passing)
 
 | File | Requires Chromium? |
 |------|--------------------|
@@ -106,6 +106,7 @@ Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-
 | accessibility-tree.test.ts | No |
 | url-safety.test.ts | No |
 | plugin-loading.test.ts | No |
+| snapshot-cache.test.ts | No |
 | dialog-compaction.test.ts (archived) | No |
 | occlusion-live.test.ts | Yes (auto-skip) |
 | reddit-dialog.test.ts | Yes (auto-skip) |
@@ -134,6 +135,13 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
 - **All URLs go through `url-safety.ts`** — blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.169.254), dangerous schemes (file:, ftp:, data:, javascript:, vbscript:), and heuristically detects secrets in URLs
 - **Screenshot**: JPEG 80% quality, viewport constrained to 1024px wide, returns data URI
 - **Compact truncation everywhere**: snapshots ~2500 chars inline (with `\nfingerprint:XXXXX` suffix), fetch content ~4000 chars with temp file spill to `/tmp/pi-browser-fetch-*`
+- **Snapshot Disk Cache** (`core/shared/snapshot-cache.ts`): when compactSnapshot() truncates a page's accessibility tree, the full tree is written to `/tmp/pi-browser/snapshot-*.txt`. The agent can `read` this file with offset/limit to find elements past the truncation boundary. `@e` refs remain valid because the element cache is independent of what text the agent reads.
+  - Only caches when truncation actually occurred (snapshot > 2800 chars)
+  - Bot-detected snapshots are never cached
+  - Keeps last 2 files per task
+  - Cache notice is appended to truncated output: `📄 Full snapshot cached at {path}`
+  - All I/O is try-catched — graceful degradation to inline-only on failure
+  - Cleaned up on session removal and shutdown
 - **`browser_finetuning.md`** — occlusion/dialog/timing hardening strategy. Read before touching ChromiumPlugin click or snapshot logic
 - **`plan_v2.md`** — full plugin-refactor architecture doc. Read before adding a new plugin type or changing the registry
 - **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click, occlusion events). Only checks in ChromiumPlugin
