@@ -354,15 +354,15 @@ class ChromiumPyBridge(BrowserBridge):
 
     def _take_snapshot_and_cache(
         self, task_id: str, page: Any
-    ) -> tuple[str, int]:
+    ) -> tuple[str, int, dict[str, dict[str, Any]]]:
         """Take snapshot, cache elements, return formatted text + count."""
         try:
             snap_text: str = page.aria_snapshot()
         except Exception:
-            return "(snapshot not available)", 0
+            return "(snapshot not available)", 0, {}
 
         if not snap_text:
-            return "(no accessibility tree)", 0
+            return "(no accessibility tree)", 0, {}
 
         parsed = parse_snapshot(snap_text)
         self.set_element_cache(task_id, parsed)
@@ -381,7 +381,17 @@ class ChromiumPyBridge(BrowserBridge):
                     "\n\n--- Auto-dismissed dialogs ---\n" + dialog_text
                 )
 
-        return result_text, parsed.count
+        return result_text, parsed.count, {
+            ref: {
+                "role": node.role,
+                "name": node.name,
+                "props": list(node.props),
+                "depth": node.depth,
+                "raw": node.raw,
+                "occurrenceIndex": node.occurrence_index,
+            }
+            for ref, node in parsed.elements.items()
+        }
 
     def _locate_element(
         self, page: Any, task_id: str, ref: str
@@ -500,10 +510,11 @@ class ChromiumPyBridge(BrowserBridge):
 
         # ── Snapshot ────────────────────────────────────────────
         try:
-            snap_text, element_count = self._take_snapshot_and_cache(task_id, page)
+            snap_text, element_count, elements = self._take_snapshot_and_cache(task_id, page)
         except Exception:
             snap_text = "(snapshot not available)"
             element_count = 0
+            elements = {}
 
         try:
             title: str = page.title()
@@ -520,6 +531,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "title": title,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
                 "botDetected": bot_detected,
             }
         else:
@@ -533,6 +545,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "title": title,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
                 "botDetected": bot_detected,
                 "error": last_error,
             }
@@ -556,7 +569,7 @@ class ChromiumPyBridge(BrowserBridge):
             }
 
         try:
-            snap_text, element_count = self._take_snapshot_and_cache(
+            snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
             session = self.get_session(task_id)
@@ -570,6 +583,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
             }
         except Exception as exc:
             _log("snapshot", taskId=task_id, success=False, elementCount=0,
@@ -582,7 +596,9 @@ class ChromiumPyBridge(BrowserBridge):
                 "error": str(exc),
             }
 
-    # ── Occlusion detection ───────────────────────────────────────
+            self.set_element_cache(task_id, parsed)
+
+        # ── Occlusion detection ───────────────────────────────────────
 
     def _check_occlusion(
         self, locator: Any, ref: str
@@ -720,7 +736,7 @@ class ChromiumPyBridge(BrowserBridge):
             except Exception:
                 pass
 
-            snap_text, element_count = self._take_snapshot_and_cache(
+            snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
             _t_phases["snapshot"] = round((time.time() - _t_start) * 1000)
@@ -734,6 +750,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
             }
             if new_url is not None:
                 result["newUrl"] = new_url
@@ -803,7 +820,7 @@ class ChromiumPyBridge(BrowserBridge):
                 locator.click(timeout=5_000)  # Focus first
             locator.fill(text)
 
-            snap_text, element_count = self._take_snapshot_and_cache(
+            snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
 
@@ -816,6 +833,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
             }
 
         except Exception as exc:
@@ -850,7 +868,7 @@ class ChromiumPyBridge(BrowserBridge):
             )
             time.sleep(0.2)
 
-            snap_text, element_count = self._take_snapshot_and_cache(
+            snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
 
@@ -862,6 +880,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
             }
 
         except Exception as exc:
@@ -899,7 +918,7 @@ class ChromiumPyBridge(BrowserBridge):
             except Exception:
                 pass
 
-            snap_text, element_count = self._take_snapshot_and_cache(
+            snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
 
@@ -911,6 +930,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
             }
             if new_url is not None:
                 result["newUrl"] = new_url
@@ -945,7 +965,7 @@ class ChromiumPyBridge(BrowserBridge):
             page.keyboard.press(key)
             time.sleep(0.2)
 
-            snap_text, element_count = self._take_snapshot_and_cache(
+            snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
 
@@ -957,6 +977,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
             }
 
         except Exception as exc:

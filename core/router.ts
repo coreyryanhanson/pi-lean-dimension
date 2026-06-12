@@ -26,6 +26,14 @@ import {
 	removeSnapshotFiles,
 	type CacheResult,
 } from "./shared/snapshot-cache.js";
+import {
+	runExtractor,
+	correlateElements,
+	queryElementCache,
+	formatElementList,
+	formatRoleCountSummary,
+	type ExtractResult,
+} from "./shared/dom-extractor.js";
 import type {
 	NavigateResult,
 	SnapshotResult,
@@ -49,6 +57,11 @@ const COMPACT_SNAPSHOT_VERY_LARGE = 8000;
 
 /** How much of the tree top to preserve for very large pages. */
 const COMPACT_SNAPSHOT_TOP_LIMIT = 2000;
+
+// ─── browser-inspect truncation constants ────────────────────────────
+
+/** Default truncation limit for browser-inspect text output when maxChars is not provided. */
+const INSPECT_DEFAULT_LIMIT = 2500;
 
 // ─── Exported types ──────────────────────────────────────────────────
 
@@ -170,6 +183,14 @@ async function refBasedInteractionOrSnapshot(
 	plugin: import("./plugin-api.js").BrowserPlugin,
 	action: () => Promise<InteractionResult>,
 ): Promise<InteractionResult> {
+	if (!wasAutoCreated) {
+		// Mark interaction time for staleness detection (Phase 2)
+		const sess = sessionManager.getSession(taskId);
+		if (sess) {
+			sess.lastInteractionAt = Date.now();
+		}
+	}
+
 	if (wasAutoCreated) {
 		const snap = await plugin.snapshot(taskId);
 		if (snap.success) {
@@ -653,6 +674,243 @@ export async function clearConsole(
 			error: `Clear console failed: ${err instanceof Error ? err.message : String(err)}`,
 		};
 	}
+}
+
+// ─── browser-inspect public types ──────────────────────────────────
+
+export interface InspectParams {
+	role?: string;
+	name?: string;
+	ref?: string;
+	subtree?: string;
+	text?: boolean;
+	maxChars?: number;
+	/** Filter extracted content to elements containing this case-insensitive substring. */
+	query?: string;
+}
+
+export interface InspectResult {
+	success: boolean;
+	/** Formatted text or element list */
+	content: string;
+	/** Whether staleness notice was appended */
+	staleCacheWarning?: boolean;
+	/** Error message if unsuccessful */
+	error?: string;
+}
+
+// ─── browser-inspect dispatch ───────────────────────────────────────
+
+/**
+ * browser-inspect: unified element query + text extraction.
+ *
+ * Dispatch logic:
+ * - text=true: run DOM extractor, correlate with element cache
+ * - role/name/ref/subtree: query element cache directly
+ * - both (text + ref/role): text extraction with filters
+ * - neither: count-by-role summary
+ */
+export async function browserInspect(
+	taskId: string | undefined,
+	params: InspectParams,
+): Promise<InspectResult> {
+	const tid = taskId ?? "default";
+
+	// 1. Require an active session
+	const sr = await requireInteractiveSession(tid);
+	if (!sr) {
+		return {
+			success: false,
+			content: "",
+			error:
+				"No active session — use browser-navigate to visit a page first, then retry",
+		};
+	}
+
+	const plugin = getPluginForSession(sr.session);
+	if (!plugin) {
+		return {
+			success: false,
+			content: "",
+			error: `Plugin '${sr.session.pluginName}' is not available`,
+		};
+	}
+
+	// 2. Get element cache from the plugin
+	const cache = plugin.getElementCache(tid);
+	const cacheExists = cache !== null && cache.size > 0;
+
+	// 3. Staleness check
+	const session = sessionManager.getSession(tid);
+	const cacheFresh = stalenessCheck(session);
+
+	// 4. Dispatch based on params
+	if (params.text) {
+		// --- Text extraction path ---
+		if (!plugin.capabilities.supportsJavaScriptEvaluate) {
+			return {
+				success: false,
+				content: "",
+				error: "Text extraction is not supported by this backend.",
+			};
+		}
+
+		if (!cacheExists) {
+			return {
+				success: false,
+				content: "",
+				error:
+					"No elements cached yet — use browser-snapshot to populate element cache.",
+			};
+		}
+
+		// Run the DOM extractor
+		const extracted = await runExtractor(tid, plugin);
+		if (!extracted) {
+			return {
+				success: false,
+				content: "",
+				error:
+					"Text extraction returned no content. The page may be empty, blocked, or strict CSP prevents DOM access. Use browser-snapshot to inspect visually.",
+			};
+		}
+
+		// Keyword filtering — case-insensitive substring match on extracted text
+		if (params.query) {
+			applyQueryFilter(extracted, params.query);
+		}
+
+		// Correlate with element cache
+		const correlated = correlateElements(extracted, cache!, cacheFresh);
+
+		let content = correlated.text;
+
+		// maxChars truncation — default ~2500 when not specified
+		const effectiveMaxChars =
+			params.maxChars !== undefined ? params.maxChars : INSPECT_DEFAULT_LIMIT;
+		if (effectiveMaxChars > 0 && content.length > effectiveMaxChars) {
+			const remaining = content.length - effectiveMaxChars;
+			content =
+				content.slice(0, effectiveMaxChars) +
+				`\n… ${remaining} more chars (use maxChars=0 for full content)`;
+		}
+
+		const result: InspectResult = {
+			success: true,
+			content,
+		};
+		if (correlated.staleCache) {
+			result.staleCacheWarning = true;
+		}
+		return result;
+	}
+
+	if (params.role || params.name || params.ref || params.subtree) {
+		// --- Element query path ---
+		if (!cacheExists) {
+			return {
+				success: false,
+				content: "",
+				error:
+					"No elements cached yet — use browser-snapshot to populate element cache.",
+			};
+		}
+
+		const filtered = queryElementCache(cache!, {
+			...(params.role !== undefined ? { role: params.role } : {}),
+			...(params.name !== undefined ? { name: params.name } : {}),
+			...(params.ref !== undefined ? { ref: params.ref } : {}),
+			...(params.subtree !== undefined ? { subtree: params.subtree } : {}),
+		});
+
+		const content = formatElementList(filtered, {
+			...(params.ref !== undefined ? { ref: params.ref } : {}),
+		});
+
+		return {
+			success: true,
+			content,
+			staleCacheWarning: !cacheFresh && filtered.length > 0,
+		};
+	}
+
+	// --- No params — role-count summary ---
+	if (!cacheExists) {
+		return {
+			success: true,
+			content:
+				"No elements cached yet — use browser-snapshot to populate element cache.",
+		};
+	}
+
+	const summary = formatRoleCountSummary(cache!);
+	return {
+		success: true,
+		content: summary,
+		staleCacheWarning: !cacheFresh,
+	};
+}
+
+/**
+ * Filter an ExtractResult in-place to only include elements whose text
+ * contains the given query string (case-insensitive). Also checks link
+ * hrefs and image sources for the query.
+ *
+ * When no elements match across any category, appends a notice to the
+ * paragraphs array so the agent gets a clear signal.
+ */
+function applyQueryFilter(extracted: ExtractResult, query: string): void {
+	const q = query.toLowerCase();
+
+	const beforeCount =
+		extracted.headings.length +
+		extracted.paragraphs.length +
+		extracted.links.length +
+		extracted.images.length +
+		extracted.interactive.length;
+
+	extracted.headings = extracted.headings.filter((h) =>
+		h.text.toLowerCase().includes(q),
+	);
+	extracted.paragraphs = extracted.paragraphs.filter((p) =>
+		p.text.toLowerCase().includes(q),
+	);
+	extracted.links = extracted.links.filter(
+		(l) => l.text.toLowerCase().includes(q) || l.href.toLowerCase().includes(q),
+	);
+	extracted.images = extracted.images.filter(
+		(img) =>
+			img.alt.toLowerCase().includes(q) || img.src.toLowerCase().includes(q),
+	);
+	extracted.interactive = extracted.interactive.filter((el) =>
+		el.text.toLowerCase().includes(q),
+	);
+
+	const afterCount =
+		extracted.headings.length +
+		extracted.paragraphs.length +
+		extracted.links.length +
+		extracted.images.length +
+		extracted.interactive.length;
+
+	// Signal empty results so the agent doesn't get a silent empty page
+	if (beforeCount > 0 && afterCount === 0) {
+		extracted.paragraphs.push({
+			text: `⚠ No content matched "${query}". Try a different keyword or remove the query parameter.`,
+		});
+	}
+}
+
+/**
+ * Check whether the element cache is still fresh compared to the
+ * last interaction time. Returns true if fresh or if timestamps
+ * are unavailable (conservative: assume fresh).
+ */
+function stalenessCheck(session: BrowserSession | undefined): boolean {
+	if (!session) return true; // No session — assume fresh
+	if (session.cachePopulatedAt === undefined) return true; // No cache time — assume fresh
+	if (session.lastInteractionAt === undefined) return true; // No interactions — assume fresh
+	return session.cachePopulatedAt >= session.lastInteractionAt;
 }
 
 // ─── Error message constants ─────────────────────────────────────────

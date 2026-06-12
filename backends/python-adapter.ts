@@ -39,6 +39,7 @@ import type {
 	ConsoleMessagesResult,
 	EvaluateResult,
 } from "../core/plugin-api.js";
+import type { AriaCachedNode } from "../core/shared/accessibility-tree.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────
 
@@ -219,6 +220,12 @@ export class PythonPluginAdapter implements BrowserPlugin {
 
 	/** Track whether we're inside a forced restart (to avoid infinite loops). */
 	private _isRestarting = false;
+
+	/**
+	 * Local element caches per task, populated from bridge responses.
+	 * Map: taskId → Map<ref, AriaCachedNode>
+	 */
+	private _elementCaches = new Map<string, Map<string, AriaCachedNode>>();
 
 	/**
 	 * @param name  Unique plugin identifier (e.g. "chromium-py").
@@ -484,6 +491,9 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	 */
 	private _killProcess(): void {
 		this._stopHeartbeat();
+
+		// Clear element caches — they're tied to the old process's DOM state
+		this._elementCaches.clear();
 
 		const proc = this._process;
 		if (!proc) return;
@@ -841,6 +851,9 @@ export class PythonPluginAdapter implements BrowserPlugin {
 					currentTitle: (result.title as string) ?? "",
 					pluginName: this.name,
 				});
+
+				// Populate local element cache from bridge response
+				this._populateElementCache(taskId, result.elements);
 			}
 
 			const navResult: NavigateResult = {
@@ -869,6 +882,9 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		try {
 			const raw = await this._rpcCall("browser.snapshot", { taskId });
 			const result = raw as Record<string, unknown>;
+
+			// Populate local element cache from bridge response
+			this._populateElementCache(taskId, result.elements);
 
 			const snapResult: SnapshotResult = {
 				success: !!result.success,
@@ -1079,6 +1095,9 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	// ═════════════════════════════════════════════════════════════════
 
 	async cleanup(taskId: string): Promise<void> {
+		// Clean up local element cache
+		this._elementCaches.delete(taskId);
+
 		try {
 			await this._rpcCall("browser.cleanup", { taskId });
 		} catch (err: unknown) {
@@ -1092,6 +1111,57 @@ export class PythonPluginAdapter implements BrowserPlugin {
 
 	// ═════════════════════════════════════════════════════════════════
 	//  Internal helpers
+	// ═════════════════════════════════════════════════════════════════
+
+	// ═════════════════════════════════════════════════════════════════
+	//  BrowserPlugin: Element cache access
+	// ═════════════════════════════════════════════════════════════════
+
+	/**
+	 * Return the local element cache for the given task.
+	 * Returns null if no cache has been populated yet (navigate/snapshot
+	 * has not been called, or the bridge doesn't support element caching).
+	 */
+	getElementCache(taskId: string): Map<string, AriaCachedNode> | null {
+		return this._elementCaches.get(taskId) ?? null;
+	}
+
+	/**
+	 * Populate the local element cache from a bridge response's `elements` dict.
+	 * The dict format is { "e1": { role, name, props, depth, raw, occurrenceIndex, parentRef }, ... }
+	 * If `elements` is not present (older bridge), the cache stays empty.
+	 */
+	private _populateElementCache(taskId: string, elements: unknown): void {
+		if (!elements || typeof elements !== "object") return;
+
+		const cache = new Map<string, AriaCachedNode>();
+
+		for (const [ref, raw] of Object.entries(
+			elements as Record<string, unknown>,
+		)) {
+			const node = raw as Record<string, unknown>;
+			if (!node.role) continue;
+
+			const cachedNode: AriaCachedNode = {
+				ref,
+				role: node.role as string,
+				name: (node.name as string) ?? "",
+				props: (node.props as string[]) ?? [],
+				depth: (node.depth as number) ?? 0,
+				raw: (node.raw as string) ?? "",
+				occurrenceIndex: (node.occurrenceIndex as number) ?? 0,
+				...(node.parentRef ? { parentRef: node.parentRef as string } : {}),
+			};
+			cache.set(ref, cachedNode);
+		}
+
+		if (cache.size > 0) {
+			this._elementCaches.set(taskId, cache);
+		} else {
+			this._elementCaches.delete(taskId);
+		}
+	}
+
 	// ═════════════════════════════════════════════════════════════════
 
 	/**

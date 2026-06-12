@@ -10,6 +10,8 @@
  * warning injection, etc.) — see §3 of plan_v2.md.
  */
 
+import type { AriaCachedNode } from "./shared/accessibility-tree.js";
+
 // ─── Capabilities ────────────────────────────────────────────────
 
 /**
@@ -189,6 +191,15 @@ export interface BrowserPlugin {
 	clearConsole(taskId: string): Promise<void>;
 
 	evaluate(taskId: string, expression: string): Promise<EvaluateResult>;
+
+	// ── Element cache access ─────────────────────────────────
+
+	/**
+	 * Return the plugin's element cache for the given task.
+	 * Returns null if the session/task has no cache (navigate or snapshot
+	 * has not been called yet).
+	 */
+	getElementCache(taskId: string): Map<string, AriaCachedNode> | null;
 
 	// ── Per-task cleanup ──────────────────────────────────────
 

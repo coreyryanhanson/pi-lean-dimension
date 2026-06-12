@@ -21,8 +21,10 @@ export interface BrowserSession {
 	currentTitle?: string;
 	/** Stable hash of the last snapshot's accessibility tree (for DOM-change detection) */
 	currentSnapshotFingerprint?: string;
-	/** Timestamp when element cache was last populated (for staleness detection in Phase 2) */
+	/** Timestamp when element cache was last populated (for staleness detection) */
 	cachePopulatedAt?: number;
+	/** Timestamp of the last interaction that may have mutated the DOM */
+	lastInteractionAt?: number;
 	/** Timestamp of last activity */
 	lastActive: number;
 	/** Whether the session has crashed and needs recovery */
@@ -80,6 +82,7 @@ class SessionManager {
 				| "crashed"
 				| "currentSnapshotFingerprint"
 				| "cachePopulatedAt"
+				| "lastInteractionAt"
 			>
 		>,
 	): void {
@@ -96,6 +99,8 @@ class SessionManager {
 				session.currentSnapshotFingerprint = updates.currentSnapshotFingerprint;
 			if (updates.cachePopulatedAt !== undefined)
 				session.cachePopulatedAt = updates.cachePopulatedAt;
+			if (updates.lastInteractionAt !== undefined)
+				session.lastInteractionAt = updates.lastInteractionAt;
 			session.lastActive = Date.now();
 		}
 	}

@@ -207,7 +207,19 @@ export class ChromiumPlugin implements BrowserPlugin {
 		return this._contexts.get(taskId)?.page;
 	}
 
-	private getElementCache(taskId: string): Map<string, AriaCachedNode> {
+	/**
+	 * Public interface — returns null when no cache exists (no session yet).
+	 * Does NOT auto-create an empty cache.
+	 */
+	getElementCache(taskId: string): Map<string, AriaCachedNode> | null {
+		return this._elementCache.get(taskId) ?? null;
+	}
+
+	/**
+	 * Private internal cache accessor — auto-creates an empty cache on miss
+	 * so internal callers (takeSnapshot, etc.) never need null checks.
+	 */
+	private getOrCreateCache(taskId: string): Map<string, AriaCachedNode> {
 		let cache = this._elementCache.get(taskId);
 		if (!cache) {
 			cache = new Map();
@@ -226,9 +238,9 @@ export class ChromiumPlugin implements BrowserPlugin {
 			const parsed = parseSnapshot(snap);
 
 			// Update cache
-			this.getElementCache(taskId).clear();
+			this.getOrCreateCache(taskId).clear();
 			for (const [ref, node] of parsed.elements) {
-				this.getElementCache(taskId).set(ref, node);
+				this.getOrCreateCache(taskId).set(ref, node);
 			}
 
 			// Check for auto-dismissed dialogs
@@ -412,9 +424,9 @@ export class ChromiumPlugin implements BrowserPlugin {
 			const parsed = parseSnapshot(snap);
 
 			// Cache elements for this session
-			this.getElementCache(taskId).clear();
+			this.getOrCreateCache(taskId).clear();
 			for (const [ref, node] of parsed.elements) {
-				this.getElementCache(taskId).set(ref, node);
+				this.getOrCreateCache(taskId).set(ref, node);
 			}
 
 			const title = await page.title();
@@ -520,9 +532,9 @@ export class ChromiumPlugin implements BrowserPlugin {
 			const parsed = parseSnapshot(snap);
 
 			// Update cache
-			this.getElementCache(taskId).clear();
+			this.getOrCreateCache(taskId).clear();
 			for (const [ref, node] of parsed.elements) {
-				this.getElementCache(taskId).set(ref, node);
+				this.getOrCreateCache(taskId).set(ref, node);
 			}
 
 			// Count auto-dismissed dialog entries for the log
@@ -583,7 +595,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 
 		const key = ref.startsWith("@") ? ref.slice(1) : ref;
-		const node = this.getElementCache(taskId).get(key);
+		const node = this.getOrCreateCache(taskId).get(key);
 
 		if (!node) {
 			this._log("click", {
@@ -732,7 +744,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 
 		const key = ref.startsWith("@") ? ref.slice(1) : ref;
-		const node = this.getElementCache(taskId).get(key);
+		const node = this.getOrCreateCache(taskId).get(key);
 
 		if (!node) {
 			this._log("type", {

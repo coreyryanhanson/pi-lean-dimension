@@ -4,12 +4,12 @@
 
 ## What This Is
 
-A pi extension that registers **11 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
+A pi extension that registers **12 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
 
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 450 tests across 14 files (all pass)
+npm test              # vitest run — 493 tests across 15 files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npm run test:watch    # vitest in watch mode
 npx tsx scripts/dialog-gate.ts        # side-by-side backend comparison
@@ -32,9 +32,9 @@ pi-browser/
 │   ├── plugin-api.ts         # BrowserPlugin interface, 13 result types
 │   ├── plugin-registry.ts    # Registration, validation, strategy resolution
 │   ├── plugin-config.ts      # Reads browser.plugins from settings.json
-│   ├── router.ts             # Dispatch, session lifecycle, truncation
+│   ├── router.ts             # Dispatch, session lifecycle, truncation, browser-inspect
 │   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
-│   └── shared/               # session-manager, url-safety, bot-detection, cdp-supervisor, accessibility-tree, snapshot-cache
+│   └── shared/               # session-manager, url-safety, bot-detection, cdp-supervisor, accessibility-tree, snapshot-cache, dom-extractor
 ├── scripts/                  # dialog-gate.ts, experiment reports
 └── __tests__/                # 13 test files + helpers/
 ```
@@ -43,12 +43,12 @@ pi-browser/
 
 ### Plugin system
 
-All interactive backends implement `BrowserPlugin` (`core/plugin-api.ts`). 13 required operations:
+All interactive backends implement `BrowserPlugin` (`core/plugin-api.ts`). 14 required operations:
 
 ```
 navigate, snapshot, click, type, scroll, goBack, press,
 screenshot, getImages, getConsoleMessages, clearConsole,
-evaluate, cleanup  (+ lifecycle: init, cleanupAll)
+evaluate, getElementCache, cleanup  (+ lifecycle: init, cleanupAll)
 ```
 
 Capabilities (`PluginCapabilities`) advertise quirks. The router checks them at dispatch time (e.g. `supportsFullPageScreenshot` for fallback, `supportsAbortSignal` to skip signal wiring, `supportsConsoleCapture` for message-capture gating).
@@ -77,12 +77,13 @@ All tool calls dispatch through the router. Key responsibilities:
 |------|----------|-------|-------|
 | `web-fetch` | Static page → Markdown, no JS needed | Stateless | Fast |
 | `browser-navigate` | Interactive page → accessibility tree with @e refs | Stateful session | Slower |
+| `browser-inspect` | Element queries + text extraction with @e ref annotations | Stateful session | Fast (sync cache) |
 
 `web-fetch` uses plain `fetch()` + `node-html-parser` + `turndown`. Returns ~4000 chars inline, spills to temp file when larger. `browser-navigate` uses Playwright Chromium, returns accessibility tree with @e1/@e2 refs.
 
-### Registered tools (11 total)
+### Registered tools (12 total)
 
-web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-screenshot, browser-get-images, browser-back, browser-press, browser-console
+web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-screenshot, browser-get-images, browser-back, browser-press, browser-console, browser-inspect
 
 ### Registered commands (2 total)
 
@@ -93,7 +94,7 @@ Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-
 
 ## Testing
 
-### Test files (14 files, 450 tests passing)
+### Test files (15 files, 493 tests passing)
 
 | File | Requires Chromium? |
 |------|--------------------|
@@ -107,6 +108,7 @@ Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-
 | url-safety.test.ts | No |
 | plugin-loading.test.ts | No |
 | snapshot-cache.test.ts | No |
+| browser-inspect.test.ts | No |
 | dialog-compaction.test.ts (archived) | No |
 | occlusion-live.test.ts | Yes (auto-skip) |
 | reddit-dialog.test.ts | Yes (auto-skip) |
@@ -144,6 +146,10 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
   - Cleaned up on session removal and shutdown
 - **`browser_finetuning.md`** — occlusion/dialog/timing hardening strategy. Read before touching ChromiumPlugin click or snapshot logic
 - **`plan_v2.md`** — full plugin-refactor architecture doc. Read before adding a new plugin type or changing the registry
+- **`browser-inspect`** (`core/shared/dom-extractor.ts`): element + text extraction tool. Uses an inline `EXTRACTOR_SCRIPT` evaluated via `page.evaluate()` (bypasses CSP). Requires `getElementCache()` on the plugin. Staleness detection via `lastInteractionAt` vs `cachePopulatedAt`. Python parity is in-scope — bridge must include `elements` dict in responses for adapter-level cache to work.
+  - **Text output truncation**: when `text=true` without an explicit `maxChars`, the output is truncated at ~2500 characters by default. Pass `maxChars=0` for full content. Truncated output appends `"\n… X more chars (use maxChars=0 for full content)"` so the agent knows how to retrieve the complete text.
+  - **Keyword filtering**: the optional `query` parameter filters extracted content to only include elements whose text matches the given case-insensitive substring. Applied before correlation, so only matching elements get @e ref annotations. When no content matches, a notice is appended to the output. Also checks link `href` and image `src` fields.
+- **`parentRef` on `AriaCachedNode`**: set by a depth-based parent stack in `parseSnapshot()`'s second pass. Enables `subtree=...` queries in `browser-inspect`. A `dialog`/`alertdialog` element becomes the parent of interior elements. Same-depth siblings share the same parent.
 - **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click, occlusion events). Only checks in ChromiumPlugin
 
 ## Debugging
