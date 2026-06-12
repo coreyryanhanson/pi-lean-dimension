@@ -1,11 +1,8 @@
 # Web Navigation Guides for pi-browser
 
 > Date: 2026-06-12
-> Status: **Proposed** — on-demand site-specific guidance delivered via a single tool,
+> Status: **Accepted** — on-demand site-specific guidance via `web-guide` tool,
 > with automatic discovery through domain-based auto-hinting.
->
-> This proposal supersedes `custom_web.md` and incorporates oracle review findings
-> from `oracle-custom-web.md` and subsequent oracle analysis.
 
 ---
 
@@ -24,61 +21,7 @@ agent can consult accumulated knowledge without replacing its own reasoning.
 
 ---
 
-## 2. Design Decisions
-
-### 2.1 Why On-Demand, Not System-Prompt Injection
-
-The original proposal (`custom_web.md`) used `promptGuidelines` to inject
-navigation knowledge into the system prompt. Oracle review identified two
-fatal problems with this approach:
-
-1. **Linear token scaling** — each active skill costs ~400–650 tokens
-   **every turn**, including turns interacting with unrelated sites. Five
-   active skills cost ~2000–3200 tokens/turn regardless of which site the
-   agent is currently on.
-
-2. **Per-site toggles are a false economy** — toggling skills on/off controls
-   system-prompt injection, but with on-demand retrieval, guidance isn't in
-   the system prompt at all. The toggle solves a problem that no longer exists.
-
-**This proposal replaces system-prompt injection with on-demand retrieval.**
-A single `web-guide` tool returns markdown guidance when explicitly called.
-Guidance enters context once, not every turn.
-
-### 2.2 Why Not Pre-Baked Method Sequences
-
-An oracle-reviewed alternative proposed site-specific tools with their own
-methods (`web-reddit.dismiss-consent()`, `web-reddit.scroll-feed()`). This
-was rejected because:
-
-- Pre-baked sequences are **brittle macros** — they break harder than guidance
-  text when sites change, and they break silently within method execution.
-- They introduce **session-state coupling** — internal `browser-snapshot`
-  followed by `browser-click` can have stale @e refs within a single call.
-- They create **error-handling complexity** — agent must understand two error
-  formats (base tools + method wrappers) with opaque failure modes.
-- They **don't actually reduce tool calls** — they just hide them inside
-  method implementations.
-
-### 2.3 Why Not Auto-Inject Full Guides
-
-Another oracle-reviewed alternative proposed automatically injecting full
-guidance into `browser-navigate` results based on domain detection. This was
-rejected because:
-
-- **Stale auto-injected guidance is dangerous** — the agent treats system
-  output as authoritative. Stale guidance from a forced injection is more
-  harmful than stale guidance the agent opted into.
-- **Redundant injection on revisits** — every `browser-navigate` to the same
-  domain re-injects the guide, even if the agent already consumed it.
-- **URL edge cases are complex** — subdomains (`old.reddit.com`), `www.`
-  prefixes, redirects, and URL shorteners all require fallback chain logic.
-- **Agent-generated guides are aspirational** — single-visit exploration
-  produces low-quality guidance; the "build a guide" flow is deferred.
-
-### 2.4 What We Do Instead: On-Demand + Auto-Hint Discovery
-
-The winning approach combines the best elements:
+## 2. Approach: On-Demand Guides + Auto-Hint Discovery
 
 | Property | Mechanism |
 |----------|-----------|
@@ -86,6 +29,8 @@ The winning approach combines the best elements:
 | **Discovery** | Domain-to-site mapping auto-appends a one-line hint to navigate results |
 | **Token cost** | Tool schema (~100–150 tokens/turn) + guide content (one-time, ~300–500 tokens) |
 | **Authority** | Agent opts in to guidance; can discount stale content against actual page state |
+
+**Key design principle: guidance enters context once, when requested, not every turn.**
 
 ---
 
@@ -129,6 +74,11 @@ const SKILL_CONTENT: Record<string, Guide> = {
   },
 };
 ```
+
+No category, no enabled/disabled, no per-site metadata. The `Guide` interface
+is deliberately minimal. Calling `web-guide` with no site parameter returns a
+flat list of all guide names with their `updated` dates (~200 tokens for 50
+guides, shown once, then forgotten).
 
 ### 3.2 Tool Definition
 
@@ -184,9 +134,7 @@ const webGuideTool = defineTool({
 | **Subsequent visits** | ~100–150 (schema only; agent remembers) |
 | **No guide for site** | ~100–150 (schema only) |
 
-**Compared to skill-tools approach:**
-- 3 active skills, 10 turns: skill-tools = ~12,000–19,500 tokens; this proposal = ~1,500–3,000
-- The guide content enters context **once** rather than **every turn**
+The guide content enters context **once** rather than **every turn**.
 
 ---
 
@@ -196,12 +144,12 @@ const webGuideTool = defineTool({
 
 The agent must discover that guidance exists. Without auto-hint, this requires
 the agent to notice `web-guide` in its tool list and make the connection to
-the current site. LLMs sometimes make this connection, sometimes don't.
+the current site — LLMs sometimes make this connection, sometimes don't.
 
 ### 4.2 The Solution
 
 When the agent navigates to a URL, a **one-line hint** is appended to the
-navigate result if a guide exists for that domain.
+navigate result if a guide exists for that domain:
 
 ```
 💡 A web guide is available for reddit.com.
@@ -270,7 +218,7 @@ Add `maxChars` to `browser-navigate` and `browser-snapshot`:
 ```
 1. browser-navigate "reddit.com", maxChars=500  → quick scan: what am I looking at?
 2. browser-snapshot, maxChars=2000               → deeper: inspect the dialog
-3. browser-snapshot, maxChars=0                  → full tree for complex interaction
+3. browser-snapshot, maxChars=0                   → full tree for complex interaction
 ```
 
 Guides can guide the agent's truncation choices:
@@ -326,55 +274,17 @@ export function compactSnapshot(
 
 ### 5.3 `maxChars=0` Convention
 
-Oracle review flagged that `maxChars=0` is ambiguous (0 usually means "none").
-The parameter description explicitly states "Use 0 for full snapshot" and
-guides reference this convention. If this proves confusing in practice,
-the alternative is a boolean `full: true` parameter. Deferred decision —
-start with `maxChars=0` and revisit if agents struggle with it.
+`maxChars=0` means "no truncation" (full snapshot). The parameter description
+explicitly states "Use 0 for full snapshot" and guides reference this convention.
+If this proves confusing in practice, the alternative is a boolean `full: true`
+parameter. Start with `maxChars=0` and revisit if agents struggle with it.
 
 ---
 
-## 6. Why There Are No Categories or Toggles
+## 6. What Does NOT Change
 
-The original proposal (`custom_web.md`) included categories and per-site
-on/off toggles. Both were solving problems that no longer exist with
-auto-hint discovery:
-
-- **Discovery** — auto-hint tells the agent a guide exists when it
-  navigates to that domain. The agent never needs to browse a catalog.
-- **Project scoping** — guidance costs zero tokens when not visited.
-  Having a shopping guide in `SKILL_CONTENT` while working on a dev
-  project costs nothing — the hint only fires on matching domains.
-- **Per-site toggles** — guidance isn't in the system prompt, so there
-  is nothing to toggle off. The agent calls `web-guide` when it needs
-  guidance, and the auto-hint tells it when that's available.
-
-The `Guide` interface is deliberately minimal:
-
-```typescript
-interface Guide {
-  content: string;   // markdown guidance text
-  updated: string;   // ISO date of last update
-}
-```
-
-No category, no enabled/disabled, no per-site metadata.
-
-**What if you want a list of available guides?** Calling `web-guide` with
-no site parameter returns a flat list of all guide names with their
-`updated` dates. For 50 guides, that's ~200 tokens, shown once, then
-forgotten. If that proves unwieldy in practice, categories can be
-reintroduced as a display concern — not as a filtering mechanism.
-
----
-
-## 7. What Does NOT Change
-
-These existing layers are foundational and remain untouched. This explicitly
-contradicts Section 8 of `custom_web.md`, which proposed simplifying them
-as a consequence of implementing skills. Oracle review confirmed this is
-a **false dependency** — guides provide knowledge, these layers provide
-runtime safety. They coexist cleanly.
+These existing layers are foundational and remain untouched. Guides provide
+knowledge; these layers provide runtime safety. They coexist cleanly.
 
 | Layer | Why It Stays |
 |-------|-------------|
@@ -389,7 +299,7 @@ runtime safety. They coexist cleanly.
 
 ---
 
-## 8. Implementation Steps
+## 7. Implementation Steps
 
 1. **Add `maxChars` parameter** to `browser-navigate` and `browser-snapshot` in
    `index.ts`, wire into `compactSnapshot()` in `router.ts` (~40 lines)
@@ -406,20 +316,20 @@ session management, or existing safety nets.
 
 ---
 
-## 9. Deferred
+## 8. Deferred
 
 | Feature | Reason |
 |---------|--------|
 | **Agent-generated guides ("build a guide")** | Single-visit exploration produces low-quality guides. Requires real-time user interaction, breaks async model, introduces filesystem trust boundaries. |
-| **Per-site toggles** | Guidance isn't in the system prompt — there's nothing to toggle off. Categories provide project-scoped discovery filtering. |
 | **User-authored guides directory** | Start with guides in code. Externalize to `~/.pi/agent/skills/pi-browser/` after proving value with hand-authored content. |
 | **Guide freshness monitoring** | Display staleness warnings when `updated` is older than threshold. Add when users encounter stale guides. |
 | **Domain-aware conditional injection** | When pi supports `registerSkill` API, migrate from guide-tool to real skills with conditional context. |
 | **Cross-cutting guide auto-applying** | Cross-cutting guides (cookie-consent, pagination) could auto-apply as `promptGuidelines` since they're site-agnostic. Deferred until after site-specific guides prove their value. |
+| **Categories for guide listing** | For 50+ guides, flat listing may become unwieldy. Add categories as a display concern if needed. |
 
 ---
 
-## 10. Risks and Mitigations
+## 9. Risks and Mitigations
 
 | Risk | Severity | Mitigation |
 |------|----------|-----------|
@@ -432,7 +342,7 @@ session management, or existing safety nets.
 
 ---
 
-## 11. Appendix: Example Guide Content
+## 10. Appendix: Example Guide Content
 
 ### cookie-consent (cross-cutting)
 
