@@ -389,6 +389,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "depth": node.depth,
                 "raw": node.raw,
                 "occurrenceIndex": node.occurrence_index,
+                "parentRef": node.parent_ref,
             }
             for ref, node in parsed.elements.items()
         }
@@ -595,8 +596,6 @@ class ChromiumPyBridge(BrowserBridge):
                 "elementCount": 0,
                 "error": str(exc),
             }
-
-            self.set_element_cache(task_id, parsed)
 
         # ── Occlusion detection ───────────────────────────────────────
 

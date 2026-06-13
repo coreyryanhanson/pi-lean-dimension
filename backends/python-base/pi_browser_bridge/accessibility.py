@@ -102,6 +102,8 @@ class AriaCachedNode:
     raw: str
     occurrence_index: int = 0
     """0-based position among siblings with same role+name in the snapshot."""
+    parent_ref: Optional[str] = None
+    """Ref of the nearest interactive ancestor (for subtree queries)."""
 
 
 @dataclass
@@ -310,6 +312,8 @@ def parse_snapshot(snap: str, max_elements: int = 500) -> AriaParseResult:
     non_dialog_assigned = 0  # non-dialog refs assigned so far
     occurrence_tracker: dict[str, int] = {}
     dialog_stack: list[int] = []
+    # Depth-based parent stack — tracks the most recent interactive ref at each depth
+    parent_stack: list[str] = []
 
     for raw_line in lines:
         if not raw_line.strip():
@@ -390,6 +394,17 @@ def parse_snapshot(snap: str, max_elements: int = 500) -> AriaParseResult:
             occurrence_index=occurrence_index,
         )
         elements[ref] = node
+
+        # Parent stack: trim entries past current depth
+        while len(parent_stack) > depth:
+            parent_stack.pop()
+
+        # Determine parentRef from the element at depth-1 (if any)
+        if len(parent_stack) >= depth and depth > 0:
+            node.parent_ref = parent_stack[depth - 1]
+
+        # Push this ref onto the parent stack at its depth
+        parent_stack.append(ref)
 
         indent = "  " * depth
         icon = _role_icon(role)
