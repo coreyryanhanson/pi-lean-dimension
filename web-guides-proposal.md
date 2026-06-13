@@ -1,6 +1,8 @@
 # Web Navigation Guides for pi-browser
 
-> Date: 2026-06-12
+> Date: 2026-06-13
+> Updated: reconciled with Phase 1 (snapshot disk cache), Phase 2 (browser-inspect),
+> and Phase 3 (hint text refresh) — all now implemented.
 > Status: **Accepted** — on-demand site-specific guidance via `web-guide` tool,
 > with automatic discovery through domain-based auto-hinting.
 
@@ -31,6 +33,12 @@ agent can consult accumulated knowledge without replacing its own reasoning.
 | **Authority** | Agent opts in to guidance; can discount stale content against actual page state |
 
 **Key design principle: guidance enters context once, when requested, not every turn.**
+
+Guides recommend the cheapest effective tool for each task — preferring
+`browser-inspect` for targeted element discovery and text extraction over
+full `browser-snapshot` loads, and referencing the snapshot disk cache when
+the agent needs to see all elements on a large page. This aligns with the
+existing hint text that the router appends to truncated snapshots.
 
 ---
 
@@ -185,7 +193,23 @@ This mapping is loaded once at startup and cached in memory. Lookup on every
 
 The hint is injected in the `browser-navigate` tool's output (in `index.ts`),
 **not** in the router. This keeps the router pure and couples hint logic only
-to the navigate tool:
+to the navigate tool.
+
+The navigate result already includes up to three appended lines from the
+router: the snapshot disk cache notice (e.g. `📄 Full snapshot cached at
+{path}`), a fallback truncation hint, and the fingerprint line. The guide
+hint should be appended **after** these, separated by a blank line, so it
+doesn't interfere with cache-path parsing:
+
+```
+… 15 elements total
+📄 Full snapshot cached at /tmp/pi-browser/snapshot-browser-1-a1b2c3d4-0.txt
+   15 elements total — read the cache file for the exact ARIA tree, or use browser-inspect for quick targeted element discovery
+fingerprint:abc123
+
+💡 A web guide is available for reddit.com.
+   Call web-guide site="reddit" for navigation tips.
+```
 
 ```typescript
 // In index.ts, browser-navigate tool's execute()
@@ -194,8 +218,8 @@ async execute(toolCallId, params, signal, onUpdate, ctx) {
 
   const hint = resolveDomainHint(params.url, DOMAIN_MAP, SKILL_CONTENT);
   if (hint) {
-    // Append hint to the rendered navigate output
-    output = renderNavigateResult(result) + "\n" + hint;
+    // Append hint after cache notice and fingerprint, separated by blank line
+    output = renderNavigateResult(result) + "\n\n" + hint;
   }
   return { content: [{ type: "text", text: output }] };
 }
@@ -209,75 +233,63 @@ The `resolveDomainHint` function:
 
 ---
 
-## 5. Agent-Controlled Truncation (`maxChars`)
+## 5. Tool Selection in Guide Content
 
-*Independent change — proceeds regardless of guide implementation.*
+*Background — already implemented. This section documents the design
+rationale so guide authors understand which tools to recommend.*
 
-Add `maxChars` to `browser-navigate` and `browser-snapshot`:
+Guides recommend tools for the agent to use. Two content types need two
+different tools, and `maxChars` only applies to one of them:
+
+| Content Type | Tool | Control | Why |
+|-------------|------|---------|-----|
+| ARIA tree (structured) | `browser-snapshot` | `full=true` — boolean choice between compact vs complete tree | Agent knows exactly what it's getting |
+| Page text (linear) | `browser-inspect text=true` | `maxChars` — quantitative choice about how much to read | Agent can predict output length |
+
+### 5.1 Why `maxChars` Is Wrong for ARIA Trees
+
+ARIA trees are **structured** — they describe interactive elements, roles,
+hierarchical relationships. `compactSnapshot()` does smart truncation: it
+preserves the most important interactive elements and cuts at natural
+breakpoints. `maxChars=N` is dumb character-count truncation on a structured
+tree — the agent can't predict what `maxChars=5000` will show vs
+`maxChars=3000`. This is why `maxChars` was not added to `browser-navigate`
+or `browser-snapshot`.
+
+### 5.2 Why `maxChars` Is Right for Text Extraction
+
+Text content is **linear** — article body, paragraph text, link text. "Show me
+the first 3000 chars of this article" is a reasonable, predictable request.
+This is why `browser-inspect text=true maxChars=3000` works well.
+
+### 5.3 The Snapshot Disk Cache
+
+When `compactSnapshot()` truncates a snapshot, the full tree is written to a
+temp file (`/tmp/pi-browser/snapshot-*.txt`). The agent can `read` this file
+with offset/limit to find elements past the truncation boundary. `@e` refs
+remain valid because the element cache is independent of what text the agent
+reads. Guides can reference this when the agent needs to see *all* elements
+on a large page.
+
+### 5.4 Guide Recommendations
+
+Guides should recommend the cheapest effective path:
+
+| Goal | Recommendation |
+|------|--------------|
+| Quick check for a dialog | `browser-inspect role="dialog"` — returns matching elements from cache, no page interaction |
+| Read page content | `browser-inspect text=true` — text extraction with `@e` refs; use `maxChars` to control length |
+| Find a specific element | `browser-inspect role="..." name="..."` — targeted cache query |
+| Full ARIA tree (complex interaction) | `browser-snapshot full=true` — escape valve, most expensive |
+| All elements on a large page | Read the cached snapshot file (path in cache notice) |
+
+Example guide advice using these tools:
 
 ```
-1. browser-navigate "reddit.com", maxChars=500  → quick scan: what am I looking at?
-2. browser-snapshot, maxChars=2000               → deeper: inspect the dialog
-3. browser-snapshot, maxChars=0                   → full tree for complex interaction
+Start with browser-inspect role="dialog" to check for the consent dialog.
+If it's gone, use browser-inspect text=true to read the feed content.
+Use browser-snapshot full=true only if you need the complete tree for complex interaction.
 ```
-
-Guides can guide the agent's truncation choices:
-
-```
-"Start with maxChars=1000 to check for the consent dialog.
-If it's gone, scan the feed with maxChars=0."
-```
-
-### 5.1 Parameter Design
-
-```typescript
-maxChars: Type.Optional(
-  Type.Number({
-    description:
-      "Maximum snapshot characters. " +
-      "Default: auto (compact ~2500 chars). " +
-      "Use 500–1000 for quick scans. " +
-      "Use 0 for full snapshot.",
-    minimum: 0,
-    maximum: 50000,
-  }),
-),
-```
-
-### 5.2 Router Integration
-
-`compactSnapshot` accepts the optional `maxChars`:
-
-```typescript
-export function compactSnapshot(
-  snapshot: string,
-  elementCount: number,
-  maxChars?: number,
-): string {
-  // No truncation
-  if (maxChars === 0) return snapshot;
-
-  // Agent requested specific truncation
-  if (maxChars !== undefined) {
-    const cut = snapshot.lastIndexOf("\n", maxChars);
-    const actualCut = cut < maxChars / 2 ? maxChars : cut;
-    const tail = elementCount
-      ? `\n… ${snapshot.length - actualCut} more chars, ${elementCount} elements total`
-      : `\n… ${snapshot.length - actualCut} more chars`;
-    return snapshot.slice(0, actualCut) + tail;
-  }
-
-  // Auto mode (existing behavior)
-  // ...
-}
-```
-
-### 5.3 `maxChars=0` Convention
-
-`maxChars=0` means "no truncation" (full snapshot). The parameter description
-explicitly states "Use 0 for full snapshot" and guides reference this convention.
-If this proves confusing in practice, the alternative is a boolean `full: true`
-parameter. Start with `maxChars=0` and revisit if agents struggle with it.
 
 ---
 
@@ -288,8 +300,8 @@ knowledge; these layers provide runtime safety. They coexist cleanly.
 
 | Layer | Why It Stays |
 |-------|-------------|
-| `extractDialogBlocks()` | Handles dialog visibility in truncated snapshots. Orthogonal to guides. |
-| Snapshot fingerprint warnings | Catch SPA transitions guides can't predict (dynamic content, infinite scroll, mutation-based UIs). |
+| Router-appended truncation hints | `compactSnapshot()` outputs a pure truncation tail; the router appends cache notices and fallback hints. Guides don't replace these — they supplement with site-specific knowledge. |
+| Snapshot disk cache (`snapshot-cache.ts`) | Caches full trees on truncation; guide content can reference cache files but doesn't change the caching mechanism. |
 | `browser_finetuning.md` | Institutional knowledge about occlusion/dialog methodology. Future maintainers need the rationale. |
 | `checkOcclusion()` | Runtime occlusion detection via `elementFromPoint`. Guides can say "watch out" but can't replace the check. |
 | `verifyClick` fallback | Runtime safety net for false-positive occlusion. |
@@ -301,18 +313,20 @@ knowledge; these layers provide runtime safety. They coexist cleanly.
 
 ## 7. Implementation Steps
 
-1. **Add `maxChars` parameter** to `browser-navigate` and `browser-snapshot` in
-   `index.ts`, wire into `compactSnapshot()` in `router.ts` (~40 lines)
-2. **Define `web-guide` tool** in `index.ts` with `site` parameter and guide
+1. **Define `web-guide` tool** in `index.ts` with `site` parameter and guide
    content map (~60 lines)
-3. **Add `DOMAIN_MAP`** with hostname-to-site-name resolution (~30 lines)
-4. **Add auto-hint injection** into `browser-navigate` tool output (~15 lines)
-5. **Start with 3 cross-cutting guides** (cookie-consent, pagination, search)
-   and 2 site-specific guides (reddit, github)
-6. **Update `AGENTS.md`** — document web-guide tool and auto-hint pattern
+2. **Add `DOMAIN_MAP`** with hostname-to-site-name resolution (~30 lines)
+3. **Add auto-hint injection** into `browser-navigate` tool output, after the
+   cache notice and fingerprint line (~15 lines)
+4. **Start with 3 cross-cutting guides** (cookie-consent, pagination, search)
+   and 2 site-specific guides (reddit, github), recommending `browser-inspect`
+   where it's the cheaper path
+5. **Update `AGENTS.md`** — document web-guide tool and auto-hint pattern
 
-**Total new code: ~150 lines.** No changes to router core, plugin system,
-session management, or existing safety nets.
+**Total new code: ~110 lines.** No changes to router core, plugin system,
+session management, or existing safety nets. No new tool parameters on
+existing tools — guides simply recommend the right combination of existing
+tools (`browser-inspect`, `browser-snapshot`, cached snapshots).
 
 ---
 
@@ -338,7 +352,6 @@ session management, or existing safety nets.
 | **Guide content accumulates in conversation** | Low | Guides are ~300–500 chars; small compared to snapshot output (~2500 chars) |
 | **Domain mapping needs updates for variants** | Low | Simple JSON object; add entries as needed; missing subdomains fall back to no-hint |
 | **Tool schema adds ~100–150 tokens/turn** | Low | Fixed cost paid once; savings on first-visit discovery (5–8 tool calls → 1–2) far exceed overhead |
-| **`maxChars=0` convention is confusing** | Low | Parameter description explicitly states meaning; can switch to `full: true` boolean if agents struggle |
 
 ---
 
@@ -353,12 +366,15 @@ session management, or existing safety nets.
 - role="dialog" or role="alertdialog" at the top of the accessibility tree
 - Buttons containing "Accept All", "Reject All", "Decline", "Manage"
 - Pressing Escape dismisses many consent dialog variants
+- Use `browser-inspect role="dialog"` to quickly check if a dialog is present
+  without loading a full snapshot
 
 ### Navigation After Dismissal
-- After dismissing consent, take a fresh snapshot — @e refs from before
-  dismissal are stale
+- After dismissing consent, use `browser-inspect role="dialog"` to confirm
+  the dialog is gone — cheaper than a full snapshot
+- If `browser-inspect` shows stale refs, take a fresh `browser-snapshot`
 - Some sites reload; others hide the dialog client-side. Either way,
-  re-scan before interacting with page content
+  verify before interacting with page content
 ```
 
 ### pagination (cross-cutting)
@@ -373,8 +389,11 @@ session management, or existing safety nets.
 - After scrolling, take a fresh snapshot — new elements may appear
 
 ### Progressive Loading
-- Use maxChars=500 for initial scan, then maxChars=0 after confirming
-  content loaded
+- Use `browser-inspect text=true maxChars=500` for an initial scan of
+  page content, then `maxChars=0` for the full text after confirming
+  content has loaded
+- Use `browser-inspect role="button" name="next"` to find pagination
+  controls without loading the full tree
 - After scrolling, wait briefly before taking snapshot (content may
   still be loading)
 ```
@@ -390,7 +409,8 @@ session management, or existing safety nets.
 - Results may load in-page (SPA) or via navigation
 
 ### After Searching
-- Take a fresh snapshot after typing or submitting
+- Use `browser-inspect text=true` to read search results with @e refs,
+  rather than loading a full snapshot
 - Results are often role="list" with role="listitem" per result
 - Pagination controls follow the patterns in the pagination guide
 ```
@@ -402,19 +422,23 @@ session management, or existing safety nets.
 
 ### Consent Dialog (First Visit)
 Reddit shows a data consent dialog (role="dialog").
+- Use `browser-inspect role="dialog"` to confirm it's present
 - Look for a button containing "Reject All" or "Decline"
 - Pressing Escape also dismisses some variants
-- After dismissing, a second "welcome" dialog may appear
+- After dismissing, use `browser-inspect role="dialog"` to confirm it's gone
+- A second "welcome" dialog may appear — check again
 
 ### Feed
 - Main feed uses role="table" or role="list"
 - Post titles are role="link" or role="rowheader"
+- Use `browser-inspect text=true` to read post content without loading
+  the full ARIA tree
 - Use browser-scroll to load more content
 
 ### Search
 - Search bar is role="combobox" with name "Search"
 - Results load in-page (SPA navigation)
-- Take a fresh snapshot after typing
+- After searching, use `browser-inspect text=true` to read results
 ```
 
 ### github (site-specific)
@@ -425,6 +449,7 @@ Reddit shows a data consent dialog (role="dialog").
 ### Repo Page
 - File list is role="table"; filenames are role="link" or role="cell"
 - Navigation tabs (Code, Issues, Pull requests) are role="tab"
+- Use `browser-inspect role="tab"` to find tabs without a full snapshot
 
 ### Pull Requests
 - PR list uses role="list" with role="listitem" per PR
@@ -434,9 +459,10 @@ Reddit shows a data consent dialog (role="dialog").
 - Global search is role="combobox" at the top
 - Keyboard shortcut "/" focuses the search box
 - Results page uses role="list"
+- After searching, use `browser-inspect text=true` to read results
 
 ### Known Quirks
 - No consent dialogs
-- GitHub uses client-side routing — take a fresh snapshot after clicking links;
-  @e refs from the previous page are stale
+- GitHub uses client-side routing — use `browser-inspect` after clicking
+  links to check for stale @e refs; if stale, take a fresh `browser-snapshot`
 ```
