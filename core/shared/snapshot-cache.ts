@@ -221,23 +221,38 @@ export function removeAllSnapshotFiles(): void {
 }
 
 /**
- * Build the cache notice line appended to compacted snapshot output.
+ * Build the hint appended to compacted snapshot output.
  *
- * Returns a non-empty string only when a cache file was written AND the
- * snapshot was actually truncated (> CACHE_TRUNCATE_THRESHOLD).
+ * When the snapshot was cached, returns the cache path + action guidance
+ * pointing to browser-inspect as a cheaper alternative to loading the full
+ * file. When the snapshot was truncated but NOT cached, returns a fallback
+ * hint pointing to browser-inspect or full=true. Returns empty string when
+ * the snapshot was not truncated.
  *
  * @param cacheResult - The result from cacheSnapshot() (null if not cached)
  * @param snapshotLength - The length of the original (uncached) snapshot
  * @param truncated - Whether the snapshot was truncated by compactSnapshot()
- * @returns A cache notice string (empty if no cache should be advertised)
+ * @param elementCount - Optional number of interactive elements on the page
+ * @returns A hint string (cache notice, fallback hint, or empty string)
  */
 export function formatCacheNotice(
 	cacheResult: CacheResult | null,
 	snapshotLength: number,
 	truncated: boolean,
+	elementCount?: number,
 ): string {
-	if (cacheResult && truncated && snapshotLength > CACHE_TRUNCATE_THRESHOLD) {
-		return `\n📄 Full snapshot cached at ${cacheResult.path}`;
+	if (truncated && snapshotLength > CACHE_TRUNCATE_THRESHOLD) {
+		if (cacheResult) {
+			// Cache was written — show cache path + action guidance
+			const guidance =
+				elementCount != null && elementCount > 0
+					? `   ${elementCount} elements total — read the cache file for the exact ARIA tree, or use browser-inspect for quick targeted element discovery`
+					: `   read the cache file for the exact ARIA tree, or use browser-inspect for quick targeted element discovery`;
+			return `\n📄 Full snapshot cached at ${cacheResult.path}\n${guidance}`;
+		}
+		// Truncated but not cached — fallback hint
+		// (replaces old "(use full=true for complete tree)" that was embedded in compactSnapshot())
+		return `\n(use browser-inspect role=... name=... to find specific elements, or use browser-snapshot full=true for the complete tree)`;
 	}
 	return "";
 }

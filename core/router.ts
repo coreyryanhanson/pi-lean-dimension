@@ -156,8 +156,8 @@ export function compactSnapshot(
 
 		const topSection = snapshot.slice(0, topCut);
 		const bottomHint = remaining
-			? `\n… ${snapshot.length - topSection.length} more chars, ${remaining} elements total (use full=true for complete tree)`
-			: `\n… ${snapshot.length - topSection.length} more chars (use full=true for complete tree)`;
+			? `\n… ${snapshot.length - topSection.length} more chars, ${remaining} elements total`
+			: `\n… ${snapshot.length - topSection.length} more chars`;
 		return topSection + bottomHint;
 	}
 
@@ -166,8 +166,8 @@ export function compactSnapshot(
 
 	const topSection = snapshot.slice(0, cut);
 	const tail = remaining
-		? `\n… ${snapshot.length - topSection.length} more chars, ${remaining} elements total (use full=true for complete tree)`
-		: `\n… ${snapshot.length - topSection.length} more chars (use full=true for complete tree)`;
+		? `\n… ${snapshot.length - topSection.length} more chars, ${remaining} elements total`
+		: `\n… ${snapshot.length - topSection.length} more chars`;
 
 	return topSection + tail;
 }
@@ -211,7 +211,12 @@ async function refBasedInteractionOrSnapshot(
 				snapshot:
 					"Page loaded interactively. Previous element references are stale. Use the following accessibility tree to interact:\n\n" +
 					compactSnapshot(snap.snapshot, snap.elementCount) +
-					formatCacheNotice(cacheResult, snap.snapshot.length, truncated) +
+					formatCacheNotice(
+						cacheResult,
+						snap.snapshot.length,
+						truncated,
+						snap.elementCount,
+					) +
 					`\nfingerprint:${fingerprint}`,
 				elementCount: snap.elementCount,
 				...(session?.currentUrl ? { newUrl: session.currentUrl } : {}),
@@ -245,7 +250,12 @@ function compactInteractionResult(
 		const compacted = compactSnapshot(rawSnapshot, result.elementCount);
 		result.snapshot =
 			compacted +
-			formatCacheNotice(cacheResult, rawSnapshot.length, truncated) +
+			formatCacheNotice(
+				cacheResult,
+				rawSnapshot.length,
+				truncated,
+				result.elementCount,
+			) +
 			`\nfingerprint:${newFingerprint}`;
 
 		const session = sessionManager.getSession(taskId);
@@ -389,11 +399,16 @@ export async function navigate(
 		// ---
 
 		const snapshotContent = rawSnapshot
-			? (botWarn
-					? rawSnapshot
-					: compactSnapshot(rawSnapshot, result.elementCount)) +
-				formatCacheNotice(cacheResult, rawSnapshot.length, isTruncated) +
-				`\nfingerprint:${fp}`
+			? botWarn
+				? rawSnapshot + `\nfingerprint:${fp}`
+				: compactSnapshot(rawSnapshot, result.elementCount) +
+					formatCacheNotice(
+						cacheResult,
+						rawSnapshot.length,
+						isTruncated,
+						result.elementCount,
+					) +
+					`\nfingerprint:${fp}`
 			: "";
 
 		// Track cache population time for staleness detection (Phase 2)
@@ -475,8 +490,11 @@ export async function snapshot(
 			session.currentSnapshotFingerprint = fp;
 		}
 		if (!full) {
+			const rawLength = result.snapshot.length;
+			const wasTruncated = rawLength > COMPACT_SNAPSHOT_NO_TRUNCATE;
 			result.snapshot =
 				compactSnapshot(result.snapshot, result.elementCount) +
+				formatCacheNotice(null, rawLength, wasTruncated, result.elementCount) +
 				`\nfingerprint:${fp}`;
 		}
 	}

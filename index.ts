@@ -68,6 +68,7 @@ const browserNavigateTool = defineTool({
 		"Use @e1, @e2 references from the accessibility tree with browser-click and browser-type to interact with page elements.",
 		"If snapshot or interaction returns 'No active session', the previous navigation was in a different context. Use browser-navigate first to establish a session.",
 		"After auto-launch, @e refs may have changed — a fresh accessibility tree is returned automatically. Use the new refs for interaction.",
+		"If the snapshot is truncated, use browser-inspect role=... name=... to find specific elements, or read the cached snapshot file. Avoid browser-snapshot full=true unless you need the entire tree.",
 	],
 	parameters: Type.Object({
 		url: Type.String({ description: "The URL to navigate to" }),

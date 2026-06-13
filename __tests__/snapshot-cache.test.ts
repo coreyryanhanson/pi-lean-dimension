@@ -268,11 +268,14 @@ describe("formatCacheNotice()", () => {
 		const notice = formatCacheNotice(cacheResult, 5000, true);
 		expect(notice).toContain("Full snapshot cached at");
 		expect(notice).toContain(cacheResult.path);
+		expect(notice).toContain("use browser-inspect");
 	});
 
-	it("returns empty string when cacheResult is null", () => {
+	it("returns fallback hint when cacheResult is null but snapshot was truncated", () => {
 		const notice = formatCacheNotice(null, 5000, true);
-		expect(notice).toBe("");
+		expect(notice).toContain("use browser-inspect");
+		expect(notice).toContain("full=true");
+		expect(notice).not.toContain("Full snapshot cached at");
 	});
 
 	it("returns empty string when snapshot was not truncated", () => {
@@ -294,6 +297,11 @@ describe("formatCacheNotice()", () => {
 		expect(notice).toBe("");
 	});
 
+	it("returns empty string when not truncated and cacheResult is null", () => {
+		const notice = formatCacheNotice(null, 100, false);
+		expect(notice).toBe("");
+	});
+
 	it("includes the absolute file path in the notice", () => {
 		const cacheResult: CacheResult = {
 			path: "/tmp/pi-browser/snapshot-test-abc123-0.txt",
@@ -301,6 +309,38 @@ describe("formatCacheNotice()", () => {
 		};
 		const notice = formatCacheNotice(cacheResult, 5000, true);
 		expect(notice).toMatch(/\/tmp\/pi-browser\/snapshot-/);
+	});
+
+	it("includes element count in cache notice when provided", () => {
+		const cacheResult: CacheResult = {
+			path: "/tmp/pi-browser/snapshot-test-abc123-0.txt",
+			fingerprint: "abc123",
+		};
+		const notice = formatCacheNotice(cacheResult, 5000, true, 42);
+		expect(notice).toContain("42 elements total");
+		expect(notice).toContain("use browser-inspect");
+	});
+
+	it("omits element count line when count is zero in cache notice", () => {
+		const cacheResult: CacheResult = {
+			path: "/tmp/pi-browser/snapshot-test-abc123-0.txt",
+			fingerprint: "abc123",
+		};
+		const notice = formatCacheNotice(cacheResult, 5000, true, 0);
+		expect(notice).toContain("Full snapshot cached at");
+		expect(notice).toContain("use browser-inspect");
+		expect(notice).not.toContain("elements total");
+	});
+
+	it("fallback hint includes both browser-inspect and full=true guidance", () => {
+		const notice = formatCacheNotice(null, 5000, true);
+		expect(notice).toContain("use browser-inspect role=... name=...");
+		expect(notice).toContain("use browser-snapshot full=true");
+	});
+
+	it("fallback hint returns empty when snapshot not truncated", () => {
+		const notice = formatCacheNotice(null, 100, false);
+		expect(notice).toBe("");
 	});
 });
 

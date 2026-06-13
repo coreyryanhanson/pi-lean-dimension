@@ -137,11 +137,16 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
 - **All URLs go through `url-safety.ts`** — blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.169.254), dangerous schemes (file:, ftp:, data:, javascript:, vbscript:), and heuristically detects secrets in URLs
 - **Screenshot**: JPEG 80% quality, viewport constrained to 1024px wide, returns data URI
 - **Compact truncation everywhere**: snapshots ~2500 chars inline (with `\nfingerprint:XXXXX` suffix), fetch content ~4000 chars with temp file spill to `/tmp/pi-browser-fetch-*`
+- **Truncation hint text** (Phase 3): The old `"(use full=true for complete tree)"` hint has been removed from compactSnapshot() and replaced with router-appended hints:
+  - **Cached snapshot**: `📄 Full snapshot cached at {path}\n   read the cache file for the exact ARIA tree, or use browser-inspect for quick targeted element discovery`
+  - **Not cached** (write failure, bot detected, or snapshot() tool): `(use browser-inspect role=... name=... to find specific elements, or use browser-snapshot full=true for the complete tree)`
+  - The cache file is the authoritative source for exact `@e` refs; `browser-inspect` is a cheaper first attempt for targeted discovery.
 - **Snapshot Disk Cache** (`core/shared/snapshot-cache.ts`): when compactSnapshot() truncates a page's accessibility tree, the full tree is written to `/tmp/pi-browser/snapshot-*.txt`. The agent can `read` this file with offset/limit to find elements past the truncation boundary. `@e` refs remain valid because the element cache is independent of what text the agent reads.
   - Only caches when truncation actually occurred (snapshot > 2800 chars)
   - Bot-detected snapshots are never cached
   - Keeps last 2 files per task
-  - Cache notice is appended to truncated output: `📄 Full snapshot cached at {path}`
+  - Cache notice is appended to truncated output with action guidance pointing to `browser-inspect`
+  - When snapshot is truncated but not cached, a fallback hint is shown instead
   - All I/O is try-catched — graceful degradation to inline-only on failure
   - Cleaned up on session removal and shutdown
 - **`browser_finetuning.md`** — occlusion/dialog/timing hardening strategy. Read before touching ChromiumPlugin click or snapshot logic
