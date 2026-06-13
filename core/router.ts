@@ -20,6 +20,20 @@ import { sessionManager } from "./shared/session-manager.js";
 import type { BrowserSession } from "./shared/session-manager.js";
 import { validateUrl } from "./shared/url-safety.js";
 import { snapshotFingerprint } from "./shared/accessibility-tree.js";
+import {
+	cacheSnapshot,
+	formatCacheNotice,
+	removeSnapshotFiles,
+	type CacheResult,
+} from "./shared/snapshot-cache.js";
+import {
+	runExtractor,
+	correlateElements,
+	queryElementCache,
+	formatElementList,
+	formatRoleCountSummary,
+	type ExtractResult,
+} from "./shared/dom-extractor.js";
 import type {
 	NavigateResult,
 	SnapshotResult,
@@ -44,8 +58,10 @@ const COMPACT_SNAPSHOT_VERY_LARGE = 8000;
 /** How much of the tree top to preserve for very large pages. */
 const COMPACT_SNAPSHOT_TOP_LIMIT = 2000;
 
-/** Max chars for a dialog block appended after truncation. */
-const DIALOG_BLOCK_MAX = 500;
+// ─── browser-inspect truncation constants ────────────────────────────
+
+/** Default truncation limit for browser-inspect text output when maxChars is not provided. */
+const INSPECT_DEFAULT_LIMIT = 2500;
 
 // ─── Exported types ──────────────────────────────────────────────────
 
@@ -104,6 +120,7 @@ async function requireInteractiveSession(taskId: string): Promise<{
 	// Failed — clean up
 	await plugin.cleanup(taskId).catch(() => {});
 	sessionManager.removeSession(taskId);
+	removeSnapshotFiles(taskId);
 	return null;
 }
 
@@ -118,113 +135,11 @@ function getPluginForSession(
 }
 
 /**
- * Extract dialog/alertdialog blocks from a snapshot text.
- *
- * Walks the lines and collects each dialog header followed by its
- * indented children (elements at greater indent than the header).
- * Returns blocks that were *entirely* beyond the character `cutPoint`
- * and thus hidden from the top portion of a compacted snapshot.
- */
-interface DialogBlock {
-	/** Full block text (header + children). */
-	text: string;
-	/** Character position where this block starts in the full snapshot. */
-	startChar: number;
-}
-
-function extractDialogBlocks(snapshot: string, cutPoint: number): string[] {
-	const lines = snapshot.split("\n");
-	const blocks: DialogBlock[] = [];
-	let currentLines: string[] | null = null;
-	let headerIndent = -1;
-	let charPos = 0;
-	let startChar = 0;
-
-	for (const rawLine of lines) {
-		const trimmed = rawLine.trim();
-		const lineLen = rawLine.length + 1; // +1 for the newline
-		const isDialogHeader =
-			trimmed.includes("💬 dialog") ||
-			trimmed.includes("⚠ alertdialog") ||
-			// Also detect raw YAML format (beyond maxElements cap)
-			/^-\s+(alert)?dialog\b/.test(trimmed);
-
-		if (isDialogHeader) {
-			// Close any previous dialog
-			if (currentLines) {
-				const blockText = currentLines.join("\n");
-				if (startChar + blockText.length > cutPoint)
-					blocks.push({ text: blockText, startChar });
-			}
-			currentLines = [rawLine];
-			startChar = charPos;
-			headerIndent = rawLine.search(/\S/);
-			if (headerIndent === -1) headerIndent = 0;
-		} else if (currentLines) {
-			// Check if this line is at the same or lower indent than the header
-			const lineIndent = rawLine.search(/\S/);
-			const effectiveIndent = lineIndent === -1 ? 0 : lineIndent;
-
-			if (effectiveIndent > headerIndent || trimmed === "") {
-				// Child of the dialog or blank line within
-				currentLines.push(rawLine);
-			} else {
-				// Dialog ended — close and finalise
-				const blockText = currentLines.join("\n");
-				if (startChar + blockText.length > cutPoint)
-					blocks.push({ text: blockText, startChar });
-				currentLines = null;
-			}
-		}
-
-		charPos += lineLen;
-	}
-
-	// Close any dangling dialog at end of file
-	if (currentLines) {
-		const blockText = currentLines.join("\n");
-		if (startChar + blockText.length > cutPoint)
-			blocks.push({ text: blockText, startChar });
-	}
-
-	// Cap each block
-	return blocks.map((b) =>
-		b.text.length > DIALOG_BLOCK_MAX
-			? truncateDialogBlock(b.text, DIALOG_BLOCK_MAX)
-			: b.text,
-	);
-}
-
-/**
- * Truncate a dialog block to at most `maxChars` while keeping the
- * header line visible.
- */
-function truncateDialogBlock(block: string, maxChars: number): string {
-	if (block.length <= maxChars) return block;
-	const lines = block.split("\n");
-	const header = lines[0]!;
-	let result = header;
-	for (let i = 1; i < lines.length; i++) {
-		if (result.length + lines[i]!.length + 1 > maxChars - 60) {
-			const remainingCount = lines.length - i;
-			result += `\n… ${remainingCount} more dialog element${remainingCount === 1 ? "" : "s"} (use full=true for complete tree)`;
-			break;
-		}
-		result += "\n" + lines[i]!;
-	}
-	return result;
-}
-
-/**
  * Compact a snapshot to a manageable size for LLM consumption.
  *
  * - Under ~2800 chars: no truncation
  * - ~2800-8000 chars: cut at a natural breakpoint near 2500 chars
  * - Over ~8000 chars: preserve top ~2000 chars + summary
- *
- * Dialog-aware: if any `💬 dialog`/`⚠ alertdialog` blocks fall entirely
- * beyond the cut point, they are included after the top section so the
- * agent can see and interact with modal/dialog elements.
  */
 export function compactSnapshot(
 	snapshot: string,
@@ -240,35 +155,21 @@ export function compactSnapshot(
 			topCut = COMPACT_SNAPSHOT_TOP_LIMIT;
 
 		const topSection = snapshot.slice(0, topCut);
-		const dialogBlocks = extractDialogBlocks(snapshot, topCut);
-
-		let result = topSection;
-		for (const block of dialogBlocks) {
-			result += "\n" + block;
-		}
-
 		const bottomHint = remaining
-			? `\n… ${snapshot.length - result.length} more chars, ${remaining} elements total (use full=true for complete tree)`
-			: `\n… ${snapshot.length - result.length} more chars (use full=true for complete tree)`;
-		return result + bottomHint;
+			? `\n… ${snapshot.length - topSection.length} more chars, ${remaining} elements total`
+			: `\n… ${snapshot.length - topSection.length} more chars`;
+		return topSection + bottomHint;
 	}
 
 	let cut = snapshot.lastIndexOf("\n", COMPACT_SNAPSHOT_LIMIT);
 	if (cut < COMPACT_SNAPSHOT_LIMIT / 2) cut = COMPACT_SNAPSHOT_LIMIT;
 
 	const topSection = snapshot.slice(0, cut);
-	const dialogBlocks = extractDialogBlocks(snapshot, cut);
-
-	let result = topSection;
-	for (const block of dialogBlocks) {
-		result += "\n" + block;
-	}
-
 	const tail = remaining
-		? `\n… ${snapshot.length - result.length} more chars, ${remaining} elements total (use full=true for complete tree)`
-		: `\n… ${snapshot.length - result.length} more chars (use full=true for complete tree)`;
+		? `\n… ${snapshot.length - topSection.length} more chars, ${remaining} elements total`
+		: `\n… ${snapshot.length - topSection.length} more chars`;
 
-	return result + tail;
+	return topSection + tail;
 }
 
 /**
@@ -282,15 +183,41 @@ async function refBasedInteractionOrSnapshot(
 	plugin: import("./plugin-api.js").BrowserPlugin,
 	action: () => Promise<InteractionResult>,
 ): Promise<InteractionResult> {
+	if (!wasAutoCreated) {
+		// Mark interaction time for staleness detection (Phase 2)
+		const sess = sessionManager.getSession(taskId);
+		if (sess) {
+			sess.lastInteractionAt = Date.now();
+		}
+	}
+
 	if (wasAutoCreated) {
 		const snap = await plugin.snapshot(taskId);
 		if (snap.success) {
 			const session = sessionManager.getSession(taskId);
+
+			// Cache the auto-snapshot before compaction
+			const truncated = snap.snapshot.length > COMPACT_SNAPSHOT_NO_TRUNCATE;
+			const fingerprint = snapshotFingerprint(snap.snapshot);
+			const cacheResult = cacheSnapshot(
+				taskId,
+				snap.snapshot,
+				fingerprint,
+				false /* botDetected — auto-recovery runs post-nav */,
+			);
+
 			return {
 				success: true,
 				snapshot:
 					"Page loaded interactively. Previous element references are stale. Use the following accessibility tree to interact:\n\n" +
-					compactSnapshot(snap.snapshot, snap.elementCount),
+					compactSnapshot(snap.snapshot, snap.elementCount) +
+					formatCacheNotice(
+						cacheResult,
+						snap.snapshot.length,
+						truncated,
+						snap.elementCount,
+					) +
+					`\nfingerprint:${fingerprint}`,
 				elementCount: snap.elementCount,
 				...(session?.currentUrl ? { newUrl: session.currentUrl } : {}),
 				...(session?.currentTitle ? { newTitle: session.currentTitle } : {}),
@@ -307,26 +234,36 @@ function compactInteractionResult(
 	result: InteractionResult,
 ): InteractionResult {
 	if (result.success && result.snapshot && result.elementCount !== undefined) {
-		const compacted = compactSnapshot(result.snapshot, result.elementCount);
+		const rawSnapshot = result.snapshot;
+		const newFingerprint = snapshotFingerprint(rawSnapshot);
 
-		// Check for DOM changes since the last snapshot (SPA navigation, dynamic content).
-		// If the fingerprint changed, warn the agent that @e refs may be stale.
+		// Cache (before compacting) — no bot detection here because interaction
+		// tools only run after navigation succeeded.
+		const truncated = rawSnapshot.length > COMPACT_SNAPSHOT_NO_TRUNCATE;
+		const cacheResult = cacheSnapshot(
+			taskId,
+			rawSnapshot,
+			newFingerprint,
+			false /* botDetected — interaction tools run post-nav */,
+		);
+
+		const compacted = compactSnapshot(rawSnapshot, result.elementCount);
+		result.snapshot =
+			compacted +
+			formatCacheNotice(
+				cacheResult,
+				rawSnapshot.length,
+				truncated,
+				result.elementCount,
+			) +
+			`\nfingerprint:${newFingerprint}`;
+
 		const session = sessionManager.getSession(taskId);
 		if (session) {
-			const newFingerprint = snapshotFingerprint(result.snapshot);
-			if (
-				session.currentSnapshotFingerprint !== undefined &&
-				session.currentSnapshotFingerprint !== newFingerprint
-			) {
-				result.snapshot =
-					compacted +
-					"\n\n⚠️ Page content structure changed since last interaction. Previously stored @e references may point to different elements. Use fresh @e refs from this tree for reliable interactions.";
-			} else {
-				result.snapshot = compacted;
-			}
 			session.currentSnapshotFingerprint = newFingerprint;
-		} else {
-			result.snapshot = compacted;
+			if (cacheResult) {
+				session.cachePopulatedAt = Date.now();
+			}
 		}
 	}
 	return result;
@@ -417,7 +354,7 @@ export async function navigate(
 		session.currentUrl = result.url;
 		session.currentTitle = result.title;
 
-		// Store snapshot fingerprint for DOM-change detection (SPA navigation etc.)
+		// Store snapshot fingerprint (passive — surfaced in output)
 		session.currentSnapshotFingerprint = snapshotFingerprint(result.snapshot);
 
 		// Store as last-nav for auto-recovery
@@ -431,6 +368,7 @@ export async function navigate(
 		if (botWarn && result.elementCount < 5) {
 			await plugin.cleanup(taskId).catch(() => {});
 			sessionManager.removeSession(taskId);
+			removeSnapshotFiles(taskId);
 			return {
 				success: false,
 				url: result.url,
@@ -450,11 +388,33 @@ export async function navigate(
 
 		// Don't compact snapshot when bot-detected — the agent needs
 		// the full content to assess whether the page is a false positive.
-		const snapshotContent = result.snapshot
+		const fp = session.currentSnapshotFingerprint!;
+
+		// --- Cache the raw snapshot before compaction ---
+		const rawSnapshot = result.snapshot;
+		const isTruncated = rawSnapshot.length > COMPACT_SNAPSHOT_NO_TRUNCATE;
+		const cacheResult: CacheResult | null = rawSnapshot
+			? cacheSnapshot(taskId, rawSnapshot, fp, botWarn)
+			: null;
+		// ---
+
+		const snapshotContent = rawSnapshot
 			? botWarn
-				? result.snapshot
-				: compactSnapshot(result.snapshot, result.elementCount)
+				? rawSnapshot + `\nfingerprint:${fp}`
+				: compactSnapshot(rawSnapshot, result.elementCount) +
+					formatCacheNotice(
+						cacheResult,
+						rawSnapshot.length,
+						isTruncated,
+						result.elementCount,
+					) +
+					`\nfingerprint:${fp}`
 			: "";
+
+		// Track cache population time for staleness detection (Phase 2)
+		if (cacheResult) {
+			session.cachePopulatedAt = Date.now();
+		}
 
 		const successResult: NavigateResult & {
 			backendUsed: string;
@@ -474,6 +434,7 @@ export async function navigate(
 	// Navigation failed — clean up
 	await plugin.cleanup(taskId).catch(() => {});
 	sessionManager.removeSession(taskId);
+	removeSnapshotFiles(taskId);
 
 	const failResult: NavigateResult & {
 		backendUsed: string;
@@ -522,13 +483,19 @@ export async function snapshot(
 
 	const result = await plugin.snapshot(tid);
 	if (result.success) {
-		// Update snapshot fingerprint for DOM-change detection
+		// Update snapshot fingerprint (passive — surfaced in output)
 		const session = sessionManager.getSession(tid);
+		const fp = snapshotFingerprint(result.snapshot);
 		if (session) {
-			session.currentSnapshotFingerprint = snapshotFingerprint(result.snapshot);
+			session.currentSnapshotFingerprint = fp;
 		}
 		if (!full) {
-			result.snapshot = compactSnapshot(result.snapshot, result.elementCount);
+			const rawLength = result.snapshot.length;
+			const wasTruncated = rawLength > COMPACT_SNAPSHOT_NO_TRUNCATE;
+			result.snapshot =
+				compactSnapshot(result.snapshot, result.elementCount) +
+				formatCacheNotice(null, rawLength, wasTruncated, result.elementCount) +
+				`\nfingerprint:${fp}`;
 		}
 	}
 	return result;
@@ -725,6 +692,243 @@ export async function clearConsole(
 			error: `Clear console failed: ${err instanceof Error ? err.message : String(err)}`,
 		};
 	}
+}
+
+// ─── browser-inspect public types ──────────────────────────────────
+
+export interface InspectParams {
+	role?: string;
+	name?: string;
+	ref?: string;
+	subtree?: string;
+	text?: boolean;
+	maxChars?: number;
+	/** Filter extracted content to elements containing this case-insensitive substring. */
+	query?: string;
+}
+
+export interface InspectResult {
+	success: boolean;
+	/** Formatted text or element list */
+	content: string;
+	/** Whether staleness notice was appended */
+	staleCacheWarning?: boolean;
+	/** Error message if unsuccessful */
+	error?: string;
+}
+
+// ─── browser-inspect dispatch ───────────────────────────────────────
+
+/**
+ * browser-inspect: unified element query + text extraction.
+ *
+ * Dispatch logic:
+ * - text=true: run DOM extractor, correlate with element cache
+ * - role/name/ref/subtree: query element cache directly
+ * - both (text + ref/role): text extraction with filters
+ * - neither: count-by-role summary
+ */
+export async function browserInspect(
+	taskId: string | undefined,
+	params: InspectParams,
+): Promise<InspectResult> {
+	const tid = taskId ?? "default";
+
+	// 1. Require an active session
+	const sr = await requireInteractiveSession(tid);
+	if (!sr) {
+		return {
+			success: false,
+			content: "",
+			error:
+				"No active session — use browser-navigate to visit a page first, then retry",
+		};
+	}
+
+	const plugin = getPluginForSession(sr.session);
+	if (!plugin) {
+		return {
+			success: false,
+			content: "",
+			error: `Plugin '${sr.session.pluginName}' is not available`,
+		};
+	}
+
+	// 2. Get element cache from the plugin
+	const cache = plugin.getElementCache(tid);
+	const cacheExists = cache !== null && cache.size > 0;
+
+	// 3. Staleness check
+	const session = sessionManager.getSession(tid);
+	const cacheFresh = stalenessCheck(session);
+
+	// 4. Dispatch based on params
+	if (params.text) {
+		// --- Text extraction path ---
+		if (!plugin.capabilities.supportsJavaScriptEvaluate) {
+			return {
+				success: false,
+				content: "",
+				error: "Text extraction is not supported by this backend.",
+			};
+		}
+
+		if (!cacheExists) {
+			return {
+				success: false,
+				content: "",
+				error:
+					"No elements cached yet — use browser-snapshot to populate element cache.",
+			};
+		}
+
+		// Run the DOM extractor
+		const extracted = await runExtractor(tid, plugin);
+		if (!extracted) {
+			return {
+				success: false,
+				content: "",
+				error:
+					"Text extraction returned no content. The page may be empty, blocked, or strict CSP prevents DOM access. Use browser-snapshot to inspect visually.",
+			};
+		}
+
+		// Keyword filtering — case-insensitive substring match on extracted text
+		if (params.query) {
+			applyQueryFilter(extracted, params.query);
+		}
+
+		// Correlate with element cache
+		const correlated = correlateElements(extracted, cache!, cacheFresh);
+
+		let content = correlated.text;
+
+		// maxChars truncation — default ~2500 when not specified
+		const effectiveMaxChars =
+			params.maxChars !== undefined ? params.maxChars : INSPECT_DEFAULT_LIMIT;
+		if (effectiveMaxChars > 0 && content.length > effectiveMaxChars) {
+			const remaining = content.length - effectiveMaxChars;
+			content =
+				content.slice(0, effectiveMaxChars) +
+				`\n… ${remaining} more chars (use maxChars=0 for full content)`;
+		}
+
+		const result: InspectResult = {
+			success: true,
+			content,
+		};
+		if (correlated.staleCache) {
+			result.staleCacheWarning = true;
+		}
+		return result;
+	}
+
+	if (params.role || params.name || params.ref || params.subtree) {
+		// --- Element query path ---
+		if (!cacheExists) {
+			return {
+				success: false,
+				content: "",
+				error:
+					"No elements cached yet — use browser-snapshot to populate element cache.",
+			};
+		}
+
+		const filtered = queryElementCache(cache!, {
+			...(params.role !== undefined ? { role: params.role } : {}),
+			...(params.name !== undefined ? { name: params.name } : {}),
+			...(params.ref !== undefined ? { ref: params.ref } : {}),
+			...(params.subtree !== undefined ? { subtree: params.subtree } : {}),
+		});
+
+		const content = formatElementList(filtered, {
+			...(params.ref !== undefined ? { ref: params.ref } : {}),
+		});
+
+		return {
+			success: true,
+			content,
+			staleCacheWarning: !cacheFresh && filtered.length > 0,
+		};
+	}
+
+	// --- No params — role-count summary ---
+	if (!cacheExists) {
+		return {
+			success: true,
+			content:
+				"No elements cached yet — use browser-snapshot to populate element cache.",
+		};
+	}
+
+	const summary = formatRoleCountSummary(cache!);
+	return {
+		success: true,
+		content: summary,
+		staleCacheWarning: !cacheFresh,
+	};
+}
+
+/**
+ * Filter an ExtractResult in-place to only include elements whose text
+ * contains the given query string (case-insensitive). Also checks link
+ * hrefs and image sources for the query.
+ *
+ * When no elements match across any category, appends a notice to the
+ * paragraphs array so the agent gets a clear signal.
+ */
+function applyQueryFilter(extracted: ExtractResult, query: string): void {
+	const q = query.toLowerCase();
+
+	const beforeCount =
+		extracted.headings.length +
+		extracted.paragraphs.length +
+		extracted.links.length +
+		extracted.images.length +
+		extracted.interactive.length;
+
+	extracted.headings = extracted.headings.filter((h) =>
+		h.text.toLowerCase().includes(q),
+	);
+	extracted.paragraphs = extracted.paragraphs.filter((p) =>
+		p.text.toLowerCase().includes(q),
+	);
+	extracted.links = extracted.links.filter(
+		(l) => l.text.toLowerCase().includes(q) || l.href.toLowerCase().includes(q),
+	);
+	extracted.images = extracted.images.filter(
+		(img) =>
+			img.alt.toLowerCase().includes(q) || img.src.toLowerCase().includes(q),
+	);
+	extracted.interactive = extracted.interactive.filter((el) =>
+		el.text.toLowerCase().includes(q),
+	);
+
+	const afterCount =
+		extracted.headings.length +
+		extracted.paragraphs.length +
+		extracted.links.length +
+		extracted.images.length +
+		extracted.interactive.length;
+
+	// Signal empty results so the agent doesn't get a silent empty page
+	if (beforeCount > 0 && afterCount === 0) {
+		extracted.paragraphs.push({
+			text: `⚠ No content matched "${query}". Try a different keyword or remove the query parameter.`,
+		});
+	}
+}
+
+/**
+ * Check whether the element cache is still fresh compared to the
+ * last interaction time. Returns true if fresh or if timestamps
+ * are unavailable (conservative: assume fresh).
+ */
+function stalenessCheck(session: BrowserSession | undefined): boolean {
+	if (!session) return true; // No session — assume fresh
+	if (session.cachePopulatedAt === undefined) return true; // No cache time — assume fresh
+	if (session.lastInteractionAt === undefined) return true; // No interactions — assume fresh
+	return session.cachePopulatedAt >= session.lastInteractionAt;
 }
 
 // ─── Error message constants ─────────────────────────────────────────

@@ -19,6 +19,7 @@ import type {
 	EvaluateResult,
 } from "../../core/plugin-api";
 import { DEFAULT_CAPABILITIES } from "../../core/plugin-api";
+import type { AriaCachedNode } from "../../core/shared/accessibility-tree";
 
 export class MockPlugin implements BrowserPlugin {
 	readonly name: string;
@@ -38,6 +39,12 @@ export class MockPlugin implements BrowserPlugin {
 
 	/** If set, this operation throws instead of returning */
 	shouldThrow: Set<string> = new Set();
+
+	/**
+	 * Mock element cache (ref → AriaCachedNode) for browser-inspect tests.
+	 * Default: empty. Tests can populate it with mock nodes.
+	 */
+	elementCache: Map<string, AriaCachedNode> = new Map();
 
 	constructor(name = "mock", capabilities: Partial<PluginCapabilities> = {}) {
 		this.name = name;
@@ -209,6 +216,13 @@ export class MockPlugin implements BrowserPlugin {
 			result: 42,
 			...this.evalResult,
 		};
+	}
+
+	getElementCache(taskId: string): Map<string, AriaCachedNode> | null {
+		this.record("getElementCache", [taskId]);
+		if (this.shouldThrow.has("getElementCache"))
+			throw new Error("getElementCache failed");
+		return this.elementCache.size > 0 ? this.elementCache : null;
 	}
 
 	async cleanup(taskId: string): Promise<void> {

@@ -28,6 +28,7 @@ Requires
 
 import base64
 import json
+import os
 import re
 import sys
 import time
@@ -53,6 +54,20 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════════════
 #  Helpers
 # ═══════════════════════════════════════════════════════════════════════
+
+# ─── BROWSER_DEBUG logging ──────────────────────────────────────────
+
+_DEBUG = os.environ.get("BROWSER_DEBUG") == "1"
+
+
+def _log(event: str, **data: Any) -> None:
+    if _DEBUG:
+        print(
+            f"[browser] {event}: {json.dumps(data, default=str)}",
+            file=sys.stderr,
+            flush=True,
+        )
+
 
 # ─── Bot detection (mirrors core/shared/bot-detection.ts) ────────────
 
@@ -182,6 +197,13 @@ class ChromiumPyBridge(BrowserBridge):
         super().__init__()
         self._pw = None
         self._browser = None
+        # Read verify-click timeout from env (default: 1500ms)
+        try:
+            self._verify_click_timeout = int(
+                os.environ.get("PY_BRIDGE_VERIFY_CLICK_TIMEOUT_MS", "1500")
+            )
+        except (ValueError, TypeError):
+            self._verify_click_timeout = 1500
 
     # ── Shared Playwright lifecycle ────────────────────────────
 
@@ -240,6 +262,21 @@ class ChromiumPyBridge(BrowserBridge):
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             ),
         )
+
+        # Start Playwright trace capture if BROWSER_TRACE_DIR is set.
+        _trace_dir = os.environ.get("BROWSER_TRACE_DIR")
+        if _trace_dir:
+            try:
+                context.tracing.start(
+                    screenshots=True,
+                    snapshots=True,
+                    sources=True,
+                )
+                _log("tracing", taskId=task_id, action="start",
+                     dir=_trace_dir)
+            except Exception:
+                pass  # Best-effort
+
         page = context.new_page()
 
         # ── Console capture ─────────────────────────────────────
@@ -276,6 +313,24 @@ class ChromiumPyBridge(BrowserBridge):
                     page.close()
             except Exception:
                 pass
+
+            # Stop and save Playwright trace if BROWSER_TRACE_DIR is set.
+            _trace_dir = os.environ.get("BROWSER_TRACE_DIR")
+            if _trace_dir:
+                try:
+                    os.makedirs(_trace_dir, exist_ok=True)
+                    _ctx: Any = session.get("context")
+                    if _ctx:
+                        _trace_path = os.path.join(
+                            _trace_dir,
+                            f"trace-{task_id}-{int(time.time() * 1000)}.zip",
+                        )
+                        _ctx.tracing.stop(path=_trace_path)
+                        _log("tracing", taskId=task_id, action="stop",
+                             dir=_trace_dir)
+                except Exception:
+                    pass  # Best-effort
+
             try:
                 context: Any = session.get("context")
                 if context:
@@ -299,15 +354,15 @@ class ChromiumPyBridge(BrowserBridge):
 
     def _take_snapshot_and_cache(
         self, task_id: str, page: Any
-    ) -> tuple[str, int]:
+    ) -> tuple[str, int, dict[str, dict[str, Any]]]:
         """Take snapshot, cache elements, return formatted text + count."""
         try:
             snap_text: str = page.aria_snapshot()
         except Exception:
-            return "(snapshot not available)", 0
+            return "(snapshot not available)", 0, {}
 
         if not snap_text:
-            return "(no accessibility tree)", 0
+            return "(no accessibility tree)", 0, {}
 
         parsed = parse_snapshot(snap_text)
         self.set_element_cache(task_id, parsed)
@@ -326,7 +381,18 @@ class ChromiumPyBridge(BrowserBridge):
                     "\n\n--- Auto-dismissed dialogs ---\n" + dialog_text
                 )
 
-        return result_text, parsed.count
+        return result_text, parsed.count, {
+            ref: {
+                "role": node.role,
+                "name": node.name,
+                "props": list(node.props),
+                "depth": node.depth,
+                "raw": node.raw,
+                "occurrenceIndex": node.occurrence_index,
+                "parentRef": node.parent_ref,
+            }
+            for ref, node in parsed.elements.items()
+        }
 
     def _locate_element(
         self, page: Any, task_id: str, ref: str
@@ -379,6 +445,7 @@ class ChromiumPyBridge(BrowserBridge):
         Includes retry on transient network errors, DOM stabilisation
         wait, bot detection, and accessibility snapshot.
         """
+        _t_start = time.time()
         session = self.ensure_session(task_id)
         page: Any = session["page"]
 
@@ -444,10 +511,11 @@ class ChromiumPyBridge(BrowserBridge):
 
         # ── Snapshot ────────────────────────────────────────────
         try:
-            snap_text, element_count = self._take_snapshot_and_cache(task_id, page)
+            snap_text, element_count, elements = self._take_snapshot_and_cache(task_id, page)
         except Exception:
             snap_text = "(snapshot not available)"
             element_count = 0
+            elements = {}
 
         try:
             title: str = page.title()
@@ -455,32 +523,45 @@ class ChromiumPyBridge(BrowserBridge):
             title = ""
 
         if last_error is None:
+            _log("navigate", url=url, plugin="chromium-py", success=True,
+                 botDetected=bot_detected, elementCount=element_count,
+                 time=round((time.time() - _t_start) * 1000))
             return {
                 "success": True,
                 "url": page.url,
                 "title": title,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
                 "botDetected": bot_detected,
             }
         else:
+            _log("navigate", url=url, plugin="chromium-py", success=False,
+                 botDetected=bot_detected, elementCount=element_count,
+                 error=last_error,
+                 time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "url": url,
                 "title": title,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
                 "botDetected": bot_detected,
                 "error": last_error,
             }
 
     def do_snapshot(self, task_id: str) -> dict[str, Any]:
         """Take a fresh accessibility snapshot and refresh element cache."""
+        _t_start = time.time()
         try:
             page = self._get_page(task_id)
         except SessionNotFoundError:
             raise
         except Exception as exc:
+            _log("snapshot", taskId=task_id, success=False, elementCount=0,
+                 dialogBlocks=0, fingerprint="",
+                 time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "snapshot": "",
@@ -489,15 +570,26 @@ class ChromiumPyBridge(BrowserBridge):
             }
 
         try:
-            snap_text, element_count = self._take_snapshot_and_cache(
+            snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
+            session = self.get_session(task_id)
+            dialog_blocks = len(session.get("dialog_log", [])) if session else 0
+            fingerprint = snap_text[:16] if snap_text else ""
+            _log("snapshot", taskId=task_id, success=True,
+                 elementCount=element_count, dialogBlocks=dialog_blocks,
+                 fingerprint=fingerprint,
+                 time=round((time.time() - _t_start) * 1000))
             return {
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
             }
         except Exception as exc:
+            _log("snapshot", taskId=task_id, success=False, elementCount=0,
+                 dialogBlocks=0, fingerprint="",
+                 time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "snapshot": "",
@@ -505,7 +597,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "error": str(exc),
             }
 
-    # ── Occlusion detection ───────────────────────────────────────
+        # ── Occlusion detection ───────────────────────────────────────
 
     def _check_occlusion(
         self, locator: Any, ref: str
@@ -546,6 +638,8 @@ class ChromiumPyBridge(BrowserBridge):
                 return !(topEl === el || el.contains(topEl));
             }""")
             if is_obscured:
+                _log("occlusion", ref=ref, isObscured=True,
+                     verifyClick="skipped", reason="elementFromPoint")
                 return {
                     "success": False,
                     "error": (
@@ -555,7 +649,12 @@ class ChromiumPyBridge(BrowserBridge):
                         "overlay, then retry."
                     ),
                 }
+            _log("occlusion", ref=ref, isObscured=False,
+                 verifyClick="skipped", reason="elementFromPoint")
         except Exception:
+            _log("occlusion", ref=ref, isObscured=False,
+                 verifyClick="skipped", reason="elementFromPoint",
+                 error="check failed")
             pass  # Fail-safe: proceed with click if check itself fails
         return None
 
@@ -563,11 +662,28 @@ class ChromiumPyBridge(BrowserBridge):
 
     def do_click(self, task_id: str, ref: str) -> dict[str, Any]:
         """Click an element by @e ref."""
+        _t_start = time.time()
+        _t_phases: dict[str, int | None] = {
+            "locate": None, "occlusion": None,
+            "click": None, "wait": None, "snapshot": None,
+        }
+
+        # Extract role/name from element cache for debug logging
+        _key = ref[1:] if ref.startswith("@") else ref
+        _cache = self.get_element_cache(task_id)
+        _node = _cache.elements.get(_key) if _cache else None
+        _role: str = getattr(_node, "role", "unknown") if _node else "unknown"
+        _name: str = getattr(_node, "name", "unknown") if _node else "unknown"
+
         try:
             page = self._get_page(task_id)
         except SessionNotFoundError:
             raise
         except Exception as exc:
+            _log("click", taskId=task_id, ref=ref, role=_role, name=_name,
+                 occlusionCheck="skipped", result="fail",
+                 timings=_t_phases,
+                 time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"Click failed: {exc}",
@@ -575,25 +691,41 @@ class ChromiumPyBridge(BrowserBridge):
 
         try:
             locator = self._locate_element(page, task_id, ref)
+            _t_phases["locate"] = round((time.time() - _t_start) * 1000)
         except RuntimeError as exc:
+            _t_phases["locate"] = round((time.time() - _t_start) * 1000)
+            _log("click", taskId=task_id, ref=ref, role=_role, name=_name,
+                 occlusionCheck="skipped", result="fail",
+                 timings=_t_phases,
+                 time=round((time.time() - _t_start) * 1000))
             return {"success": False, "error": str(exc)}
 
         # Fast occlusion check — verify with short click if flagged to
         # eliminate false positives (e.g., child elements with pointer-events:none).
         occlusion = self._check_occlusion(locator, ref)
+        _t_phases["occlusion"] = round((time.time() - _t_start) * 1000)
 
+        occlusion_check: str = "verified"
         if occlusion is not None:
             try:
-                locator.click(timeout=1_500)
+                locator.click(timeout=self._verify_click_timeout)
+                occlusion_check = "blocked_verify_ok"
                 # Succeeded — false positive, proceed below
             except Exception:
+                _t_phases["click"] = round((time.time() - _t_start) * 1000)
+                _log("click", taskId=task_id, ref=ref, role=_role, name=_name,
+                     occlusionCheck="blocked", result="fail",
+                     timings=_t_phases,
+                     time=round((time.time() - _t_start) * 1000))
                 return occlusion
 
         try:
             if occlusion is None:
                 locator.click(timeout=5_000)
+            _t_phases["click"] = round((time.time() - _t_start) * 1000)
 
             time.sleep(0.3)
+            _t_phases["wait"] = round((time.time() - _t_start) * 1000)
 
             new_url: Optional[str] = None
             new_title: Optional[str] = None
@@ -603,14 +735,21 @@ class ChromiumPyBridge(BrowserBridge):
             except Exception:
                 pass
 
-            snap_text, element_count = self._take_snapshot_and_cache(
+            snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
+            _t_phases["snapshot"] = round((time.time() - _t_start) * 1000)
+
+            _log("click", taskId=task_id, ref=ref, role=_role, name=_name,
+                 occlusionCheck=occlusion_check, result="success",
+                 timings=_t_phases,
+                 time=round((time.time() - _t_start) * 1000))
 
             result: dict[str, Any] = {
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
             }
             if new_url is not None:
                 result["newUrl"] = new_url
@@ -619,6 +758,11 @@ class ChromiumPyBridge(BrowserBridge):
             return result
 
         except Exception as exc:
+            _t_phases["snapshot"] = round((time.time() - _t_start) * 1000)
+            _log("click", taskId=task_id, ref=ref, role=_role, name=_name,
+                 occlusionCheck=occlusion_check, result="fail",
+                 timings=_t_phases,
+                 time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"Click failed: {exc}",
@@ -626,11 +770,23 @@ class ChromiumPyBridge(BrowserBridge):
 
     def do_type(self, task_id: str, ref: str, text: str) -> dict[str, Any]:
         """Type text into an element by @e ref."""
+        _t_start = time.time()
+
+        # Extract role/name from element cache for debug logging
+        _key = ref[1:] if ref.startswith("@") else ref
+        _cache = self.get_element_cache(task_id)
+        _node = _cache.elements.get(_key) if _cache else None
+        _role: str = getattr(_node, "role", "unknown") if _node else "unknown"
+        _name: str = getattr(_node, "name", "unknown") if _node else "unknown"
+
         try:
             page = self._get_page(task_id)
         except SessionNotFoundError:
             raise
         except Exception as exc:
+            _log("type", taskId=task_id, ref=ref, role=_role, name=_name,
+                 occlusionCheck="skipped", result="fail",
+                 time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"Type failed: {exc}",
@@ -639,15 +795,23 @@ class ChromiumPyBridge(BrowserBridge):
         try:
             locator = self._locate_element(page, task_id, ref)
         except RuntimeError as exc:
+            _log("type", taskId=task_id, ref=ref, role=_role, name=_name,
+                 occlusionCheck="skipped", result="fail",
+                 time=round((time.time() - _t_start) * 1000))
             return {"success": False, "error": str(exc)}
 
         # Fast occlusion check — verify with short click if flagged
         occlusion = self._check_occlusion(locator, ref)
 
+        occlusion_check: str = "verified"
         if occlusion is not None:
             try:
-                locator.click(timeout=1_500)
+                locator.click(timeout=self._verify_click_timeout)
+                occlusion_check = "blocked_verify_ok"
             except Exception:
+                _log("type", taskId=task_id, ref=ref, role=_role, name=_name,
+                     occlusionCheck="blocked", result="fail",
+                     time=round((time.time() - _t_start) * 1000))
                 return occlusion
 
         try:
@@ -655,17 +819,26 @@ class ChromiumPyBridge(BrowserBridge):
                 locator.click(timeout=5_000)  # Focus first
             locator.fill(text)
 
-            snap_text, element_count = self._take_snapshot_and_cache(
+            snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
+
+            _log("type", taskId=task_id, ref=ref, role=_role, name=_name,
+                 occlusionCheck=occlusion_check, result="success",
+                 elementCount=element_count,
+                 time=round((time.time() - _t_start) * 1000))
 
             return {
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
             }
 
         except Exception as exc:
+            _log("type", taskId=task_id, ref=ref, role=_role, name=_name,
+                 occlusionCheck=occlusion_check, result="fail",
+                 time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"Type failed: {exc}",
@@ -673,11 +846,14 @@ class ChromiumPyBridge(BrowserBridge):
 
     def do_scroll(self, task_id: str, direction: str) -> dict[str, Any]:
         """Scroll the page up or down."""
+        _t_start = time.time()
         try:
             page = self._get_page(task_id)
         except SessionNotFoundError:
             raise
         except Exception as exc:
+            _log("scroll", taskId=task_id, direction=direction,
+                 success=False, time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"Scroll failed: {exc}",
@@ -691,17 +867,24 @@ class ChromiumPyBridge(BrowserBridge):
             )
             time.sleep(0.2)
 
-            snap_text, element_count = self._take_snapshot_and_cache(
+            snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
+
+            _log("scroll", taskId=task_id, direction=direction,
+                 success=True, elementCount=element_count,
+                 time=round((time.time() - _t_start) * 1000))
 
             return {
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
             }
 
         except Exception as exc:
+            _log("scroll", taskId=task_id, direction=direction,
+                 success=False, time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"Scroll failed: {exc}",
@@ -709,11 +892,14 @@ class ChromiumPyBridge(BrowserBridge):
 
     def do_go_back(self, task_id: str) -> dict[str, Any]:
         """Navigate back in history."""
+        _t_start = time.time()
         try:
             page = self._get_page(task_id)
         except SessionNotFoundError:
             raise
         except Exception as exc:
+            _log("goBack", taskId=task_id, success=False,
+                 time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"GoBack failed: {exc}",
@@ -731,14 +917,19 @@ class ChromiumPyBridge(BrowserBridge):
             except Exception:
                 pass
 
-            snap_text, element_count = self._take_snapshot_and_cache(
+            snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
+
+            _log("goBack", taskId=task_id, success=True,
+                 elementCount=element_count,
+                 time=round((time.time() - _t_start) * 1000))
 
             result: dict[str, Any] = {
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
             }
             if new_url is not None:
                 result["newUrl"] = new_url
@@ -747,6 +938,8 @@ class ChromiumPyBridge(BrowserBridge):
             return result
 
         except Exception as exc:
+            _log("goBack", taskId=task_id, success=False,
+                 time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"GoBack failed: {exc}",
@@ -754,11 +947,14 @@ class ChromiumPyBridge(BrowserBridge):
 
     def do_press(self, task_id: str, key: str) -> dict[str, Any]:
         """Press a keyboard key."""
+        _t_start = time.time()
         try:
             page = self._get_page(task_id)
         except SessionNotFoundError:
             raise
         except Exception as exc:
+            _log("press", taskId=task_id, key=key, success=False,
+                 time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"Press failed: {exc}",
@@ -768,17 +964,24 @@ class ChromiumPyBridge(BrowserBridge):
             page.keyboard.press(key)
             time.sleep(0.2)
 
-            snap_text, element_count = self._take_snapshot_and_cache(
+            snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
+
+            _log("press", taskId=task_id, key=key, success=True,
+                 elementCount=element_count,
+                 time=round((time.time() - _t_start) * 1000))
 
             return {
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
+                "elements": elements,
             }
 
         except Exception as exc:
+            _log("press", taskId=task_id, key=key, success=False,
+                 time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"Press failed: {exc}",

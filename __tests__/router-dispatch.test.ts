@@ -593,125 +593,6 @@ describe("compactSnapshot()", () => {
 		const result = router.compactSnapshot(content, 0);
 		expect(result).not.toMatch(/\d+ elements/);
 	});
-
-	describe("dialog-aware truncation", () => {
-		const DIALOG_LINES = [
-			'💬 dialog "Let us know your cookie preferences"',
-			'  @e742 🔘 button "Accept all cookies"',
-			'  @e743 🔘 button "Reject all"',
-			'  @e744 🔘 button "Customize settings"',
-		];
-		const DIALOG_BLOCK = DIALOG_LINES.join("\n");
-
-		it("includes hidden dialog blocks in very large snapshots", () => {
-			// Build a snapshot with ~3000 chars of content before the dialog block
-			const content = "line content here padding\n".repeat(120); // ~3000 chars
-			const snap = content + "\n" + DIALOG_BLOCK;
-			const result = router.compactSnapshot(snap, 200);
-
-			// Dialog block should appear in the compacted output
-			expect(result).toContain("Let us know your cookie preferences");
-			expect(result).toContain("Accept all cookies");
-			expect(result).toContain("Reject all");
-			expect(result).toContain("Customize settings");
-			// Should still include the truncation hint
-			expect(result).toMatch(/more chars/);
-		});
-
-		it("does NOT duplicate dialog blocks already in the visible top section", () => {
-			// Dialog near the top (within first 2000 chars) — should NOT be duplicated
-			const header = "top content\n".repeat(20); // ~300 chars
-			const snap = header + DIALOG_BLOCK + "\n" + "footer\n".repeat(200); // ~3000 chars beyond
-			const result = router.compactSnapshot(snap, 100);
-
-			// Dialog should appear only once
-			const matches = result.match(/Let us know your cookie preferences/g);
-			expect(matches).toHaveLength(1);
-		});
-
-		it("includes hidden dialog blocks in medium snapshots (2800-8000 chars)", () => {
-			// Build content that's ~3000 chars with a dialog at the end
-			const content = "line content here\n".repeat(120); // ~2160 chars
-			const snap = content + "\n" + DIALOG_BLOCK;
-			const result = router.compactSnapshot(snap, 50);
-
-			// Dialog should be visible
-			expect(result).toContain("Customize settings");
-		});
-
-		it("handles multiple hidden dialog blocks", () => {
-			const dialog2 = ['💬 dialog "Second dialog"', '  @e800 🔘 button "OK"'];
-			const content = "line content\n".repeat(150); // ~2250 chars
-			const snap = content + "\n" + DIALOG_BLOCK + "\n" + dialog2.join("\n");
-			const result = router.compactSnapshot(snap, 300);
-
-			expect(result).toContain("Let us know your cookie preferences");
-			expect(result).toContain("Second dialog");
-			expect(result).toContain("OK");
-		});
-
-		it("handles alertdialog headers too", () => {
-			const alertDialog = [
-				'⚠ alertdialog "Important alert"',
-				'  @e50 🔘 button "Acknowledge"',
-			];
-			const content = "line content\n".repeat(150); // ~2250 chars
-			const snap = content + "\n" + alertDialog.join("\n");
-			const result = router.compactSnapshot(snap, 50);
-
-			expect(result).toContain("Important alert");
-			expect(result).toContain("Acknowledge");
-		});
-
-		it("caps very large dialog blocks", () => {
-			// Build a dialog with many children
-			const largeDialogHeader = '💬 dialog "Large dialog"';
-			const largeDialogLines = [largeDialogHeader];
-			for (let i = 0; i < 100; i++) {
-				largeDialogLines.push(`  @e${i + 100} 🔘 button "Option ${i}"`);
-			}
-			const largeDialogBlock = largeDialogLines.join("\n");
-
-			const content = "line content\n".repeat(150); // ~2250 chars
-			const snap = content + "\n" + largeDialogBlock;
-			const result = router.compactSnapshot(snap, 200);
-
-			// Dialog header should always be visible
-			expect(result).toContain("Large dialog");
-			// First few children should be visible
-			expect(result).toContain("Option 0");
-			// But the whole block should be capped (not all 100 children)
-			expect(result).toContain("more dialog elements");
-		});
-
-		it("no dialogs in snapshot — unchanged behavior", () => {
-			const content = "line content with longer text here\n".repeat(200); // ~5600 chars
-			const result = router.compactSnapshot(content, 30);
-			expect(result.length).toBeLessThan(content.length);
-			expect(result).toContain("30 elements");
-			// No dialog content should appear
-			expect(result).not.toContain("dialog");
-		});
-
-		it("nested dialog (indented) is still detected", () => {
-			// Dialog can be at any indent level, not just top-level
-			const nestedDialogLines = [
-				"  " + DIALOG_LINES[0]!,
-				"    " + DIALOG_LINES[1]!.trim(),
-				"    " + DIALOG_LINES[2]!.trim(),
-			];
-			const nestedBlock = nestedDialogLines.join("\n");
-
-			const content = "line content\n".repeat(150); // ~2250 chars
-			const snap = content + "\n" + nestedBlock;
-			const result = router.compactSnapshot(snap, 50);
-
-			expect(result).toContain("Let us know your cookie preferences");
-			// Nested children should also be visible
-			expect(result).toContain("Accept all cookies");
-			expect(result).toContain("Reject all");
-		});
-	});
 });
 
 // ─── Session persistence across sequential calls ─────────────────
@@ -921,7 +802,7 @@ describe("bot detection UX", () => {
 	});
 
 	describe("snapshot compaction", () => {
-		it("skips compactSnapshot when botDetected is true", async () => {
+		it("skips compactSnapshot when botDetected is true, but includes fingerprint", async () => {
 			// Create a long snapshot that would normally be compacted (>2800 chars)
 			const longSnapshot = "line\n".repeat(600); // ~3600 chars
 			mock.navResult = {
@@ -935,8 +816,9 @@ describe("bot detection UX", () => {
 
 			const result = await router.navigate("https://bot.example");
 			expect(result.success).toBe(true);
-			// Snapshot should be the full version, not compacted
-			expect(result.snapshot).toBe(longSnapshot);
+			// Snapshot should be full version (not compacted), plus fingerprint
+			expect(result.snapshot).toContain(longSnapshot);
+			expect(result.snapshot).toMatch(/fingerprint:/);
 			expect(result.botDetectionWarning).toBe(true);
 		});
 
@@ -980,9 +862,9 @@ describe("bot detection UX", () => {
 		});
 	});
 
-	// ─── Snapshot fingerprint — DOM-change detection ────────────
+	// ─── Snapshot fingerprint — passive surfacing ────────────
 
-	describe("snapshot fingerprint for DOM-change detection", () => {
+	describe("snapshot fingerprint is surfaced", () => {
 		it("stores fingerprint after navigate", async () => {
 			const rawSnap = '- button "Click"\n- link "More"\n';
 			mock.navResult = { snapshot: rawSnap };
@@ -990,7 +872,6 @@ describe("bot detection UX", () => {
 
 			const session = sessionManager.getSession("default");
 			expect(session?.currentSnapshotFingerprint).toBeDefined();
-			// Fingerprint should be the hash of the raw snapshot
 			const { snapshotFingerprint } = await import(
 				"../core/shared/accessibility-tree.js"
 			);
@@ -999,34 +880,29 @@ describe("bot detection UX", () => {
 			);
 		});
 
-		it("does not warn when snapshot content is unchanged", async () => {
+		it("includes fingerprint line in interaction result", async () => {
 			const rawSnap = '- button "Same"\n- link "Same"\n';
 			mock.navResult = { snapshot: rawSnap };
-			// Make click return the same snapshot content as navigate
 			mock.interactResult = { snapshot: rawSnap };
 
 			await router.navigate("https://example.com");
 			const result = await router.click("default", "e1");
 
 			expect(result.success).toBe(true);
-			expect(result.snapshot).not.toContain("content structure changed");
-			expect(result.snapshot).toContain("Same");
+			expect(result.snapshot).toMatch(/fingerprint:/);
 		});
 
-		it("warns when snapshot content changes (simulating DOM change)", async () => {
+		it("fingerprint line changes when content changes", async () => {
 			mock.navResult = { snapshot: '- button "Page A"\n' };
-
 			await router.navigate("https://example.com");
 
-			// Click returns a different snapshot, simulating DOM change
 			mock.interactResult = { snapshot: '- link "Page B"\n' };
 			const result = await router.click("default", "e1");
 
 			expect(result.success).toBe(true);
-			expect(result.snapshot).toContain("content structure changed");
-			expect(result.snapshot).toContain(
-				"@e references may point to different elements",
-			);
+			expect(result.snapshot).toMatch(/fingerprint:/);
+			// No warning injected — just the passive fingerprint line
+			expect(result.snapshot).not.toContain("content structure changed");
 		});
 
 		it("stores updated fingerprint after interaction", async () => {
@@ -1036,7 +912,6 @@ describe("bot detection UX", () => {
 
 			await router.navigate("https://example.com");
 
-			// After click with different content, fingerprint should be updated
 			mock.interactResult = { snapshot: clickSnap };
 			await router.click("default", "e1");
 
@@ -1049,51 +924,12 @@ describe("bot detection UX", () => {
 			);
 		});
 
-		it("only warns once — second same interaction does not re-warn", async () => {
-			const snap = '- button "Stable"\n';
-			mock.navResult = { snapshot: '- root "Page"\n' };
-
-			await router.navigate("https://example.com");
-
-			// First interaction with different content → warning
-			mock.interactResult = { snapshot: snap };
-			const first = await router.click("default", "e1");
-			expect(first.snapshot).toContain("content structure changed");
-
-			// Second interaction with same content → no warning (fingerprint matches)
-			mock.interactResult = { snapshot: snap };
-			const second = await router.click("default", "e2");
-			expect(second.snapshot).not.toContain("content structure changed");
-			expect(second.snapshot).toContain("Stable");
-		});
-
-		it("warns again when fingerprint changes again after stabilising", async () => {
-			mock.navResult = { snapshot: '- root "Page"\n' };
-
-			await router.navigate("https://example.com");
-
-			// First change
-			mock.interactResult = { snapshot: '- button "First"\n' };
-			const first = await router.click("default", "e1");
-			expect(first.snapshot).toContain("content structure changed");
-
-			// Same → no warning
-			mock.interactResult = { snapshot: '- button "First"\n' };
-			await router.click("default", "e2");
-
-			// Different again → warning re-appears
-			mock.interactResult = { snapshot: '- link "Second"\n' };
-			const third = await router.click("default", "e3");
-			expect(third.snapshot).toContain("content structure changed");
-		});
-
 		it("stores fingerprint after snapshot() call", async () => {
 			const navSnap = '- button "Init"\n';
 			const snapSnap = '- link "Refreshed"\n';
 			mock.navResult = { snapshot: navSnap };
 			await router.navigate("https://example.com");
 
-			// Override snapshot plugin response
 			mock.snapResult = { snapshot: snapSnap };
 			await router.snapshot("default");
 
@@ -1104,21 +940,6 @@ describe("bot detection UX", () => {
 			expect(session!.currentSnapshotFingerprint).toBe(
 				snapshotFingerprint(snapSnap),
 			);
-		});
-
-		it("no warning on first interaction if navigate fingerprint matches interaction snapshot", async () => {
-			// Navigate to a page with button content
-			const snap = '- button "Consistent"\n- link "More"\n';
-			mock.navResult = { snapshot: snap };
-			// First click returns the SAME snapshot content (DOM didn't change)
-			mock.interactResult = { snapshot: snap };
-
-			await router.navigate("https://example.com");
-			const result = await router.click("default", "e1");
-
-			expect(result.success).toBe(true);
-			expect(result.snapshot).not.toContain("content structure changed");
-			expect(result.snapshot).toContain("Consistent");
 		});
 	});
 });

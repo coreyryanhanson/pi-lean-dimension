@@ -16,6 +16,8 @@ export interface AriaCachedNode {
 	raw: string;
 	/** 0-based position among siblings with the same role+name in the snapshot */
 	occurrenceIndex: number;
+	/** Ref of the nearest interactive ancestor (e.g., for subtree queries) */
+	parentRef?: string;
 }
 
 export interface AriaParseResult {
@@ -182,6 +184,8 @@ export function parseSnapshot(
 
 	// ── Second pass: assign refs with dialog priority ──────────────
 	const dialogDepthStack: number[] = [];
+	/** Depth-based parent stack — tracks the most recent interactive ref at each depth */
+	const parentStack: string[] = [];
 	let totalInteractiveCount = 0; // all interactive elements (even those skipped)
 	let nonDialogAssigned = 0; // non-dialog refs assigned so far
 
@@ -266,6 +270,20 @@ export function parseSnapshot(
 		const occurrenceIndex = occurrenceTracker.get(occKey) ?? 0;
 		occurrenceTracker.set(occKey, occurrenceIndex + 1);
 
+		// Parent stack: trim entries past current depth
+		while (parentStack.length > depth) {
+			parentStack.pop();
+		}
+
+		// Determine parentRef from the element at depth-1 (if any)
+		const parentRef =
+			parentStack.length >= depth && depth > 0
+				? parentStack[depth - 1]
+				: undefined;
+
+		// Push this ref onto the parent stack at its depth
+		parentStack[depth] = ref;
+
 		const node: AriaCachedNode = {
 			ref,
 			role,
@@ -274,6 +292,7 @@ export function parseSnapshot(
 			depth,
 			raw: trimmed,
 			occurrenceIndex,
+			...(parentRef ? { parentRef } : {}),
 		};
 		elements.set(ref, node);
 
@@ -389,7 +408,7 @@ function countLeadingSpaces(s: string): number {
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
-function roleIcon(role: string): string {
+export function roleIcon(role: string): string {
 	const icons: Record<string, string> = {
 		alert: "🔔 ",
 		alertdialog: "⚠ ",

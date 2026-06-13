@@ -51,6 +51,24 @@ def main() -> None:
                     "snapshot": "- @e1 [link] Example Domain\n- @e2 [button] Submit",
                     "elementCount": 2,
                     "botDetected": False,
+                    "elements": {
+                        "e1": {
+                            "role": "link",
+                            "name": "Example Domain",
+                            "props": [],
+                            "depth": 0,
+                            "raw": "- link \"Example Domain\"",
+                            "occurrenceIndex": 0,
+                        },
+                        "e2": {
+                            "role": "button",
+                            "name": "Submit",
+                            "props": [],
+                            "depth": 0,
+                            "raw": "- button \"Submit\"",
+                            "occurrenceIndex": 0,
+                        },
+                    },
                 },
             )
 
@@ -61,6 +79,16 @@ def main() -> None:
                     "success": True,
                     "snapshot": "- @e1 [link] Example",
                     "elementCount": 1,
+                    "elements": {
+                        "e1": {
+                            "role": "link",
+                            "name": "Example",
+                            "props": [],
+                            "depth": 0,
+                            "raw": "- link \"Example\"",
+                            "occurrenceIndex": 0,
+                        },
+                    },
                 },
             )
 

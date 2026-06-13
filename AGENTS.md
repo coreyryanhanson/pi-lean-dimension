@@ -4,136 +4,178 @@
 
 ## What This Is
 
-A browser automation extension for `@earendil-works/pi-coding-agent`. Registers 11 tools + 2 commands (`/browser-status`, `/web`). Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
+A pi extension that registers **12 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
 
-## Current Architecture (Post-V2 Refactor)
+## Developer Commands
+
+```bash
+npm test              # vitest run — 493 tests across 15 files (all pass)
+npx vitest run __tests__/router-dispatch.test.ts  # single test file
+npm run test:watch    # vitest in watch mode
+npx tsx scripts/dialog-gate.ts        # side-by-side backend comparison
+npx tsx scripts/dialog-gate.ts --preset basic-close --repeat 20  # with preset
+```
+
+There is no build step (`noEmit: true` in tsconfig). The extension is loaded directly by pi from the source TypeScript files. No linter or formatter is configured.
+
+## Directory Layout (compact)
 
 ```
 pi-browser/
-├── index.ts                    # Entry: registers tools, loads plugins from config, startup/shutdown
-├── browser-toggle.ts           # /web on|off|status — toggle all browser tools, persist state
-│
-├── backends/
-│   ├── chromium/index.ts       # ChromiumPlugin — Node/Playwright backend (~750 lines)
-│   ├── python-adapter.ts       # PythonPluginAdapter — JSON-RPC over subprocess stdin/stdout
-│   ├── chromium-py/            # Python bridge (bridge.py, ~950 lines)
-│   │   └── bridge.py           #   Validates Python adapter; disabled by default
-│   └── python-base/            # Shared Python package: pi_browser_bridge (pyproject.toml)
-│       └── pi_browser_bridge/  #   BrowserBridge base class
-│
-├── core/
-│   ├── plugin-api.ts           # BrowserPlugin interface + 13 typed result types + capabilities
-│   ├── plugin-registry.ts      # PluginRegistry — register, resolve, order (stealth levels)
-│   ├── plugin-config.ts        # Reads browser.plugins from settings.json, type detection
-│   ├── router.ts               # Plugin dispatch (replaces old if/else router)
-│   ├── fetch-backend.ts        # Stateless HTTP → Markdown (used by web-fetch only)
-│   └── shared/                 # Moved from old utils/
-│       ├── accessibility-tree.ts   # @e1/@e2 ref parsing + buildLocator(getByRole)
-│       ├── bot-detection.ts        # Cloudflare/CAPTCHA heuristics
-│       ├── session-manager.ts      # Per-task BrowserSession lifecycle
-│       ├── url-safety.ts           # SSRF/secrets/scheme validation
-│       └── cdp-supervisor.ts       # CDP dialog dismiss + console capture
-│
-└── __tests__/                  # ~314 tests across 9+ test files (see below)
+├── index.ts                  # Entry: registers 11 tools + 2 commands
+├── browser-toggle.ts         # /web on|off|status — toggle tools in/out of active set
+├── backends/                 # Plugin implementations
+│   ├── chromium/index.ts     # Node/Playwright, reference ~1100 lines
+│   ├── python-adapter.ts     # JSON-RPC bridge for subprocess plugins
+│   └── chromium-py/bridge.py # Python bridge, disabled by default
+├── core/                     # Framework: shared across all plugins
+│   ├── plugin-api.ts         # BrowserPlugin interface, 13 result types
+│   ├── plugin-registry.ts    # Registration, validation, strategy resolution
+│   ├── plugin-config.ts      # Reads browser.plugins from settings.json
+│   ├── router.ts             # Dispatch, session lifecycle, truncation, browser-inspect
+│   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
+│   └── shared/               # session-manager, url-safety, bot-detection, cdp-supervisor, accessibility-tree, snapshot-cache, dom-extractor
+├── scripts/                  # dialog-gate.ts, experiment reports
+└── __tests__/                # 13 test files + helpers/
 ```
 
-## Plugin Architecture (BrowserPlugin Interface)
+## Architecture
 
-All interactive backends implement `BrowserPlugin` (in `core/plugin-api.ts`) with 13 operations + capabilities:
+### Plugin system
+
+All interactive backends implement `BrowserPlugin` (`core/plugin-api.ts`). 14 required operations:
 
 ```
 navigate, snapshot, click, type, scroll, goBack, press,
 screenshot, getImages, getConsoleMessages, clearConsole,
-evaluate, cleanup  (+ lifecycle: init, cleanupAll)
+evaluate, getElementCache, cleanup  (+ lifecycle: init, cleanupAll)
 ```
 
-Capabilities advertise quirks (e.g. `supportsAbortSignal: false` on Python bridge). The router respects them.
+Capabilities (`PluginCapabilities`) advertise quirks. The router checks them at dispatch time (e.g. `supportsFullPageScreenshot` for fallback, `supportsAbortSignal` to skip signal wiring, `supportsConsoleCapture` for message-capture gating).
 
-Plugins are configured in `~/.pi/agent/settings.json` under `browser.plugins`. Each entry has `{name, dir, enabled, config}`. The `dir` maps to `backends/<dir>/`, where the entry point is either `index.ts` (Node) or `bridge.py` (Python) — auto-detected.
+Plugin loading: reads `browser.plugins` from `~/.pi/agent/settings.json` (global, merged with `.pi/settings.json` project-local). Each entry is `{name, dir, enabled, config}`. `dir` maps to `backends/<dir>/`; entry point is auto-detected (`index.ts` = Node plugin, `bridge.py` = Python plugin). If no plugins configure, a default ChromiumPlugin is created.
 
-Two active plugins at time of writing:
-- **`chromium`** (Node/Playwright, always enabled) — full-featured, registered as default
-- **`chromium-py`** (Python/Playwright, disabled by default) — validates Python adapter infrastructure
+**Active plugins (config-driven):**
+- **`chromium`** — Node/Playwright (~1100 lines), always enabled by default, reference implementation
+- **`chromium-py`** — Python/Playwright (~950 lines bridge.py), disabled by default
 
-## Router
+### Router (`core/router.ts`)
 
-`core/router.ts` dispatches via `PluginRegistry.resolveStrategy(strategy)`:
-- `"auto"` → first enabled plugin in config order
-- `"<name>"` → named plugin (e.g. `"chromium-py"`)
+All tool calls dispatch through the router. Key responsibilities:
+- **Strategy resolution**: `PluginRegistry.resolveStrategy("auto")` → first enabled plugin; `"<name>"` → named plugin
+- **Session lifecycle**: per-taskId sessions created on first navigate, cleaned up on shutdown
+- **Compact truncation**: `< 2800 chars` raw, cut at ~2500; `> 8000 chars` preserve top ~2000
+- **Bot-detection downgrade**: when `botDetected && elementCount < 5`, navigate fails hard (blocks are unreadable)
+- **Bot-detected snapshots are NOT compacted** — full content passes through for human judgment
+- **All interaction results have fingerprint appended**: `\nfingerprint:XXXXX` for DOM-change detection
+- **Auto-recovery**: crashed sessions are detected and re-navigated to the last URL
+- **Stale @e ref handling**: if a session was just auto-created, interaction tools return a fresh snapshot instead of performing the action
 
-Cross-cutting concerns in the router, not plugins:
-- Snapshot truncation (compactSnapshot — dialog-aware, DOM-change fingerprinting)
-- URL safety (validateUrl)
-- Session lifecycle (sessionManager.create/remove/update)
-- Bot-detection downgrade heuristic (fail navigate when `botDetected && elementCount < 5`)
-
-## Key Tools: web-fetch vs Interactive Browsing
+### Key Tools
 
 | Tool | Use Case | State | Speed |
 |------|----------|-------|-------|
 | `web-fetch` | Static page → Markdown, no JS needed | Stateless | Fast |
 | `browser-navigate` | Interactive page → accessibility tree with @e refs | Stateful session | Slower |
+| `browser-inspect` | Element queries + text extraction with @e ref annotations | Stateful session | Fast (sync cache) |
+
+`web-fetch` uses plain `fetch()` + `node-html-parser` + `turndown`. Returns ~4000 chars inline, spills to temp file when larger. `browser-navigate` uses Playwright Chromium, returns accessibility tree with @e1/@e2 refs.
+
+### Registered tools (12 total)
+
+web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-screenshot, browser-get-images, browser-back, browser-press, browser-console, browser-inspect
+
+### Registered commands (2 total)
+
+`/browser-status` — show backend health and active sessions
+`/web on|off|status` — toggle all browser tools out of the active tool set (saves ~1500-2000 tokens when off)
+
+Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`.
+
+## Testing
+
+### Test files (15 files, 493 tests passing)
+
+| File | Requires Chromium? |
+|------|--------------------|
+| router-dispatch.test.ts | No |
+| browser-toggle.test.ts | No |
+| plugin-registry.test.ts | No |
+| plugin-contract.test.ts | No (structural) |
+| python-adapter.test.ts | No |
+| fetch-backend.test.ts | No |
+| accessibility-tree.test.ts | No |
+| url-safety.test.ts | No |
+| plugin-loading.test.ts | No |
+| snapshot-cache.test.ts | No |
+| browser-inspect.test.ts | No |
+| dialog-compaction.test.ts (archived) | No |
+| occlusion-live.test.ts | Yes (auto-skip) |
+| reddit-dialog.test.ts | Yes (auto-skip) |
+| chromium-py.test.ts | Yes (auto-skip) |
+
+Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automatically when Playwright Chromium is unavailable. The archived dialog-compaction test lives under `core/archived/`.
+
+### Shared test utilities (`__tests__/helpers/`)
+
+- `plugin-contract.ts` — `runContractTests(name, factory, opts?)` validates any BrowserPlugin
+- `mock-plugin.ts` — MockPlugin for structural contract validation
+- `reddit-fixture.ts` — HTML fixtures for Reddit dialog occlusion scenarios (4 variants)
+- `test-server.ts` — `startTestServer()` returns a local HTTP server for integration tests
+- External test server: `occlusion-test-server.cjs` for local debugging
+
+### Contract test harness
+
+`runContractTests()` from `plugin-contract.ts` validates structural contracts (all 13 operations exist, result shapes) without a browser, and behavioral tests (`realBrowser: true`) with a live Chromium against the local test server.
 
 ## Known Constraints & Debt
 
-- **Console capture only on Chromium** — Python adapter's `BridgeBase` has console capture but the `chromium-py` bridge doesn't call it yet
-- **AbortSignal not supported on Python bridge** — `supportsAbortSignal: false`
-- **Sessions are per taskId** — created on first navigate, cleaned up on shutdown
-- **Compact truncation everywhere**: snapshots ~2500 chars inline, fetch content ~4000 chars with temp file spill
-- **Role-based locators only**: never XPath/CSS — always `getByRole()` via `buildLocator()`
-- **All URLs go through `url-safety.ts`** — blocks localhost, private IPs, dangerous schemes
-- **Screenshot quality**: JPEG 80% quality, max 1024px wide
-- **Toggle state** (`/web`) persisted per-session branch, survives `/reload`, `/resume`, `/fork`
-- **`browser_finetuning.md`** contains the occlusion/dialog/timing hardening strategy — read it before touching the ChromiumPlugin click/snapshot logic
-- **`plan_v2.md`** is the full architecture doc for the plugin refactor — read before adding a new plugin type or changing the registry
+- **Console capture only on Chromium** — Python adapter's `BridgeBase` has capture but `chromium-py` bridge doesn't call it yet
+- **AbortSignal not supported on Python bridge** — `supportsAbortSignal: false`, router skips signal wiring
+- **Sessions are per taskId** — tasks are stable pi session IDs mapped to `browser-NNN` keys via `_sessionKeys`/`_sessionCounter` in index.ts. Created on first navigate, cleaned up on session_shutdown
+- **Role-based locators only**: never XPath/CSS — always `getByRole()` via `buildLocator()` with positional `.nth()` for duplicates. The `INTERACTIVE_ROLES` set defines which roles get @e refs
+- **All URLs go through `url-safety.ts`** — blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.169.254), dangerous schemes (file:, ftp:, data:, javascript:, vbscript:), and heuristically detects secrets in URLs
+- **Screenshot**: JPEG 80% quality, viewport constrained to 1024px wide, returns data URI
+- **Compact truncation everywhere**: snapshots ~2500 chars inline (with `\nfingerprint:XXXXX` suffix), fetch content ~4000 chars with temp file spill to `/tmp/pi-browser-fetch-*`
+- **Truncation hint text** (Phase 3): The old `"(use full=true for complete tree)"` hint has been removed from compactSnapshot() and replaced with router-appended hints:
+  - **Cached snapshot**: `📄 Full snapshot cached at {path}\n   read the cache file for the exact ARIA tree, or use browser-inspect for quick targeted element discovery`
+  - **Not cached** (write failure, bot detected, or snapshot() tool): `(use browser-inspect role=... name=... to find specific elements, or use browser-snapshot full=true for the complete tree)`
+  - The cache file is the authoritative source for exact `@e` refs; `browser-inspect` is a cheaper first attempt for targeted discovery.
+- **Snapshot Disk Cache** (`core/shared/snapshot-cache.ts`): when compactSnapshot() truncates a page's accessibility tree, the full tree is written to `/tmp/pi-browser/snapshot-*.txt`. The agent can `read` this file with offset/limit to find elements past the truncation boundary. `@e` refs remain valid because the element cache is independent of what text the agent reads.
+  - Only caches when truncation actually occurred (snapshot > 2800 chars)
+  - Bot-detected snapshots are never cached
+  - Keeps last 2 files per task
+  - Cache notice is appended to truncated output with action guidance pointing to `browser-inspect`
+  - When snapshot is truncated but not cached, a fallback hint is shown instead
+  - All I/O is try-catched — graceful degradation to inline-only on failure
+  - Cleaned up on session removal and shutdown
+- **`browser_finetuning.md`** — occlusion/dialog/timing hardening strategy. Read before touching ChromiumPlugin click or snapshot logic
+- **`plan_v2.md`** — full plugin-refactor architecture doc. Read before adding a new plugin type or changing the registry
+- **`browser-inspect`** (`core/shared/dom-extractor.ts`): element + text extraction tool. Uses an inline `EXTRACTOR_SCRIPT` evaluated via `page.evaluate()` (bypasses CSP). Requires `getElementCache()` on the plugin. Staleness detection via `lastInteractionAt` vs `cachePopulatedAt`. Python parity is in-scope — bridge must include `elements` dict in responses for adapter-level cache to work.
+  - **Text output truncation**: when `text=true` without an explicit `maxChars`, the output is truncated at ~2500 characters by default. Pass `maxChars=0` for full content. Truncated output appends `"\n… X more chars (use maxChars=0 for full content)"` so the agent knows how to retrieve the complete text.
+  - **Keyword filtering**: the optional `query` parameter filters extracted content to only include elements whose text matches the given case-insensitive substring. Applied before correlation, so only matching elements get @e ref annotations. When no content matches, a notice is appended to the output. Also checks link `href` and image `src` fields.
+- **`parentRef` on `AriaCachedNode`**: set by a depth-based parent stack in `parseSnapshot()`'s second pass. Enables `subtree=...` queries in `browser-inspect`. A `dialog`/`alertdialog` element becomes the parent of interior elements. Same-depth siblings share the same parent.
+- **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click, occlusion events). Only checks in ChromiumPlugin
 
-## Tests
-
-```
-__tests__/
-├── router-dispatch.test.ts     # 88 tests — strategy resolution, session lifecycle, navigation flow
-├── browser-toggle.test.ts      # 62 tests — toggle on/off, persist/restore, config defaults
-├── plugin-registry.test.ts     # 47 tests — registration, validation, resolution, ordering
-├── python-adapter.test.ts      # 40 tests — JSON-RPC transport, heartbeat, error handling, sessions
-├── fetch-backend.test.ts       # 24 tests — webFetch(), JS detection, bot detection, content capping
-├── accessibility-tree.test.ts  # 19 tests — @e ref parsing, buildLocator, duplicate resolution
-├── url-safety.test.ts          # 14 tests — SSRF, schemes, secrets, malformed URLs
-├── plugin-loading.test.ts      # 12 tests — config loading, type detection, error handling
-├── occlusion-live.test.ts      # 8 tests — real-browser occlusion detection (requires Chromium)
-├── chromium-py.test.ts         # Contract tests for Python bridge (skipped if no venv)
-└── plugin-contract.test.ts     # Contract test harness validation against MockPlugin
-```
-
-### Running Tests
+## Debugging
 
 ```bash
-npm test              # vitest run — all tests
-npx vitest run __tests__/router-dispatch.test.ts  # single file
+BROWSER_DEBUG=1 npx vitest run __tests__/occlusion-live.test.ts
 ```
 
-Integration tests (`occlusion-live.test.ts`, `chromium-py.test.ts`) require Playwright Chromium installed. They skip automatically in CI.
+Set `BROWSER_DEBUG=1` for structured logging from ChromiumPlugin.
 
-## What Changed (V1 → V2)
+## TypeScript Quirks
 
-- **V2 refactor done**: BrowserPlugin interface extracted, PluginRegistry implemented, router rewritten, fetch decoupled. The old `backend/` and `utils/` are gone.
-- **Python bridge infrastructure added**: `PythonPluginAdapter` (JSON-RPC over stdin/stdout), `python-base/pi_browser_bridge/` shared library, `chromium-py` bridge
-- **Contract test harness**: `runContractTests()` validates any BrowserPlugin — structural (always) and behavioral (real browser opt-in)
-- **Config-driven plugin loading**: from `browser.plugins` in settings.json; fallback to single chromium
-- **Capability system**: plugins advertise what they support, router adapts
-
-## Reading Order
-
-1. `index.ts` — extension entry, plugin registration, tool definitions
-2. `core/plugin-api.ts` — BrowserPlugin interface, result types, capabilities
-3. `core/plugin-registry.ts` — registration, strategy resolution, ordering
-4. `core/router.ts` — dispatch, session lifecycle, truncation (compactSnapshot)
-5. `backends/chromium/index.ts` — reference implementation of BrowserPlugin
-6. `backends/python-adapter.ts` — Python subprocess bridge pattern
+- `noEmit: true` — source-only, no build step
+- `exactOptionalPropertyTypes: true` — `undefined` in optional params triggers type errors; use `Type.Optional()` wrapper (from `@earendil-works/pi-ai`) for tool parameters
+- `noUncheckedIndexedAccess: true` — all indexed accesses require null checks
+- `module: "nodenext"` — imports need `.js` extensions in source files
 
 ## `backends/` vs `core/` Boundaries
 
 - `backends/` — plugin-specific implementations (Node or Python)
 - `core/` — framework: plugin API, registry, config loader, router, shared utilities
-- `core/shared/` — utilities used by both framework and plugins (accessibility, bot detection, URL safety, sessions, CDP)
+- `core/shared/` — utilities used by both framework and plugins
 - Plugins import from `../../core/plugin-api.js` and `../../core/shared/*.js`
 - The router imports from `../../core/plugin-api.js` and `../../core/shared/*.js`
