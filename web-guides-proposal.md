@@ -1,10 +1,14 @@
 # Web Navigation Guides for pi-browser
 
 > Date: 2026-06-13
-> Updated: added guide categories (site/pattern) with trigger-based presence tiers
-> (auto-inject, auto-hint, on-demand), session-level inject suppression with
-> downgrade to hint, `autoInject` config toggle, `dialogPresent` trigger for
-> cookie-consent, and category-aware guide listing.
+> Updated: per-taskId `injectedGuides` map (prevents cross-task suppression),
+> `source` field on `Guide` type with file loader for user-authored guides in
+> `guides/` directory (user files `.gitignore`'d), date-based staleness (agent
+> decides from `updated` + current date instead of `staleAfterDays` threshold),
+> guide categories (site/pattern) with trigger-based presence tiers (auto-inject,
+> auto-hint, on-demand), session-level inject suppression with downgrade to hint,
+> `autoInject` config toggle, `dialogPresent` trigger for cookie-consent, and
+> category-aware guide listing.
 > Reconciled with Phase 1 (snapshot disk cache), Phase 2 (browser-inspect),
 > and Phase 3 (hint text refresh) — all now implemented.
 > Status: **Accepted** — on-demand site-specific guidance via `web-guide` tool,
@@ -54,10 +58,11 @@ existing hint text that the router appends to truncated snapshots.
 
 ### 3.1 Guide Content Structure
 
-Guides are stored as typed entries with content and freshness metadata:
+Guides are stored as typed entries with content and source/freshness metadata:
 
 ```typescript
 type GuideCategory = "site" | "pattern";
+type GuideSource = "builtin" | "user";
 
 /** Trigger that promotes a pattern guide to auto-presence. */
 interface GuideTrigger {
@@ -71,7 +76,7 @@ interface Guide {
   content: string;         // markdown guidance text, max ~600 tokens / ~800 chars
   updated: string;         // ISO date of last update
   category: GuideCategory; // site = domain-mapped, pattern = cross-cutting
-  staleAfterDays?: number; // optional: emit staleness warning beyond this threshold
+  source: GuideSource;     // builtin = shipped in GUIDE_CONTENT, user = loaded from guides/ dir
   trigger?: GuideTrigger;  // only pattern guides use this; site guides use DOMAIN_MAP
 }
 
@@ -79,12 +84,14 @@ const GUIDE_CONTENT: Record<string, Guide> = {
   // Site guides — discovered via DOMAIN_MAP auto-hint
   "reddit": {
     category: "site",
+    source: "builtin",
     updated: "2026-06-01",
     content: `## Reddit Navigation Patterns
 ...`,
   },
   "github": {
     category: "site",
+    source: "builtin",
     updated: "2026-06-01",
     content: `## GitHub Navigation Patterns
 ...`,
@@ -92,6 +99,7 @@ const GUIDE_CONTENT: Record<string, Guide> = {
   // Pattern guides — discovered via trigger or on-demand
   "bot-detection": {
     category: "pattern",
+    source: "builtin",
     updated: "2026-06-13",
     trigger: { signal: "botDetected", presence: "inject" },
     content: `## Bot Detection Patterns
@@ -99,6 +107,7 @@ const GUIDE_CONTENT: Record<string, Guide> = {
   },
   "cookie-consent": {
     category: "pattern",
+    source: "builtin",
     updated: "2026-06-12",
     trigger: { signal: "dialogPresent", presence: "hint" },
     content: `## Cookie Consent Patterns
@@ -106,18 +115,142 @@ const GUIDE_CONTENT: Record<string, Guide> = {
   },
   "pagination": {
     category: "pattern",
+    source: "builtin",
     updated: "2026-06-12",
     content: `## Pagination Patterns
 ...`,
   },
   "search": {
     category: "pattern",
+    source: "builtin",
     updated: "2026-06-12",
     content: `## Search Patterns
 ...`,
   },
 };
 ```
+
+### 3.1a User-Authored Guides (File Loader)
+
+Builtin guides are defined in `GUIDE_CONTENT` above. User-authored guides live
+as `.md` files in `guides/` within the extension directory, loaded at startup
+by a file scanner and merged into the same `GUIDE_CONTENT` record with
+`source: "user"`. User-authored files are `.gitignore`'d so they ship locally
+without polluting the repo.
+
+**Directory layout:**
+
+```
+pi-browser/
+├── guides/                  # User-authored guide files (gitignored)
+│   ├── amazon.md            # Example: user adds a site guide
+│   └── infinite-scroll.md   # Example: user adds a pattern guide
+└── .gitignore               # Contains: guides/*.md
+```
+
+**File format** — YAML frontmatter + markdown body (dotted keys for nested fields):
+
+```markdown
+---
+category: site
+updated: 2026-06-13
+trigger.signal: dialogPresent  # optional, only for pattern guides
+trigger.presence: hint
+---
+
+## Amazon Navigation Patterns
+
+### Product Pages
+- Price is role="text" with name "Price"
+...
+```
+
+**Loader** (`loadUserGuides()`):
+
+```typescript
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
+/** Directory for user-authored guide files. */
+const GUIDES_DIR = join(__dirname, "..", "guides");
+
+/** Parse a user guide .md file with YAML frontmatter. */
+function parseGuideFile(filepath: string, filename: string): [string, Guide] | null {
+  try {
+    const raw = readFileSync(filepath, "utf-8");
+    const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+    if (!match) return null;
+
+    const [, frontmatter, content] = match;
+    // Minimal YAML parsing — only scalar fields we need
+    const meta: Record<string, string> = {};
+    for (const line of frontmatter.split("\n")) {
+      const [key, ...rest] = line.split(":");
+      if (key && rest.length) meta[key.trim()] = rest.join(":").trim();
+    }
+
+    const name = filename.replace(/\.md$/, "");
+    const category = meta["category"] === "pattern" ? "pattern" : "site";
+    const updated = meta["updated"] ?? new Date().toISOString().slice(0, 10);
+
+    let trigger: GuideTrigger | undefined;
+    if (meta["trigger.signal"] && meta["trigger.presence"]) {
+      trigger = {
+        signal: meta["trigger.signal"] as GuideTrigger["signal"],
+        presence: meta["trigger.presence"] as GuideTrigger["presence"],
+      };
+    }
+
+    return [name, {
+      category,
+      source: "user",
+      updated,
+      content: content.trim(),
+      ...(trigger ? { trigger } : {}),
+    }];
+  } catch {
+    return null;
+  }
+}
+
+/** Load user-authored guides from guides/ directory. */
+function loadUserGuides(): Record<string, Guide> {
+  const result: Record<string, Guide> = {};
+  try {
+    const entries = readdirSync(GUIDES_DIR);
+    for (const filename of entries) {
+      if (!filename.endsWith(".md")) continue;
+      const parsed = parseGuideFile(join(GUIDES_DIR, filename), filename);
+      if (parsed) {
+        const [name, guide] = parsed;
+        result[name] = guide;
+      }
+    }
+  } catch {
+    // guides/ dir may not exist — that's fine
+  }
+  return result;
+}
+```
+
+**Merge at startup** — user guides override builtin guides with the same name,
+allowing users to customize or fix builtin content without editing source code:
+
+```typescript
+const GUIDE_CONTENT: Record<string, Guide> = {
+  ...BUILTIN_GUIDES,
+  ...loadUserGuides(),  // user overrides builtin on name collision
+};
+```
+
+The `.gitignore` entry for `guides/*.md` ensures user files are never
+accidentally committed. The directory itself is tracked (with a `.gitkeep`)
+so the loader can safely assume it exists.
+
+The `source` field (`"builtin"` | `"user"`) is available in listings and
+the `web-guide` response so the agent (and user) can tell which guides are
+shipped with the extension vs locally customized. This also enables future
+targeted operations (e.g. only update builtin guides, only delete user guides).
 
 The `Guide` interface is deliberately minimal beyond the essential fields.
 The `category` field drives both listing organization and auto-presence
@@ -166,33 +299,27 @@ const webGuideTool = defineTool({
         }],
       };
     }
-    let text = entry.content + `\n\n_Updated: ${entry.updated}_`;
-    // Staleness warning if configured
-    if (entry.staleAfterDays) {
-      const ageDays = (Date.now() - new Date(entry.updated).getTime()) / 86400000;
-      if (ageDays > entry.staleAfterDays) {
-        text += `\n\n⚠️ This guide was last updated ${Math.round(ageDays)} days ago. ` +
-          `Verify recommendations against the current page state.`;
-      }
-    }
+    const currentDate = new Date().toISOString().slice(0, 10);
+    const text = entry.content +
+      `\n\n_Guide updated: ${entry.updated} · Current date: ${currentDate} · Source: ${entry.source}_`;
     return {
       content: [{ type: "text", text }],
     };
   },
 });
 
-/** Format guide listing grouped by category. */
+/** Format guide listing grouped by category and source. */
 function formatGuideList(guides: Record<string, Guide>): string {
   const sites = Object.entries(guides)
     .filter(([, g]) => g.category === "site")
-    .map(([name, g]) => `  ${name} (updated ${g.updated})`);
+    .map(([name, g]) => `  ${name} (${g.source}, updated ${g.updated})`);
   const patterns = Object.entries(guides)
     .filter(([, g]) => g.category === "pattern")
     .map(([name, g]) => {
       const trigger = g.trigger
         ? ` — auto-${g.trigger.presence} when ${g.trigger.signal}`
         : "";
-      return `  ${name} (updated ${g.updated})${trigger}`;
+      return `  ${name} (${g.source}, updated ${g.updated})${trigger}`;
     });
   return [
     "Available guides:\n",
@@ -202,6 +329,7 @@ function formatGuideList(guides: Record<string, Guide>): string {
     "Pattern guides:",
     ...patterns,
     "",
+    'Source: "builtin" = shipped with extension, "user" = loaded from guides/ directory.',
     'Call web-guide guide="<name>" for guidance.',
   ].join("\n");
 }
@@ -247,11 +375,13 @@ hint; agents that can self-serve use the tool on demand.
 | **Auto-hint** | Condition met + agent can act | ~20 tokens | Site-specific guide, dialog present |
 | **On-demand** | Agent calls `web-guide` | ~300–600 tokens | All guides always available |
 
-**Session-level inject suppression.** After the first auto-inject of a guide
+**Session-level inject suppression (per-taskId).** After the first auto-inject of a guide
 in a session, subsequent triggers of the same guide downgrade to auto-hint.
 The agent already has the content in context; re-injecting is pure waste.
-This is automatic and requires no configuration — it follows the design
-principle that guidance enters context once.
+The suppression state is tracked in a `Map<string, Set<string>>` keyed by
+`taskId`, so concurrent sessions don't interfere — Task A's bot-detection
+injection doesn't suppress Task B's. The map is cleared when the task session
+is removed via `session_shutdown`.
 
 **`autoInject` config toggle.** Users who prefer minimal output or who are
 working in token-constrained environments can disable auto-inject globally:
@@ -274,6 +404,12 @@ it costs on first encounter (prevents 3–5 failed tool calls).
 The config is read from `~/.pi/agent/settings.json` via the existing
 `plugin-config.ts` mechanism, alongside `browser.plugins`. No new config
 infrastructure needed.
+
+**User guides override builtin on name collision.** At startup, the file
+loader runs after `BUILTIN_GUIDES` is defined, so a user-authored
+`guides/reddit.md` would override the builtin `reddit` entry. The `source`
+field captures the origin so the listing and tool response can show which
+is which.
 
 How the initial guides map to tiers:
 
@@ -302,9 +438,7 @@ const DOMAIN_MAP: Record<string, DomainEntry> = {
   "www.reddit.com": { guide: "reddit" },
   "old.reddit.com": { guide: "reddit" },
   "github.com": { guide: "github" },
-  "hackernews.com": { guide: "hackernews" },
   "news.ycombinator.com": { guide: "hackernews" },
-  "www.hackernews.com": { guide: "hackernews" },
   "theguardian.com": { guide: "guardian" },
   "www.theguardian.com": { guide: "guardian" },
   // Future: sites known to require a stealth backend
@@ -380,8 +514,8 @@ just the hint:
 ```typescript
 // ── Guide presence resolution ─────────────────────────────────────
 
-/** Track which guides have been auto-injected this session. */
-const injectedGuides = new Set<string>();
+/** Per-task suppression of auto-injected guides (Map<taskId, Set<guideName>>). */
+const injectedGuides = new Map<string, Set<string>>();
 
 /** Check if a dialog is present in the snapshot text. */
 function dialogPresentInSnapshot(snapshot: string): boolean {
@@ -391,18 +525,26 @@ function dialogPresentInSnapshot(snapshot: string): boolean {
 
 /** Resolve which guide presence to show, if any. */
 function resolveGuidePresence(
+  taskId: string,
   url: string,
   result: NavigateResult & { botDetectionWarning?: boolean },
   domainMap: Record<string, DomainEntry>,
   guides: Record<string, Guide>,
   autoInjectConfig: boolean,
 ): { type: "inject" | "hint"; guideName: string; text: string } | undefined {
+  // Get or create per-task injection set
+  let taskInjected = injectedGuides.get(taskId);
+  if (!taskInjected) {
+    taskInjected = new Set<string>();
+    injectedGuides.set(taskId, taskInjected);
+  }
+
   // 1. Bot-detection trigger — highest priority
   if (result.botDetectionWarning) {
     const guide = guides["bot-detection"];
     if (guide?.trigger?.signal === "botDetected") {
-      if (autoInjectConfig && !injectedGuides.has("bot-detection")) {
-        injectedGuides.add("bot-detection");
+      if (autoInjectConfig && !taskInjected.has("bot-detection")) {
+        taskInjected.add("bot-detection");
         return {
           type: "inject",
           guideName: "bot-detection",
@@ -442,13 +584,19 @@ function resolveGuidePresence(
   return undefined;
 }
 
+/** Clean up per-task injection tracking. */
+function cleanupInjectedGuides(taskId: string): void {
+  injectedGuides.delete(taskId);
+}
+
 // In index.ts, browser-navigate tool's execute()
 async execute(toolCallId, params, signal, onUpdate, ctx) {
-  const result = await router.navigate(params.url, taskId, strategy);
+  const tid = taskId(ctx);
+  const result = await router.navigate(params.url, { ...navOptions, taskId: tid });
   const autoInjectConfig = readGuidesConfig().autoInject;  // from settings.json
 
   const presence = resolveGuidePresence(
-    params.url, result, DOMAIN_MAP, GUIDE_CONTENT, autoInjectConfig,
+    tid, params.url, result, DOMAIN_MAP, GUIDE_CONTENT, autoInjectConfig,
   );
 
   let output = renderNavigateResult(result);
@@ -473,11 +621,12 @@ At most one guide presence is shown per navigate result. The first matching
 condition wins. This keeps the navigate output focused and avoids stacking
 multiple hints.
 
-The `injectedGuides` set is scoped to the task session and cleared on session
-removal. It tracks guide names (not domains) — navigating to `reddit.com`
-(bot-detected, inject) then `github.com` (bot-detected, also injects) would
-inject bot-detection on the first visit and hint on the second, because the
-agent already has the content from the first injection.
+The `injectedGuides` map is keyed by `taskId`, so each concurrent session maintains
+its own suppression state. It's cleared on `session_shutdown` via
+`cleanupInjectedGuides(tid)`. It tracks guide names (not domains) — navigating
+to `reddit.com` (bot-detected, inject) then `github.com` (bot-detected, also
+injects) would inject bot-detection on the first visit and hint on the second,
+because the agent already has the content from the first injection.
 
 The `dialogPresentInSnapshot` check is a lightweight string scan on content
 the router already produced. It detects `role="dialog"` and
@@ -568,29 +717,39 @@ knowledge; these layers provide runtime safety. They coexist cleanly.
 
 ## 7. Implementation Steps
 
-1. **Define `web-guide` tool** in `index.ts` with `guide` parameter, guide
-   content map, category-aware listing, and staleness warning logic (~80 lines)
-2. **Add `GuideCategory`, `GuideTrigger`, and `Guide` types** with `category`
-   and `trigger` fields; add `DomainEntry` type and `DOMAIN_MAP` with
-   hostname-to-entry resolution and optional `strategy` field (~50 lines)
-3. **Add `resolveGuidePresence` function** with trigger-based auto-inject and
-   auto-hint logic, `dialogPresentInSnapshot` check, session-level inject
-   suppression via `injectedGuides` set, and `autoInject` config toggle
-   (~60 lines)
-4. **Wire guide presence into `browser-navigate`** tool output, appending
-   inject content or hint text after cache/fingerprint lines (~15 lines)
-5. **Add `readGuidesConfig`** to read `browser.guides.autoInject` from
+1. **Add `GuideCategory`, `GuideSource`, `GuideTrigger`, and `Guide` types**
+   with `category`, `source` (`"builtin"` | `"user"`), and `trigger` fields;
+   add `DomainEntry` type and `DOMAIN_MAP` with hostname-to-entry resolution
+   and optional `strategy` field (~50 lines)
+2. **Define `BUILTIN_GUIDES` record** with 4 pattern guides and 2 site-specific
+   guides, all with `source: "builtin"` (~40 lines)
+3. **Add file loader** (`loadUserGuides()`, `parseGuideFile()`) that reads
+   `.md` files from `guides/` directory at startup, merging them into
+   `GUIDE_CONTENT` (user overrides builtin on name collision). Add `guides/`
+   directory and `.gitignore` entry (`guides/*.md`) (~70 lines)
+4. **Define `web-guide` tool** in `index.ts` with `guide` parameter, guide
+   content map, category-aware listing, and date-based staleness line
+   (~80 lines)
+5. **Add `resolveGuidePresence` function** with trigger-based auto-inject and
+   auto-hint logic, `dialogPresentInSnapshot` check, per-taskId inject
+   suppression via `Map<string, Set<string>>`, `cleanupInjectedGuides()`
+   helper, and `autoInject` config toggle (~70 lines)
+6. **Wire guide presence into `browser-navigate`** tool output, passing `tid`
+   to `resolveGuidePresence`, appending inject content or hint text after
+   cache/fingerprint lines (~15 lines)
+7. **Add `readGuidesConfig`** to read `browser.guides.autoInject` from
    `settings.json` via existing `plugin-config.ts` mechanism (~10 lines)
-6. **Start with 4 pattern guides** (cookie-consent, pagination, search,
-   bot-detection) and 2 site-specific guides (reddit, github), recommending
-   `browser-inspect` where it's the cheaper path
-7. **Add tests** for `resolveGuidePresence` (all three tiers + suppression),
-   `dialogPresentInSnapshot`, `formatGuideList`, `web-guide` tool execution,
-   and `autoInject: false` config (~70–100 lines)
-8. **Update `AGENTS.md`** — document web-guide tool, three-tier presence,
-   categories, auto-inject with session suppression, and `autoInject` config
+8. **Wire cleanup** — call `cleanupInjectedGuides(tid)` on `session_shutdown`
+   alongside `_sessionKeys.delete()` (~5 lines)
+9. **Add tests** for `resolveGuidePresence` (all three tiers + per-taskId
+   suppression + `autoInject: false`), `dialogPresentInSnapshot`,
+   `formatGuideList`, `web-guide` tool execution, and `parseGuideFile`
+   (~80–110 lines)
+10. **Update `AGENTS.md`** — document web-guide tool, three-tier presence,
+    categories, per-taskId auto-inject suppression, `source` field, user
+    guide file loader, and `autoInject` config
 
-**Total new code: ~285–315 lines** (including tests). No changes to router core,
+**Total new code: ~420–450 lines** (including tests). No changes to router core,
 plugin system, session management, or existing safety nets. No new tool
 parameters on existing tools — guides simply recommend the right combination
 of existing tools (`browser-inspect`, `browser-snapshot`, cached snapshots).
@@ -602,8 +761,6 @@ of existing tools (`browser-inspect`, `browser-snapshot`, cached snapshots).
 | Feature | Reason |
 |---------|--------|
 | **Agent-generated guides ("build a guide")** | Single-visit exploration produces low-quality guides. Requires real-time user interaction, breaks async model, introduces filesystem trust boundaries. |
-| **User-authored guides directory** | Start with guides in code. Externalize to `~/.pi/agent/skills/pi-browser/` after proving value with hand-authored content. |
-| **Guide freshness monitoring** | Display staleness warnings when `updated` is older than threshold. Add when users encounter stale guides. |
 | **Domain-aware conditional injection** | When pi supports `registerSkill` API, migrate from guide-tool to real skills with conditional context. |
 | **Per-guide auto-inject config** | Only one auto-inject guide exists in v1 (bot-detection). A per-guide config map is premature; the global `autoInject` boolean is sufficient. Revisit at 5+ auto-inject guides. |
 | **Richer trigger conditions** | Triggers are intentionally narrow (two signals, two presence modes). New triggers (e.g. "large page" for pagination) require code review, not config composition. This is the right default for v1. |
@@ -615,10 +772,10 @@ of existing tools (`browser-inspect`, `browser-snapshot`, cached snapshots).
 
 | Risk | Severity | Mitigation |
 |------|----------|-----------|
-| **Stale guide content** | Medium | Guides carry `updated` date + optional `staleAfterDays` for runtime warnings; guides include staleness disclaimers (e.g. "If the described elements don't appear, fall back to browser-inspect"); stale guides are advisory, not authoritative |
+| **Stale guide content** | Medium | Guides carry `updated` date paired with the current date in output — agent decides whether content is stale. Guides include staleness disclaimers (e.g. "If the described elements don't appear, fall back to browser-inspect"). No arbitrary threshold to go stale. |
 | **Agent ignores auto-hint** | Low | Worst case = same as today (discovery cost). Agent can still call `web-guide` manually. Bot-detection hint is more urgent and uses ⚠️ emoji for visibility |
 | **Guide content accumulates in conversation** | Low | Guides are ~300–600 chars; small compared to snapshot output (~2500 chars); auto-inject fires at most once per guide per session |
-| **Repeated auto-inject on same guide** | Medium | Session-level `injectedGuides` set downgrades to hint after first inject; `autoInject: false` config for users who never want inject |
+| **Repeated auto-inject on same guide** | Medium | Per-taskId `injectedGuides` map downgrades to hint after first inject per session; `autoInject: false` config for users who never want inject |
 | **Domain mapping needs updates for variants** | Low | Simple JSON object; add entries as needed; missing subdomains fall back to no-hint |
 | **Tool schema adds ~100–150 tokens/turn** | Low | Fixed cost paid once; savings on first-visit discovery (5–8 tool calls → 1–2) far exceed overhead |
 | **Guide content exceeds size cap** | Low | Authoring discipline enforced by review; no runtime truncation (would silently degrade guidance quality) |
