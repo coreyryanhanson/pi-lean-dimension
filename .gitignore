@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # Python pycache
 __pycache__
+
+# User-authored web navigation guides (YAML frontmatter + markdown)
+guides/*.md

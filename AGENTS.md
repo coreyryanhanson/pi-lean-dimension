@@ -4,7 +4,7 @@
 
 ## What This Is
 
-A pi extension that registers **12 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
+A pi extension that registers **13 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
 
 ## Developer Commands
 
@@ -22,7 +22,7 @@ There is no build step (`noEmit: true` in tsconfig). The extension is loaded dir
 
 ```
 pi-browser/
-├── index.ts                  # Entry: registers 11 tools + 2 commands
+├── index.ts                  # Entry: registers 13 tools + 2 commands
 ├── browser-toggle.ts         # /web on|off|status — toggle tools in/out of active set
 ├── backends/                 # Plugin implementations
 │   ├── chromium/index.ts     # Node/Playwright, reference ~1100 lines
@@ -33,8 +33,10 @@ pi-browser/
 │   ├── plugin-registry.ts    # Registration, validation, strategy resolution
 │   ├── plugin-config.ts      # Reads browser.plugins from settings.json
 │   ├── router.ts             # Dispatch, session lifecycle, truncation, browser-inspect
+│   ├── guides.ts             # Guide types, builtin guides, file loader, presence resolution
 │   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
 │   └── shared/               # session-manager, url-safety, bot-detection, cdp-supervisor, accessibility-tree, snapshot-cache, dom-extractor
+├── guides/                  # User-authored guide files (gitignored)
 ├── scripts/                  # dialog-gate.ts, experiment reports
 └── __tests__/                # 13 test files + helpers/
 ```
@@ -78,23 +80,36 @@ All tool calls dispatch through the router. Key responsibilities:
 | `web-fetch` | Static page → Markdown, no JS needed | Stateless | Fast |
 | `browser-navigate` | Interactive page → accessibility tree with @e refs | Stateful session | Slower |
 | `browser-inspect` | Element queries + text extraction with @e ref annotations | Stateful session | Fast (sync cache) |
+| `web-guide` | Get navigation guidance for a site or pattern | Stateless | Instant |
 
 `web-fetch` uses plain `fetch()` + `node-html-parser` + `turndown`. Returns ~4000 chars inline, spills to temp file when larger. `browser-navigate` uses Playwright Chromium, returns accessibility tree with @e1/@e2 refs.
 
-### Registered tools (12 total)
+### Registered tools (13 total)
 
-web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-screenshot, browser-get-images, browser-back, browser-press, browser-console, browser-inspect
+web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-screenshot, browser-get-images, browser-back, browser-press, browser-console, browser-inspect, web-guide
 
 ### Registered commands (2 total)
 
 `/browser-status` — show backend health and active sessions
 `/web on|off|status` — toggle all browser tools out of the active tool set (saves ~1500-2000 tokens when off)
 
+### Guides (`core/guides.ts`)
+
+Type definitions (`Guide`, `GuideTrigger`, `GuideCategory`, `GuideSource`,
+`DomainEntry`, `GuidePresenceResult`), the `BUILTIN_GUIDES` record (4 pattern guides + 1 test-only site fixture),
+`DOMAIN_MAP` for domain-to-guide resolution,
+`loadUserGuides()`/`parseGuideFile()` for user-authored guides (YAML frontmatter
++ markdown body), `resolveGuidePresence()` for three-tier auto-presence
+(auto-inject / auto-hint / on-demand), `dialogPresentInSnapshot()` for dialog
+detection from accessibility tree text, `readGuidesConfig()` for
+`browser.guides.autoInject` from settings.json, and `cleanupInjectedGuides()`
+for per-task injection tracking cleanup.
+
 Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`.
 
 ## Testing
 
-### Test files (15 files, 493 tests passing)
+### Test files (16 files, 527 tests passing)
 
 | File | Requires Chromium? |
 |------|--------------------|
@@ -109,6 +124,7 @@ Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-
 | plugin-loading.test.ts | No |
 | snapshot-cache.test.ts | No |
 | browser-inspect.test.ts | No |
+| web-guides.test.ts | No |
 | dialog-compaction.test.ts (archived) | No |
 | occlusion-live.test.ts | Yes (auto-skip) |
 | reddit-dialog.test.ts | Yes (auto-skip) |
@@ -155,6 +171,10 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
   - **Text output truncation**: when `text=true` without an explicit `maxChars`, the output is truncated at ~2500 characters by default. Pass `maxChars=0` for full content. Truncated output appends `"\n… X more chars (use maxChars=0 for full content)"` so the agent knows how to retrieve the complete text.
   - **Keyword filtering**: the optional `query` parameter filters extracted content to only include elements whose text matches the given case-insensitive substring. Applied before correlation, so only matching elements get @e ref annotations. When no content matches, a notice is appended to the output. Also checks link `href` and image `src` fields.
 - **`parentRef` on `AriaCachedNode`**: set by a depth-based parent stack in `parseSnapshot()`'s second pass. Enables `subtree=...` queries in `browser-inspect`. A `dialog`/`alertdialog` element becomes the parent of interior elements. Same-depth siblings share the same parent.
+- **Guide content discipline**: guides should be ≤800 chars. No runtime enforcement — authoring discipline.
+- **`dialogPresentInSnapshot` is a string scan**: checks for `role="dialog"` in the already-truncated snapshot. May miss dialogs below the truncation boundary. A proper `dialogDetected` field on `NavigateResult` is deferred.
+- **Guide staleness**: pattern guides (bot-detection, cookie-consent, pagination, search) are kept generic and reviewed periodically. No builtin site guides are shipped — site guidance is entirely user-authored via `guides/*.md`. Guides carry `updated` date paired with `currentDate` in output for the agent to assess freshness.
+- **`DOMAIN_MAP` is static**: entries must be added manually. The only builtin entry is a test-only fixture (`_internal-test.example`). Users who add site guides must also add corresponding `DOMAIN_MAP` entries.
 - **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click, occlusion events). Only checks in ChromiumPlugin
 
 ## Debugging

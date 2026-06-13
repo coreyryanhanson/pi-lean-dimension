@@ -19,6 +19,13 @@ import {
 	removeAllSnapshotFiles,
 } from "./core/shared/snapshot-cache.js";
 import initBrowserToggle, { getToggleState } from "./browser-toggle.js";
+import {
+	resolveGuidePresence,
+	cleanupInjectedGuides,
+	formatGuideList,
+	GUIDE_CONTENT,
+	type Guide,
+} from "./core/guides.js";
 
 // ============================================================
 // Status bar update helper
@@ -168,6 +175,26 @@ const browserNavigateTool = defineTool({
 			"",
 			contentText,
 		];
+
+		// ---- Web Guide presence ----
+		const presence = resolveGuidePresence(
+			tid,
+			result.url,
+			result.snapshot,
+			result.botDetectionWarning ?? false,
+		);
+		if (presence) {
+			if (presence.type === "inject") {
+				lines.push(
+					"",
+					presence.text,
+					"",
+					`_Call web-guide guide="${presence.guideName}" to see this guide again._`,
+				);
+			} else {
+				lines.push("", presence.text);
+			}
+		}
 
 		return {
 			content: [{ type: "text", text: lines.filter(Boolean).join("\n") }],
@@ -1239,6 +1266,56 @@ const webFetchTool = defineTool({
 });
 
 // ============================================================
+// Tool: web-guide
+// ============================================================
+const webGuideTool = defineTool({
+	name: "web-guide",
+	label: "Web Navigation Guide",
+	description:
+		"Get navigation guidance for a site or pattern. " +
+		"Call with a guide name (e.g. 'reddit', 'cookie-consent', 'bot-detection') " +
+		"for guidance, or with no parameter to list all available guides.",
+	parameters: Type.Object({
+		guide: Type.Optional(
+			Type.String({
+				description:
+					"Guide name (e.g. 'reddit', 'cookie-consent', 'bot-detection'). Omit to list all guides.",
+			}),
+		),
+	}),
+
+	async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+		const { guide } = params as { guide?: string };
+		if (!guide) {
+			return {
+				content: [{ type: "text", text: formatGuideList() }],
+				details: {},
+			};
+		}
+		const entry: Guide | undefined = GUIDE_CONTENT[guide];
+		if (!entry) {
+			return {
+				content: [
+					{
+						type: "text",
+						text: `No guide for '${guide}'. Available: ${Object.keys(GUIDE_CONTENT).join(", ")}`,
+					},
+				],
+				details: {},
+			};
+		}
+		const currentDate = new Date().toISOString().slice(0, 10);
+		const text =
+			entry.content +
+			`\n\n_Guide updated: ${entry.updated} · Current date: ${currentDate} · Source: ${entry.source}_`;
+		return {
+			content: [{ type: "text", text }],
+			details: {},
+		};
+	},
+});
+
+// ============================================================
 // Command: /browser-status
 // ============================================================
 const browserStatusCommand = {
@@ -1377,6 +1454,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(browserPressTool);
 	pi.registerTool(browserConsoleTool);
 	pi.registerTool(browserInspectTool);
+	pi.registerTool(webGuideTool);
 
 	// --- Register commands ------------------------------------------
 	pi.registerCommand("browser-status", browserStatusCommand);
@@ -1395,7 +1473,10 @@ export default function (pi: ExtensionAPI) {
 	// --- Cleanup ----------------------------------------------------
 	pi.on("session_shutdown", async (_event, ctx) => {
 		const piSessionId = (ctx as any)?.sessionManager?.getSessionId?.();
-		if (piSessionId) _sessionKeys.delete(piSessionId);
+		if (piSessionId) {
+			_sessionKeys.delete(piSessionId);
+			cleanupInjectedGuides(piSessionId);
+		}
 
 		// Clean up all registered plugins
 		const ordered = pluginRegistry.getOrdered();
