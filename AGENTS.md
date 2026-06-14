@@ -4,7 +4,7 @@
 
 ## What This Is
 
-A pi extension that registers **13 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
+A pi extension that registers **14 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
 
 ## Developer Commands
 
@@ -22,8 +22,8 @@ There is no build step (`noEmit: true` in tsconfig). The extension is loaded dir
 
 ```
 pi-browser/
-├── index.ts                  # Entry: registers 13 tools + 2 commands
-├── browser-toggle.ts         # /web on|off|status — toggle tools in/out of active set
+├── index.ts                  # Entry: registers 14 tools + 2 commands
+├── browser-toggle.ts         # /web on|off|learn|status — three-state toggle
 ├── backends/                 # Plugin implementations
 │   ├── chromium/index.ts     # Node/Playwright, reference ~1100 lines
 │   ├── python-adapter.ts     # JSON-RPC bridge for subprocess plugins
@@ -81,17 +81,20 @@ All tool calls dispatch through the router. Key responsibilities:
 | `browser-navigate` | Interactive page → accessibility tree with @e refs | Stateful session | Slower |
 | `browser-inspect` | Element queries + text extraction with @e ref annotations | Stateful session | Fast (sync cache) |
 | `web-guide` | Get navigation guidance for a site or pattern | Stateless | Instant |
+| `web-learn` | Save or update navigation guidance for a site | Stateless | Instant |
 
 `web-fetch` uses plain `fetch()` + `node-html-parser` + `turndown`. Returns ~4000 chars inline, spills to temp file when larger. `browser-navigate` uses Playwright Chromium, returns accessibility tree with @e1/@e2 refs.
 
-### Registered tools (13 total)
+### Registered tools (14 total)
 
-web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-screenshot, browser-get-images, browser-back, browser-press, browser-console, browser-inspect, web-guide
+web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-screenshot, browser-get-images, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
 
 ### Registered commands (2 total)
 
 `/browser-status` — show backend health and active sessions
-`/web on|off|status` — toggle all browser tools out of the active tool set (saves ~1500-2000 tokens when off)
+`/web on|off|learn|status` — /web on (browsing only), /web off (all disabled),
+                                 /web learn (browsing + guide-saving via web-learn),
+                                 /web (show current state)
 
 ### Guides (`core/guides.ts`)
 
@@ -104,6 +107,17 @@ Type definitions (`Guide`, `GuideTrigger`, `GuideCategory`, `GuideSource`,
 detection from accessibility tree text, `readGuidesConfig()` for
 `browser.guides.autoInject` from settings.json, and `cleanupInjectedGuides()`
 for per-task injection tracking cleanup.
+
+### Guide Creation (web-learn tool)
+
+Guides are saved or updated via the `web-learn` tool, invoked in response to
+a user request (explicit or contextual). The tool creates a `.md` file with YAML
+frontmatter in `guides/`, including a `domains` field that automatically triggers
+domain hints on future navigations. Calling `web-learn` again on the same domain
+updates the existing file (new content, new date).
+
+The `/web learn` command must be active or the tool isn't in the active tool set.
+Default is `/web on` (browsing only).
 
 Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`.
 
@@ -174,7 +188,16 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
 - **Guide content discipline**: guides should be ≤800 chars. No runtime enforcement — authoring discipline.
 - **`dialogPresentInSnapshot` is a string scan**: checks for `role="dialog"` in the already-truncated snapshot. May miss dialogs below the truncation boundary. A proper `dialogDetected` field on `NavigateResult` is deferred.
 - **Guide staleness**: pattern guides (bot-detection, cookie-consent, pagination, search) are kept generic and reviewed periodically. No builtin site guides are shipped — site guidance is entirely user-authored via `guides/*.md`. Guides carry `updated` date paired with `currentDate` in output for the agent to assess freshness.
-- **`DOMAIN_MAP` is static**: entries must be added manually. The only builtin entry is a test-only fixture (`_internal-test.example`). Users who add site guides must also add corresponding `DOMAIN_MAP` entries.
+- **Domain map is built dynamically from guide files**: the only static entry
+  is the test-only fixture (`_internal-test.example`). Any guide in `guides/`
+  with a `domains` frontmatter field automatically contributes domain hints.
+  Caches invalidate on `web-learn` tool calls — no reload needed.
+- **Learn mode toggle**: `/web learn` adds `web-learn` to the active tool set;
+  `/web on` removes it. The agent never calls `web-learn` unprompted — it only
+  saves or updates guides when the user asks or the context implies it.
+  State is persisted per-session-branch. Internally stores two independent booleans.
+  Legacy `/web on|off` branches restore correctly.
+  Learn mode defaults to off on fresh sessions.
 - **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click, occlusion events). Only checks in ChromiumPlugin
 
 ## Debugging

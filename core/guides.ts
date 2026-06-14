@@ -34,7 +34,9 @@ export interface Guide {
 	updated: string;
 	category: GuideCategory;
 	source: GuideSource;
-	/** Pattern guides only; site guides use DOMAIN_MAP. */
+	/** Domain name(s) this site guide applies to. Pattern guides leave this empty. */
+	domains?: string[];
+	/** Pattern guides only; site guides use domains or DOMAIN_MAP. */
 	trigger?: GuideTrigger;
 }
 
@@ -183,7 +185,7 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 // ═══════════════════════════════════════════════════════════════════
 
 /** Directory for user-authored guide files, resolved relative to this file (core/ → ../guides/). */
-const GUIDES_DIR = join(__dirname, "..", "guides");
+export const GUIDES_DIR = join(__dirname, "..", "guides");
 
 /**
  * Parse a raw guide file content string with YAML frontmatter.
@@ -220,6 +222,14 @@ export function parseGuideContent(
 		};
 	}
 
+	const rawDomains = meta["domains"];
+	const domains: string[] | undefined = rawDomains
+		? rawDomains
+				.split(",")
+				.map((d) => d.trim())
+				.filter(Boolean)
+		: undefined;
+
 	return [
 		name,
 		{
@@ -227,6 +237,7 @@ export function parseGuideContent(
 			source: "user" as GuideSource,
 			updated,
 			content: content.trim(),
+			...(domains ? { domains } : {}),
 			...(trigger ? { trigger } : {}),
 		},
 	];
@@ -265,20 +276,36 @@ export function loadUserGuides(): Record<string, Guide> {
 	return result;
 }
 
-// ── Merged Guide Content ─────────────────────────────────────────
+// ── Merged Guide Content (lazy) ────────────────────────────────
 
-/** User-authored guides override builtin guides on name collision. */
-export const GUIDE_CONTENT: Record<string, Guide> = {
-	...BUILTIN_GUIDES,
-	...loadUserGuides(),
-};
+let _guideContentCache: Record<string, Guide> | null = null;
+
+/**
+ * Get the merged guide content (builtin + user-authored).
+ * Lazily built on first call; invalidate via invalidateGuideContent().
+ * User-authored guides override builtin guides on name collision.
+ */
+export function getGuideContent(): Record<string, Guide> {
+	if (!_guideContentCache) {
+		_guideContentCache = {
+			...BUILTIN_GUIDES,
+			...loadUserGuides(),
+		};
+	}
+	return _guideContentCache;
+}
+
+/** Invalidate the guide content cache so the next getGuideContent() call rescans guides/. */
+export function invalidateGuideContent(): void {
+	_guideContentCache = null;
+}
 
 /** Format guide listing grouped by category and source. */
 export function formatGuideList(): string {
 	const sites: string[] = [];
 	const patterns: string[] = [];
 
-	for (const [name, g] of Object.entries(GUIDE_CONTENT)) {
+	for (const [name, g] of Object.entries(getGuideContent())) {
 		const entry = `  ${name} (${g.source}, updated ${g.updated})`;
 		if (g.category === "site") {
 			sites.push(entry);
@@ -309,6 +336,47 @@ export function formatGuideList(): string {
 
 /** Per-task suppression of auto-injected guides (Map<taskId, Set<guideName>>). */
 const injectedGuides = new Map<string, Set<string>>();
+
+// ═══════════════════════════════════════════════════════════════════
+// Dynamic Domain Map
+// ═══════════════════════════════════════════════════════════════════
+
+let _domainMapCache: Record<string, DomainEntry> | null = null;
+
+/**
+ * Build a domain map from DOMAIN_MAP (static base) + all guides returned
+ * by getGuideContent() that have a `domains` field.
+ * Derives from the single source of truth (getGuideContent) rather than
+ * calling loadUserGuides() independently — this keeps both caches consistent.
+ */
+export function buildDomainMap(): Record<string, DomainEntry> {
+	const map: Record<string, DomainEntry> = { ...DOMAIN_MAP };
+	for (const [name, guide] of Object.entries(getGuideContent())) {
+		if (
+			guide.category === "site" &&
+			guide.domains &&
+			guide.domains.length > 0
+		) {
+			for (const domain of guide.domains) {
+				map[domain] = { guide: name };
+			}
+		}
+	}
+	return map;
+}
+
+/** Get the (cached) domain map; lazily built on first call. */
+export function getDomainMap(): Record<string, DomainEntry> {
+	if (!_domainMapCache) {
+		_domainMapCache = buildDomainMap();
+	}
+	return _domainMapCache;
+}
+
+/** Invalidate the domain map cache so the next getDomainMap() call rescans. */
+export function invalidateDomainMap(): void {
+	_domainMapCache = null;
+}
 
 /** Check if a dialog is present in the snapshot/accessibility tree text. */
 export function dialogPresentInSnapshot(snapshot: string): boolean {
@@ -378,7 +446,7 @@ export function resolveGuidePresence(
 
 	// 1. Bot-detection trigger — highest priority
 	if (botDetected) {
-		const guide = GUIDE_CONTENT["bot-detection"];
+		const guide = getGuideContent()["bot-detection"];
 		if (guide?.trigger?.signal === "botDetected") {
 			if (autoInjectConfig && !taskInjected.has("bot-detection")) {
 				taskInjected.add("bot-detection");
@@ -398,7 +466,7 @@ export function resolveGuidePresence(
 
 	// 2. Dialog trigger — check for consent dialogs in snapshot
 	if (dialogPresentInSnapshot(snapshot)) {
-		const guide = GUIDE_CONTENT["cookie-consent"];
+		const guide = getGuideContent()["cookie-consent"];
 		if (guide?.trigger?.signal === "dialogPresent") {
 			return {
 				type: "hint",
@@ -408,15 +476,15 @@ export function resolveGuidePresence(
 		}
 	}
 
-	// 3. Domain-based hint — site guides via DOMAIN_MAP
+	// 3. Domain-based hint — site guides via dynamic domain map
 	let hostname: string;
 	try {
 		hostname = new URL(url).hostname;
 	} catch {
 		return undefined;
 	}
-	const entry = DOMAIN_MAP[hostname];
-	if (entry?.guide && GUIDE_CONTENT[entry.guide]) {
+	const entry = getDomainMap()[hostname];
+	if (entry?.guide && getGuideContent()[entry.guide]) {
 		let text = `💡 A web guide is available for ${hostname}.\n   Call web-guide guide="${entry.guide}" for navigation tips.`;
 		if (entry.strategy) {
 			text += `\n   This site often requires a stealth browser — try strategy="${entry.strategy}".`;

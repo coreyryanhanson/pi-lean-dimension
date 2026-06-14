@@ -18,7 +18,11 @@ import {
 	parseGuideContent,
 	parseGuideFile,
 	formatGuideList,
-	GUIDE_CONTENT,
+	getGuideContent,
+	invalidateGuideContent,
+	buildDomainMap,
+	getDomainMap,
+	invalidateDomainMap,
 	BUILTIN_GUIDES,
 	DOMAIN_MAP,
 } from "../core/guides.js";
@@ -313,6 +317,7 @@ describe("parseGuideContent", () => {
 		expect(guide.content).toContain("## My Guide");
 		expect(guide.content).toContain("Some guidance text");
 		expect(guide.trigger).toBeUndefined();
+		expect(guide.domains).toBeUndefined();
 	});
 
 	it("parses pattern guide with trigger fields", () => {
@@ -327,6 +332,7 @@ describe("parseGuideContent", () => {
 		expect(guide.trigger).toBeDefined();
 		expect(guide.trigger!.signal).toBe("botDetected");
 		expect(guide.trigger!.presence).toBe("inject");
+		expect(guide.domains).toBeUndefined();
 	});
 
 	it("returns null for content with no frontmatter", () => {
@@ -364,6 +370,51 @@ describe("parseGuideContent", () => {
 		expect(result).not.toBeNull();
 		expect(result![1].content).toBe("padded content");
 	});
+
+	// ── domains frontmatter parsing ─────────────────────────────
+
+	it("parses single domain from frontmatter", () => {
+		const raw =
+			"---\ncategory: site\ndomains: reddit.com\nupdated: 2026-06-01\n---\n## Reddit Guide";
+		const result = parseGuideContent(raw, "reddit.com.md");
+		expect(result).not.toBeNull();
+		expect(result![1].domains).toEqual(["reddit.com"]);
+	});
+
+	it("parses comma-separated domains from frontmatter", () => {
+		const raw =
+			"---\ncategory: site\ndomains: reddit.com, www.reddit.com, old.reddit.com\nupdated: 2026-06-01\n---\n## Reddit Guide";
+		const result = parseGuideContent(raw, "reddit.com.md");
+		expect(result).not.toBeNull();
+		expect(result![1].domains).toEqual([
+			"reddit.com",
+			"www.reddit.com",
+			"old.reddit.com",
+		]);
+	});
+
+	it("handles missing domains field as undefined", () => {
+		const raw = "---\ncategory: site\nupdated: 2026-06-01\n---\n## No Domains";
+		const result = parseGuideContent(raw, "no-domains.md");
+		expect(result).not.toBeNull();
+		expect(result![1].domains).toBeUndefined();
+	});
+
+	it("filters trailing comma and empty segments", () => {
+		const raw =
+			"---\ncategory: site\ndomains: reddit.com, , www.reddit.com, \nupdated: 2026-06-01\n---\n## Reddit";
+		const result = parseGuideContent(raw, "reddit.com.md");
+		expect(result).not.toBeNull();
+		expect(result![1].domains).toEqual(["reddit.com", "www.reddit.com"]);
+	});
+
+	it("trims whitespace from domain entries", () => {
+		const raw =
+			"---\ncategory: site\ndomains:  reddit.com ,  www.reddit.com  \nupdated: 2026-06-01\n---\n## Reddit";
+		const result = parseGuideContent(raw, "reddit.com.md");
+		expect(result).not.toBeNull();
+		expect(result![1].domains).toEqual(["reddit.com", "www.reddit.com"]);
+	});
 });
 
 describe("parseGuideFile", () => {
@@ -376,12 +427,88 @@ describe("parseGuideFile", () => {
 // ─── DOMAIN_MAP consistency ─────────────────────────────────────
 
 describe("DOMAIN_MAP consistency", () => {
-	it("all DOMAIN_MAP guide references exist in GUIDE_CONTENT", () => {
+	it("all DOMAIN_MAP guide references exist in getGuideContent()", () => {
 		for (const [, entry] of Object.entries(DOMAIN_MAP)) {
 			if (entry.guide) {
-				expect(GUIDE_CONTENT[entry.guide]).toBeDefined();
+				expect(getGuideContent()[entry.guide]).toBeDefined();
 			}
 		}
+	});
+});
+
+// ─── Dynamic Domain Map ────────────────────────────────────────
+
+describe("buildDomainMap", () => {
+	it("includes the builtin DOMAIN_MAP fixture", () => {
+		const map = buildDomainMap();
+		expect(map["_internal-test.example"]).toBeDefined();
+	});
+
+	it("excludes pattern guides (no domains field)", () => {
+		const map = buildDomainMap();
+		// Pattern guides should not appear as domain entries
+		for (const [name] of Object.entries(getGuideContent())) {
+			if (getGuideContent()[name]?.category === "pattern") {
+				expect(Object.values(map).some((e) => e.guide === name)).toBe(false);
+			}
+		}
+	});
+
+	it("derives from getGuideContent() (single source of truth)", () => {
+		// buildDomainMap uses getGuideContent() internally, not loadUserGuides()
+		const map = buildDomainMap();
+		expect(map).toBeDefined();
+		expect(Object.keys(map).length).toBeGreaterThanOrEqual(1);
+	});
+});
+
+describe("getDomainMap / invalidateDomainMap", () => {
+	beforeEach(() => {
+		invalidateDomainMap();
+	});
+
+	afterEach(() => {
+		invalidateDomainMap();
+	});
+
+	it("first call builds cache", () => {
+		const map = getDomainMap();
+		expect(map["_internal-test.example"]).toBeDefined();
+	});
+
+	it("subsequent calls return same cached object", () => {
+		const first = getDomainMap();
+		const second = getDomainMap();
+		expect(first).toBe(second);
+	});
+
+	it("after invalidation, next call rescans", () => {
+		invalidateDomainMap();
+		const after = getDomainMap();
+		expect(after).toBeDefined();
+		expect(after["_internal-test.example"]).toBeDefined();
+	});
+});
+
+describe("getGuideContent / invalidateGuideContent", () => {
+	beforeEach(() => {
+		invalidateGuideContent();
+	});
+
+	afterEach(() => {
+		invalidateGuideContent();
+	});
+
+	it("returns builtin guides", () => {
+		const content = getGuideContent();
+		expect(content["bot-detection"]).toBeDefined();
+	});
+
+	it("after invalidation, returns fresh content (same keys)", () => {
+		const before = getGuideContent();
+		invalidateGuideContent();
+		const after = getGuideContent();
+		expect(Object.keys(after).sort()).toEqual(Object.keys(before).sort());
 	});
 });
 
@@ -431,18 +558,20 @@ describe("BUILTIN_GUIDES structure", () => {
 	});
 });
 
-// ─── GUIDE_CONTENT merge ────────────────────────────────────────
+// ─── getGuideContent merge ──────────────────────────────────────
 
-describe("GUIDE_CONTENT merge", () => {
+describe("getGuideContent merge", () => {
 	it("contains all builtin guides", () => {
 		for (const name of Object.keys(BUILTIN_GUIDES)) {
-			expect(GUIDE_CONTENT[name]).toBeDefined();
-			expect(GUIDE_CONTENT[name]!.content).toBe(BUILTIN_GUIDES[name]!.content);
+			expect(getGuideContent()[name]).toBeDefined();
+			expect(getGuideContent()[name]!.content).toBe(
+				BUILTIN_GUIDES[name]!.content,
+			);
 		}
 	});
 
-	it("builtin guides maintain trigger in GUIDE_CONTENT", () => {
-		const botGuide = GUIDE_CONTENT["bot-detection"];
+	it("builtin guides maintain trigger in getGuideContent()", () => {
+		const botGuide = getGuideContent()["bot-detection"];
 		expect(botGuide?.trigger?.signal).toBe("botDetected");
 	});
 });

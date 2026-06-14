@@ -9,8 +9,11 @@ import { homedir } from "node:os";
 /**
  * Browser Toggle — integrated into pi-browser extension.
  *
- * Provides /web on, /web off, and /web status commands to enable / disable
- * all browser automation tools in the system prompt.
+ * Provides /web on, /web off, /web learn, and /web status commands to enable / disable
+ * browser automation tools (browsing tools) and learn tools (web-learn) in the system prompt.
+ *
+ * Three states: on (browsing only), learn (browsing + web-learn), off (all disabled).
+ * Internally stores two independent booleans (browserToolsEnabled, learnToolsEnabled).
  *
  * When browser tools are disabled, the LLM cannot see them — no descriptions,
  * parameter schemas, prompt snippets, or guidelines are included in the context,
@@ -34,7 +37,7 @@ const PROJECT_SETTINGS_PATH = ".pi/settings.json";
 /** Default toggle config key */
 const CONFIG_KEY = "browserToggle";
 
-/** Names of every tool registered by pi-browser's index.ts */
+/** Names of every browser browsing tool registered by pi-browser's index.ts (excludes learn tools). */
 const BROWSER_TOOL_NAMES = new Set([
 	"web-fetch",
 	"browser-navigate",
@@ -49,9 +52,13 @@ const BROWSER_TOOL_NAMES = new Set([
 	"browser-console",
 ]);
 
-/** Persisted state shape */
+/** Names of learn tools (web-learn) that require /web learn to be active. */
+const LEARN_TOOL_NAMES = new Set(["web-learn"]);
+
+/** Persisted state shape — two independent booleans. */
 interface BrowserToggleState {
-	enabled: boolean;
+	browserToolsEnabled: boolean;
+	learnToolsEnabled: boolean;
 }
 
 /** Last known toggle state — used by status bar */
@@ -109,16 +116,23 @@ function applyBrowserState(pi: ExtensionAPI, enable: boolean): void {
  * Persist the current toggle state into the session for branch-aware
  * restoration across /reload, /resume, /fork, and /tree navigation.
  */
-function persistState(pi: ExtensionAPI, enabled: boolean): void {
-	pi.appendEntry<BrowserToggleState>("browser-toggle-state", { enabled });
+function persistState(pi: ExtensionAPI, state: BrowserToggleState): void {
+	pi.appendEntry<BrowserToggleState>("browser-toggle-state", state);
 }
 
 // ---- Branch-aware restoration ----------------------------------
 
 /**
- * Restore toggle state from the session branch.
- * Returns `true` if a saved state was found and applied, `false` otherwise.
+ * Migrate a legacy {enabled: boolean} state to the new two-boolean schema.
  */
+function migrateLegacyState(data: unknown): BrowserToggleState | null {
+	if (data && typeof data === "object" && "enabled" in data) {
+		const enabled = (data as Record<string, unknown>).enabled === true;
+		return { browserToolsEnabled: enabled, learnToolsEnabled: enabled };
+	}
+	return null;
+}
+
 function restoreFromBranch(pi: ExtensionAPI, ctx: ExtensionContext): boolean {
 	const registered = getRegisteredBrowserTools(pi);
 	if (registered.length === 0) return false;
@@ -130,12 +144,19 @@ function restoreFromBranch(pi: ExtensionAPI, ctx: ExtensionContext): boolean {
 			entry.type === "custom" &&
 			entry.customType === "browser-toggle-state"
 		) {
-			savedState = entry.data as BrowserToggleState;
+			const data = entry.data as Record<string, unknown>;
+			// Try new schema first, then legacy
+			if (data && typeof data.browserToolsEnabled === "boolean") {
+				savedState = data as unknown as BrowserToggleState;
+			} else {
+				savedState = migrateLegacyState(data) ?? undefined;
+			}
 		}
 	}
 
 	if (savedState !== undefined) {
-		applyBrowserState(pi, savedState.enabled);
+		applyBrowserState(pi, savedState.browserToolsEnabled);
+		applyLearnState(pi, savedState.learnToolsEnabled);
 		return true;
 	}
 
@@ -145,12 +166,14 @@ function restoreFromBranch(pi: ExtensionAPI, ctx: ExtensionContext): boolean {
 /**
  * Apply the config-file default on a fresh session (no branch state found).
  * Reads `browserToggle.defaultEnabled` from pi's settings.json files.
+ * Learn always starts disabled by default.
  */
 function applyConfigDefault(pi: ExtensionAPI): void {
 	const enabled = readBrowserToggleConfig();
 	applyBrowserState(pi, enabled);
+	applyLearnState(pi, false);
 	// Persist so subsequent branch navigation sees this as the initial state
-	persistState(pi, enabled);
+	persistState(pi, { browserToolsEnabled: enabled, learnToolsEnabled: false });
 }
 
 // ---- Unit-test exports -----------------------------------------
@@ -217,6 +240,45 @@ function readSettingsFile(path: string): Record<string, unknown> {
 	}
 }
 
+/**
+ * Return the subset of LEARN_TOOL_NAMES that are actually registered.
+ */
+function getRegisteredLearnTools(pi: ExtensionAPI): string[] {
+	return pi
+		.getAllTools()
+		.map((t) => t.name)
+		.filter((n) => LEARN_TOOL_NAMES.has(n));
+}
+
+/**
+ * Check whether learn tools are currently active.
+ * Returns true when no learn tools exist (vacuously enabled).
+ */
+function isLearnEnabled(pi: ExtensionAPI): boolean {
+	const registered = getRegisteredLearnTools(pi);
+	if (registered.length === 0) return true;
+	const active = new Set(pi.getActiveTools());
+	return registered.some((name) => active.has(name));
+}
+
+/**
+ * Apply a learn-tool state without persisting.
+ * Uses getActiveTools() (not getAllTools()) to avoid accidentally activating
+ * learn tools that are not currently registered.
+ */
+function applyLearnState(pi: ExtensionAPI, enable: boolean): void {
+	const registered = new Set(getRegisteredLearnTools(pi));
+	if (registered.size === 0) return;
+	if (enable) {
+		const current = pi.getActiveTools();
+		pi.setActiveTools([...new Set([...current, ...registered])]);
+	} else {
+		// Remove learn tools from the *currently active* set
+		const current = pi.getActiveTools();
+		pi.setActiveTools(current.filter((name) => !registered.has(name)));
+	}
+}
+
 export {
 	getRegisteredBrowserTools,
 	isBrowserEnabled,
@@ -225,6 +287,10 @@ export {
 	restoreFromBranch,
 	readBrowserToggleConfig,
 	applyConfigDefault,
+	getRegisteredLearnTools,
+	isLearnEnabled,
+	applyLearnState,
+	migrateLegacyState,
 };
 export type { BrowserToggleState };
 
@@ -240,7 +306,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 	pi.registerCommand("web", {
 		description:
 			"Enable/disable browser automation tools. " +
-			"Usage: /web on | off | status",
+			"Usage: /web on | off | learn | status",
 		handler: async (args, ctx) => {
 			const cmd = args.trim().toLowerCase();
 			const hasBrowserTools = getRegisteredBrowserTools(pi).length > 0;
@@ -254,38 +320,52 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 			}
 
 			if (cmd === "on") {
-				if (isBrowserEnabled(pi)) {
-					ctx.ui.notify("🌐 Browser tools are already enabled", "info");
-					return;
-				}
 				applyBrowserState(pi, true);
-				persistState(pi, true);
+				applyLearnState(pi, false);
+				persistState(pi, {
+					browserToolsEnabled: true,
+					learnToolsEnabled: false,
+				});
 				ctx.ui.setStatus("browser", "🌐 idle");
 				ctx.ui.notify(
-					"🌐 Browser tools enabled (saves ~1500–2000 tokens when off)",
+					"🌐 Browser tools enabled. /web learn to make web-learn available.",
+					"info",
+				);
+			} else if (cmd === "learn") {
+				applyBrowserState(pi, true);
+				applyLearnState(pi, true);
+				persistState(pi, {
+					browserToolsEnabled: true,
+					learnToolsEnabled: true,
+				});
+				ctx.ui.setStatus("browser", "🌐 idle");
+				ctx.ui.notify(
+					"📖 web-learn tool is now available. Agent will save/update guides when asked.",
 					"info",
 				);
 			} else if (cmd === "off") {
-				if (!isBrowserEnabled(pi)) {
-					ctx.ui.notify("🌐 Browser tools are already disabled", "info");
-					return;
-				}
 				applyBrowserState(pi, false);
-				persistState(pi, false);
+				applyLearnState(pi, false);
+				persistState(pi, {
+					browserToolsEnabled: false,
+					learnToolsEnabled: false,
+				});
 				ctx.ui.setStatus("browser", "○ web off");
 				ctx.ui.notify(
-					"🌐 Browser tools disabled. Use  /web on  to re-enable.",
+					"🌐 Browser tools disabled. /web on to re-enable.",
 					"info",
 				);
 			} else {
 				// Default: show status
-				const status = isBrowserEnabled(pi) ? "✅ on" : "❌ off";
-				const count = getRegisteredBrowserTools(pi).length;
+				const browserStatus = isBrowserEnabled(pi) ? "✅ on" : "❌ off";
+				const learnStatus = isLearnEnabled(pi) ? "✅ on" : "❌ off";
 				ctx.ui.notify(
-					`🌐 Browser tools: ${status}  (${count} tools registered)\n` +
-						`   /web on   enable browser tools\n` +
-						`   /web off  disable browser tools\n` +
-						`   /web      show this status`,
+					`🌐 Browser tools: ${browserStatus}\n` +
+						`📖 Learn mode: ${learnStatus}\n` +
+						`   /web off     disable all browser tools\n` +
+						`   /web on      enable browsing only\n` +
+						`   /web learn   enable browsing + guide-saving\n` +
+						`   /web         show this status`,
 					"info",
 				);
 			}
