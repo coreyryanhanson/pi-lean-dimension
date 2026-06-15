@@ -5,7 +5,6 @@
  * - listProfiles() enumerates profile directories
  * - formatProfileList() formats correctly
  * - profileStateSize() shows sizes
- * - isProfileLocked() detects active locks
  * - Command handler dispatch for profile sub-commands
  */
 
@@ -98,7 +97,6 @@ describe("listProfiles()", () => {
 		expect(profiles).toHaveLength(2);
 		expect(profiles[0].name).toBe("default");
 		expect(profiles[0].stateSize).toBe("500 B");
-		expect(profiles[0].locked).toBe(false);
 		expect(profiles[1].name).toBe("shopping");
 		expect(profiles[1].stateSize).toBe("no state");
 	});

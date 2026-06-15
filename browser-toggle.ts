@@ -375,21 +375,12 @@ function profileStateSize(profileName: string): string {
 }
 
 /**
- * Check whether a profile is currently locked.
- * Advisory locks have been removed; profiles are never locked.
- */
-function isProfileLocked(_profileName: string): boolean {
-	return false;
-}
-
-/**
  * List all profiles found on disk.
- * Returns an array of { name, stateSize, locked } objects.
+ * Returns an array of { name, stateSize } objects.
  */
 export function listProfiles(): Array<{
 	name: string;
 	stateSize: string;
-	locked: boolean;
 }> {
 	try {
 		if (!existsSync(PROFILE_DIR)) return [];
@@ -399,7 +390,6 @@ export function listProfiles(): Array<{
 			.map((e) => ({
 				name: e.name,
 				stateSize: profileStateSize(e.name),
-				locked: isProfileLocked(e.name),
 			}));
 		profiles.sort((a, b) => a.name.localeCompare(b.name));
 		return profiles;
@@ -564,7 +554,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 						ctx.ui.notify(
 							"Usage: /web profile create <name>\n" +
 								"  Profile names must be alphanumeric, hyphens, and underscores only.\n" +
-								"  Reserved names: none, session, new, last, create.",
+								"  Reserved names: none, session, create.",
 							"warning",
 						);
 						return;
