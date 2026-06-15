@@ -29,13 +29,9 @@ import {
 import {
 	loadStorageState,
 	sanitizeProfileName,
-	profileDir,
+	sessionProfileName,
 } from "./shared/storage-state.js";
 import { loadBrowserConfig } from "./plugin-config.js";
-import {
-	acquireProfileLock,
-	releaseProfileLock,
-} from "./shared/profile-lock.js";
 import {
 	runExtractor,
 	correlateElements,
@@ -84,8 +80,60 @@ export interface NavigateOptions {
 	timeout?: number;
 	signal?: AbortSignal;
 	taskId?: string;
-	/** Session mode or profile name ("new", "last", or profile name). Default: "new". */
-	session?: "new" | "last" | string;
+	/**
+	 * Profile mode or named profile.
+	 * - "none": clean slate, no persistence
+	 * - "session": persist for this conversation
+	 * - A named profile string (e.g. "shopping", "work")
+	 */
+	profile?: "none" | "session" | string;
+	/**
+	 * pi session ID for session-scoped profiles (profile="session").
+	 * Used to derive the internal `_session-<piSessionId>` profile name.
+	 */
+	piSessionId?: string;
+}
+
+// ─── Profile Event ──────────────────────────────────────────────────
+
+/**
+ * Event emitted when a task's profile changes (created, switched, etc.)
+ * or when a task joins/leaves a shared BrowserContext.
+ */
+export interface ProfileEvent {
+	type:
+		| "profile_changed"
+		| "profile_created"
+		| "profile_pruned"
+		| "context_joined"
+		| "context_left";
+	taskId: string;
+	profileName?: string | undefined;
+	profileMode?: "none" | "session" | "named" | undefined;
+	/** For context_joined/context_left: number of tasks now sharing this context */
+	sharedRefCount?: number | undefined;
+}
+
+type ProfileEventCallback = (event: ProfileEvent) => void;
+const _profileEventCallbacks: ProfileEventCallback[] = [];
+
+/**
+ * Register a callback for profile lifecycle events.
+ * Used by index.ts to update the TUI status bar and log debug info.
+ */
+export function onProfileEvent(cb: ProfileEventCallback): void {
+	_profileEventCallbacks.push(cb);
+}
+
+/** @internal Emit a profile event to all registered callbacks. */
+export function _emitProfileEvent(event: ProfileEvent): void {
+	for (const cb of _profileEventCallbacks) {
+		try {
+			cb(event);
+		} catch {
+			/* best-effort — don't let a callback crash the emitter */
+		}
+	}
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -132,11 +180,11 @@ async function requireInteractiveSession(taskId: string): Promise<{
 	// Restore profile state if the last navigation used a profile
 	let navStorageState: unknown;
 	if (lastNav.profileName) {
+		session.persistState = true;
+		session.profileName = lastNav.profileName;
 		const loaded = loadStorageState(lastNav.profileName);
 		if (loaded) {
 			navStorageState = loaded;
-			session.persistState = true;
-			session.profileName = lastNav.profileName;
 		}
 	}
 
@@ -158,14 +206,6 @@ async function requireInteractiveSession(taskId: string): Promise<{
 	}
 
 	// Failed — clean up
-	// Release profile lock if acquired
-	if (lastNav.profileName) {
-		try {
-			releaseProfileLock(profileDir(lastNav.profileName), taskId);
-		} catch {
-			/* best-effort */
-		}
-	}
 	await plugin.cleanup(taskId).catch(() => {});
 	sessionManager.removeSession(taskId);
 	removeSnapshotFiles(taskId);
@@ -384,48 +424,61 @@ export async function navigate(
 		};
 	}
 
-	// ── Resolve session mode ────────────────────────────────────
+	// ── Resolve profile mode ───────────────────────────────────
 	let persistState = false;
 	let resolvedProfileName: string | undefined;
 	let storageState: unknown;
-	let sessionMode: "new" | "restored" | undefined;
-	let lockAcquired = false;
+	let profileMode: "none" | "session" | "named" | undefined;
 
-	// Check for existing session that needs clean-up before session resolution
+	// Check for existing session that needs clean-up before profile resolution
 	const existingSession = sessionManager.getSession(taskId);
 	const browserConfig = loadBrowserConfig();
-	const sessionInput = options.session ?? browserConfig.sessionDefault;
 
-	if (sessionInput === "new") {
+	const profileInput = options.profile ?? browserConfig.defaultProfile;
+
+	if (profileInput === "none") {
 		// Explicit fresh session — destroy existing context if any
 		if (existingSession) {
 			await plugin.cleanup(taskId).catch(() => {});
 			sessionManager.removeSession(taskId);
 			removeSnapshotFiles(taskId);
 		}
-		sessionMode = "new";
-	} else if (sessionInput === "last") {
-		resolvedProfileName = browserConfig.defaultProfile;
-		persistState = true;
+		profileMode = "none";
+	} else if (profileInput === "session") {
+		// Session-scoped profile — maps to current pi conversation session
+		profileMode = "session";
+		const piSessionId = options.piSessionId;
+		if (piSessionId) {
+			resolvedProfileName = sessionProfileName(piSessionId);
+			persistState = true;
 
-		// If existing session used a different profile, destroy context
-		if (
-			existingSession &&
-			existingSession.profileName !== resolvedProfileName
-		) {
-			await plugin.cleanup(taskId).catch(() => {});
-			sessionManager.removeSession(taskId);
-			removeSnapshotFiles(taskId);
+			// If existing session used a different profile, destroy context
+			if (
+				existingSession &&
+				existingSession.profileName !== resolvedProfileName
+			) {
+				await plugin.cleanup(taskId).catch(() => {});
+				sessionManager.removeSession(taskId);
+				removeSnapshotFiles(taskId);
+			}
+
+			// Load storage state (null = first use, gracefully handled)
+			const loaded = loadStorageState(resolvedProfileName);
+			storageState = loaded ?? undefined;
+		} else {
+			// Can't resolve session profile without piSessionId — fall back with warning
+			console.warn(
+				"[pi-browser] profile='session' requested but piSessionId unavailable. " +
+					"Falling back to profile='none'. This may occur during extension reload.",
+			);
+			profileMode = "none";
+			persistState = false;
 		}
-
-		// Load storage state (null = first use, gracefully handled)
-		const loaded = loadStorageState(resolvedProfileName);
-		storageState = loaded ?? undefined;
-		sessionMode = loaded ? "restored" : "new";
 	} else {
 		// Named profile
+		profileMode = "named";
 		try {
-			sanitizeProfileName(sessionInput);
+			sanitizeProfileName(profileInput);
 		} catch (err) {
 			return {
 				success: false,
@@ -433,14 +486,14 @@ export async function navigate(
 				title: "",
 				snapshot: "",
 				elementCount: 0,
-				error: `Invalid session/profile name: ${err instanceof Error ? err.message : String(err)}`,
+				error: `Invalid profile name: ${err instanceof Error ? err.message : String(err)}`,
 				backendUsed: plugin.name,
 			} as NavigateResult & {
 				backendUsed: string;
 				botDetectionWarning?: boolean;
 			};
 		}
-		resolvedProfileName = sessionInput;
+		resolvedProfileName = profileInput;
 		persistState = true;
 
 		if (
@@ -452,23 +505,19 @@ export async function navigate(
 			removeSnapshotFiles(taskId);
 		}
 
-		const loaded = loadStorageState(resolvedProfileName);
+		const loaded = resolvedProfileName
+			? loadStorageState(resolvedProfileName)
+			: null;
 		storageState = loaded ?? undefined;
-		sessionMode = loaded ? "restored" : "new";
 	}
 
-	// Acquire profile lock for persistent sessions
-	if (persistState && resolvedProfileName) {
-		const pDir = profileDir(resolvedProfileName);
-		lockAcquired = acquireProfileLock(pDir, taskId);
-		if (!lockAcquired) {
-			// Fall back to ephemeral — another session holds the lock
-			persistState = false;
-			resolvedProfileName = undefined;
-			sessionMode = "new";
-			storageState = undefined;
-		}
-	}
+	// ── Emit profile event ──────────────────────────────────
+	_emitProfileEvent({
+		type: "profile_changed",
+		taskId,
+		profileName: resolvedProfileName,
+		profileMode,
+	});
 
 	// ── Create session and navigate ───────────────────────────
 	sessionManager.createSession(taskId, plugin.name);
@@ -479,6 +528,9 @@ export async function navigate(
 	}
 	if (resolvedProfileName !== undefined) {
 		session.profileName = resolvedProfileName;
+	}
+	if (options.piSessionId !== undefined) {
+		session.piSessionId = options.piSessionId;
 	}
 
 	const navOptions: { signal?: AbortSignal; storageState?: unknown } = {};
@@ -523,13 +575,6 @@ export async function navigate(
 			// overwrite previously saved good state
 			session.persistState = false;
 
-			if (lockAcquired && resolvedProfileName) {
-				try {
-					releaseProfileLock(profileDir(resolvedProfileName), taskId);
-				} catch {
-					/* best-effort */
-				}
-			}
 			await plugin.cleanup(taskId).catch(() => {});
 			sessionManager.removeSession(taskId);
 			removeSnapshotFiles(taskId);
@@ -591,7 +636,7 @@ export async function navigate(
 			elementCount: result.elementCount,
 			backendUsed: plugin.name,
 		};
-		if (sessionMode !== undefined) successResult.sessionMode = sessionMode;
+		if (profileMode !== undefined) successResult.profileMode = profileMode;
 		if (resolvedProfileName !== undefined)
 			successResult.profileName = resolvedProfileName;
 		if (botWarn) successResult.botDetectionWarning = true;
@@ -605,13 +650,6 @@ export async function navigate(
 		session.persistState = false;
 	}
 
-	if (lockAcquired && resolvedProfileName) {
-		try {
-			releaseProfileLock(profileDir(resolvedProfileName), taskId);
-		} catch {
-			/* best-effort */
-		}
-	}
 	await plugin.cleanup(taskId).catch(() => {});
 	sessionManager.removeSession(taskId);
 	removeSnapshotFiles(taskId);

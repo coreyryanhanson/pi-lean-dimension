@@ -1,9 +1,9 @@
 /**
- * Tests for the sessionDefault config option in the router.
+ * Tests for the defaultProfile config option in the router.
  *
- * Verifies that when browser.sessionDefault is set to "last" in settings,
- * the router uses it as the default session mode when the agent omits
- * the `session` parameter on browser-navigate.
+ * Verifies that when browser.defaultProfile is set in settings,
+ * the router uses it as the default profile when the agent omits
+ * the `profile` parameter on browser-navigate.
  *
  * These tests mock the plugin-config module to control the return value
  * of loadBrowserConfig() without hitting the real filesystem.
@@ -14,10 +14,16 @@ import { pluginRegistry } from "../core/plugin-registry";
 import { sessionManager } from "../core/shared/session-manager";
 import { MockPlugin, makeConfig } from "./helpers/mock-plugin";
 
-// Mock plugin-config to return custom sessionDefault
+/**
+ * Shared piSessionId for tests that need session-scoped profiles.
+ * Simulates the value passed by index.ts from ctx.sessionManager.getSessionId().
+ */
+const TEST_PI_SESSION_ID = "test-session-001";
+
+// Mock plugin-config to return custom defaultProfile
 const mockConfig = vi.hoisted(() => ({
-	sessionDefault: "last" as "new" | "last",
-	defaultProfile: "default",
+	defaultProfile: "session",
+	legacyDefaultProfile: "default",
 	maxStorageStateSize: 10 * 1024 * 1024,
 	profiles: {},
 }));
@@ -29,7 +35,7 @@ vi.mock("../core/plugin-config", () => ({
 // Must import router AFTER the mock is set up
 import * as router from "../core/router";
 
-describe("Router sessionDefault config routing", () => {
+describe("Router defaultProfile config routing", () => {
 	let mock: MockPlugin;
 
 	beforeEach(() => {
@@ -37,8 +43,8 @@ describe("Router sessionDefault config routing", () => {
 		mock = new MockPlugin("mock");
 		pluginRegistry.register(mock, makeConfig({ name: "mock" }));
 		// Reset mock config to defaults before each test
-		mockConfig.sessionDefault = "last";
-		mockConfig.defaultProfile = "default";
+		mockConfig.defaultProfile = "session";
+		mockConfig.legacyDefaultProfile = "default";
 	});
 
 	afterEach(async () => {
@@ -46,67 +52,98 @@ describe("Router sessionDefault config routing", () => {
 		pluginRegistry.clear();
 	});
 
-	it("defaults to 'last' when sessionDefault config is 'last' and session param omitted", async () => {
-		const result = await router.navigate("https://example.com");
-
-		expect(result.success).toBe(true);
-		expect(result.profileName).toBe("default");
-		// No state file exists on disk, so mode is "new" but profile is set
-		// for future saves
-		expect(result.sessionMode).toBe("new");
-
-		const session = sessionManager.getSession("default");
-		expect(session?.profileName).toBe("default");
-		expect(session?.persistState).toBe(true);
-	});
-
-	it("uses explicit session='new' even when config says 'last'", async () => {
+	it('defaults to session profile when config defaultProfile="session" and piSessionId available', async () => {
 		const result = await router.navigate("https://example.com", {
-			taskId: "custom-task",
-			session: "new",
+			piSessionId: TEST_PI_SESSION_ID,
 		});
 
 		expect(result.success).toBe(true);
-		expect(result.sessionMode).toBe("new");
+		expect(result.profileName).toContain("_session-");
+		expect(result.profileMode).toBe("session");
+
+		const session = sessionManager.getSession("default");
+		expect(session?.profileName).toContain("_session-");
+		expect(session?.persistState).toBe(true);
+	});
+
+	it('defaults to "none" profile when config defaultProfile="session" but piSessionId unavailable', async () => {
+		const result = await router.navigate("https://example.com");
+
+		expect(result.success).toBe(true);
+		expect(result.profileMode).toBe("none");
+		expect(result.profileName).toBeUndefined();
+
+		const session = sessionManager.getSession("default");
+		expect(session?.persistState).toBeFalsy();
+		expect(session?.profileName).toBeUndefined();
+	});
+
+	it("uses explicit profile='none' even when config says 'session'", async () => {
+		const result = await router.navigate("https://example.com", {
+			taskId: "custom-task",
+			profile: "none",
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.profileMode).toBe("none");
 		expect(result.profileName).toBeUndefined();
 
 		const session = sessionManager.getSession("custom-task");
 		expect(session?.persistState).toBeFalsy();
 	});
 
-	it("uses custom defaultProfile from config when session='last'", async () => {
-		mockConfig.defaultProfile = "work-custom";
-
-		const result = await router.navigate("https://example.com");
-
-		expect(result.success).toBe(true);
-		expect(result.profileName).toBe("work-custom");
-
-		const session = sessionManager.getSession("default");
-		expect(session?.profileName).toBe("work-custom");
-	});
-
-	it("uses explicit session='last' and uses config's defaultProfile", async () => {
-		mockConfig.defaultProfile = "my-profile";
-
+	it("uses config defaultProfile with custom piSessionId from index.ts", async () => {
+		// In production, index.ts always passes piSessionId when available.
+		// This simulates that flow: config says defaultProfile="session" and
+		// the tool handler provides piSessionId.
 		const result = await router.navigate("https://example.com", {
-			session: "last",
+			piSessionId: "custom-session",
 		});
 
 		expect(result.success).toBe(true);
-		expect(result.profileName).toBe("my-profile");
+		expect(result.profileName).toContain("_session-");
+		expect(result.profileName).toContain("custom-session");
+
+		const session = sessionManager.getSession("default");
+		expect(session?.persistState).toBe(true);
+		expect(session?.profileName).toContain("_session-");
+	});
+
+	it("uses explicit profile='session' with piSessionId", async () => {
+		const result = await router.navigate("https://example.com", {
+			profile: "session",
+			piSessionId: TEST_PI_SESSION_ID,
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.profileName).toContain("_session-");
+		expect(result.profileMode).toBe("session");
 	});
 
 	it("still accepts explicit named profile over config default", async () => {
 		const result = await router.navigate("https://example.com", {
-			session: "shopping",
+			profile: "shopping",
 		});
 
 		expect(result.success).toBe(true);
 		expect(result.profileName).toBe("shopping");
+		expect(result.profileMode).toBe("named");
 
 		const session = sessionManager.getSession("default");
 		expect(session?.profileName).toBe("shopping");
 		expect(session?.persistState).toBe(true);
+	});
+
+	it("explicit profile='none' overrides defaultProfile config", async () => {
+		const result = await router.navigate("https://example.com", {
+			profile: "none",
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.profileMode).toBe("none");
+		expect(result.profileName).toBeUndefined();
+
+		const session = sessionManager.getSession("default");
+		expect(session?.persistState).toBeFalsy();
 	});
 });

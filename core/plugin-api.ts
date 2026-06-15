@@ -70,8 +70,8 @@ export interface NavigateResult extends ResultBase {
 	elementCount: number;
 	/** Plugin-internal signal: page may be blocked by bot detection */
 	botDetected?: boolean;
-	/** Phase 2: Whether a stored profile was restored ("restored") or a fresh context was created ("new") */
-	sessionMode?: "new" | "restored";
+	/** The active profile mode for this session. */
+	profileMode?: "none" | "session" | "named";
 	/** Phase 2: Which profile was loaded for this session (if any) */
 	profileName?: string;
 }
@@ -208,6 +208,10 @@ export interface BrowserPlugin {
 			signal?: AbortSignal;
 			/** Phase 2: Playwright storage state for profile-based session restoration */
 			storageState?: unknown;
+			/** Phase 2: Profile name for shared-context resolution */
+			profileName?: string;
+			/** Phase 2: Profile mode for shared-context resolution */
+			profileMode?: "none" | "session" | "named";
 		},
 	): Promise<NavigateResult>;
 

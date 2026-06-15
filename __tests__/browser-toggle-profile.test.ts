@@ -136,12 +136,22 @@ describe("formatProfileList()", () => {
 		const formatted = formatProfileList([
 			{ name: "default", stateSize: "1.2 KB", locked: false },
 			{ name: "shopping", stateSize: "no state", locked: false },
-			{ name: "work", stateSize: "3.0 MB", locked: true },
+			{ name: "work", stateSize: "3.0 MB", locked: false },
 		]);
 		expect(formatted).toContain("Profiles (3):");
 		expect(formatted).toContain("default  (1.2 KB)");
 		expect(formatted).toContain("shopping  (no state)");
-		expect(formatted).toContain("work  (3.0 MB) 🔒");
+		expect(formatted).toContain("work  (3.0 MB)");
+	});
+
+	test("adds 📋 badge for session profiles", () => {
+		const formatted = formatProfileList([
+			{ name: "_session-abc123", stateSize: "512 B", locked: false },
+			{ name: "work", stateSize: "1.2 KB", locked: false },
+		]);
+		expect(formatted).toContain("📋 session  (512 B)");
+		expect(formatted).toContain("📋");
+		expect(formatted).not.toContain("🔒");
 	});
 });
 
@@ -273,15 +283,21 @@ describe("/web profile command handler", () => {
 		expect(notify).toHaveBeenCalledWith("Cleared 2 profile(s).", "info");
 	});
 
-	it("handles unknown profile sub-command — shows usage", async () => {
+	it("handles nonexistent profile name — suggests create", async () => {
 		const pi = mockPi(["web-fetch"]);
 		const handler = captureHandler(pi);
+
+		(existsSync as vi.Mock).mockReturnValue(false);
 
 		const notify = vi.fn();
 		await handler("profile unknown", { ui: { notify } } as any);
 
 		expect(notify).toHaveBeenCalledWith(
-			expect.stringContaining("Unknown profile sub-command"),
+			expect.stringContaining("does not exist"),
+			"warning",
+		);
+		expect(notify).toHaveBeenCalledWith(
+			expect.stringContaining("Create it first with /web profile create"),
 			"warning",
 		);
 	});

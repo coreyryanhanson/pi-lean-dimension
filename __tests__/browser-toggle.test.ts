@@ -380,6 +380,7 @@ describe("persistState", () => {
 		persistState(pi, {
 			browserToolsEnabled: true,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 		expect(pi.appendEntry).toHaveBeenCalledWith(
 			"browser-toggle-state",
@@ -392,10 +393,12 @@ describe("persistState", () => {
 		persistState(pi, {
 			browserToolsEnabled: true,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 		expect(pi.appendEntry).toHaveBeenCalledWith("browser-toggle-state", {
 			browserToolsEnabled: true,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 	});
 
@@ -404,10 +407,12 @@ describe("persistState", () => {
 		persistState(pi, {
 			browserToolsEnabled: false,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 		expect(pi.appendEntry).toHaveBeenCalledWith("browser-toggle-state", {
 			browserToolsEnabled: false,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 	});
 
@@ -416,10 +421,12 @@ describe("persistState", () => {
 		persistState(pi, {
 			browserToolsEnabled: true,
 			learnToolsEnabled: true,
+			defaultProfile: "none",
 		});
 		expect(pi.appendEntry).toHaveBeenCalledWith("browser-toggle-state", {
 			browserToolsEnabled: true,
 			learnToolsEnabled: true,
+			defaultProfile: "none",
 		});
 	});
 });
@@ -458,6 +465,7 @@ describe("getToggleState", () => {
 		persistState(mockPi(), {
 			browserToolsEnabled: true,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 		// persistState doesn't call applyBrowserState, so state is unchanged
 		expect(getToggleState()).toBe(true);
@@ -519,6 +527,7 @@ describe("restoreFromBranch", () => {
 				data: {
 					browserToolsEnabled: true,
 					learnToolsEnabled: false,
+					defaultProfile: "none",
 				} satisfies BrowserToggleState,
 			},
 		]);
@@ -542,6 +551,7 @@ describe("restoreFromBranch", () => {
 				data: {
 					browserToolsEnabled: false,
 					learnToolsEnabled: false,
+					defaultProfile: "none",
 				} satisfies BrowserToggleState,
 			},
 		]);
@@ -607,6 +617,7 @@ describe("restoreFromBranch", () => {
 				data: {
 					browserToolsEnabled: false,
 					learnToolsEnabled: false,
+					defaultProfile: "none",
 				} satisfies BrowserToggleState,
 			},
 		]);
@@ -1119,6 +1130,7 @@ describe("restoreFromBranch (return value)", () => {
 				data: {
 					browserToolsEnabled: true,
 					learnToolsEnabled: false,
+					defaultProfile: "none",
 				} satisfies BrowserToggleState,
 			},
 		]);
@@ -1156,6 +1168,7 @@ describe("restoreFromBranch (return value)", () => {
 		expect(result).toEqual({
 			browserToolsEnabled: true,
 			learnToolsEnabled: true,
+			defaultProfile: "none",
 		});
 	});
 
@@ -1164,6 +1177,7 @@ describe("restoreFromBranch (return value)", () => {
 		expect(result).toEqual({
 			browserToolsEnabled: false,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 	});
 

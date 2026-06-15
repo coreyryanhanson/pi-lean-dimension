@@ -4,7 +4,7 @@
 
 ## What This Is
 
-A pi extension that registers **14 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
+A pi extension that registers **13 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
 
 ## Developer Commands
 
@@ -22,7 +22,7 @@ There is no build step (`noEmit: true` in tsconfig). The extension is loaded dir
 
 ```
 pi-browser/
-├── index.ts                  # Entry: registers 14 tools + 2 commands
+├── index.ts                  # Entry: registers 13 tools + 2 commands
 ├── browser-toggle.ts         # /web on|off|learn|status — three-state toggle
 ├── backends/                 # Plugin implementations
 │   ├── chromium/index.ts     # Node/Playwright, reference ~1100 lines
@@ -85,7 +85,7 @@ All tool calls dispatch through the router. Key responsibilities:
 
 `web-fetch` uses plain `fetch()` + `node-html-parser` + `turndown`. Returns ~4000 chars inline, spills to temp file when larger. `browser-navigate` uses Playwright Chromium, returns accessibility tree with @e1/@e2 refs.
 
-### Registered tools (14 total)
+### Registered tools (13 total)
 
 web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-screenshot, browser-get-images, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
 

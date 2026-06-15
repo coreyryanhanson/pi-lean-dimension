@@ -35,6 +35,8 @@ export interface BrowserSession {
 	persistState?: boolean;
 	/** Phase 2: Profile name used for this session (undefined = default) */
 	profileName?: string;
+	/** Phase 0: pi session ID for session-scoped profiles */
+	piSessionId?: string;
 }
 
 /** Stored last navigation for a task (used to auto-recover sessions) */
@@ -91,6 +93,7 @@ class SessionManager {
 				| "lastInteractionAt"
 				| "persistState"
 				| "profileName"
+				| "piSessionId"
 			>
 		>,
 	): void {
@@ -113,6 +116,8 @@ class SessionManager {
 				session.persistState = updates.persistState;
 			if (updates.profileName !== undefined)
 				session.profileName = updates.profileName;
+			if (updates.piSessionId !== undefined)
+				session.piSessionId = updates.piSessionId;
 			session.lastActive = Date.now();
 		}
 	}
@@ -202,17 +207,30 @@ class SessionManager {
 			const s = active[0]!;
 			const domain = s.currentUrl ? extractDomain(s.currentUrl) : undefined;
 			const sym = this.pluginSymbol(s.pluginName);
-			let status = domain ? `▶ ${sym}: ${domain}` : `▶ ${sym}`;
+			const profileTag = s.profileName
+				? ` [${profileDisplayName(s.profileName)}]`
+				: "";
+			let status = domain
+				? `▶ ${sym}: ${domain}${profileTag}`
+				: `▶ ${sym}${profileTag}`;
 			if (crashed.length > 0) {
 				status += ` · ${crashed.length} crashed`;
 			}
 			return status;
 		}
-		const plugins = new Set(active.map((s) => s.pluginName));
-		const pluginStr = Array.from(plugins)
-			.map((p) => this.pluginSymbol(p))
-			.join(",");
-		let status = `🌐 ${active.length} active (${pluginStr})`;
+		// Multiple active sessions — group by profile
+		const byProfile = new Map<string, number>();
+		for (const s of active) {
+			const key = s.profileName ?? "ephemeral";
+			byProfile.set(key, (byProfile.get(key) ?? 0) + 1);
+		}
+		const profileParts = Array.from(byProfile.entries()).map(([name, count]) =>
+			count > 1
+				? `${profileDisplayName(name)}×${count}`
+				: profileDisplayName(name),
+		);
+		const sym = this.pluginSymbol(active[0]!.pluginName);
+		let status = `🌐 ${active.length} active (${sym}): ${profileParts.join(", ")}`;
 		if (crashed.length > 0) {
 			status += ` · ${crashed.length} crashed`;
 		}
@@ -229,12 +247,36 @@ class SessionManager {
 		return this.getActiveSessions().length;
 	}
 
+	/**
+	 * Find the taskId for a given pi session ID.
+	 * Used by command handlers (like `/web cookies`) to resolve the correct
+	 * taskId without duplicating index.ts's monotonic counter logic.
+	 */
+	getTaskIdForPiSessionId(piSessionId: string): string | undefined {
+		for (const [taskId, session] of this.#sessions.entries()) {
+			if (session.piSessionId === piSessionId) return taskId;
+		}
+		return undefined;
+	}
+
 	getPlaywrightBrowser(): Browser | null {
 		return this.#playwrightBrowser;
 	}
 	setPlaywrightBrowser(b: Browser | null): void {
 		this.#playwrightBrowser = b;
 	}
+}
+
+/**
+ * Short display name for a profile in the TUI status bar.
+ * Session-scoped profiles render as a "📋 session" badge;
+ * named profiles show their name;
+ * "ephemeral" (no profile) label shows as-is.
+ */
+function profileDisplayName(name: string): string {
+	if (name.startsWith("_session-")) return "📋 session";
+	if (name === "ephemeral") return "ephemeral";
+	return name;
 }
 
 function extractDomain(url: string): string {

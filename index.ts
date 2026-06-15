@@ -18,9 +18,11 @@ import {
 	removeSnapshotFiles,
 	removeAllSnapshotFiles,
 } from "./core/shared/snapshot-cache.js";
+import { isSessionProfile } from "./core/shared/storage-state.js";
 import initBrowserToggle, {
 	getToggleState,
 	listProfiles,
+	getConversationDefaultProfile,
 } from "./browser-toggle.js";
 import {
 	resolveGuidePresence,
@@ -38,15 +40,52 @@ import { join } from "node:path";
 // ============================================================
 // Status bar update helper
 // ============================================================
+
+/**
+ * Retained reference to the most recent extension context for use by
+ * the browser.profile event listener (which fires asynchronously from
+ * tool execution contexts). Updated on session_start and cleared on
+ * session_shutdown.
+ */
+let _lastCtx: {
+	ui: { setStatus: (key: string, label: string) => void };
+} | null = null;
+
 function updateFooterStatus(ctx: {
 	ui: { setStatus: (key: string, label: string) => void };
 }): void {
+	_lastCtx = ctx;
 	const toggleState = getToggleState();
 	if (toggleState === false) {
 		ctx.ui.setStatus("browser", "○ web off");
 	} else {
 		ctx.ui.setStatus("browser", sessionManager.getStatus());
 	}
+}
+
+// ─── Profile line formatting helper ────────────────────────────
+
+/**
+ * Format the profile line for browser-navigate output.
+ *
+ * Examples:
+ *   Profile: none
+ *   Profile: session (this conversation)
+ *   Profile: work (shared)
+ */
+function profileLine(result: {
+	profileMode?: string;
+	profileName?: string;
+}): string {
+	const mode = result.profileMode;
+	if (mode === "none") {
+		return "Profile: none";
+	}
+	if (mode === "session") {
+		return "Profile: session (this conversation)";
+	}
+	// Named profile
+	return `Profile: ${result.profileName ?? "unnamed"} (shared)`;
 }
 
 // ─── Helper to get a stable taskId from tool call context ──────
@@ -102,14 +141,15 @@ const browserNavigateTool = defineTool({
 				maximum: 120,
 			}),
 		),
-		session: Type.Optional(
-			Type.String({
-				description:
-					'Session mode: "new" (fresh, default), "last" (resume default profile), ' +
-					'or a named profile (e.g. "shopping", "work"). ' +
-					'When "last" or a named profile is used, cookies and localStorage are ' +
-					"persisted between sessions.",
-			}),
+		profile: Type.Optional(
+			Type.Union([
+				Type.Literal("none"),
+				Type.Literal("session"),
+				Type.String(),
+			]),
+			"Profile mode: 'none' (clean slate, default), 'session' (persist for this " +
+				"conversation), or a named profile (e.g. 'shopping', 'work'). " +
+				"Named profiles share cookies across subagents like browser tabs.",
 		),
 	}),
 
@@ -118,14 +158,15 @@ const browserNavigateTool = defineTool({
 			url,
 			strategy = "auto",
 			timeout = 30,
-			session,
+			profile,
 		} = params as {
 			url: string;
 			strategy?: string;
 			timeout?: number;
-			session?: string;
+			profile?: string;
 		};
 		const tid = taskId(ctx);
+		const piSessionId = ctx?.sessionManager?.getSessionId?.();
 
 		signal?.addEventListener(
 			"abort",
@@ -142,8 +183,20 @@ const browserNavigateTool = defineTool({
 			timeout,
 			taskId: tid,
 		};
+		if (piSessionId) navOptions.piSessionId = piSessionId;
 		if (signal) navOptions.signal = signal;
-		if (session) navOptions.session = session as "new" | "last" | string;
+		// Profile resolution: explicit param > conversation default > config file default
+		if (profile) {
+			// Explicit user parameter
+			navOptions.profile = profile as "none" | "session" | string;
+		} else {
+			// Conversation-scoped default (set via /web profile <name>)
+			const convDefault = getConversationDefaultProfile();
+			if (convDefault) {
+				navOptions.profile = convDefault as "none" | "session" | string;
+			}
+			// else: router falls back to browserConfig.defaultProfile
+		}
 
 		const result = await router.navigate(url, navOptions);
 
@@ -187,9 +240,7 @@ const browserNavigateTool = defineTool({
 			result.elementCount !== undefined
 				? `Interactive elements: ${result.elementCount}`
 				: "",
-			result.sessionMode !== undefined
-				? `Session: ${result.sessionMode === "restored" ? "restored (profile loaded)" : "new"}${result.profileName ? ` (profile: ${result.profileName})` : ""}`
-				: "",
+			result.profileMode !== undefined ? profileLine(result) : "",
 			result.botDetectionWarning
 				? "⚠ BOT DETECTION WARNING: This page appears to be protected by " +
 					"anti-automation. The content below may be incomplete or show " +
@@ -226,7 +277,7 @@ const browserNavigateTool = defineTool({
 				url: result.url,
 				backendUsed: result.backendUsed,
 				elementCount: result.elementCount,
-				sessionMode: result.sessionMode,
+				profileMode: result.profileMode,
 				profileName: result.profileName,
 				botDetectionWarning: result.botDetectionWarning,
 			},
@@ -260,7 +311,7 @@ const browserNavigateTool = defineTool({
 		const backend = (d?.backendUsed as string) || "?";
 		const url = (d?.url as string) || "";
 		const ec = d?.elementCount as number | undefined;
-		const sm = d?.sessionMode as string | undefined;
+		const pm = d?.profileMode as string | undefined;
 		const pn = d?.profileName as string | undefined;
 		const botWarn = d?.botDetectionWarning as boolean | undefined;
 
@@ -268,8 +319,12 @@ const browserNavigateTool = defineTool({
 		text += `\n${theme.fg("dim", url)}`;
 		text += `\n${theme.fg("muted", `via ${backend}`)}`;
 		if (ec !== undefined) text += ` · ${ec} elements`;
-		if (sm === "restored") text += ` ${theme.fg("accent", "↻ restored")}`;
-		if (pn) text += ` ${theme.fg("dim", `[${pn}]`)}`;
+		if (pn) {
+			const modeTag = pm === "session" ? "📋" : "👤";
+			text += ` ${theme.fg("dim", `${modeTag} ${pn}`)}`;
+		} else if (pm === "restored") {
+			text += ` ${theme.fg("accent", "↻ restored")}`;
+		}
 		if (botWarn) text += ` ${theme.fg("warning", "⚠ bot detection")}`;
 
 		const content = (result.content?.[0] as any)?.text ?? "";
@@ -1469,309 +1524,6 @@ const webLearnTool = defineTool({
 });
 
 // ============================================================
-// Tool: browser-cookies
-// ============================================================
-const browserCookiesTool = defineTool({
-	name: "browser-cookies",
-	label: "Browser Cookies",
-	description:
-		"Read, set, or clear browser cookies. " +
-		"Cookies are tied to the current browser session and persist within " +
-		"a conversation. " +
-		"Call with action='get' to read cookies, action='set' with a cookies array " +
-		"to add cookies, or action='clear' to remove cookies (omit all filters to clear everything).",
-	promptSnippet: "Read, set, or clear cookies in the current browser session",
-	promptGuidelines: [
-		"Use browser-cookies action='get' to inspect current cookies (useful for understanding auth/login state)",
-		"Use browser-cookies action='set' to inject cookies (e.g. to restore an auth session)",
-		"Use browser-cookies action='clear' with no filters to clear ALL cookies — " +
-			"equivalent to clearing the browser's cookie jar",
-		"Setting cookies requires at least name, value, domain, and path — Playwright " +
-			"will reject incomplete cookie objects",
-		"Cookies set via browser-cookies take effect immediately for the current session",
-		"Note: cookies are per-BrowserContext and isolated by taskId. " +
-			"Different browser sessions do not share cookies",
-	],
-	parameters: Type.Object({
-		action: StringEnum(["get", "set", "clear"] as const, {
-			description:
-				"'get' to read cookies, 'set' to add cookies, 'clear' to remove cookies",
-		}),
-		urls: Type.Optional(
-			Type.Array(Type.String(), {
-				description:
-					"URLs to filter by (only for action='get'). Returns only cookies matching these origins.",
-			}),
-		),
-		cookies: Type.Optional(
-			Type.Array(
-				Type.Object({
-					name: Type.String({
-						description: "Cookie name",
-					}),
-					value: Type.String({
-						description: "Cookie value",
-					}),
-					domain: Type.Optional(
-						Type.String({
-							description:
-								"Cookie domain (e.g. '.example.com'). Required by Playwright at runtime.",
-						}),
-					),
-					path: Type.Optional(
-						Type.String({
-							description:
-								"Cookie path (e.g. '/'). Required by Playwright at runtime.",
-						}),
-					),
-					expires: Type.Optional(
-						Type.Number({
-							description:
-								"Expiry as Unix timestamp in seconds; omit for session cookies",
-						}),
-					),
-					httpOnly: Type.Optional(
-						Type.Boolean({
-							description: "Whether the cookie is HTTP-only",
-						}),
-					),
-					secure: Type.Optional(
-						Type.Boolean({
-							description: "Whether the cookie is secure (HTTPS only)",
-						}),
-					),
-					sameSite: Type.Optional(
-						StringEnum(["Strict", "Lax", "None"] as const, {
-							description: "SameSite policy (defaults to Lax if omitted)",
-						}),
-					),
-				}),
-				{
-					description:
-						"Cookies to set (only for action='set'). Each must have at least name, value, domain.",
-				},
-			),
-		),
-		name: Type.Optional(
-			Type.String({
-				description: "Filter by cookie name (only for action='clear')",
-			}),
-		),
-		domain: Type.Optional(
-			Type.String({
-				description: "Filter by domain (only for action='clear')",
-			}),
-		),
-		path: Type.Optional(
-			Type.String({
-				description: "Filter by path (only for action='clear')",
-			}),
-		),
-	}),
-
-	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-		const p = params as Record<string, unknown>;
-		const action = p.action as string;
-		const tid = (p.taskId as string | undefined) ?? taskId(ctx);
-
-		switch (action) {
-			case "get": {
-				const urls = p.urls ? (p.urls as string[]) : undefined;
-				const result = await router.getCookies(tid, urls);
-
-				if (!result.success) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Failed to get cookies: ${result.error ?? "unknown error"}`,
-							},
-						],
-						details: { error: true },
-					};
-				}
-
-				if (result.cookies.length === 0) {
-					return {
-						content: [{ type: "text", text: "No cookies found." }],
-						details: { count: 0 },
-					};
-				}
-
-				const lines = [`Found ${result.cookies.length} cookie(s):`, ""];
-				for (const c of result.cookies) {
-					const flags = [
-						c.httpOnly ? "HttpOnly" : "",
-						c.secure ? "Secure" : "",
-						c.sameSite || "",
-					]
-						.filter(Boolean)
-						.join(" ");
-					const expires =
-						c.expires && c.expires > 0
-							? new Date(c.expires * 1000).toISOString()
-							: "Session";
-					lines.push(
-						`  ${c.name}=${c.value.slice(0, 80)}${c.value.length > 80 ? "…" : ""}`,
-					);
-					lines.push(`    Domain: ${c.domain ?? "?"}  Path: ${c.path ?? "/"}`);
-					lines.push(`    Expires: ${expires}  ${flags}`.trimEnd());
-					lines.push("");
-				}
-
-				return {
-					content: [{ type: "text", text: lines.join("\n") }],
-					details: { count: result.cookies.length, cookies: result.cookies },
-				};
-			}
-
-			case "set": {
-				const cookies = (p.cookies ?? []) as Array<Record<string, unknown>>;
-				if (cookies.length === 0) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: "No cookies provided. Pass a cookies array with at least name, value, domain.",
-							},
-						],
-						details: { error: true },
-					};
-				}
-
-				const result = await router.addCookies(tid, cookies as any);
-
-				if (!result.success) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Failed to set cookies: ${result.error ?? "unknown error"}`,
-							},
-						],
-						details: { error: true },
-					};
-				}
-
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Set ${cookies.length} cookie(s) successfully.`,
-						},
-					],
-					details: { count: cookies.length },
-				};
-			}
-
-			case "clear": {
-				const options: Record<string, string> = {};
-				if (p.name) options.name = p.name as string;
-				if (p.domain) options.domain = p.domain as string;
-				if (p.path) options.path = p.path as string;
-
-				const result = await router.clearCookies(
-					tid,
-					Object.keys(options).length > 0
-						? (options as import("./core/plugin-api.js").ClearCookiesOptions)
-						: undefined,
-				);
-
-				if (!result.success) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Failed to clear cookies: ${result.error ?? "unknown error"}`,
-							},
-						],
-						details: { error: true },
-					};
-				}
-
-				const filters = ["name", "domain", "path"]
-					.filter((k) => p[k])
-					.map((k) => `${k}=${p[k]}`)
-					.join(", ");
-				const summary = filters
-					? `Cleared cookies matching: ${filters}`
-					: "Cleared all cookies.";
-
-				return {
-					content: [{ type: "text", text: summary }],
-					details: { cleared: true, ...options },
-				};
-			}
-
-			default: {
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Unknown action: ${action}. Use "get", "set", or "clear".`,
-						},
-					],
-					details: { error: true },
-				};
-			}
-		}
-	},
-
-	renderCall(args, theme, _context) {
-		const action = args.action as string;
-		const label = {
-			get: "📖",
-			set: "📝",
-			clear: "🗑",
-		};
-		return new Text(
-			`${theme.fg("toolTitle", theme.bold("browser-cookies"))} ${theme.fg("accent", (label as any)[action] || action)}`,
-			0,
-			0,
-		);
-	},
-
-	renderResult(result, { expanded }, theme, _context) {
-		const d = result.details as Record<string, unknown> | undefined;
-		if (d?.error) {
-			const content = (result.content?.[0] as any)?.text ?? "";
-			return new Text(theme.fg("error", content), 0, 0);
-		}
-
-		if (d?.cleared) {
-			const filters = ["name", "domain", "path"]
-				.filter((k) => d && d[k])
-				.map((k) => `${k}=${d![k]}`)
-				.join(", ");
-			const label = filters ? `🗑 cookies (${filters})` : "🗑 all cookies";
-			return new Text(theme.fg("success", label), 0, 0);
-		}
-
-		if (d?.count !== undefined) {
-			if (d.count === 0) {
-				return new Text(theme.fg("dim", "🍪 no cookies"), 0, 0);
-			}
-			const content = (result.content?.[0] as any)?.text ?? "";
-			if (expanded) {
-				const preview = content.replace(/\n{3,}/g, "\n\n").slice(0, 300);
-				let text = theme.fg("accent", `🍪 ${d.count} cookie(s)`);
-				text += `\n${theme.fg("dim", preview)}`;
-				if (content.length > 300)
-					text += `\n${theme.fg("muted", `… ${content.length - 300} more chars`)}`;
-				return new Text(text, 0, 0);
-			}
-			return new Text(
-				theme.fg("accent", `🍪 ${d.count} cookie(s) (expand)`),
-				0,
-				0,
-			);
-		}
-
-		return new Text(theme.fg("success", "🍪 ok"), 0, 0);
-	},
-});
-
-// ============================================================
 // Command: /browser-status
 // ============================================================
 const browserStatusCommand = {
@@ -1812,8 +1564,9 @@ const browserStatusCommand = {
 			const lines = [`\nProfiles: ${profiles.length} on disk`];
 			for (const p of profiles) {
 				const current = p.name === activeProfile ? " ← active" : "";
-				const lockBadge = p.locked ? " 🔒" : "";
-				lines.push(`  ${p.name}  (${p.stateSize})${lockBadge}${current}`);
+				const badge = isSessionProfile(p.name) ? " 📋" : "";
+				const label = isSessionProfile(p.name) ? "📋 session" : p.name;
+				lines.push(`  ${label}  (${p.stateSize})${badge}${current}`);
 			}
 			lines.push("  /web profile list — detailed view");
 			msg += lines.join("\n");
@@ -1931,11 +1684,28 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(browserInspectTool);
 	pi.registerTool(webGuideTool);
 	pi.registerTool(webLearnTool);
-	pi.registerTool(browserCookiesTool);
 
 	// --- Register commands ------------------------------------------
 	pi.registerCommand("browser-status", browserStatusCommand);
 	initBrowserToggle(pi);
+
+	// --- Profile event listener for TUI status updates ------------
+	router.onProfileEvent((event) => {
+		// Update TUI status bar on any profile lifecycle event
+		if (_lastCtx) {
+			updateFooterStatus(_lastCtx);
+		}
+
+		// Debug logging when BROWSER_DEBUG is set
+		if (process.env.BROWSER_DEBUG) {
+			const parts = [`[browser] ${event.type}: task=${event.taskId}`];
+			if (event.profileName) parts.push(`profile=${event.profileName}`);
+			if (event.profileMode) parts.push(`mode=${event.profileMode}`);
+			if (event.sharedRefCount !== undefined)
+				parts.push(`refCount=${event.sharedRefCount}`);
+			console.error(parts.join(" "));
+		}
+	});
 
 	// --- Startup ----------------------------------------------------
 	pi.on("session_start", async (_event, ctx) => {
@@ -1949,6 +1719,7 @@ export default function (pi: ExtensionAPI) {
 
 	// --- Cleanup ----------------------------------------------------
 	pi.on("session_shutdown", async (_event, ctx) => {
+		_lastCtx = null;
 		const piSessionId = (ctx as any)?.sessionManager?.getSessionId?.();
 		if (piSessionId) {
 			_sessionKeys.delete(piSessionId);

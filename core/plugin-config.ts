@@ -39,13 +39,14 @@ export interface BrowserProfileConfig {
  */
 export interface BrowserConfig {
 	/**
-	 * Default session mode when `browser-navigate` omits the `session` parameter.
-	 * - "new": fresh context each time (backward-compatible default)
-	 * - "last": resume the default profile (requires explicit opt-in)
+	 * Default profile mode or named profile when `browser-navigate` omits the `profile` parameter.
+	 * - "none": clean slate, no persistence
+	 * - "session": persist for this conversation
+	 * - A named profile string (e.g. "shopping", "work")
 	 */
-	sessionDefault: "new" | "last";
-	/** Which profile to use for `session="last"`. Default: "default". */
-	defaultProfile: string;
+	defaultProfile: "none" | "session" | string;
+	/** Fallback profile name when `profile="session"` cannot derive a piSessionId-based name. Default: "default". */
+	legacyDefaultProfile: string;
 	/**
 	 * Size threshold in bytes for storage state warnings.
 	 * When a saved state exceeds this, a warning is logged but the save proceeds.
@@ -139,8 +140,7 @@ function readPluginsFromSettings(): unknown[] | undefined {
  * Load and validate the browser configuration from settings.json.
  *
  * Reads the `browser` section and extracts:
- * - `sessionDefault` ("new" | "last", default "new")
- * - `defaultProfile` (string, default "default")
+ * - `defaultProfile` (string, default "none")
  * - `maxStorageStateSize` (number in bytes, default 10 MB)
  * - `profiles` (record of profile configs, default {})
  *
@@ -154,38 +154,55 @@ export function loadBrowserConfig(): BrowserConfig {
 
 	// Defaults
 	const config: BrowserConfig = {
-		sessionDefault: "new",
-		defaultProfile: "default",
+		defaultProfile: "none",
+		legacyDefaultProfile: "default",
 		maxStorageStateSize: DEFAULT_MAX_STORAGE_STATE_SIZE,
 		profiles: {},
 	};
 
 	if (!raw) return config;
 
-	// ── sessionDefault ────────────────────────────────────────
-	if (raw.sessionDefault !== undefined) {
-		if (raw.sessionDefault === "new" || raw.sessionDefault === "last") {
-			config.sessionDefault = raw.sessionDefault;
-		} else {
-			errors.push(
-				`browser.sessionDefault: expected "new" or "last", got ${JSON.stringify(raw.sessionDefault)}`,
-			);
-		}
-	}
-
-	// ── defaultProfile ────────────────────────────────────────
+	// ── defaultProfile ───────────────────────────────────────────
 	if (raw.defaultProfile !== undefined) {
 		if (typeof raw.defaultProfile === "string" && raw.defaultProfile.trim()) {
-			try {
-				config.defaultProfile = sanitizeProfileName(raw.defaultProfile.trim());
-			} catch (err) {
-				errors.push(
-					`browser.defaultProfile: ${err instanceof Error ? err.message : String(err)}`,
-				);
+			const v = raw.defaultProfile.trim();
+			// Validate: "none", "session", or a named profile
+			if (v === "none" || v === "session") {
+				config.defaultProfile = v;
+			} else {
+				try {
+					config.defaultProfile = sanitizeProfileName(v);
+				} catch (err) {
+					errors.push(
+						`browser.defaultProfile: ${err instanceof Error ? err.message : String(err)}`,
+					);
+				}
 			}
 		} else {
 			errors.push(
 				`browser.defaultProfile: expected a non-empty string, got ${typeof raw.defaultProfile}`,
+			);
+		}
+	}
+
+	// ── legacyDefaultProfile (was old defaultProfile) ────────
+	if (raw.legacyDefaultProfile !== undefined) {
+		if (
+			typeof raw.legacyDefaultProfile === "string" &&
+			raw.legacyDefaultProfile.trim()
+		) {
+			try {
+				config.legacyDefaultProfile = sanitizeProfileName(
+					raw.legacyDefaultProfile.trim(),
+				);
+			} catch (err) {
+				errors.push(
+					`browser.legacyDefaultProfile: ${err instanceof Error ? err.message : String(err)}`,
+				);
+			}
+		} else {
+			errors.push(
+				`browser.legacyDefaultProfile: expected a non-empty string, got ${typeof raw.legacyDefaultProfile}`,
 			);
 		}
 	}

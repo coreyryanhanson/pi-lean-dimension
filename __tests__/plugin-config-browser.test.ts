@@ -3,7 +3,7 @@
  *
  * Covers:
  * - loadBrowserConfig() defaults when no config exists
- * - sessionDefault validation ("new" | "last")
+ * - defaultProfile validation ("none", "session", or a named profile)
  * - defaultProfile validation
  * - maxStorageStateSize validation
  * - profiles section validation
@@ -75,8 +75,8 @@ describe("loadBrowserConfig()", () => {
 	it("returns defaults when no settings.json exists", () => {
 		mockNoSettings();
 		const config = loadBrowserConfig();
-		expect(config.sessionDefault).toBe("new");
-		expect(config.defaultProfile).toBe("default");
+		expect(config.defaultProfile).toBe("none");
+		expect(config.legacyDefaultProfile).toBe("default");
 		expect(config.maxStorageStateSize).toBe(DEFAULT_MAX_STORAGE_STATE_SIZE);
 		expect(config.profiles).toEqual({});
 	});
@@ -84,40 +84,15 @@ describe("loadBrowserConfig()", () => {
 	it("returns defaults when browser section is missing", () => {
 		mockGlobalSettings({});
 		const config = loadBrowserConfig();
-		expect(config.sessionDefault).toBe("new");
-		expect(config.defaultProfile).toBe("default");
+		expect(config.defaultProfile).toBe("none");
+		expect(config.legacyDefaultProfile).toBe("default");
 	});
 
 	it("returns defaults when browser section has no config keys", () => {
 		mockGlobalSettings({ unrelated: true });
 		const config = loadBrowserConfig();
-		expect(config.sessionDefault).toBe("new");
+		expect(config.defaultProfile).toBe("none");
 		expect(config.profiles).toEqual({});
-	});
-
-	// ── sessionDefault ─────────────────────────────────────────
-
-	describe("sessionDefault", () => {
-		it('accepts "new"', () => {
-			mockGlobalSettings({ sessionDefault: "new" });
-			expect(loadBrowserConfig().sessionDefault).toBe("new");
-		});
-
-		it('accepts "last"', () => {
-			mockGlobalSettings({ sessionDefault: "last" });
-			expect(loadBrowserConfig().sessionDefault).toBe("last");
-		});
-
-		it("rejects invalid values and falls back to default", () => {
-			mockGlobalSettings({ sessionDefault: "maybe" });
-			// Falls back to default
-			expect(loadBrowserConfig().sessionDefault).toBe("new");
-		});
-
-		it("rejects non-string values", () => {
-			mockGlobalSettings({ sessionDefault: 42 });
-			expect(loadBrowserConfig().sessionDefault).toBe("new");
-		});
 	});
 
 	// ── defaultProfile ─────────────────────────────────────────
@@ -134,25 +109,27 @@ describe("loadBrowserConfig()", () => {
 		});
 
 		it("rejects reserved names and falls back to default", () => {
-			mockGlobalSettings({ defaultProfile: "new" });
+			mockGlobalSettings({ defaultProfile: "none" });
+			// "none" is reserved as a profile name but valid as a defaultProfile mode
 			const config = loadBrowserConfig();
-			expect(config.defaultProfile).toBe("default");
+			expect(config.defaultProfile).toBe("none");
 		});
 
-		it("rejects 'last' as a profile name", () => {
-			mockGlobalSettings({ defaultProfile: "last" });
+		it("rejects 'session' as a profile name for named profiles", () => {
+			mockGlobalSettings({ defaultProfile: "session" });
+			// "session" is reserved as a profile name but valid as a defaultProfile mode
 			const config = loadBrowserConfig();
-			expect(config.defaultProfile).toBe("default");
+			expect(config.defaultProfile).toBe("session");
 		});
 
 		it("rejects empty string", () => {
 			mockGlobalSettings({ defaultProfile: "" });
-			expect(loadBrowserConfig().defaultProfile).toBe("default");
+			expect(loadBrowserConfig().defaultProfile).toBe("none");
 		});
 
 		it("rejects names with path traversal", () => {
 			mockGlobalSettings({ defaultProfile: "../../evil" });
-			expect(loadBrowserConfig().defaultProfile).toBe("default");
+			expect(loadBrowserConfig().defaultProfile).toBe("none");
 		});
 	});
 
@@ -220,12 +197,12 @@ describe("loadBrowserConfig()", () => {
 		it("skips entries with reserved names", () => {
 			mockGlobalSettings({
 				profiles: {
-					new: { persist: true },
+					none: { persist: true },
 					valid: { persist: true },
 				},
 			});
 			const config = loadBrowserConfig();
-			expect(config.profiles.new).toBeUndefined();
+			expect(config.profiles.none).toBeUndefined();
 			expect(config.profiles.valid).toBeDefined();
 		});
 
@@ -263,32 +240,30 @@ describe("loadBrowserConfig()", () => {
 	describe("settings merge", () => {
 		it("project settings override global settings", () => {
 			mockBothSettings(
-				{ browser: { sessionDefault: "new" } },
-				{ browser: { sessionDefault: "last" } },
+				{ browser: { defaultProfile: "none" } },
+				{ browser: { defaultProfile: "work" } },
 			);
-			expect(loadBrowserConfig().sessionDefault).toBe("last");
+			expect(loadBrowserConfig().defaultProfile).toBe("work");
 		});
 
 		it("project settings entirely replace global browser config (shallow merge)", () => {
 			mockBothSettings(
 				{
 					browser: {
-						sessionDefault: "last",
 						defaultProfile: "global-profile",
 					},
 				},
 				{
 					browser: {
-						sessionDefault: "new",
+						defaultProfile: "session",
 					},
-					// project doesn't set defaultProfile or maxStorageStateSize
+					// project doesn't set maxStorageStateSize
 					// but since browser is shallow-merged, global's browser is entirely replaced
 				},
 			);
 			const config = loadBrowserConfig();
-			expect(config.sessionDefault).toBe("new");
-			// Global's defaultProfile is lost because project replaced browser entirely
-			expect(config.defaultProfile).toBe("default");
+			expect(config.defaultProfile).toBe("session");
+			// Global's settings are lost because project replaced browser entirely.
 			expect(config.maxStorageStateSize).toBe(DEFAULT_MAX_STORAGE_STATE_SIZE);
 		});
 	});

@@ -942,4 +942,93 @@ describe("bot detection UX", () => {
 			);
 		});
 	});
+
+	// ─── Profile-aware auto-recovery (Phase 7) ─────────────────
+	describe("profile-aware auto-recovery", () => {
+		it("restores profileName from lastNav on auto-creation", async () => {
+			await sessionManager.removeAll();
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"mock",
+				"work",
+			);
+
+			const result = await router.snapshot("default");
+			expect(result.success).toBe(true);
+
+			const session = sessionManager.getSession("default");
+			expect(session).toBeDefined();
+			expect(session!.profileName).toBe("work");
+		});
+
+		it("restores session profile from lastNav on auto-creation", async () => {
+			await sessionManager.removeAll();
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"mock",
+				"_session-test-session-abc",
+			);
+
+			const result = await router.snapshot("default");
+			expect(result.success).toBe(true);
+
+			const session = sessionManager.getSession("default");
+			expect(session).toBeDefined();
+			expect(session!.profileName).toBe("_session-test-session-abc");
+		});
+
+		it("no profileName restored when lastNav has no profile", async () => {
+			await sessionManager.removeAll();
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"mock",
+			);
+
+			const result = await router.snapshot("default");
+			expect(result.success).toBe(true);
+
+			const session = sessionManager.getSession("default");
+			expect(session).toBeDefined();
+			expect(session!.profileName).toBeUndefined();
+		});
+
+		it("click auto-recovers and returns stale ref hint", async () => {
+			await sessionManager.removeAll();
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"mock",
+				"work",
+			);
+
+			const result = await router.click("default", "@e5");
+			expect(result.success).toBe(true);
+			expect(mock.calls.get("click")).toBeUndefined();
+			expect(mock.calls.get("navigate")).toBeDefined();
+			expect(result.snapshot).toMatch(/accessibility tree/i);
+		});
+
+		it("type auto-recovers and returns stale ref hint", async () => {
+			await sessionManager.removeAll();
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"mock",
+				"work",
+			);
+
+			const result = await router.type("default", "@e3", "hello");
+			expect(result.success).toBe(true);
+			expect(mock.calls.get("type")).toBeUndefined();
+			expect(mock.calls.get("navigate")).toBeDefined();
+		});
+	});
 });
