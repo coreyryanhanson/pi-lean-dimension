@@ -30,6 +30,11 @@ import { sessionManager } from "../../core/shared/session-manager.js";
 import { checkPage } from "../../core/shared/bot-detection.js";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
+import {
+	saveStorageState,
+	profileDir,
+} from "../../core/shared/storage-state.js";
+import { releaseProfileLock } from "../../core/shared/profile-lock.js";
 import type {
 	BrowserPlugin,
 	PluginCapabilities,
@@ -40,6 +45,11 @@ import type {
 	GetImagesResult,
 	ConsoleMessagesResult,
 	EvaluateResult,
+	ResultBase,
+	Cookie,
+	CookieResult,
+	ClearCookiesOptions,
+	StorageStateResult,
 } from "../../core/plugin-api.js";
 
 // ─── Capabilities ──────────────────────────────────────────────────
@@ -113,7 +123,10 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	// ── Internal helpers ───────────────────────────────────────
 
-	private async getOrCreateContext(taskId: string): Promise<{
+	private async getOrCreateContext(
+		taskId: string,
+		storageState?: unknown,
+	): Promise<{
 		context: BrowserContext;
 		page: Page;
 		isNew: boolean;
@@ -161,11 +174,18 @@ export class ChromiumPlugin implements BrowserPlugin {
 			});
 		}
 
-		const context = await this._browser.newContext({
+		const contextOptions: Record<string, unknown> = {
 			viewport: { width: 1280, height: 720 },
 			userAgent:
 				"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-		});
+		};
+
+		// Apply storage state (cookies + localStorage) for profile restoration
+		if (storageState !== undefined) {
+			contextOptions.storageState = storageState;
+		}
+
+		const context = await this._browser.newContext(contextOptions);
 
 		// Start Playwright trace capture if BROWSER_TRACE_DIR is set.
 		// Traces include screenshots, DOM snapshots, and source for debugging.
@@ -354,11 +374,14 @@ export class ChromiumPlugin implements BrowserPlugin {
 		url: string,
 		taskId: string,
 		timeoutMs: number = 30_000,
-		options?: { signal?: AbortSignal },
+		options?: { signal?: AbortSignal; storageState?: unknown },
 	): Promise<NavigateResult> {
 		const _start = performance.now();
 		try {
-			const { page } = await this.getOrCreateContext(taskId);
+			const { page } = await this.getOrCreateContext(
+				taskId,
+				options?.storageState,
+			);
 
 			// Wire up abort
 			if (options?.signal) {
@@ -1105,11 +1128,201 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 	}
 
+	// ── Cookies & storage state ───────────────────────────────
+
+	async getCookies(taskId: string, urls?: string[]): Promise<CookieResult> {
+		const _start = performance.now();
+		const entry = this._contexts.get(taskId);
+		if (!entry) {
+			this._log("getCookies", {
+				taskId,
+				success: false,
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
+			return { success: false, cookies: [], error: "No active session" };
+		}
+
+		try {
+			const cookies = await entry.context.cookies(urls);
+			this._log("getCookies", {
+				taskId,
+				success: true,
+				count: cookies.length,
+				time: Math.round(performance.now() - _start),
+			});
+			return { success: true, cookies };
+		} catch (err: unknown) {
+			this._log("getCookies", {
+				taskId,
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+				time: Math.round(performance.now() - _start),
+			});
+			return {
+				success: false,
+				cookies: [],
+				error: err instanceof Error ? err.message : String(err),
+			};
+		}
+	}
+
+	async addCookies(taskId: string, cookies: Cookie[]): Promise<ResultBase> {
+		const _start = performance.now();
+		const entry = this._contexts.get(taskId);
+		if (!entry) {
+			this._log("addCookies", {
+				taskId,
+				success: false,
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
+			return { success: false, error: "No active session" };
+		}
+
+		try {
+			await entry.context.addCookies(cookies);
+			this._log("addCookies", {
+				taskId,
+				success: true,
+				count: cookies.length,
+				time: Math.round(performance.now() - _start),
+			});
+			return { success: true };
+		} catch (err: unknown) {
+			this._log("addCookies", {
+				taskId,
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+				time: Math.round(performance.now() - _start),
+			});
+			return {
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+			};
+		}
+	}
+
+	async clearCookies(
+		taskId: string,
+		options?: ClearCookiesOptions,
+	): Promise<ResultBase> {
+		const _start = performance.now();
+		const entry = this._contexts.get(taskId);
+		if (!entry) {
+			this._log("clearCookies", {
+				taskId,
+				success: false,
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
+			return { success: false, error: "No active session" };
+		}
+
+		try {
+			await entry.context.clearCookies({
+				...(options?.name ? { name: options.name } : {}),
+				...(options?.domain ? { domain: options.domain } : {}),
+				...(options?.path ? { path: options.path } : {}),
+			});
+			this._log("clearCookies", {
+				taskId,
+				success: true,
+				time: Math.round(performance.now() - _start),
+			});
+			return { success: true };
+		} catch (err: unknown) {
+			this._log("clearCookies", {
+				taskId,
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+				time: Math.round(performance.now() - _start),
+			});
+			return {
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+			};
+		}
+	}
+
+	async getStorageState(taskId: string): Promise<StorageStateResult> {
+		const _start = performance.now();
+		const entry = this._contexts.get(taskId);
+		if (!entry) {
+			this._log("getStorageState", {
+				taskId,
+				success: false,
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
+			return {
+				success: false,
+				cookies: [],
+				origins: [],
+				error: "No active session",
+			};
+		}
+
+		try {
+			const state = await entry.context.storageState();
+			this._log("getStorageState", {
+				taskId,
+				success: true,
+				cookies: state.cookies.length,
+				origins: state.origins.length,
+				time: Math.round(performance.now() - _start),
+			});
+			return {
+				success: true,
+				cookies: state.cookies,
+				origins: state.origins,
+			};
+		} catch (err: unknown) {
+			this._log("getStorageState", {
+				taskId,
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+				time: Math.round(performance.now() - _start),
+			});
+			return {
+				success: false,
+				cookies: [],
+				origins: [],
+				error: err instanceof Error ? err.message : String(err),
+			};
+		}
+	}
+
 	// ── Per-task cleanup ───────────────────────────────────────
 
 	async cleanup(taskId: string): Promise<void> {
 		const entry = this._contexts.get(taskId);
 		if (entry) {
+			// ── Auto-save storage state if session is persistent ──────
+			const session = sessionManager.getSession(taskId);
+			if (session?.persistState) {
+				try {
+					const state = await entry.context.storageState();
+					const name = session.profileName ?? "default";
+					const saved = saveStorageState(name, state);
+					if (saved) {
+						// Release profile lock so other sessions can use it
+						try {
+							releaseProfileLock(profileDir(name), taskId);
+						} catch {
+							/* best-effort */
+						}
+					}
+				} catch (err) {
+					console.warn(
+						`[pi-browser] Failed to auto-save storage state for profile ` +
+							`'${session.profileName ?? "default"}': ` +
+							`${err instanceof Error ? err.message : String(err)}. ` +
+							"Session state may be lost.",
+					);
+				}
+			}
+
 			// Stop and save Playwright trace if BROWSER_TRACE_DIR is set.
 			// Traces are stored as trace-{taskId}-{timestamp}.zip.
 			const traceDir = process.env.BROWSER_TRACE_DIR;

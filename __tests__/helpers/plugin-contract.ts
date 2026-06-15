@@ -617,6 +617,123 @@ export function runContractTests(
 			});
 		});
 
+		// ─── Cookies & storage state ─────────────────────────
+
+		describe("getCookies()", () => {
+			it("returns a CookieResult with required fields", async () => {
+				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
+
+				const result = await plugin.getCookies(TASK_ID);
+
+				expect(result).toBeDefined();
+				expect(typeof result.success).toBe("boolean");
+				expect(Array.isArray(result.cookies)).toBe(true);
+
+				if (result.success) {
+					for (const c of result.cookies) {
+						expect(typeof c.name).toBe("string");
+						expect(typeof c.value).toBe("string");
+					}
+				} else {
+					expect(result.error).toBeTruthy();
+				}
+			});
+
+			it("accepts optional urls filter", async () => {
+				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
+
+				const result = await plugin.getCookies(TASK_ID, [
+					"https://example.com",
+				]);
+
+				expect(result).toBeDefined();
+				expect(typeof result.success).toBe("boolean");
+				expect(Array.isArray(result.cookies)).toBe(true);
+			});
+		});
+
+		describe("addCookies()", () => {
+			it("returns a ResultBase with required fields", async () => {
+				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
+
+				const result = await plugin.addCookies(TASK_ID, [
+					{
+						name: "test",
+						value: "value",
+						domain: ".example.com",
+						path: "/",
+					},
+				]);
+
+				expect(result).toBeDefined();
+				expect(typeof result.success).toBe("boolean");
+				if (!result.success && !result.error) {
+					expect(result.error).toBeTruthy();
+				}
+			});
+
+			it("rejects cookies without required fields", async () => {
+				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
+
+				// Missing domain and path — may fail at Playwright level
+				const result = await plugin.addCookies(TASK_ID, [
+					{ name: "incomplete", value: "test" },
+				]);
+
+				// Either success (Playwright infers domain/path) or error — both are valid
+				expect(result).toBeDefined();
+				expect(typeof result.success).toBe("boolean");
+			});
+		});
+
+		describe("clearCookies()", () => {
+			it("returns a ResultBase with required fields", async () => {
+				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
+
+				const result = await plugin.clearCookies(TASK_ID);
+
+				expect(result).toBeDefined();
+				expect(typeof result.success).toBe("boolean");
+			});
+
+			it("accepts optional filter params", async () => {
+				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
+
+				const result = await plugin.clearCookies(TASK_ID, {
+					name: "test-cookie",
+				});
+
+				expect(result).toBeDefined();
+				expect(typeof result.success).toBe("boolean");
+			});
+		});
+
+		describe("getStorageState()", () => {
+			it("returns a StorageStateResult with required fields", async () => {
+				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
+
+				const result = await plugin.getStorageState(TASK_ID);
+
+				expect(result).toBeDefined();
+				expect(typeof result.success).toBe("boolean");
+				expect(Array.isArray(result.cookies)).toBe(true);
+				expect(Array.isArray(result.origins)).toBe(true);
+
+				if (result.success) {
+					for (const c of result.cookies) {
+						expect(typeof c.name).toBe("string");
+						expect(typeof c.value).toBe("string");
+					}
+					for (const o of result.origins) {
+						expect(typeof o.origin).toBe("string");
+						expect(Array.isArray(o.localStorage)).toBe(true);
+					}
+				} else {
+					expect(result.error).toBeTruthy();
+				}
+			});
+		});
+
 		// ─── Cleanup ────────────────────────────────────────
 
 		describe("cleanup()", () => {

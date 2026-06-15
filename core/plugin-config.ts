@@ -8,6 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PluginConfig, PluginDetection } from "./plugin-api.js";
+import { sanitizeProfileName } from "./shared/storage-state.js";
 
 // ─── Config paths ─────────────────────────────────────────────────
 
@@ -23,6 +24,40 @@ const GLOBAL_SETTINGS_PATH = join(
 const PROJECT_SETTINGS_PATH = ".pi/settings.json";
 
 // ─── Types ────────────────────────────────────────────────────────
+
+/** Minimum-size storage state threshold for warnings (10 MB). */
+export const DEFAULT_MAX_STORAGE_STATE_SIZE = 10 * 1024 * 1024;
+
+/** Configuration for a single browser profile. */
+export interface BrowserProfileConfig {
+	persist: boolean;
+}
+
+/**
+ * Parsed browser configuration from settings.json.
+ * Provides defaults for all fields — every field is always present.
+ */
+export interface BrowserConfig {
+	/**
+	 * Default session mode when `browser-navigate` omits the `session` parameter.
+	 * - "new": fresh context each time (backward-compatible default)
+	 * - "last": resume the default profile (requires explicit opt-in)
+	 */
+	sessionDefault: "new" | "last";
+	/** Which profile to use for `session="last"`. Default: "default". */
+	defaultProfile: string;
+	/**
+	 * Size threshold in bytes for storage state warnings.
+	 * When a saved state exceeds this, a warning is logged but the save proceeds.
+	 */
+	maxStorageStateSize: number;
+	/**
+	 * Named profiles configuration.
+	 * Profiles listed here are validated at startup; unlisted profiles
+	 * can still be used at runtime but won't appear in listings.
+	 */
+	profiles: Record<string, BrowserProfileConfig>;
+}
 
 /** Raw plugin entry from settings.json (before validation) */
 interface RawPluginEntry {
@@ -58,15 +93,15 @@ function readSettingsFile(path: string): Record<string, unknown> {
 }
 
 /**
- * Read the browser.plugins array from settings.json.
+ * Read the merged browser config object from settings.json.
  *
  * Looks in:
  *   1. `~/.pi/agent/settings.json` (global)
  *   2. `.pi/settings.json` (project-local, overrides global)
  *
- * Returns the merged plugins array, or undefined if not configured.
+ * Returns the browser config object, or undefined if not present or invalid.
  */
-function readPluginsFromSettings(): unknown[] | undefined {
+function readBrowserConfigRaw(): Record<string, unknown> | undefined {
 	const global = readSettingsFile(GLOBAL_SETTINGS_PATH);
 	const project = readSettingsFile(PROJECT_SETTINGS_PATH);
 
@@ -82,10 +117,140 @@ function readPluginsFromSettings(): unknown[] | undefined {
 		return undefined;
 	}
 
-	const plugins = (browserConfig as Record<string, unknown>)["plugins"];
+	return browserConfig as Record<string, unknown>;
+}
+
+/**
+ * Read the browser.plugins array from settings.json.
+ *
+ * Returns the merged plugins array, or undefined if not configured.
+ */
+function readPluginsFromSettings(): unknown[] | undefined {
+	const browserConfig = readBrowserConfigRaw();
+	if (!browserConfig) return undefined;
+
+	const plugins = browserConfig["plugins"];
 	if (!Array.isArray(plugins)) return undefined;
 
 	return plugins;
+}
+
+/**
+ * Load and validate the browser configuration from settings.json.
+ *
+ * Reads the `browser` section and extracts:
+ * - `sessionDefault` ("new" | "last", default "new")
+ * - `defaultProfile` (string, default "default")
+ * - `maxStorageStateSize` (number in bytes, default 10 MB)
+ * - `profiles` (record of profile configs, default {})
+ *
+ * All profile names are validated via `sanitizeProfileName()`.
+ * Validation errors are collected but non-fatal — invalid entries
+ * fall back to sensible defaults.
+ */
+export function loadBrowserConfig(): BrowserConfig {
+	const raw = readBrowserConfigRaw();
+	const errors: string[] = [];
+
+	// Defaults
+	const config: BrowserConfig = {
+		sessionDefault: "new",
+		defaultProfile: "default",
+		maxStorageStateSize: DEFAULT_MAX_STORAGE_STATE_SIZE,
+		profiles: {},
+	};
+
+	if (!raw) return config;
+
+	// ── sessionDefault ────────────────────────────────────────
+	if (raw.sessionDefault !== undefined) {
+		if (raw.sessionDefault === "new" || raw.sessionDefault === "last") {
+			config.sessionDefault = raw.sessionDefault;
+		} else {
+			errors.push(
+				`browser.sessionDefault: expected "new" or "last", got ${JSON.stringify(raw.sessionDefault)}`,
+			);
+		}
+	}
+
+	// ── defaultProfile ────────────────────────────────────────
+	if (raw.defaultProfile !== undefined) {
+		if (typeof raw.defaultProfile === "string" && raw.defaultProfile.trim()) {
+			try {
+				config.defaultProfile = sanitizeProfileName(raw.defaultProfile.trim());
+			} catch (err) {
+				errors.push(
+					`browser.defaultProfile: ${err instanceof Error ? err.message : String(err)}`,
+				);
+			}
+		} else {
+			errors.push(
+				`browser.defaultProfile: expected a non-empty string, got ${typeof raw.defaultProfile}`,
+			);
+		}
+	}
+
+	// ── maxStorageStateSize ───────────────────────────────────
+	if (raw.maxStorageStateSize !== undefined) {
+		if (
+			typeof raw.maxStorageStateSize === "number" &&
+			raw.maxStorageStateSize > 0 &&
+			Number.isFinite(raw.maxStorageStateSize)
+		) {
+			config.maxStorageStateSize = raw.maxStorageStateSize;
+		} else {
+			errors.push(
+				`browser.maxStorageStateSize: expected a positive number, got ${JSON.stringify(raw.maxStorageStateSize)}`,
+			);
+		}
+	}
+
+	// ── profiles ──────────────────────────────────────────────
+	if (raw.profiles !== undefined) {
+		if (
+			typeof raw.profiles !== "object" ||
+			Array.isArray(raw.profiles) ||
+			raw.profiles === null
+		) {
+			errors.push(
+				`browser.profiles: expected an object, got ${typeof raw.profiles}`,
+			);
+		} else {
+			const profilesRaw = raw.profiles as Record<string, unknown>;
+			for (const [name, entry] of Object.entries(profilesRaw)) {
+				try {
+					sanitizeProfileName(name);
+				} catch (err) {
+					errors.push(
+						`browser.profiles['${name}']: ${err instanceof Error ? err.message : String(err)}`,
+					);
+					continue;
+				}
+
+				if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+					errors.push(
+						`browser.profiles['${name}']: expected an object, got ${typeof entry}`,
+					);
+					continue;
+				}
+
+				const profileEntry = entry as Record<string, unknown>;
+				const persist =
+					typeof profileEntry.persist === "boolean"
+						? profileEntry.persist
+						: true;
+
+				config.profiles[name] = { persist };
+			}
+		}
+	}
+
+	// Log validation errors (non-fatal, but surfaced in return)
+	for (const err of errors) {
+		console.warn(`[pi-browser] Config warning: ${err}`);
+	}
+
+	return config;
 }
 
 // ─── Validation ───────────────────────────────────────────────────

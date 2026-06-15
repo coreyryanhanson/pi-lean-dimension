@@ -252,16 +252,24 @@ class ChromiumPyBridge(BrowserBridge):
         Reuses the shared Playwright instance and Browser across tasks.
         Returns a session dict containing the page, context, and
         console-message accumulator.
+
+        If ``config`` contains a ``storageState`` key, it is passed
+        to ``browser.new_context()`` to restore cookies and localStorage.
         """
         _pw, browser = self._ensure_playwright()
 
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 720},
-            user_agent=(
+        context_kwargs: dict[str, Any] = {
+            "viewport": {"width": 1280, "height": 720},
+            "user_agent": (
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             ),
-        )
+        }
+        storage_state = config.get("storageState")
+        if storage_state is not None:
+            context_kwargs["storage_state"] = storage_state
+
+        context = browser.new_context(**context_kwargs)
 
         # Start Playwright trace capture if BROWSER_TRACE_DIR is set.
         _trace_dir = os.environ.get("BROWSER_TRACE_DIR")
@@ -439,14 +447,22 @@ class ChromiumPyBridge(BrowserBridge):
         task_id: str,
         url: str,
         timeout_ms: int = 30_000,
+        storageState: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """Navigate the browser to a URL.
 
         Includes retry on transient network errors, DOM stabilisation
         wait, bot detection, and accessibility snapshot.
+
+        If ``storageState`` is provided, it is passed to
+        ``create_browser_session()`` so the new context is initialised
+        with saved cookies and localStorage.
         """
         _t_start = time.time()
-        session = self.ensure_session(task_id)
+        config: dict[str, Any] = {}
+        if storageState is not None:
+            config["storageState"] = storageState
+        session = self.ensure_session(task_id, config)
         page: Any = session["page"]
 
         # ── Navigate (with retry on transient errors) ───────────
@@ -1137,6 +1153,97 @@ class ChromiumPyBridge(BrowserBridge):
         except Exception as exc:
             return {
                 "success": False,
+                "error": str(exc),
+            }
+
+    # ── Cookies & storage state ─────────────────────────────────
+
+    def do_get_cookies(
+        self, task_id: str, urls: Optional[list[str]] = None
+    ) -> dict[str, Any]:
+        """Get cookies, optionally filtered by URL."""
+        try:
+            session = self.require_session(task_id)
+            context: Any = session["context"]
+            raw = context.cookies(urls or [])
+            # Normalise to our Cookie shape
+            cookies = [
+                {
+                    "name": c["name"],
+                    "value": c["value"],
+                    "domain": c.get("domain"),
+                    "path": c.get("path"),
+                    "expires": c.get("expires"),
+                    "httpOnly": c.get("httpOnly"),
+                    "secure": c.get("secure"),
+                    "sameSite": c.get("sameSite"),
+                }
+                for c in raw
+            ]
+            return {"success": True, "cookies": cookies}
+        except SessionNotFoundError:
+            raise
+        except Exception as exc:
+            return {"success": False, "cookies": [], "error": str(exc)}
+
+    def do_add_cookies(
+        self, task_id: str, cookies: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Add cookies to the browser context."""
+        try:
+            session = self.require_session(task_id)
+            context: Any = session["context"]
+            context.add_cookies(cookies)
+            return {"success": True}
+        except SessionNotFoundError:
+            raise
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
+    def do_clear_cookies(
+        self,
+        task_id: str,
+        name: Optional[str] = None,
+        domain: Optional[str] = None,
+        path: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Clear cookies, optionally filtered by name/domain/path."""
+        try:
+            session = self.require_session(task_id)
+            context: Any = session["context"]
+            # Playwright Python accepts name/domain/path as kwargs
+            kwargs: dict[str, Any] = {}
+            if name is not None:
+                kwargs["name"] = name
+            if domain is not None:
+                kwargs["domain"] = domain
+            if path is not None:
+                kwargs["path"] = path
+            context.clear_cookies(**kwargs)
+            return {"success": True}
+        except SessionNotFoundError:
+            raise
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
+    def do_get_storage_state(self, task_id: str) -> dict[str, Any]:
+        """Get full storage state (cookies + localStorage + IndexedDB)."""
+        try:
+            session = self.require_session(task_id)
+            context: Any = session["context"]
+            state: dict[str, Any] = context.storage_state()
+            return {
+                "success": True,
+                "cookies": state.get("cookies", []),
+                "origins": state.get("origins", []),
+            }
+        except SessionNotFoundError:
+            raise
+        except Exception as exc:
+            return {
+                "success": False,
+                "cookies": [],
+                "origins": [],
                 "error": str(exc),
             }
 

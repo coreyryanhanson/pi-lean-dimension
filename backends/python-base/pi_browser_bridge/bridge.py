@@ -277,6 +277,56 @@ class BrowserBridge:
             f"{type(self).__name__} must implement do_evaluate()"
         )
 
+    def do_get_cookies(
+        self, task_id: str, urls: Optional[list[str]] = None
+    ) -> dict[str, Any]:
+        """Get all cookies, optionally filtered by URL.
+
+        Must return a dict with keys:
+            success (bool), cookies (list) — each with name, value, domain, ...
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement do_get_cookies()"
+        )
+
+    def do_add_cookies(
+        self, task_id: str, cookies: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Add cookies to the browser context.
+
+        Must return a dict with keys:
+            success (bool)
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement do_add_cookies()"
+        )
+
+    def do_clear_cookies(
+        self,
+        task_id: str,
+        name: Optional[str] = None,
+        domain: Optional[str] = None,
+        path: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Clear cookies, optionally filtered by name/domain/path.
+
+        Must return a dict with keys:
+            success (bool)
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement do_clear_cookies()"
+        )
+
+    def do_get_storage_state(self, task_id: str) -> dict[str, Any]:
+        """Get full storage state (cookies + localStorage + IndexedDB).
+
+        Must return a dict with keys:
+            success (bool), cookies (list), origins (list)
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement do_get_storage_state()"
+        )
+
     def do_cleanup(self, task_id: str) -> dict[str, Any]:
         """Clean up resources for a specific task.
 
@@ -373,6 +423,32 @@ class BrowserBridge:
                 task_id = self._require_param(params, "taskId", str, cmd_id)
                 expression = self._require_param(params, "expression", str, cmd_id)
                 result = self.do_evaluate(task_id, expression)
+                return make_success_response(cmd_id, result)
+
+            if method == "browser.getCookies":
+                task_id = self._require_param(params, "taskId", str, cmd_id)
+                urls = params.get("urls")
+                result = self.do_get_cookies(task_id, urls)
+                return make_success_response(cmd_id, result)
+
+            if method == "browser.addCookies":
+                task_id = self._require_param(params, "taskId", str, cmd_id)
+                cookies = self._require_param(params, "cookies", list, cmd_id)
+                result = self.do_add_cookies(task_id, cookies)
+                return make_success_response(cmd_id, result)
+
+            if method == "browser.clearCookies":
+                task_id = self._require_param(params, "taskId", str, cmd_id)
+                name = params.get("name")
+                domain = params.get("domain")
+                path = params.get("path")
+                # No required params beyond taskId — empty call clears ALL cookies
+                result = self.do_clear_cookies(task_id, name, domain, path)
+                return make_success_response(cmd_id, result)
+
+            if method == "browser.getStorageState":
+                task_id = self._require_param(params, "taskId", str, cmd_id)
+                result = self.do_get_storage_state(task_id)
                 return make_success_response(cmd_id, result)
 
             if method == "browser.cleanup":

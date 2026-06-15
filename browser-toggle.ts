@@ -2,7 +2,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -294,6 +294,102 @@ export {
 };
 export type { BrowserToggleState };
 
+// ---- Profile management helpers ----------------------------------
+
+import {
+	PROFILE_DIR,
+	profileDir,
+	profileFilePath,
+	deleteStorageState,
+} from "./core/shared/storage-state.js";
+import {
+	acquireProfileLock as acquireLock,
+	releaseProfileLock as releaseLock,
+} from "./core/shared/profile-lock.js";
+
+/**
+ * Get a human-readable size description for a profile's storage state.
+ * Returns "no state" if the file doesn't exist or is empty.
+ */
+function profileStateSize(profileName: string): string {
+	const path = profileFilePath(profileName);
+	try {
+		if (!existsSync(path)) return "no state";
+		const bytes = statSync(path).size;
+		if (bytes === 0) return "empty";
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	} catch {
+		return "?";
+	}
+}
+
+/**
+ * Check whether a profile is currently locked.
+ * Returns true only if the lock directory exists and the lock
+ * is held by an active (non-stale) session different from
+ * the current task. Best-effort — returns false on errors.
+ */
+function isProfileLocked(profileName: string): boolean {
+	try {
+		const ld = join(profileDir(profileName), ".lock");
+		if (!existsSync(ld)) return false;
+		// If we can acquire the lock, it wasn't actually locked
+		const acquired = acquireLock(profileDir(profileName), "_inspect_");
+		if (acquired) {
+			releaseLock(profileDir(profileName), "_inspect_");
+			return false;
+		}
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * List all profiles found on disk.
+ * Returns an array of { name, stateSize, locked } objects.
+ */
+export function listProfiles(): Array<{
+	name: string;
+	stateSize: string;
+	locked: boolean;
+}> {
+	try {
+		if (!existsSync(PROFILE_DIR)) return [];
+		const entries = readdirSync(PROFILE_DIR, { withFileTypes: true });
+		const profiles = entries
+			.filter((e) => e.isDirectory() && !e.name.startsWith("."))
+			.map((e) => ({
+				name: e.name,
+				stateSize: profileStateSize(e.name),
+				locked: isProfileLocked(e.name),
+			}));
+		profiles.sort((a, b) => a.name.localeCompare(b.name));
+		return profiles;
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Format a profile list as a human-readable string.
+ */
+export function formatProfileList(
+	profiles: ReturnType<typeof listProfiles>,
+): string {
+	if (profiles.length === 0) {
+		return "No profiles found on disk.";
+	}
+	const lines = [`Profiles (${profiles.length}):`];
+	for (const p of profiles) {
+		const lockBadge = p.locked ? " 🔒" : "";
+		lines.push(`  ${p.name}  (${p.stateSize})${lockBadge}`);
+	}
+	return lines.join("\n");
+}
+
 // ---- Toggle initializer ----------------------------------------
 
 /**
@@ -355,6 +451,63 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 					"🌐 Browser tools disabled. /web on to re-enable.",
 					"info",
 				);
+			} else if (cmd === "profile" || cmd.startsWith("profile ")) {
+				// ── Profile management sub-commands ────────────────────
+				const sub = cmd.slice("profile".length).trim();
+
+				if (sub === "" || sub === "list") {
+					const profiles = listProfiles();
+					const formatted = formatProfileList(profiles);
+					ctx.ui.notify(formatted, "info");
+				} else if (sub === "clear-all" || sub === "clear-all --confirm") {
+					const profiles = listProfiles();
+					if (profiles.length === 0) {
+						ctx.ui.notify("No profiles to clear.", "info");
+						return;
+					}
+					if (sub === "clear-all") {
+						// Require confirmation
+						const names = profiles.map((p) => p.name).join(", ");
+						ctx.ui.notify(
+							`⚠ This will clear ALL profile states: ${names}\n` +
+								`  Run /web profile clear-all --confirm to proceed.`,
+							"warning",
+						);
+					} else {
+						// With --confirm: proceed
+						let cleared = 0;
+						for (const p of profiles) {
+							deleteStorageState(p.name);
+							cleared++;
+						}
+						ctx.ui.notify(`Cleared ${cleared} profile(s).`, "info");
+					}
+				} else if (sub === "clear" || sub.startsWith("clear ")) {
+					const name = sub === "clear" ? "" : sub.slice("clear ".length).trim();
+					if (!name) {
+						ctx.ui.notify(
+							"Usage: /web profile clear <name> — provide a profile name.",
+							"warning",
+						);
+						return;
+					}
+					const path = profileFilePath(name);
+					if (!existsSync(path)) {
+						ctx.ui.notify(
+							`Profile '${name}' has no saved state. Nothing to clear.`,
+							"info",
+						);
+						return;
+					}
+					deleteStorageState(name);
+					ctx.ui.notify(`Cleared profile '${name}' state.`, "info");
+				} else {
+					ctx.ui.notify(
+						`Unknown profile sub-command: "${sub}". ` +
+							`Usage: /web profile [list|clear <name>|clear-all [--confirm]]`,
+						"warning",
+					);
+				}
 			} else {
 				// Default: show status
 				const browserStatus = isBrowserEnabled(pi) ? "✅ on" : "❌ off";
@@ -362,10 +515,11 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				ctx.ui.notify(
 					`🌐 Browser tools: ${browserStatus}\n` +
 						`📖 Learn mode: ${learnStatus}\n` +
-						`   /web off     disable all browser tools\n` +
-						`   /web on      enable browsing only\n` +
-						`   /web learn   enable browsing + guide-saving\n` +
-						`   /web         show this status`,
+						`   /web profile     manage browser profiles\n` +
+						`   /web off         disable all browser tools\n` +
+						`   /web on          enable browsing only\n` +
+						`   /web learn       enable browsing + guide-saving\n` +
+						`   /web             show this status`,
 					"info",
 				);
 			}

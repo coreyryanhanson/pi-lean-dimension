@@ -27,6 +27,16 @@ import {
 	type CacheResult,
 } from "./shared/snapshot-cache.js";
 import {
+	loadStorageState,
+	sanitizeProfileName,
+	profileDir,
+} from "./shared/storage-state.js";
+import { loadBrowserConfig } from "./plugin-config.js";
+import {
+	acquireProfileLock,
+	releaseProfileLock,
+} from "./shared/profile-lock.js";
+import {
 	runExtractor,
 	correlateElements,
 	queryElementCache,
@@ -42,6 +52,10 @@ import type {
 	GetImagesResult,
 	ConsoleMessagesResult,
 	EvaluateResult,
+	Cookie,
+	CookieResult,
+	ClearCookiesOptions,
+	ResultBase,
 } from "./plugin-api.js";
 
 // ─── Snapshot truncation constants ────────────────────────────────────
@@ -70,6 +84,8 @@ export interface NavigateOptions {
 	timeout?: number;
 	signal?: AbortSignal;
 	taskId?: string;
+	/** Session mode or profile name ("new", "last", or profile name). Default: "new". */
+	session?: "new" | "last" | string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -80,6 +96,9 @@ export interface NavigateOptions {
  * If a session already exists, returns it. If no session exists but
  * a last-navigation URL is available, auto-creates a session and
  * navigates to that URL.
+ *
+ * When restoring from a lastNav with a profile, the storage state
+ * for that profile is loaded and passed to the plugin.
  *
  * Returns null if no session can be established.
  */
@@ -110,7 +129,28 @@ async function requireInteractiveSession(taskId: string): Promise<{
 	session.currentUrl = lastNav.url;
 	session.currentTitle = lastNav.title;
 
-	const navResult = await plugin.navigate(lastNav.url, taskId, 30_000);
+	// Restore profile state if the last navigation used a profile
+	let navStorageState: unknown;
+	if (lastNav.profileName) {
+		const loaded = loadStorageState(lastNav.profileName);
+		if (loaded) {
+			navStorageState = loaded;
+			session.persistState = true;
+			session.profileName = lastNav.profileName;
+		}
+	}
+
+	const navOptions: { signal?: AbortSignal; storageState?: unknown } = {};
+	if (navStorageState !== undefined) {
+		navOptions.storageState = navStorageState;
+	}
+
+	const navResult = await plugin.navigate(
+		lastNav.url,
+		taskId,
+		30_000,
+		navOptions,
+	);
 	if (navResult.success) {
 		session.currentUrl = navResult.url;
 		session.currentTitle = navResult.title;
@@ -118,6 +158,14 @@ async function requireInteractiveSession(taskId: string): Promise<{
 	}
 
 	// Failed — clean up
+	// Release profile lock if acquired
+	if (lastNav.profileName) {
+		try {
+			releaseProfileLock(profileDir(lastNav.profileName), taskId);
+		} catch {
+			/* best-effort */
+		}
+	}
 	await plugin.cleanup(taskId).catch(() => {});
 	sessionManager.removeSession(taskId);
 	removeSnapshotFiles(taskId);
@@ -336,13 +384,108 @@ export async function navigate(
 		};
 	}
 
-	// Create session
+	// ── Resolve session mode ────────────────────────────────────
+	let persistState = false;
+	let resolvedProfileName: string | undefined;
+	let storageState: unknown;
+	let sessionMode: "new" | "restored" | undefined;
+	let lockAcquired = false;
+
+	// Check for existing session that needs clean-up before session resolution
+	const existingSession = sessionManager.getSession(taskId);
+	const browserConfig = loadBrowserConfig();
+	const sessionInput = options.session ?? browserConfig.sessionDefault;
+
+	if (sessionInput === "new") {
+		// Explicit fresh session — destroy existing context if any
+		if (existingSession) {
+			await plugin.cleanup(taskId).catch(() => {});
+			sessionManager.removeSession(taskId);
+			removeSnapshotFiles(taskId);
+		}
+		sessionMode = "new";
+	} else if (sessionInput === "last") {
+		resolvedProfileName = browserConfig.defaultProfile;
+		persistState = true;
+
+		// If existing session used a different profile, destroy context
+		if (
+			existingSession &&
+			existingSession.profileName !== resolvedProfileName
+		) {
+			await plugin.cleanup(taskId).catch(() => {});
+			sessionManager.removeSession(taskId);
+			removeSnapshotFiles(taskId);
+		}
+
+		// Load storage state (null = first use, gracefully handled)
+		const loaded = loadStorageState(resolvedProfileName);
+		storageState = loaded ?? undefined;
+		sessionMode = loaded ? "restored" : "new";
+	} else {
+		// Named profile
+		try {
+			sanitizeProfileName(sessionInput);
+		} catch (err) {
+			return {
+				success: false,
+				url: normalizedUrl,
+				title: "",
+				snapshot: "",
+				elementCount: 0,
+				error: `Invalid session/profile name: ${err instanceof Error ? err.message : String(err)}`,
+				backendUsed: plugin.name,
+			} as NavigateResult & {
+				backendUsed: string;
+				botDetectionWarning?: boolean;
+			};
+		}
+		resolvedProfileName = sessionInput;
+		persistState = true;
+
+		if (
+			existingSession &&
+			existingSession.profileName !== resolvedProfileName
+		) {
+			await plugin.cleanup(taskId).catch(() => {});
+			sessionManager.removeSession(taskId);
+			removeSnapshotFiles(taskId);
+		}
+
+		const loaded = loadStorageState(resolvedProfileName);
+		storageState = loaded ?? undefined;
+		sessionMode = loaded ? "restored" : "new";
+	}
+
+	// Acquire profile lock for persistent sessions
+	if (persistState && resolvedProfileName) {
+		const pDir = profileDir(resolvedProfileName);
+		lockAcquired = acquireProfileLock(pDir, taskId);
+		if (!lockAcquired) {
+			// Fall back to ephemeral — another session holds the lock
+			persistState = false;
+			resolvedProfileName = undefined;
+			sessionMode = "new";
+			storageState = undefined;
+		}
+	}
+
+	// ── Create session and navigate ───────────────────────────
 	sessionManager.createSession(taskId, plugin.name);
 	const session = sessionManager.getSession(taskId)!;
 	session.currentUrl = normalizedUrl;
+	if (persistState) {
+		session.persistState = true;
+	}
+	if (resolvedProfileName !== undefined) {
+		session.profileName = resolvedProfileName;
+	}
 
-	const navOptions: { signal?: AbortSignal } = {};
+	const navOptions: { signal?: AbortSignal; storageState?: unknown } = {};
 	if (options.signal) navOptions.signal = options.signal;
+	if (storageState !== undefined) {
+		navOptions.storageState = storageState;
+	}
 	const result = await plugin.navigate(
 		normalizedUrl,
 		taskId,
@@ -353,12 +496,22 @@ export async function navigate(
 	if (result.success) {
 		session.currentUrl = result.url;
 		session.currentTitle = result.title;
+		session.persistState = persistState;
+		if (resolvedProfileName !== undefined) {
+			session.profileName = resolvedProfileName;
+		}
 
 		// Store snapshot fingerprint (passive — surfaced in output)
 		session.currentSnapshotFingerprint = snapshotFingerprint(result.snapshot);
 
-		// Store as last-nav for auto-recovery
-		sessionManager.setLastNav(taskId, result.url, result.title, plugin.name);
+		// Store as last-nav for auto-recovery (include profileName)
+		sessionManager.setLastNav(
+			taskId,
+			result.url,
+			result.title,
+			plugin.name,
+			resolvedProfileName,
+		);
 
 		const botWarn = result.botDetected ?? false;
 
@@ -366,6 +519,17 @@ export async function navigate(
 		// it's likely a challenge/block page. Downgrade to failure so the
 		// agent gets a clear signal rather than a misleading partial page.
 		if (botWarn && result.elementCount < 5) {
+			// Prevent auto-save of empty/blocked-page state which would
+			// overwrite previously saved good state
+			session.persistState = false;
+
+			if (lockAcquired && resolvedProfileName) {
+				try {
+					releaseProfileLock(profileDir(resolvedProfileName), taskId);
+				} catch {
+					/* best-effort */
+				}
+			}
 			await plugin.cleanup(taskId).catch(() => {});
 			sessionManager.removeSession(taskId);
 			removeSnapshotFiles(taskId);
@@ -427,11 +591,27 @@ export async function navigate(
 			elementCount: result.elementCount,
 			backendUsed: plugin.name,
 		};
+		if (sessionMode !== undefined) successResult.sessionMode = sessionMode;
+		if (resolvedProfileName !== undefined)
+			successResult.profileName = resolvedProfileName;
 		if (botWarn) successResult.botDetectionWarning = true;
 		return successResult;
 	}
 
 	// Navigation failed — clean up
+	// Prevent auto-save of empty state which would overwrite
+	// previously saved good state from a prior successful session
+	if (session) {
+		session.persistState = false;
+	}
+
+	if (lockAcquired && resolvedProfileName) {
+		try {
+			releaseProfileLock(profileDir(resolvedProfileName), taskId);
+		} catch {
+			/* best-effort */
+		}
+	}
 	await plugin.cleanup(taskId).catch(() => {});
 	sessionManager.removeSession(taskId);
 	removeSnapshotFiles(taskId);
@@ -929,6 +1109,60 @@ function stalenessCheck(session: BrowserSession | undefined): boolean {
 	if (session.cachePopulatedAt === undefined) return true; // No cache time — assume fresh
 	if (session.lastInteractionAt === undefined) return true; // No interactions — assume fresh
 	return session.cachePopulatedAt >= session.lastInteractionAt;
+}
+
+// ─── Cookie dispatch ──────────────────────────────────────────────
+
+export async function getCookies(
+	taskId: string | undefined,
+	urls?: string[],
+): Promise<CookieResult> {
+	const tid = taskId ?? "default";
+	const sr = await requireInteractiveSession(tid);
+	if (!sr) return { success: false, cookies: [], error: noSessionMsg };
+	const plugin = getPluginForSession(sr.session);
+	if (!plugin)
+		return {
+			success: false,
+			cookies: [],
+			error: `Plugin '${sr.session.pluginName}' is not available`,
+		};
+
+	return plugin.getCookies(tid, urls);
+}
+
+export async function addCookies(
+	taskId: string | undefined,
+	cookies: Cookie[],
+): Promise<ResultBase> {
+	const tid = taskId ?? "default";
+	const sr = await requireInteractiveSession(tid);
+	if (!sr) return { success: false, error: noSessionMsg };
+	const plugin = getPluginForSession(sr.session);
+	if (!plugin)
+		return {
+			success: false,
+			error: `Plugin '${sr.session.pluginName}' is not available`,
+		};
+
+	return plugin.addCookies(tid, cookies);
+}
+
+export async function clearCookies(
+	taskId: string | undefined,
+	options?: ClearCookiesOptions,
+): Promise<ResultBase> {
+	const tid = taskId ?? "default";
+	const sr = await requireInteractiveSession(tid);
+	if (!sr) return { success: false, error: noSessionMsg };
+	const plugin = getPluginForSession(sr.session);
+	if (!plugin)
+		return {
+			success: false,
+			error: `Plugin '${sr.session.pluginName}' is not available`,
+		};
+
+	return plugin.clearCookies(tid, options);
 }
 
 // ─── Error message constants ─────────────────────────────────────────

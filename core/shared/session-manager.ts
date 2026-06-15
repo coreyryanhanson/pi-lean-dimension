@@ -31,6 +31,10 @@ export interface BrowserSession {
 	crashed: boolean;
 	/** Playwright browser context (undefined for fetch) */
 	context?: BrowserContext;
+	/** Phase 2: Whether to auto-save storage state on cleanup */
+	persistState?: boolean;
+	/** Phase 2: Profile name used for this session (undefined = default) */
+	profileName?: string;
 }
 
 /** Stored last navigation for a task (used to auto-recover sessions) */
@@ -39,6 +43,8 @@ interface LastNavEntry {
 	title: string;
 	/** Plugin name that was used for the original navigation */
 	pluginName: string;
+	/** Phase 2: Profile name active during this navigation (for restoring state on recovery) */
+	profileName?: string;
 }
 
 class SessionManager {
@@ -83,6 +89,8 @@ class SessionManager {
 				| "currentSnapshotFingerprint"
 				| "cachePopulatedAt"
 				| "lastInteractionAt"
+				| "persistState"
+				| "profileName"
 			>
 		>,
 	): void {
@@ -101,6 +109,10 @@ class SessionManager {
 				session.cachePopulatedAt = updates.cachePopulatedAt;
 			if (updates.lastInteractionAt !== undefined)
 				session.lastInteractionAt = updates.lastInteractionAt;
+			if (updates.persistState !== undefined)
+				session.persistState = updates.persistState;
+			if (updates.profileName !== undefined)
+				session.profileName = updates.profileName;
 			session.lastActive = Date.now();
 		}
 	}
@@ -112,8 +124,13 @@ class SessionManager {
 		url: string,
 		title: string,
 		pluginName: string,
+		profileName?: string,
 	): void {
-		this.#lastNav.set(taskId, { url, title, pluginName });
+		const entry: LastNavEntry = { url, title, pluginName };
+		if (profileName !== undefined) {
+			entry.profileName = profileName;
+		}
+		this.#lastNav.set(taskId, entry);
 	}
 
 	getLastNav(taskId: string): LastNavEntry | undefined {
