@@ -37,7 +37,7 @@ pi-browser/
 │   ├── router.ts             # Dispatch, session lifecycle, truncation, browser-inspect
 │   ├── guides.ts             # Guide types, builtin guides, file loader, presence resolution
 │   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
-│   └── shared/               # accessibility-tree, bot-detection, cdp-supervisor, dom-extractor, session-manager, settings-reader, snapshot-cache, storage-state, url-safety
+│   └── shared/               # accessibility-tree, bot-detection, dom-extractor, session-manager, settings-reader, snapshot-cache, storage-state, url-safety
 ├── guides/                  # User-authored guide files (gitignored)
 ├── tools/                   # Tool definitions — one file per tool (14 files) + barrel + utils
 ├── scripts/                  # dialog-gate.ts, experiment reports

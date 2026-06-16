@@ -25,7 +25,7 @@ import {
 	formatDialogLog,
 	getConsoleLog as getRawConsoleLog,
 	clearConsoleLog,
-} from "../../core/shared/cdp-supervisor.js";
+} from "./browser-events.js";
 import { sessionManager } from "../../core/shared/session-manager.js";
 import { checkPage } from "../../core/shared/bot-detection.js";
 import { join } from "node:path";
