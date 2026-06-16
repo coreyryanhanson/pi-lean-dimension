@@ -27,7 +27,6 @@ const TEST_PI_SESSION_ID = "test-session-001";
 // Default is "none" so existing direct-profile tests work unchanged.
 const mockConfig = vi.hoisted(() => ({
 	defaultProfile: "none",
-	legacyDefaultProfile: "default",
 	maxStorageStateSize: 10 * 1024 * 1024,
 	profiles: {},
 }));
@@ -415,7 +414,6 @@ describe("Router defaultProfile config routing", () => {
 		mock = new MockPlugin("mock");
 		pluginRegistry.register(mock, makeConfig({ name: "mock" }));
 		mockConfig.defaultProfile = "session";
-		mockConfig.legacyDefaultProfile = "default";
 	});
 
 	afterEach(async () => {

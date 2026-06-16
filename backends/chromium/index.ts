@@ -1636,3 +1636,5 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 	}
 }
+
+export default ChromiumPlugin;

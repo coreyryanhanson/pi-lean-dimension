@@ -37,8 +37,7 @@ export interface BrowserConfig {
 	 * - A named profile string (e.g. "shopping", "work")
 	 */
 	defaultProfile: "none" | "session" | string;
-	/** Fallback profile name when `profile="session"` cannot derive a piSessionId-based name. Default: "default". */
-	legacyDefaultProfile: string;
+
 	/**
 	 * Size threshold in bytes for storage state warnings.
 	 * When a saved state exceeds this, a warning is logged but the save proceeds.
@@ -132,7 +131,7 @@ export function loadBrowserConfig(): BrowserConfig {
 	// Defaults
 	const config: BrowserConfig = {
 		defaultProfile: "none",
-		legacyDefaultProfile: "default",
+
 		maxStorageStateSize: DEFAULT_MAX_STORAGE_STATE_SIZE,
 		profiles: {},
 	};
@@ -158,28 +157,6 @@ export function loadBrowserConfig(): BrowserConfig {
 		} else {
 			errors.push(
 				`browser.defaultProfile: expected a non-empty string, got ${typeof raw.defaultProfile}`,
-			);
-		}
-	}
-
-	// ── legacyDefaultProfile (was old defaultProfile) ────────
-	if (raw.legacyDefaultProfile !== undefined) {
-		if (
-			typeof raw.legacyDefaultProfile === "string" &&
-			raw.legacyDefaultProfile.trim()
-		) {
-			try {
-				config.legacyDefaultProfile = sanitizeProfileName(
-					raw.legacyDefaultProfile.trim(),
-				);
-			} catch (err) {
-				errors.push(
-					`browser.legacyDefaultProfile: ${err instanceof Error ? err.message : String(err)}`,
-				);
-			}
-		} else {
-			errors.push(
-				`browser.legacyDefaultProfile: expected a non-empty string, got ${typeof raw.legacyDefaultProfile}`,
 			);
 		}
 	}

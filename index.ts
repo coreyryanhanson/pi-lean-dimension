@@ -123,21 +123,31 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (detection.type === "node") {
-			// Node-based backend — currently only ChromiumPlugin
-			if (config.dir === "chromium") {
-				const plugin = new ChromiumPlugin();
-				pluginRegistry.register(plugin, config);
-				plugin.init(config.config).catch((err: unknown) => {
+			// Node-based backend — dynamically import the detected plugin
+			(async () => {
+				try {
+					const mod: any = await import(detection.entryPoint);
+					const PluginClass: new () => import("./core/plugin-api.js").BrowserPlugin =
+						mod.default;
+					if (!PluginClass || typeof PluginClass !== "function") {
+						throw new Error(
+							`Plugin '${config.name}' (${detection.entryPoint}) must export a default class implementing BrowserPlugin`,
+						);
+					}
+					const plugin = new PluginClass();
+					pluginRegistry.register(plugin, config);
+					plugin.init(config.config).catch((err: unknown) => {
+						console.error(
+							`[pi-browser] Failed to init plugin '${config.name}':`,
+							err,
+						);
+					});
+				} catch (err: unknown) {
 					console.error(
-						`[pi-browser] Failed to init plugin '${config.name}':`,
-						err,
+						`[pi-browser] Failed to load Node plugin '${config.name}' (dir: '${config.dir}'): ${err instanceof Error ? err.message : String(err)}`,
 					);
-				});
-			} else {
-				console.warn(
-					`[pi-browser] Node plugin '${config.name}' (dir: '${config.dir}') is not yet supported. Only 'chromium' is available as a Node plugin.`,
-				);
-			}
+				}
+			})();
 		} else if (detection.type === "python") {
 			// Python-based backend via JSON-RPC bridge
 			const bridgeConfig: PythonBridgeConfig = {

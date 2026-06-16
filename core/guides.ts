@@ -12,6 +12,11 @@
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import {
+	readSettingsFile,
+	GLOBAL_SETTINGS_PATH,
+	PROJECT_SETTINGS_PATH,
+} from "./shared/settings-reader.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -388,6 +393,8 @@ export function dialogPresentInSnapshot(snapshot: string): boolean {
 
 /**
  * Read the autoInject config from settings.json.
+ * Uses the shared settings-reader module for canonical path resolution
+ * and file reading — avoiding duplication of path/file logic.
  *
  * @param override - Optional override for testing. If provided, overrides file-based config.
  */
@@ -396,24 +403,18 @@ export function readGuidesConfig(override?: { autoInject: boolean }): {
 } {
 	if (override !== undefined) return override;
 
-	try {
-		const home = process.env.HOME || "/root";
-		const paths = [
-			join(home, ".pi", "agent", "settings.json"),
-			".pi/settings.json",
-		];
-		for (const p of paths) {
-			if (existsSync(p)) {
-				const raw = readFileSync(p, "utf-8");
-				const parsed = JSON.parse(raw);
-				const browser = parsed?.browser;
-				if (browser?.guides?.autoInject === false) {
-					return { autoInject: false };
-				}
-			}
-		}
-	} catch {
-		// config file may not exist or be malformed — use default
+	// Read global + project settings (project overrides global)
+	const global = readSettingsFile(GLOBAL_SETTINGS_PATH);
+	const project = readSettingsFile(PROJECT_SETTINGS_PATH);
+	const merged = { ...global, ...project };
+	const browser = merged.browser as Record<string, unknown> | undefined;
+	if (
+		browser &&
+		typeof browser === "object" &&
+		!Array.isArray(browser) &&
+		(browser as any)?.guides?.autoInject === false
+	) {
+		return { autoInject: false };
 	}
 	return { autoInject: true };
 }

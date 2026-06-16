@@ -21,6 +21,7 @@ import {
 	cacheSnapshot,
 	formatCacheNotice,
 	removeSnapshotFiles,
+	SNAPSHOT_TRUNCATE_THRESHOLD,
 	type CacheResult,
 } from "./shared/snapshot-cache.js";
 import {
@@ -52,9 +53,6 @@ import type {
 } from "./plugin-api.js";
 
 // ─── Snapshot truncation constants ────────────────────────────────────
-
-/** Snapshots shorter than this are returned as-is (no truncation). */
-const COMPACT_SNAPSHOT_NO_TRUNCATE = 2800;
 
 /** Target truncation length for compact snapshots (newline-aware). */
 const COMPACT_SNAPSHOT_LIMIT = 2500;
@@ -170,20 +168,25 @@ async function requireInteractiveSession(taskId: string): Promise<{
 	if (!plugin) return null;
 
 	sessionManager.createSession(taskId, lastNav.pluginName);
-	const session = sessionManager.getSession(taskId)!;
-	session.currentUrl = lastNav.url;
-	session.currentTitle = lastNav.title;
+	sessionManager.updateSession(taskId, {
+		currentUrl: lastNav.url,
+		currentTitle: lastNav.title,
+	});
 
 	// Restore profile state if the last navigation used a profile
 	let navStorageState: unknown;
 	if (lastNav.profileName) {
-		session.persistState = true;
-		session.profileName = lastNav.profileName;
+		sessionManager.updateSession(taskId, {
+			persistState: true,
+			profileName: lastNav.profileName,
+		});
 		const loaded = loadStorageState(lastNav.profileName);
 		if (loaded) {
 			navStorageState = loaded;
 		}
 	}
+
+	const session = sessionManager.getSession(taskId)!;
 
 	const navOptions: { signal?: AbortSignal; storageState?: unknown } = {};
 	if (navStorageState !== undefined) {
@@ -197,8 +200,10 @@ async function requireInteractiveSession(taskId: string): Promise<{
 		navOptions,
 	);
 	if (navResult.success) {
-		session.currentUrl = navResult.url;
-		session.currentTitle = navResult.title;
+		sessionManager.updateSession(taskId, {
+			currentUrl: navResult.url,
+			currentTitle: navResult.title,
+		});
 		return { session, pluginName: lastNav.pluginName, wasAutoCreated: true };
 	}
 
@@ -230,7 +235,7 @@ export function compactSnapshot(
 	snapshot: string,
 	elementCount: number,
 ): string {
-	if (snapshot.length <= COMPACT_SNAPSHOT_NO_TRUNCATE) return snapshot;
+	if (snapshot.length <= SNAPSHOT_TRUNCATE_THRESHOLD) return snapshot;
 
 	const remaining = elementCount > 0 ? elementCount : undefined;
 
@@ -272,7 +277,9 @@ async function refBasedInteractionOrSnapshot(
 		// Mark interaction time for staleness detection (Phase 2)
 		const sess = sessionManager.getSession(taskId);
 		if (sess) {
-			sess.lastInteractionAt = Date.now();
+			sessionManager.updateSession(taskId, {
+				lastInteractionAt: Date.now(),
+			});
 		}
 	}
 
@@ -282,7 +289,7 @@ async function refBasedInteractionOrSnapshot(
 			const session = sessionManager.getSession(taskId);
 
 			// Cache the auto-snapshot before compaction
-			const truncated = snap.snapshot.length > COMPACT_SNAPSHOT_NO_TRUNCATE;
+			const truncated = snap.snapshot.length > SNAPSHOT_TRUNCATE_THRESHOLD;
 			const fingerprint = snapshotFingerprint(snap.snapshot);
 			const cacheResult = cacheSnapshot(
 				taskId,
@@ -324,7 +331,7 @@ function compactInteractionResult(
 
 		// Cache (before compacting) — no bot detection here because interaction
 		// tools only run after navigation succeeded.
-		const truncated = rawSnapshot.length > COMPACT_SNAPSHOT_NO_TRUNCATE;
+		const truncated = rawSnapshot.length > SNAPSHOT_TRUNCATE_THRESHOLD;
 		const cacheResult = cacheSnapshot(
 			taskId,
 			rawSnapshot,
@@ -345,10 +352,10 @@ function compactInteractionResult(
 
 		const session = sessionManager.getSession(taskId);
 		if (session) {
-			session.currentSnapshotFingerprint = newFingerprint;
-			if (cacheResult) {
-				session.cachePopulatedAt = Date.now();
-			}
+			sessionManager.updateSession(taskId, {
+				currentSnapshotFingerprint: newFingerprint,
+				...(cacheResult ? { cachePopulatedAt: Date.now() } : {}),
+			});
 		}
 	}
 	return result;
@@ -518,17 +525,18 @@ export async function navigate(
 
 	// ── Create session and navigate ───────────────────────────
 	sessionManager.createSession(taskId, plugin.name);
+	sessionManager.updateSession(taskId, {
+		currentUrl: normalizedUrl,
+		...(persistState ? { persistState: true } : {}),
+		...(resolvedProfileName !== undefined
+			? { profileName: resolvedProfileName }
+			: {}),
+		...(options.piSessionId !== undefined
+			? { piSessionId: options.piSessionId }
+			: {}),
+	});
+
 	const session = sessionManager.getSession(taskId)!;
-	session.currentUrl = normalizedUrl;
-	if (persistState) {
-		session.persistState = true;
-	}
-	if (resolvedProfileName !== undefined) {
-		session.profileName = resolvedProfileName;
-	}
-	if (options.piSessionId !== undefined) {
-		session.piSessionId = options.piSessionId;
-	}
 
 	const navOptions: { signal?: AbortSignal; storageState?: unknown } = {};
 	if (options.signal) navOptions.signal = options.signal;
@@ -543,15 +551,15 @@ export async function navigate(
 	);
 
 	if (result.success) {
-		session.currentUrl = result.url;
-		session.currentTitle = result.title;
-		session.persistState = persistState;
-		if (resolvedProfileName !== undefined) {
-			session.profileName = resolvedProfileName;
-		}
-
-		// Store snapshot fingerprint (passive — surfaced in output)
-		session.currentSnapshotFingerprint = snapshotFingerprint(result.snapshot);
+		sessionManager.updateSession(taskId, {
+			currentUrl: result.url,
+			currentTitle: result.title,
+			persistState,
+			...(resolvedProfileName !== undefined
+				? { profileName: resolvedProfileName }
+				: {}),
+			currentSnapshotFingerprint: snapshotFingerprint(result.snapshot),
+		});
 
 		// Store as last-nav for auto-recovery (include profileName)
 		sessionManager.setLastNav(
@@ -570,7 +578,7 @@ export async function navigate(
 		if (botWarn && result.elementCount < 5) {
 			// Prevent auto-save of empty/blocked-page state which would
 			// overwrite previously saved good state
-			session.persistState = false;
+			sessionManager.updateSession(taskId, { persistState: false });
 
 			await plugin.cleanup(taskId).catch(() => {});
 			sessionManager.removeSession(taskId);
@@ -598,7 +606,7 @@ export async function navigate(
 
 		// --- Cache the raw snapshot before compaction ---
 		const rawSnapshot = result.snapshot;
-		const isTruncated = rawSnapshot.length > COMPACT_SNAPSHOT_NO_TRUNCATE;
+		const isTruncated = rawSnapshot.length > SNAPSHOT_TRUNCATE_THRESHOLD;
 		const cacheResult: CacheResult | null = rawSnapshot
 			? cacheSnapshot(taskId, rawSnapshot, fp, botWarn)
 			: null;
@@ -619,7 +627,9 @@ export async function navigate(
 
 		// Track cache population time for staleness detection (Phase 2)
 		if (cacheResult) {
-			session.cachePopulatedAt = Date.now();
+			sessionManager.updateSession(taskId, {
+				cachePopulatedAt: Date.now(),
+			});
 		}
 
 		const successResult: NavigateResult & {
@@ -644,7 +654,7 @@ export async function navigate(
 	// Prevent auto-save of empty state which would overwrite
 	// previously saved good state from a prior successful session
 	if (session) {
-		session.persistState = false;
+		sessionManager.updateSession(taskId, { persistState: false });
 	}
 
 	await plugin.cleanup(taskId).catch(() => {});
@@ -702,11 +712,13 @@ export async function snapshot(
 		const session = sessionManager.getSession(tid);
 		const fp = snapshotFingerprint(result.snapshot);
 		if (session) {
-			session.currentSnapshotFingerprint = fp;
+			sessionManager.updateSession(tid, {
+				currentSnapshotFingerprint: fp,
+			});
 		}
 		if (!full) {
 			const rawLength = result.snapshot.length;
-			const wasTruncated = rawLength > COMPACT_SNAPSHOT_NO_TRUNCATE;
+			const wasTruncated = rawLength > SNAPSHOT_TRUNCATE_THRESHOLD;
 			result.snapshot =
 				compactSnapshot(result.snapshot, result.elementCount) +
 				formatCacheNotice(null, rawLength, wasTruncated, result.elementCount) +

@@ -74,7 +74,6 @@ describe("loadBrowserConfig()", () => {
 		mockNoSettings();
 		const config = loadBrowserConfig();
 		expect(config.defaultProfile).toBe("none");
-		expect(config.legacyDefaultProfile).toBe("default");
 		expect(config.maxStorageStateSize).toBe(DEFAULT_MAX_STORAGE_STATE_SIZE);
 		expect(config.profiles).toEqual({});
 	});
@@ -83,7 +82,6 @@ describe("loadBrowserConfig()", () => {
 		mockGlobalSettings({});
 		const config = loadBrowserConfig();
 		expect(config.defaultProfile).toBe("none");
-		expect(config.legacyDefaultProfile).toBe("default");
 	});
 
 	it("returns defaults when browser section has no config keys", () => {
