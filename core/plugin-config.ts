@@ -9,11 +9,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { PluginConfig, PluginDetection } from "./plugin-api.js";
 import { sanitizeProfileName } from "./shared/storage-state.js";
-import {
-	readSettingsFile,
-	GLOBAL_SETTINGS_PATH,
-	PROJECT_SETTINGS_PATH,
-} from "./shared/settings-reader.js";
+import { readMergedSettings } from "./shared/settings-reader.js";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -59,11 +55,7 @@ export interface PluginConfigLoadResult {
  * Returns the browser config object, or undefined if not present or invalid.
  */
 function readBrowserConfigRaw(): Record<string, unknown> | undefined {
-	const global = readSettingsFile(GLOBAL_SETTINGS_PATH);
-	const project = readSettingsFile(PROJECT_SETTINGS_PATH);
-
-	// Project overrides global
-	const merged = { ...global, ...project };
+	const merged = readMergedSettings();
 	const browserConfig = merged["browser"];
 
 	if (

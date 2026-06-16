@@ -43,3 +43,21 @@ export function readSettingsFile(path: string): Record<string, unknown> {
 		return {};
 	}
 }
+
+/**
+ * Read global + project settings and merge them (project overrides global).
+ *
+ * Convenience wrapper so consumers don't duplicate the merge pattern.
+ *
+ * @param globalPath - Path to the global settings file (defaults to GLOBAL_SETTINGS_PATH)
+ * @param projectPath - Path to the project settings file (defaults to PROJECT_SETTINGS_PATH)
+ * @returns Merged settings object with project values taking precedence
+ */
+export function readMergedSettings(
+	globalPath: string = GLOBAL_SETTINGS_PATH,
+	projectPath: string = PROJECT_SETTINGS_PATH,
+): Record<string, unknown> {
+	const global = readSettingsFile(globalPath);
+	const project = readSettingsFile(projectPath);
+	return { ...global, ...project };
+}

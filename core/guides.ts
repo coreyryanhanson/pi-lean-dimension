@@ -12,11 +12,7 @@
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import {
-	readSettingsFile,
-	GLOBAL_SETTINGS_PATH,
-	PROJECT_SETTINGS_PATH,
-} from "./shared/settings-reader.js";
+import { readMergedSettings } from "./shared/settings-reader.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -404,9 +400,7 @@ export function readGuidesConfig(override?: { autoInject: boolean }): {
 	if (override !== undefined) return override;
 
 	// Read global + project settings (project overrides global)
-	const global = readSettingsFile(GLOBAL_SETTINGS_PATH);
-	const project = readSettingsFile(PROJECT_SETTINGS_PATH);
-	const merged = { ...global, ...project };
+	const merged = readMergedSettings();
 	const browser = merged.browser as Record<string, unknown> | undefined;
 	if (
 		browser &&

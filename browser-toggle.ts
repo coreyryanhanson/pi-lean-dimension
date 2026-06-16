@@ -24,11 +24,7 @@ import type {
  * you can leave browser tools disabled and rely on web-fetch alone.
  */
 
-import {
-	readSettingsFile,
-	GLOBAL_SETTINGS_PATH,
-	PROJECT_SETTINGS_PATH,
-} from "./core/shared/settings-reader.js";
+import { readMergedSettings } from "./core/shared/settings-reader.js";
 
 // ---- Constants -------------------------------------------------
 
@@ -248,11 +244,7 @@ export function _resetToggleStateForTest(): void {
  * Silently returns `true` on missing files, parse errors, or type mismatches.
  */
 function readBrowserToggleConfig(): boolean {
-	const global = readSettingsFile(GLOBAL_SETTINGS_PATH);
-	const project = readSettingsFile(PROJECT_SETTINGS_PATH);
-
-	// Project overrides global
-	const merged = { ...global, ...project };
+	const merged = readMergedSettings();
 	const segment = merged[CONFIG_KEY];
 
 	if (
