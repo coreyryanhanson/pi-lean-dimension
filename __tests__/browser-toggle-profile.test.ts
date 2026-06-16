@@ -8,8 +8,8 @@
  * - Command handler dispatch for profile sub-commands
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // Mock node:fs to control the filesystem for profile tests
@@ -50,7 +50,7 @@ function captureHandler(
 	pi: ExtensionAPI,
 ): (args: string, ctx: any) => Promise<void> {
 	let capturedHandler: ((args: string, ctx: any) => Promise<void>) | undefined;
-	(pi.registerCommand as vi.Mock).mockImplementation(
+	(pi.registerCommand as Mock).mockImplementation(
 		(_name: string, opts: any) => {
 			capturedHandler = opts.handler;
 		},
@@ -68,12 +68,12 @@ beforeEach(() => {
 
 describe("listProfiles()", () => {
 	it("returns empty array when PROFILE_DIR does not exist", () => {
-		(existsSync as vi.Mock).mockReturnValue(false);
+		(existsSync as Mock).mockReturnValue(false);
 		expect(listProfiles()).toEqual([]);
 	});
 
 	it("enumerates profile directories with state info", () => {
-		(existsSync as vi.Mock).mockImplementation((path: string) => {
+		(existsSync as Mock).mockImplementation((path: string) => {
 			// Check for lock directories first
 			if (path.includes(".lock")) return false;
 			// Profile state files: one exists, one doesn't
@@ -84,33 +84,33 @@ describe("listProfiles()", () => {
 			if (path.includes("browser-state")) return true;
 			return false;
 		});
-		(readdirSync as vi.Mock).mockReturnValue([
+		(readdirSync as Mock).mockReturnValue([
 			{ name: "default", isDirectory: () => true },
 			{ name: "shopping", isDirectory: () => true },
 			{ name: ".lock", isDirectory: () => true }, // hidden dir, should be excluded
 		]);
-		(statSync as vi.Mock).mockReturnValue({ size: 500 });
+		(statSync as Mock).mockReturnValue({ size: 500 });
 
 		const profiles = listProfiles();
 		expect(profiles).toHaveLength(2);
-		expect(profiles[0].name).toBe("default");
-		expect(profiles[0].stateSize).toBe("500 B");
-		expect(profiles[1].name).toBe("shopping");
-		expect(profiles[1].stateSize).toBe("no state");
+		expect(profiles[0]!.name).toBe("default");
+		expect(profiles[0]!.stateSize).toBe("500 B");
+		expect(profiles[1]!.name).toBe("shopping");
+		expect(profiles[1]!.stateSize).toBe("no state");
 	});
 
 	it("sorts profiles alphabetically", () => {
-		(existsSync as vi.Mock).mockImplementation((path: string) => {
+		(existsSync as Mock).mockImplementation((path: string) => {
 			if (path.includes("browser-state")) return true;
 			if (path.includes("storage-state.json")) return true;
 			return false;
 		});
-		(readdirSync as vi.Mock).mockReturnValue([
+		(readdirSync as Mock).mockReturnValue([
 			{ name: "work", isDirectory: () => true },
 			{ name: "default", isDirectory: () => true },
 			{ name: "shopping", isDirectory: () => true },
 		]);
-		(statSync as vi.Mock).mockReturnValue({ size: 100 });
+		(statSync as Mock).mockReturnValue({ size: 100 });
 
 		const profiles = listProfiles();
 		expect(profiles.map((p) => p.name)).toEqual([
@@ -130,9 +130,9 @@ describe("formatProfileList()", () => {
 
 	it("formats profiles with state sizes", () => {
 		const formatted = formatProfileList([
-			{ name: "default", stateSize: "1.2 KB", locked: false },
-			{ name: "shopping", stateSize: "no state", locked: false },
-			{ name: "work", stateSize: "3.0 MB", locked: false },
+			{ name: "default", stateSize: "1.2 KB" },
+			{ name: "shopping", stateSize: "no state" },
+			{ name: "work", stateSize: "3.0 MB" },
 		]);
 		expect(formatted).toContain("Profiles (3):");
 		expect(formatted).toContain("default  (1.2 KB)");
@@ -142,8 +142,8 @@ describe("formatProfileList()", () => {
 
 	test("adds 📋 badge for session profiles", () => {
 		const formatted = formatProfileList([
-			{ name: "_session-abc123", stateSize: "512 B", locked: false },
-			{ name: "work", stateSize: "1.2 KB", locked: false },
+			{ name: "_session-abc123", stateSize: "512 B" },
+			{ name: "work", stateSize: "1.2 KB" },
 		]);
 		expect(formatted).toContain("📋 session  (512 B)");
 		expect(formatted).toContain("📋");
@@ -159,15 +159,15 @@ describe("/web profile command handler", () => {
 		const handler = captureHandler(pi);
 
 		// Mock filesystem to return some profiles
-		(existsSync as vi.Mock).mockImplementation((path: string) => {
+		(existsSync as Mock).mockImplementation((path: string) => {
 			if (path.includes("browser-state")) return true;
 			if (path.includes("storage-state.json")) return true;
 			return false;
 		});
-		(readdirSync as vi.Mock).mockReturnValue([
+		(readdirSync as Mock).mockReturnValue([
 			{ name: "default", isDirectory: () => true },
 		]);
-		(statSync as vi.Mock).mockReturnValue({ size: 200 });
+		(statSync as Mock).mockReturnValue({ size: 200 });
 
 		const notify = vi.fn();
 		await handler("profile", { ui: { notify } } as any);
@@ -186,7 +186,7 @@ describe("/web profile command handler", () => {
 		const pi = mockPi(["web-fetch"]);
 		const handler = captureHandler(pi);
 
-		(existsSync as vi.Mock).mockReturnValue(false);
+		(existsSync as Mock).mockReturnValue(false);
 
 		const notify = vi.fn();
 		await handler("profile list", { ui: { notify } } as any);
@@ -199,9 +199,9 @@ describe("/web profile command handler", () => {
 		const handler = captureHandler(pi);
 
 		// State file exists
-		(existsSync as vi.Mock).mockReturnValue(true);
+		(existsSync as Mock).mockReturnValue(true);
 		// Also make readdirSync return something to avoid errors in listProfiles
-		(readdirSync as vi.Mock).mockReturnValue([]);
+		(readdirSync as Mock).mockReturnValue([]);
 
 		const notify = vi.fn();
 		await handler("profile clear default", { ui: { notify } } as any);
@@ -217,7 +217,7 @@ describe("/web profile command handler", () => {
 		const handler = captureHandler(pi);
 
 		// State file does NOT exist
-		(existsSync as vi.Mock).mockReturnValue(false);
+		(existsSync as Mock).mockReturnValue(false);
 
 		const notify = vi.fn();
 		await handler("profile clear default", { ui: { notify } } as any);
@@ -245,13 +245,13 @@ describe("/web profile command handler", () => {
 		const pi = mockPi(["web-fetch"]);
 		const handler = captureHandler(pi);
 
-		(existsSync as vi.Mock).mockReturnValue(true);
-		(readdirSync as vi.Mock).mockReturnValue([
+		(existsSync as Mock).mockReturnValue(true);
+		(readdirSync as Mock).mockReturnValue([
 			{ name: "default", isDirectory: () => true },
 			{ name: "shopping", isDirectory: () => true },
 			{ name: "work", isDirectory: () => true },
 		]);
-		(statSync as vi.Mock).mockReturnValue({ size: 100 });
+		(statSync as Mock).mockReturnValue({ size: 100 });
 
 		const notify = vi.fn();
 		await handler("profile clear-all", { ui: { notify } } as any);
@@ -266,12 +266,12 @@ describe("/web profile command handler", () => {
 		const pi = mockPi(["web-fetch"]);
 		const handler = captureHandler(pi);
 
-		(existsSync as vi.Mock).mockReturnValue(true);
-		(readdirSync as vi.Mock).mockReturnValue([
+		(existsSync as Mock).mockReturnValue(true);
+		(readdirSync as Mock).mockReturnValue([
 			{ name: "default", isDirectory: () => true },
 			{ name: "shopping", isDirectory: () => true },
 		]);
-		(statSync as vi.Mock).mockReturnValue({ size: 100 });
+		(statSync as Mock).mockReturnValue({ size: 100 });
 
 		const notify = vi.fn();
 		await handler("profile clear-all --confirm", { ui: { notify } } as any);
@@ -283,7 +283,7 @@ describe("/web profile command handler", () => {
 		const pi = mockPi(["web-fetch"]);
 		const handler = captureHandler(pi);
 
-		(existsSync as vi.Mock).mockReturnValue(false);
+		(existsSync as Mock).mockReturnValue(false);
 
 		const notify = vi.fn();
 		await handler("profile unknown", { ui: { notify } } as any);

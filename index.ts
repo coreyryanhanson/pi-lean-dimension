@@ -136,7 +136,7 @@ export default function (pi: ExtensionAPI) {
 					}
 					const plugin = new PluginClass();
 					pluginRegistry.register(plugin, config);
-					plugin.init(config.config).catch((err: unknown) => {
+					plugin.init?.(config.config).catch((err: unknown) => {
 						console.error(
 							`[pi-browser] Failed to init plugin '${config.name}':`,
 							err,
@@ -220,7 +220,7 @@ export default function (pi: ExtensionAPI) {
 	initBrowserToggle(pi);
 
 	// --- Profile change callback for TUI status updates ------------
-	router.onProfileChange = (taskId, profileName, profileMode) => {
+	router.setOnProfileChange((taskId, profileName, profileMode) => {
 		// Update TUI status bar on any profile lifecycle event
 		const lastCtx = getLastCtx();
 		if (lastCtx) {
@@ -234,7 +234,7 @@ export default function (pi: ExtensionAPI) {
 			if (profileMode) parts.push(`mode=${profileMode}`);
 			console.error(parts.join(" "));
 		}
-	};
+	});
 
 	// --- Startup ----------------------------------------------------
 	pi.on("session_start", async (_event, ctx) => {

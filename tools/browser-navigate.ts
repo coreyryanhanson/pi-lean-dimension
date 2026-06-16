@@ -45,14 +45,15 @@ export const browserNavigateTool = defineTool({
 			}),
 		),
 		profile: Type.Optional(
-			Type.Union([
-				Type.Literal("none"),
-				Type.Literal("session"),
-				Type.String(),
-			]),
-			"Profile mode: 'none' (clean slate, default), 'session' (persist for this " +
-				"conversation), or a named profile (e.g. 'shopping', 'work'). " +
-				"Named profiles share cookies across subagents like browser tabs.",
+			Type.Union(
+				[Type.Literal("none"), Type.Literal("session"), Type.String()],
+				{
+					description:
+						"Profile mode: 'none' (clean slate, default), 'session' (persist for this " +
+						"conversation), or a named profile (e.g. 'shopping', 'work'). " +
+						"Named profiles share cookies across subagents like browser tabs.",
+				},
+			),
 		),
 	}),
 

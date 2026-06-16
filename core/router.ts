@@ -94,13 +94,29 @@ export interface NavigateOptions {
  * Simple nullable callback for profile changes.
  * Used by index.ts to update the TUI status bar.
  */
-export const onProfileChange:
+let _onProfileChange:
 	| ((
 			taskId: string,
 			profileName?: string,
 			profileMode?: "none" | "session" | "named",
 	  ) => void)
 	| null = null;
+
+/**
+ * Set the profile change callback.
+ * Called once at extension startup from index.ts.
+ */
+export function setOnProfileChange(
+	handler:
+		| ((
+				taskId: string,
+				profileName?: string,
+				profileMode?: "none" | "session" | "named",
+		  ) => void)
+		| null,
+): void {
+	_onProfileChange = handler;
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -438,7 +454,7 @@ export async function navigate(
 	}
 
 	// ── Notify profile change callback ─────────────────────
-	onProfileChange?.(taskId, resolvedProfileName, profileMode);
+	_onProfileChange?.(taskId, resolvedProfileName, profileMode);
 
 	// ── Create session and navigate ───────────────────────────
 	sessionManager.createSession(taskId, plugin.name);

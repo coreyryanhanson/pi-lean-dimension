@@ -222,6 +222,18 @@ describe("runExtractor()", () => {
 			getElementCache() {
 				return null;
 			},
+			async getCookies() {
+				return { success: true, cookies: [] };
+			},
+			async addCookies() {
+				return { success: true };
+			},
+			async clearCookies() {
+				return { success: true };
+			},
+			async getStorageState() {
+				return { success: true, cookies: [], origins: [] };
+			},
 		};
 
 		const result = await runExtractor("test-task", mockPlugin);
@@ -292,6 +304,18 @@ describe("runExtractor()", () => {
 			getElementCache() {
 				return null;
 			},
+			async getCookies() {
+				return { success: true, cookies: [] };
+			},
+			async addCookies() {
+				return { success: true };
+			},
+			async clearCookies() {
+				return { success: true };
+			},
+			async getStorageState() {
+				return { success: true, cookies: [], origins: [] };
+			},
 		};
 
 		const result = await runExtractor("test-task", mockPlugin);
@@ -354,6 +378,18 @@ describe("runExtractor()", () => {
 			async cleanup() {},
 			getElementCache() {
 				return null;
+			},
+			async getCookies() {
+				return { success: true, cookies: [] };
+			},
+			async addCookies() {
+				return { success: true };
+			},
+			async clearCookies() {
+				return { success: true };
+			},
+			async getStorageState() {
+				return { success: true, cookies: [], origins: [] };
 			},
 		};
 
@@ -420,6 +456,18 @@ describe("runExtractor()", () => {
 			async cleanup() {},
 			getElementCache() {
 				return null;
+			},
+			async getCookies() {
+				return { success: true, cookies: [] };
+			},
+			async addCookies() {
+				return { success: true };
+			},
+			async clearCookies() {
+				return { success: true };
+			},
+			async getStorageState() {
+				return { success: true, cookies: [], origins: [] };
 			},
 		};
 
