@@ -1074,15 +1074,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 
 		try {
-			// Constrain viewport width for manageable screenshots
-			const currentViewport = page.viewportSize();
-			if (currentViewport && currentViewport.width > 1024) {
-				await page.setViewportSize({
-					width: 1024,
-					height: currentViewport.height,
-				});
-			}
-
 			const buffer = await page.screenshot({
 				type: "jpeg",
 				quality: 80,

@@ -50,7 +50,6 @@ const ALL_BROWSER_TOOLS = [
 	{ name: "browser-click", description: "click" },
 	{ name: "browser-type", description: "type" },
 	{ name: "browser-scroll", description: "scroll" },
-	{ name: "browser-screenshot", description: "screenshot" },
 	{ name: "browser-get-images", description: "get images" },
 	{ name: "browser-back", description: "back" },
 	{ name: "browser-press", description: "press" },

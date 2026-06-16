@@ -13,6 +13,7 @@ export const browserSnapshotTool = defineTool({
 	label: "Page Snapshot",
 	description:
 		"Get the current page's accessibility tree with @e1, @e2 element references. " +
+		"Also captures a screenshot to a temp file (see output for path). " +
 		"Use after browser-navigate to refresh the element list, or after page changes (click, scroll) to see the updated state.",
 	parameters: Type.Object({
 		full: Type.Optional(
@@ -42,8 +43,19 @@ export const browserSnapshotTool = defineTool({
 			};
 		}
 
+		// Capture a screenshot to a temp file so the LLM can opt into visual
+		// inspection via `read` only when needed.
+		const screenshotPath = await router.screenshotToTemp(tid);
+
+		const parts = [
+			screenshotPath
+				? `📷 Screenshot: ${screenshotPath} (use the read tool for visual inspection)`
+				: "",
+			result.snapshot || "(empty page)",
+		];
+
 		return {
-			content: [{ type: "text", text: result.snapshot || "(empty page)" }],
+			content: [{ type: "text", text: parts.filter(Boolean).join("\n\n") }],
 			details: { elementCount: result.elementCount, full },
 		};
 	},

@@ -1,5 +1,5 @@
 /**
- * Tool definitions barrel — exports all 14 tool definitions for registration.
+ * Tool definitions barrel — exports all 13 tool definitions for registration.
  *
  * Each tool is defined in its own file under tools/ for maintainability.
  * This barrel collects them for import by index.ts.
@@ -10,7 +10,6 @@ export { browserSnapshotTool } from "./browser-snapshot.js";
 export { browserClickTool } from "./browser-click.js";
 export { browserTypeTool } from "./browser-type.js";
 export { browserScrollTool } from "./browser-scroll.js";
-export { browserScreenshotTool } from "./browser-screenshot.js";
 export { browserGetImagesTool } from "./browser-get-images.js";
 export { browserBackTool } from "./browser-back.js";
 export { browserPressTool } from "./browser-press.js";

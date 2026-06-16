@@ -12,6 +12,8 @@
  * - Auto-recovery from crashed sessions (via lastNav)
  */
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { pluginRegistry } from "./plugin-registry.js";
 import { sessionManager } from "./shared/session-manager.js";
 import type { BrowserSession } from "./shared/session-manager.js";
@@ -41,7 +43,6 @@ import type {
 	NavigateResult,
 	SnapshotResult,
 	InteractionResult,
-	ScreenshotResult,
 	GetImagesResult,
 	ConsoleMessagesResult,
 	EvaluateResult,
@@ -759,30 +760,41 @@ export async function press(
 	);
 }
 
-// ─── Media ───────────────────────────────────────────────────────────
-
-export async function screenshot(
+/**
+ * Capture a screenshot and save it to a temp file.
+ * Returns the file path on success, or null on failure (graceful degradation).
+ * Does NOT resize the viewport — captures at whatever the current viewport is.
+ *
+ * Uses a stable filename per task so new captures overwrite old ones.
+ * The LLM can use `read` on the returned path to visually inspect the page.
+ */
+export async function screenshotToTemp(
 	taskId?: string,
-	fullPage?: boolean,
-): Promise<ScreenshotResult> {
+): Promise<string | null> {
 	const tid = taskId ?? "default";
 	const sr = await requireInteractiveSession(tid);
-	if (!sr) return { success: false, dataUri: "", error: noSessionMsg };
+	if (!sr) return null;
 	const plugin = getPluginForSession(sr.session);
-	if (!plugin)
-		return {
-			success: false,
-			dataUri: "",
-			error: `Plugin '${sr.session.pluginName}' is not available`,
-		};
+	if (!plugin) return null;
 
-	// Respect capability: if fullPage is requested but not supported, fall back
-	const screenshotOpts: { fullPage?: boolean } = {};
-	if (fullPage && plugin.capabilities.supportsFullPageScreenshot) {
-		screenshotOpts.fullPage = true;
+	try {
+		const result = await plugin.screenshot(tid, { fullPage: false });
+		if (!result.success || !result.dataUri) return null;
+
+		// Decode the base64 data URI
+		const base64Data = result.dataUri.replace(/^data:image\/\w+;base64,/, "");
+		if (!base64Data) return null;
+
+		const buffer = Buffer.from(base64Data, "base64");
+		const dir = `${tmpdir()}/pi-browser`;
+		mkdirSync(dir, { recursive: true });
+		const filename = `screenshot-${tid}.jpg`;
+		const path = `${dir}/${filename}`;
+		writeFileSync(path, buffer);
+		return path;
+	} catch {
+		return null; // Non-critical — snapshot tree is still valid
 	}
-
-	return plugin.screenshot(tid, screenshotOpts);
 }
 
 export async function getImages(taskId?: string): Promise<GetImagesResult> {

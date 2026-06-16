@@ -96,7 +96,7 @@ export interface InteractionResult extends ResultBase {
 	elementCount?: number;
 }
 
-/** Result from browser-screenshot */
+/** Result from plugin.screenshot() */
 export interface ScreenshotResult extends ResultBase {
 	/** JPEG data URI of the screenshot */
 	dataUri: string;

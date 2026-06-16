@@ -137,6 +137,10 @@ export const browserNavigateTool = defineTool({
 				`Read cached snapshot for full content.`;
 		}
 
+		// Capture a screenshot to a temp file so the LLM can opt into visual
+		// inspection via `read` only when needed.
+		const screenshotPath = await router.screenshotToTemp(tid);
+
 		const lines = [
 			`Title: ${result.title || "(no title)"}`,
 			`URL: ${result.url}`,
@@ -149,6 +153,9 @@ export const browserNavigateTool = defineTool({
 				? "⚠ BOT DETECTION WARNING: This page appears to be protected by " +
 					"anti-automation. The content below may be incomplete or show " +
 					"a challenge page instead of the actual content."
+				: "",
+			screenshotPath
+				? `📷 Screenshot: ${screenshotPath} (use the read tool for visual inspection)`
 				: "",
 			"",
 			contentText,

@@ -11,7 +11,7 @@
 
 1. [Quick Start](#quick-start)
 2. [`/web` Command — Browser Toggle & Profiles](#web-command--browser-toggle--profiles)
-3. [All 14 Tools](#all-14-tools)
+3. [All 13 Tools](#all-13-tools)
 4. [Stateless Fetching (web-fetch)](#stateless-fetching-web-fetch)
 5. [Navigation Guides (web-guide & web-learn)](#navigation-guides-web-guide--web-learn)
 6. [`/web status` — Detailed Runtime Status](#web-status--detailed-runtime-status)
@@ -81,10 +81,15 @@ which defaults to `true`).
 
 ---
 
-## All 14 Tools
+## All 13 Tools
 
-Pi-browser registers 14 tools. The first 11 require a **browser session**
+Pi-browser registers 13 tools. The first 10 require a **browser session**
 (created by `browser-navigate`). `web-fetch`, `web-guide`, and `web-learn` are stateless.
+
+**Auto-captured screenshots:** `browser-navigate` and `browser-snapshot` automatically
+capture a screenshot to a temp file (`/tmp/pi-browser/screenshot-<taskId>.jpg`).
+Use the `read` tool to visually inspect the page when the accessibility tree isn't enough.
+No viewport resizing occurs — screenshots are captured at the native 1280px width.
 
 ### 1. `browser-navigate` — Visit a Page
 
@@ -115,12 +120,14 @@ Interactive elements: 3
 - Page title, URL, backend name, element count
 - Profile info when using profiles
 - Bot detection warning when applicable
+- Screenshot file path for visual inspection
 - Auto-injected navigation guides when relevant
 
 ### 2. `browser-snapshot` — Refresh the Accessibility Tree
 
-Returns the current page's accessibility tree with up-to-date `@e` refs. Use
-after clicking, typing, or scrolling to get fresh element references.
+Returns the current page's accessibility tree with up-to-date `@e` refs. Also
+captures a screenshot to a temp file (path in output). Use after clicking, typing,
+or scrolling to get fresh element references.
 
 - `full=true` — returns the complete tree (by default it's compacted to
   ~2500 characters for LLM efficiency)
@@ -163,21 +170,12 @@ browser-press key="Enter"
 
 Useful keys: `Enter`, `Tab`, `Escape`, `ArrowDown`, `ArrowUp`, `/`.
 
-### 8. `browser-screenshot` — Visual Capture
-
-Returns a JPEG screenshot (80% quality, 1024px max width) as a data URI that
-vision-capable models can examine.
-
-- `fullPage=true` — capture the full page, not just the viewport
-- `question="…"` — optional, lets vision models answer questions about the
-  screenshot
-
-### 9. `browser-get-images` — List Page Images
+### 8. `browser-get-images` — List Page Images
 
 Extracts all `<img>` tags with their src, alt text, and dimensions (excludes
 data URIs). Useful for understanding visual layout without a full screenshot.
 
-### 10. `browser-console` — Read Console / Run JS
+### 9. `browser-console` — Read Console / Run JS
 
 Three modes:
 
@@ -187,7 +185,7 @@ Three modes:
 | `browser-console` (no params) | Returns captured console messages (log, warn, error, info) |
 | `browser-console clear=true` | Clears the captured console log |
 
-### 11. `browser-inspect` — Targeted Element Discovery
+### 10. `browser-inspect` — Targeted Element Discovery
 
 A lighter alternative to loading a full snapshot. Queries the page for specific
 elements or extracts text content.
@@ -513,7 +511,7 @@ Size threshold for profile state warnings (default: 10 MB):
 |-----------------|----------------------|
 | Static content, docs, READMEs | Interactive pages, JS-heavy SPAs |
 | Quick lookups, no session needed | Form filling, clicking, authentication |
-| Bot-detected pages (fallback) | Visual inspection (screenshots) |
+| Bot-detected pages (fallback) | Visual inspection (auto-captured screenshots) |
 | Content you want as clean Markdown | Pages where you need the accessibility tree |
 
 ### Working with `@e` Element References

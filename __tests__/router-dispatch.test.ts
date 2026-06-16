@@ -391,54 +391,30 @@ describe("Router dispatch", () => {
 		});
 	});
 
-	// ─── screenshot() ──────────────────────────────────────────
+	// ─── screenshotToTemp() ─────────────────────────────────────
 
-	describe("screenshot()", () => {
-		it("dispatches to plugin.screenshot", async () => {
+	describe("screenshotToTemp()", () => {
+		it("returns a file path on success", async () => {
 			await router.navigate("https://example.com");
 			mock.calls.delete("navigate");
 
-			const result = await router.screenshot("default");
-			expect(result.success).toBe(true);
-			expect(result.dataUri).toBe("data:image/jpeg;base64,mockdata");
+			const path = await router.screenshotToTemp("default");
+			expect(path).toBeDefined();
+			expect(path).toMatch(/\/screenshot-default\.jpg$/);
 		});
 
-		it("returns error without a session", async () => {
-			const result = await router.screenshot("default");
-			expect(result.success).toBe(false);
-			expect(result.dataUri).toBe("");
+		it("returns null without a session", async () => {
+			const path = await router.screenshotToTemp("default");
+			expect(path).toBeNull();
 		});
 
-		it("passes fullPage option when capabilities support it", async () => {
+		it("returns null when screenshot fails", async () => {
 			await router.navigate("https://example.com");
 			mock.calls.delete("navigate");
+			mock.shouldThrow.add("screenshot");
 
-			await router.screenshot("default", true);
-			const [, opts] = mock.calls.get("screenshot")![0] as [
-				string,
-				{ fullPage?: boolean } | undefined,
-			];
-			expect(opts).toEqual({ fullPage: true });
-		});
-
-		it("omits fullPage option when plugin does not support it", async () => {
-			// Register a limited-capability plugin
-			const limited = new MockPlugin("limited", {
-				supportsFullPageScreenshot: false,
-			});
-			await pluginRegistry.register(limited, makeConfig({ name: "limited" }));
-
-			// Navigate with the limited plugin
-			await router.navigate("https://example.com", { strategy: "limited" });
-
-			limited.calls.delete("navigate");
-			await router.screenshot("default", true);
-			const [, opts] = limited.calls.get("screenshot")![0] as [
-				string,
-				{ fullPage?: boolean } | undefined,
-			];
-			// fullPage should NOT be passed since capability is false
-			expect(opts).toEqual({});
+			const path = await router.screenshotToTemp("default");
+			expect(path).toBeNull();
 		});
 	});
 
@@ -611,12 +587,12 @@ describe("session persistence across sequential calls", () => {
 		pluginRegistry.clear();
 	});
 
-	it("navigate then screenshot succeeds with same taskId", async () => {
+	it("navigate then screenshotToTemp succeeds with same taskId", async () => {
 		await router.navigate("https://example.com", { taskId: "seq-test-1" });
 
-		const result = await router.screenshot("seq-test-1");
-		expect(result.success).toBe(true);
-		expect(result.dataUri).toMatch(/^data:image\/jpeg;base64,/);
+		const path = await router.screenshotToTemp("seq-test-1");
+		expect(path).toBeDefined();
+		expect(path).toMatch(/\/screenshot-seq-test-1\.jpg$/);
 	});
 
 	it("navigate then snapshot succeeds with same taskId", async () => {

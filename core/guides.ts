@@ -88,7 +88,7 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 			"### What NOT to Do",
 			"- Don't try to click through CAPTCHA challenges — automated clicks are fingerprinted and often cause permanent blocks",
 			"- Don't retry navigation rapidly — rate limits escalate the challenge difficulty",
-			"- Don't assume the page is broken — `browser-screenshot` can show you what's actually rendered",
+			"- Don't assume the page is broken — use `read` on the auto-captured screenshot path shown in the navigate output",
 			"",
 			"### Backend Strategy",
 			"- The default `chromium` backend is detected by many anti-automation systems",
@@ -100,7 +100,7 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 			"- If the dialog is gone, use `browser-inspect text=true` to read the actual page content",
 			"- If `browser-inspect` shows stale refs, take a fresh `browser-snapshot`",
 			"",
-			"_Last verified against common Cloudflare and Akamai challenge patterns. If the described elements don't appear, fall back to `browser-inspect` and `browser-screenshot` to discover the current page structure._",
+			"_Last verified against common Cloudflare and Akamai challenge patterns. If the described elements don't appear, fall back to `browser-inspect` and `browser-snapshot` (which includes a screenshot path) to discover the current page structure._",
 		].join("\n"),
 	},
 

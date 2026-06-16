@@ -90,9 +90,9 @@ All tool calls dispatch through the router. Key responsibilities:
 
 `web-fetch` uses plain `fetch()` + `node-html-parser` + `turndown`. Returns ~4000 chars inline, spills to temp file when larger. `browser-navigate` uses Playwright Chromium, returns accessibility tree with @e1/@e2 refs.
 
-### Registered tools (14 total)
+### Registered tools (13 total)
 
-web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-screenshot, browser-get-images, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
+web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-get-images, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
 
 ### Registered commands (2 total)
 
