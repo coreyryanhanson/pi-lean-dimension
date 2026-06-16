@@ -12,10 +12,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import {
-	loadBrowserConfig,
-	DEFAULT_MAX_STORAGE_STATE_SIZE,
-} from "../core/plugin-config";
+import { loadBrowserConfig } from "../core/plugin-config";
+import { DEFAULT_MAX_STORAGE_STATE_SIZE } from "../core/shared/storage-state";
 
 // ─── Mock fs to intercept settings.json reads ────────────────────
 

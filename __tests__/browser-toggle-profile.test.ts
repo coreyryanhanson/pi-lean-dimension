@@ -24,10 +24,8 @@ vi.mock("node:fs", () => ({
 	unlinkSync: vi.fn(),
 }));
 
-import browserToggle, {
-	listProfiles,
-	formatProfileList,
-} from "../browser-toggle";
+import browserToggle from "../browser-toggle";
+import { listProfiles, formatProfileList } from "../browser-profile";
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
