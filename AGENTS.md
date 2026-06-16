@@ -9,7 +9,7 @@ A pi extension that registers **13 tools + 2 commands** for web browsing. Archit
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 493 tests across 15 files (all pass)
+npm test              # vitest run — 735 tests across 20 files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npm run test:watch    # vitest in watch mode
 npx tsx scripts/dialog-gate.ts        # side-by-side backend comparison
@@ -38,7 +38,7 @@ pi-browser/
 │   └── shared/               # session-manager, url-safety, bot-detection, cdp-supervisor, accessibility-tree, snapshot-cache, dom-extractor
 ├── guides/                  # User-authored guide files (gitignored)
 ├── scripts/                  # dialog-gate.ts, experiment reports
-└── __tests__/                # 13 test files + helpers/
+└── __tests__/                # 20 test files + helpers/
 ```
 
 ## Architecture
@@ -58,12 +58,14 @@ Capabilities (`PluginCapabilities`) advertise quirks. The router checks them at 
 Plugin loading: reads `browser.plugins` from `~/.pi/agent/settings.json` (global, merged with `.pi/settings.json` project-local). Each entry is `{name, dir, enabled, config}`. `dir` maps to `backends/<dir>/`; entry point is auto-detected (`index.ts` = Node plugin, `bridge.py` = Python plugin). If no plugins configure, a default ChromiumPlugin is created.
 
 **Active plugins (config-driven):**
+
 - **`chromium`** — Node/Playwright (~1100 lines), always enabled by default, reference implementation
 - **`chromium-py`** — Python/Playwright (~950 lines bridge.py), disabled by default
 
 ### Router (`core/router.ts`)
 
 All tool calls dispatch through the router. Key responsibilities:
+
 - **Strategy resolution**: `PluginRegistry.resolveStrategy("auto")` → first enabled plugin; `"<name>"` → named plugin
 - **Session lifecycle**: per-taskId sessions created on first navigate, cleaned up on shutdown
 - **Compact truncation**: `< 2800 chars` raw, cut at ~2500; `> 8000 chars` preserve top ~2000
@@ -85,7 +87,7 @@ All tool calls dispatch through the router. Key responsibilities:
 
 `web-fetch` uses plain `fetch()` + `node-html-parser` + `turndown`. Returns ~4000 chars inline, spills to temp file when larger. `browser-navigate` uses Playwright Chromium, returns accessibility tree with @e1/@e2 refs.
 
-### Registered tools (13 total)
+### Registered tools (14 total)
 
 web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-screenshot, browser-get-images, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
 
@@ -102,7 +104,8 @@ Type definitions (`Guide`, `GuideTrigger`, `GuideCategory`, `GuideSource`,
 `DomainEntry`, `GuidePresenceResult`), the `BUILTIN_GUIDES` record (4 pattern guides + 1 test-only site fixture),
 `DOMAIN_MAP` for domain-to-guide resolution,
 `loadUserGuides()`/`parseGuideFile()` for user-authored guides (YAML frontmatter
-+ markdown body), `resolveGuidePresence()` for three-tier auto-presence
+
+- markdown body), `resolveGuidePresence()` for three-tier auto-presence
 (auto-inject / auto-hint / on-demand), `dialogPresentInSnapshot()` for dialog
 detection from accessibility tree text, `readGuidesConfig()` for
 `browser.guides.autoInject` from settings.json, and `cleanupInjectedGuides()`
@@ -123,7 +126,7 @@ Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-
 
 ## Testing
 
-### Test files (16 files, 527 tests passing)
+### Test files (20 files, 735 tests passing)
 
 | File | Requires Chromium? |
 |------|--------------------|
@@ -144,7 +147,7 @@ Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-
 | reddit-dialog.test.ts | Yes (auto-skip) |
 | chromium-py.test.ts | Yes (auto-skip) |
 
-Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automatically when Playwright Chromium is unavailable. The archived dialog-compaction test lives under `core/archived/`.
+Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automatically when Playwright Chromium is unavailable.
 
 ### Shared test utilities (`__tests__/helpers/`)
 
