@@ -11,10 +11,9 @@ import {
 import { ChromiumPlugin } from "./backends/chromium/index.js";
 import { PythonPluginAdapter } from "./backends/python-adapter.js";
 import type { PythonBridgeConfig } from "./backends/python-adapter.js";
+
 import { sessionManager } from "./core/shared/session-manager.js";
 import { removeAllSnapshotFiles } from "./core/shared/snapshot-cache.js";
-import { isSessionProfile } from "./core/shared/storage-state.js";
-import { listProfiles } from "./browser-profile.js";
 import initBrowserToggle from "./browser-toggle.js";
 import { cleanupInjectedGuides } from "./core/guides.js";
 import {
@@ -42,61 +41,6 @@ import {
 	webGuideTool,
 	webLearnTool,
 } from "./tools/index.js";
-
-// ============================================================
-// Command: /browser-status
-// ============================================================
-const browserStatusCommand = {
-	description: "Show browser backend health and active sessions",
-	handler: async (_args: string, ctx: any) => {
-		const status = sessionManager.getStatus();
-		const active = sessionManager.getActiveSessions();
-		let msg = `🌐 ${status}`;
-
-		// List available plugins
-		const allPlugins = pluginRegistry.availableAll();
-		const backendLines: string[] = [];
-		for (const p of allPlugins) {
-			if (p.enabled) {
-				backendLines.push(p.name);
-			} else {
-				backendLines.push(`${p.name} (disabled)`);
-			}
-		}
-		msg += `\nPlugins: ${backendLines.join(", ")}`;
-		msg += `\nUse web-fetch for stateless HTTP fetches.`;
-
-		if (active.length > 0) {
-			msg += `\nActive sessions: ${active.length}`;
-			for (const s of active) {
-				const sym = sessionManager.pluginSymbol(s.pluginName);
-				msg += `\n  ${sym} [${s.pluginName}] ${s.currentUrl || "(pending)"}`;
-				if (s.currentTitle) msg += ` — ${s.currentTitle}`;
-				if (s.profileName) msg += ` [profile: ${s.profileName}]`;
-			}
-		}
-
-		// Profiles section
-		const profiles = listProfiles();
-		if (profiles.length > 0) {
-			// Find which profile is currently active (if any)
-			const activeProfile = active.find((s) => s.profileName)?.profileName;
-			const lines = [`\nProfiles: ${profiles.length} on disk`];
-			for (const p of profiles) {
-				const current = p.name === activeProfile ? " ← active" : "";
-				const badge = isSessionProfile(p.name) ? " 📋" : "";
-				const label = isSessionProfile(p.name) ? "📋 session" : p.name;
-				lines.push(`  ${label}  (${p.stateSize})${badge}${current}`);
-			}
-			lines.push("  /web profile list — detailed view");
-			msg += lines.join("\n");
-		} else {
-			msg += `\nProfiles: none`;
-		}
-
-		ctx.ui.notify(msg, "info");
-	},
-};
 
 // ============================================================
 // Extension entry point
@@ -216,7 +160,6 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(webLearnTool);
 
 	// --- Register commands ------------------------------------------
-	pi.registerCommand("browser-status", browserStatusCommand);
 	initBrowserToggle(pi);
 
 	// --- Profile change callback for TUI status updates ------------

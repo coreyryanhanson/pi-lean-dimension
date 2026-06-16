@@ -14,7 +14,7 @@
 3. [All 14 Tools](#all-14-tools)
 4. [Stateless Fetching (web-fetch)](#stateless-fetching-web-fetch)
 5. [Navigation Guides (web-guide & web-learn)](#navigation-guides-web-guide--web-learn)
-6. [Browser Status Command](#browser-status-command)
+6. [`/web status` — Detailed Runtime Status](#web-status--detailed-runtime-status)
 7. [Profiles — Persistent Sessions](#profiles--persistent-sessions)
 8. [Cookie Management](#cookie-management)
 9. [Backend Architecture & Future Expansion](#backend-architecture--future-expansion)
@@ -60,7 +60,8 @@ toggles guide-saving mode, and manages browser profiles.
 
 | Command | Effect |
 |---------|--------|
-| `/web` | Show current status: browser tools on/off, learn mode on/off, and available sub-commands. |
+| `/web` | Show current toggle status and available sub-commands. |
+| `/web status` | **Detailed runtime status** — toggle state, plugin health, active sessions, and profiles on disk. |
 
 ### Why Toggle?
 
@@ -267,18 +268,33 @@ You must explicitly enable it with `/web learn`.
 
 ---
 
-## Browser Status Command
+## `/web status` — Detailed Runtime Status
 
 ```text
-/browser-status
+/web status
 ```
 
-Shows:
+Shows everything about the browser runtime in one notification:
 
-- Backend health (e.g., "🌐 idle")
-- All registered plugins (enabled/disabled)
-- Active sessions with current URL, title, and profile name
-- All profiles on disk with their state size
+```text
+🌐 Browser tools: ✅ on  |  📖 Learn mode: ❌ off
+────────────────────────────────────────
+Status: 🌐 idle
+Plugins: chromium
+Active sessions: 1
+  🌐 [chromium] https://example.com — Example Domain [profile: session]
+Profiles: 2 on disk
+  📋 session  (2.1 KB) ← active
+  shopping  (0.3 KB)
+```
+
+Covers:
+
+- **Toggle state** — whether browser/learn tools are active in the agent's context
+- **Backend health** — idle, busy, or error state
+- **All registered plugins** — enabled/disabled status
+- **Active sessions** — current URL, title, profile name per session
+- **Profiles on disk** — state size and which one is currently active
 
 ---
 

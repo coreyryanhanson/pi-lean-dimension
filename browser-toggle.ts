@@ -317,6 +317,7 @@ export type { BrowserToggleState };
 
 import { handleProfileSubcommand } from "./browser-profile.js";
 import { handleCookiesSubcommand } from "./browser-cookies.js";
+import { handleStatusSubcommand } from "./browser-status.js";
 
 // ---- Internal helpers (used by delegated handlers) ---------------
 
@@ -425,6 +426,8 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 			} else if (cmd === "cookies" || cmd.startsWith("cookies ")) {
 				const sub = cmd.slice("cookies".length).trim();
 				await handleCookiesSubcommand(sub, ctx);
+			} else if (cmd === "status") {
+				handleStatusSubcommand(ctx, isBrowserEnabled(pi), isLearnEnabled(pi));
 			} else {
 				// Default: show status
 				const browserStatus = isBrowserEnabled(pi) ? "✅ on" : "❌ off";
@@ -437,6 +440,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 						`   /web off         disable all browser tools\n` +
 						`   /web on          enable browsing only\n` +
 						`   /web learn       enable browsing + guide-saving\n` +
+						`   /web status      detailed runtime status (sessions, plugins, profiles)\n` +
 						`   /web             show this status`,
 					"info",
 				);
