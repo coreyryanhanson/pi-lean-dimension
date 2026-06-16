@@ -4,7 +4,7 @@
 
 ## What This Is
 
-A pi extension that registers **13 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
+A pi extension that registers **14 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
 
 ## Developer Commands
 
@@ -22,8 +22,10 @@ There is no build step (`noEmit: true` in tsconfig). The extension is loaded dir
 
 ```
 pi-browser/
-├── index.ts                  # Entry: registers 13 tools + 2 commands
+├── index.ts                  # Entry: imports & registers tool definitions + lifecycle
 ├── browser-toggle.ts         # /web on|off|learn|status — three-state toggle
+├── browser-cookies.ts        # /web cookies subcommand (extracted from toggle)
+├── browser-profile.ts        # /web profile subcommand (extracted from toggle)
 ├── backends/                 # Plugin implementations
 │   ├── chromium/index.ts     # Node/Playwright, reference ~1100 lines
 │   ├── python-adapter.ts     # JSON-RPC bridge for subprocess plugins
@@ -35,8 +37,9 @@ pi-browser/
 │   ├── router.ts             # Dispatch, session lifecycle, truncation, browser-inspect
 │   ├── guides.ts             # Guide types, builtin guides, file loader, presence resolution
 │   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
-│   └── shared/               # session-manager, url-safety, bot-detection, cdp-supervisor, accessibility-tree, snapshot-cache, dom-extractor
+│   └── shared/               # accessibility-tree, bot-detection, cdp-supervisor, dom-extractor, session-manager, settings-reader, snapshot-cache, storage-state, url-safety
 ├── guides/                  # User-authored guide files (gitignored)
+├── tools/                   # Tool definitions — one file per tool (14 files) + barrel + utils
 ├── scripts/                  # dialog-gate.ts, experiment reports
 └── __tests__/                # 20 test files + helpers/
 ```
@@ -142,7 +145,6 @@ Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-
 | snapshot-cache.test.ts | No |
 | browser-inspect.test.ts | No |
 | web-guides.test.ts | No |
-| dialog-compaction.test.ts (archived) | No |
 | occlusion-live.test.ts | Yes (auto-skip) |
 | reddit-dialog.test.ts | Yes (auto-skip) |
 | chromium-py.test.ts | Yes (auto-skip) |
@@ -165,7 +167,7 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
 
 - **Console capture only on Chromium** — Python adapter's `BridgeBase` has capture but `chromium-py` bridge doesn't call it yet
 - **AbortSignal not supported on Python bridge** — `supportsAbortSignal: false`, router skips signal wiring
-- **Sessions are per taskId** — tasks are stable pi session IDs mapped to `browser-NNN` keys via `_sessionKeys`/`_sessionCounter` in index.ts. Created on first navigate, cleaned up on session_shutdown
+- **Sessions are per taskId** — tasks are stable pi session IDs mapped to `browser-NNN` keys via `_sessionKeys`/`_sessionCounter` in `tools/utils.ts`. Created on first navigate, cleaned up on session_shutdown
 - **Role-based locators only**: never XPath/CSS — always `getByRole()` via `buildLocator()` with positional `.nth()` for duplicates. The `INTERACTIVE_ROLES` set defines which roles get @e refs
 - **All URLs go through `url-safety.ts`** — blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.169.254), dangerous schemes (file:, ftp:, data:, javascript:, vbscript:), and heuristically detects secrets in URLs
 - **Screenshot**: JPEG 80% quality, viewport constrained to 1024px wide, returns data URI
