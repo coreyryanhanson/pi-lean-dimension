@@ -1,14 +1,9 @@
 /**
  * Session manager — tracks browser session lifecycle per task_id.
  *
- * Design: one shared Browser instance, one BrowserContext per active taskId.
- * Contexts are created on first use and disposed on task completion or error.
- *
- * v2 change: Sessions use `pluginName: string` instead of a backend-level enum.
- * The `processHandle` field has been removed.
+ * Design: sessions track metadata; browsers and contexts are managed
+ * entirely by the plugin. The session manager is Playwright-agnostic.
  */
-
-import type { Browser, BrowserContext } from "playwright";
 
 /** Runtime state of a single browsing session */
 export interface BrowserSession {
@@ -29,13 +24,11 @@ export interface BrowserSession {
 	lastActive: number;
 	/** Whether the session has crashed and needs recovery */
 	crashed: boolean;
-	/** Playwright browser context (undefined for fetch) */
-	context?: BrowserContext;
-	/** Phase 2: Whether to auto-save storage state on cleanup */
+	/** Whether to auto-save storage state on cleanup */
 	persistState?: boolean;
-	/** Phase 2: Profile name used for this session (undefined = default) */
+	/** Profile name used for this session (undefined = default) */
 	profileName?: string;
-	/** Phase 0: pi session ID for session-scoped profiles */
+	/** pi session ID for session-scoped profiles */
 	piSessionId?: string;
 }
 
@@ -51,7 +44,6 @@ interface LastNavEntry {
 
 class SessionManager {
 	#sessions = new Map<string, BrowserSession>();
-	#playwrightBrowser: Browser | null = null;
 	/** Last navigation URL per task (survives session removal, cleared explicitly) */
 	#lastNav = new Map<string, LastNavEntry>();
 
@@ -149,32 +141,13 @@ class SessionManager {
 	// ─── Session lifecycle ────────────────────────────────────────────
 
 	removeSession(taskId: string): void {
-		const session = this.#sessions.get(taskId);
-		if (session?.context) {
-			session.context.close().catch(() => {});
-		}
 		this.#sessions.delete(taskId);
 		this.#lastNav.delete(taskId);
 	}
 
 	async removeAll(): Promise<void> {
-		const closePromises: Promise<void>[] = [];
-		for (const [, session] of this.#sessions) {
-			if (session.context) {
-				closePromises.push(session.context.close().catch(() => {}));
-			}
-		}
-		await Promise.all(closePromises);
 		this.#sessions.clear();
 		this.#lastNav.clear();
-		if (this.#playwrightBrowser) {
-			try {
-				await this.#playwrightBrowser.close();
-			} catch {
-				/* browser may already be closed */
-			}
-			this.#playwrightBrowser = null;
-		}
 	}
 
 	/**
@@ -257,13 +230,6 @@ class SessionManager {
 			if (session.piSessionId === piSessionId) return taskId;
 		}
 		return undefined;
-	}
-
-	getPlaywrightBrowser(): Browser | null {
-		return this.#playwrightBrowser;
-	}
-	setPlaywrightBrowser(b: Browser | null): void {
-		this.#playwrightBrowser = b;
 	}
 }
 

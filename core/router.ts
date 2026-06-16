@@ -25,7 +25,6 @@ import {
 	type CacheResult,
 } from "./shared/snapshot-cache.js";
 import {
-	loadStorageState,
 	sanitizeProfileName,
 	sessionProfileName,
 } from "./shared/storage-state.js";
@@ -89,47 +88,19 @@ export interface NavigateOptions {
 	piSessionId?: string;
 }
 
-// ─── Profile Event ──────────────────────────────────────────────────
+// ─── Profile Change Callback ───────────────────────────────────────
 
 /**
- * Event emitted when a task's profile changes (created, switched, etc.)
- * or when a task joins/leaves a shared BrowserContext.
+ * Simple nullable callback for profile changes.
+ * Used by index.ts to update the TUI status bar.
  */
-export interface ProfileEvent {
-	type:
-		| "profile_changed"
-		| "profile_created"
-		| "profile_pruned"
-		| "context_joined"
-		| "context_left";
-	taskId: string;
-	profileName?: string | undefined;
-	profileMode?: "none" | "session" | "named" | undefined;
-	/** For context_joined/context_left: number of tasks now sharing this context */
-	sharedRefCount?: number | undefined;
-}
-
-type ProfileEventCallback = (event: ProfileEvent) => void;
-const _profileEventCallbacks: ProfileEventCallback[] = [];
-
-/**
- * Register a callback for profile lifecycle events.
- * Used by index.ts to update the TUI status bar and log debug info.
- */
-export function onProfileEvent(cb: ProfileEventCallback): void {
-	_profileEventCallbacks.push(cb);
-}
-
-/** @internal Emit a profile event to all registered callbacks. */
-export function _emitProfileEvent(event: ProfileEvent): void {
-	for (const cb of _profileEventCallbacks) {
-		try {
-			cb(event);
-		} catch {
-			/* best-effort — don't let a callback crash the emitter */
-		}
-	}
-}
+export const onProfileChange:
+	| ((
+			taskId: string,
+			profileName?: string,
+			profileMode?: "none" | "session" | "named",
+	  ) => void)
+	| null = null;
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -173,26 +144,16 @@ async function requireInteractiveSession(taskId: string): Promise<{
 		currentTitle: lastNav.title,
 	});
 
-	// Restore profile state if the last navigation used a profile
-	let navStorageState: unknown;
+	// Restore profile name if the last navigation used a profile
 	if (lastNav.profileName) {
 		sessionManager.updateSession(taskId, {
 			persistState: true,
 			profileName: lastNav.profileName,
 		});
-		const loaded = loadStorageState(lastNav.profileName);
-		if (loaded) {
-			navStorageState = loaded;
-		}
 	}
 
-	const session = sessionManager.getSession(taskId)!;
-
-	const navOptions: { signal?: AbortSignal; storageState?: unknown } = {};
-	if (navStorageState !== undefined) {
-		navOptions.storageState = navStorageState;
-	}
-
+	// Navigate — plugin loads its own storage state if needed
+	const navOptions: { signal?: AbortSignal } = {};
 	const navResult = await plugin.navigate(
 		lastNav.url,
 		taskId,
@@ -204,7 +165,11 @@ async function requireInteractiveSession(taskId: string): Promise<{
 			currentUrl: navResult.url,
 			currentTitle: navResult.title,
 		});
-		return { session, pluginName: lastNav.pluginName, wasAutoCreated: true };
+		return {
+			session: sessionManager.getSession(taskId)!,
+			pluginName: lastNav.pluginName,
+			wasAutoCreated: true,
+		};
 	}
 
 	// Failed — clean up
@@ -429,54 +394,26 @@ export async function navigate(
 	}
 
 	// ── Resolve profile mode ───────────────────────────────────
-	let persistState = false;
 	let resolvedProfileName: string | undefined;
-	let storageState: unknown;
 	let profileMode: "none" | "session" | "named" | undefined;
 
-	// Check for existing session that needs clean-up before profile resolution
-	const existingSession = sessionManager.getSession(taskId);
 	const browserConfig = loadBrowserConfig();
-
 	const profileInput = options.profile ?? browserConfig.defaultProfile;
 
 	if (profileInput === "none") {
-		// Explicit fresh session — destroy existing context if any
-		if (existingSession) {
-			await plugin.cleanup(taskId).catch(() => {});
-			sessionManager.removeSession(taskId);
-			removeSnapshotFiles(taskId);
-		}
 		profileMode = "none";
 	} else if (profileInput === "session") {
-		// Session-scoped profile — maps to current pi conversation session
 		profileMode = "session";
 		const piSessionId = options.piSessionId;
 		if (piSessionId) {
 			resolvedProfileName = sessionProfileName(piSessionId);
-			persistState = true;
-
-			// If existing session used a different profile, destroy context
-			if (
-				existingSession &&
-				existingSession.profileName !== resolvedProfileName
-			) {
-				await plugin.cleanup(taskId).catch(() => {});
-				sessionManager.removeSession(taskId);
-				removeSnapshotFiles(taskId);
-			}
-
-			// Load storage state (null = first use, gracefully handled)
-			const loaded = loadStorageState(resolvedProfileName);
-			storageState = loaded ?? undefined;
 		} else {
 			// Can't resolve session profile without piSessionId — fall back with warning
 			console.warn(
 				"[pi-browser] profile='session' requested but piSessionId unavailable. " +
-					"Falling back to profile='none'. This may occur during extension reload.",
+					"Falling back to profile='none'.",
 			);
 			profileMode = "none";
-			persistState = false;
 		}
 	} else {
 		// Named profile
@@ -498,50 +435,40 @@ export async function navigate(
 			};
 		}
 		resolvedProfileName = profileInput;
-		persistState = true;
-
-		if (
-			existingSession &&
-			existingSession.profileName !== resolvedProfileName
-		) {
-			await plugin.cleanup(taskId).catch(() => {});
-			sessionManager.removeSession(taskId);
-			removeSnapshotFiles(taskId);
-		}
-
-		const loaded = resolvedProfileName
-			? loadStorageState(resolvedProfileName)
-			: null;
-		storageState = loaded ?? undefined;
 	}
 
-	// ── Emit profile event ──────────────────────────────────
-	_emitProfileEvent({
-		type: "profile_changed",
-		taskId,
-		profileName: resolvedProfileName,
-		profileMode,
-	});
+	// ── Notify profile change callback ─────────────────────
+	onProfileChange?.(taskId, resolvedProfileName, profileMode);
 
 	// ── Create session and navigate ───────────────────────────
 	sessionManager.createSession(taskId, plugin.name);
 	sessionManager.updateSession(taskId, {
 		currentUrl: normalizedUrl,
-		...(persistState ? { persistState: true } : {}),
-		...(resolvedProfileName !== undefined
-			? { profileName: resolvedProfileName }
-			: {}),
+		persistState: resolvedProfileName !== undefined,
 		...(options.piSessionId !== undefined
 			? { piSessionId: options.piSessionId }
 			: {}),
 	});
 
+	// Set/clear profileName directly
 	const session = sessionManager.getSession(taskId)!;
+	if (session) {
+		if (resolvedProfileName !== undefined) {
+			session.profileName = resolvedProfileName;
+		} else {
+			delete session.profileName;
+		}
+	}
 
-	const navOptions: { signal?: AbortSignal; storageState?: unknown } = {};
+	const navOptions: {
+		signal?: AbortSignal;
+		profileName?: string;
+		profileMode?: "none" | "session" | "named";
+	} = {};
 	if (options.signal) navOptions.signal = options.signal;
-	if (storageState !== undefined) {
-		navOptions.storageState = storageState;
+	if (resolvedProfileName !== undefined) {
+		navOptions.profileName = resolvedProfileName;
+		navOptions.profileMode = profileMode;
 	}
 	const result = await plugin.navigate(
 		normalizedUrl,
@@ -554,10 +481,6 @@ export async function navigate(
 		sessionManager.updateSession(taskId, {
 			currentUrl: result.url,
 			currentTitle: result.title,
-			persistState,
-			...(resolvedProfileName !== undefined
-				? { profileName: resolvedProfileName }
-				: {}),
 			currentSnapshotFingerprint: snapshotFingerprint(result.snapshot),
 		});
 

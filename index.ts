@@ -219,8 +219,8 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("browser-status", browserStatusCommand);
 	initBrowserToggle(pi);
 
-	// --- Profile event listener for TUI status updates ------------
-	router.onProfileEvent((event) => {
+	// --- Profile change callback for TUI status updates ------------
+	router.onProfileChange = (taskId, profileName, profileMode) => {
 		// Update TUI status bar on any profile lifecycle event
 		const lastCtx = getLastCtx();
 		if (lastCtx) {
@@ -229,14 +229,12 @@ export default function (pi: ExtensionAPI) {
 
 		// Debug logging when BROWSER_DEBUG is set
 		if (process.env.BROWSER_DEBUG) {
-			const parts = [`[browser] ${event.type}: task=${event.taskId}`];
-			if (event.profileName) parts.push(`profile=${event.profileName}`);
-			if (event.profileMode) parts.push(`mode=${event.profileMode}`);
-			if (event.sharedRefCount !== undefined)
-				parts.push(`refCount=${event.sharedRefCount}`);
+			const parts = [`[browser] profile_changed: task=${taskId}`];
+			if (profileName) parts.push(`profile=${profileName}`);
+			if (profileMode) parts.push(`mode=${profileMode}`);
 			console.error(parts.join(" "));
 		}
-	});
+	};
 
 	// --- Startup ----------------------------------------------------
 	pi.on("session_start", async (_event, ctx) => {

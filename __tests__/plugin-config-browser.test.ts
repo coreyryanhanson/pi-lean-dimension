@@ -13,7 +13,6 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { loadBrowserConfig } from "../core/plugin-config";
-import { DEFAULT_MAX_STORAGE_STATE_SIZE } from "../core/shared/storage-state";
 
 // ─── Mock fs to intercept settings.json reads ────────────────────
 
@@ -74,8 +73,6 @@ describe("loadBrowserConfig()", () => {
 		mockNoSettings();
 		const config = loadBrowserConfig();
 		expect(config.defaultProfile).toBe("none");
-		expect(config.maxStorageStateSize).toBe(DEFAULT_MAX_STORAGE_STATE_SIZE);
-		expect(config.profiles).toEqual({});
 	});
 
 	it("returns defaults when browser section is missing", () => {
@@ -88,7 +85,6 @@ describe("loadBrowserConfig()", () => {
 		mockGlobalSettings({ unrelated: true });
 		const config = loadBrowserConfig();
 		expect(config.defaultProfile).toBe("none");
-		expect(config.profiles).toEqual({});
 	});
 
 	// ── defaultProfile ─────────────────────────────────────────
@@ -129,108 +125,6 @@ describe("loadBrowserConfig()", () => {
 		});
 	});
 
-	// ── maxStorageStateSize ────────────────────────────────────
-
-	describe("maxStorageStateSize", () => {
-		it("accepts a positive number", () => {
-			mockGlobalSettings({ maxStorageStateSize: 5 * 1024 * 1024 });
-			expect(loadBrowserConfig().maxStorageStateSize).toBe(5 * 1024 * 1024);
-		});
-
-		it("falls back to default for zero", () => {
-			mockGlobalSettings({ maxStorageStateSize: 0 });
-			expect(loadBrowserConfig().maxStorageStateSize).toBe(
-				DEFAULT_MAX_STORAGE_STATE_SIZE,
-			);
-		});
-
-		it("falls back to default for negative numbers", () => {
-			mockGlobalSettings({ maxStorageStateSize: -1 });
-			expect(loadBrowserConfig().maxStorageStateSize).toBe(
-				DEFAULT_MAX_STORAGE_STATE_SIZE,
-			);
-		});
-
-		it("falls back to default for Infinity", () => {
-			mockGlobalSettings({ maxStorageStateSize: Infinity });
-			expect(loadBrowserConfig().maxStorageStateSize).toBe(
-				DEFAULT_MAX_STORAGE_STATE_SIZE,
-			);
-		});
-
-		it("falls back to default for non-number", () => {
-			mockGlobalSettings({ maxStorageStateSize: "10MB" });
-			expect(loadBrowserConfig().maxStorageStateSize).toBe(
-				DEFAULT_MAX_STORAGE_STATE_SIZE,
-			);
-		});
-	});
-
-	// ── profiles ───────────────────────────────────────────────
-
-	describe("profiles", () => {
-		it("accepts a valid profiles object", () => {
-			mockGlobalSettings({
-				profiles: {
-					default: { persist: true },
-					shopping: { persist: false },
-				},
-			});
-			const config = loadBrowserConfig();
-			expect(config.profiles.default).toEqual({ persist: true });
-			expect(config.profiles.shopping).toEqual({ persist: false });
-		});
-
-		it("defaults persist to true when omitted", () => {
-			mockGlobalSettings({
-				profiles: {
-					work: {},
-				},
-			});
-			expect(loadBrowserConfig().profiles.work).toEqual({ persist: true });
-		});
-
-		it("skips entries with reserved names", () => {
-			mockGlobalSettings({
-				profiles: {
-					none: { persist: true },
-					valid: { persist: true },
-				},
-			});
-			const config = loadBrowserConfig();
-			expect(config.profiles.none).toBeUndefined();
-			expect(config.profiles.valid).toBeDefined();
-		});
-
-		it("skips entries with invalid profile names", () => {
-			mockGlobalSettings({
-				profiles: {
-					"has space": { persist: true },
-					"../escape": { persist: true },
-					"valid-name": { persist: true },
-				},
-			});
-			const config = loadBrowserConfig();
-			expect(config.profiles["has space"]).toBeUndefined();
-			expect(config.profiles["../escape"]).toBeUndefined();
-			expect(config.profiles["valid-name"]).toBeDefined();
-		});
-
-		it("rejects non-object profiles value", () => {
-			mockGlobalSettings({
-				profiles: "not-an-object",
-			});
-			expect(loadBrowserConfig().profiles).toEqual({});
-		});
-
-		it("rejects array profiles value", () => {
-			mockGlobalSettings({
-				profiles: ["default", "shopping"],
-			});
-			expect(loadBrowserConfig().profiles).toEqual({});
-		});
-	});
-
 	// ── Settings merge ─────────────────────────────────────────
 
 	describe("settings merge", () => {
@@ -253,14 +147,10 @@ describe("loadBrowserConfig()", () => {
 					browser: {
 						defaultProfile: "session",
 					},
-					// project doesn't set maxStorageStateSize
-					// but since browser is shallow-merged, global's browser is entirely replaced
 				},
 			);
 			const config = loadBrowserConfig();
 			expect(config.defaultProfile).toBe("session");
-			// Global's settings are lost because project replaced browser entirely.
-			expect(config.maxStorageStateSize).toBe(DEFAULT_MAX_STORAGE_STATE_SIZE);
 		});
 	});
 });

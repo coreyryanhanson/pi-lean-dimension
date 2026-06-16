@@ -8,10 +8,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { PluginConfig, PluginDetection } from "./plugin-api.js";
-import {
-	sanitizeProfileName,
-	DEFAULT_MAX_STORAGE_STATE_SIZE,
-} from "./shared/storage-state.js";
+import { sanitizeProfileName } from "./shared/storage-state.js";
 import {
 	readSettingsFile,
 	GLOBAL_SETTINGS_PATH,
@@ -19,11 +16,6 @@ import {
 } from "./shared/settings-reader.js";
 
 // ─── Types ────────────────────────────────────────────────────────
-
-/** Configuration for a single browser profile. */
-export interface BrowserProfileConfig {
-	persist: boolean;
-}
 
 /**
  * Parsed browser configuration from settings.json.
@@ -37,18 +29,6 @@ export interface BrowserConfig {
 	 * - A named profile string (e.g. "shopping", "work")
 	 */
 	defaultProfile: "none" | "session" | string;
-
-	/**
-	 * Size threshold in bytes for storage state warnings.
-	 * When a saved state exceeds this, a warning is logged but the save proceeds.
-	 */
-	maxStorageStateSize: number;
-	/**
-	 * Named profiles configuration.
-	 * Profiles listed here are validated at startup; unlisted profiles
-	 * can still be used at runtime but won't appear in listings.
-	 */
-	profiles: Record<string, BrowserProfileConfig>;
 }
 
 /** Raw plugin entry from settings.json (before validation) */
@@ -117,10 +97,8 @@ function readPluginsFromSettings(): unknown[] | undefined {
  *
  * Reads the `browser` section and extracts:
  * - `defaultProfile` (string, default "none")
- * - `maxStorageStateSize` (number in bytes, default 10 MB)
- * - `profiles` (record of profile configs, default {})
  *
- * All profile names are validated via `sanitizeProfileName()`.
+ * Profile names are validated via `sanitizeProfileName()`.
  * Validation errors are collected but non-fatal — invalid entries
  * fall back to sensible defaults.
  */
@@ -131,9 +109,6 @@ export function loadBrowserConfig(): BrowserConfig {
 	// Defaults
 	const config: BrowserConfig = {
 		defaultProfile: "none",
-
-		maxStorageStateSize: DEFAULT_MAX_STORAGE_STATE_SIZE,
-		profiles: {},
 	};
 
 	if (!raw) return config;
@@ -158,61 +133,6 @@ export function loadBrowserConfig(): BrowserConfig {
 			errors.push(
 				`browser.defaultProfile: expected a non-empty string, got ${typeof raw.defaultProfile}`,
 			);
-		}
-	}
-
-	// ── maxStorageStateSize ───────────────────────────────────
-	if (raw.maxStorageStateSize !== undefined) {
-		if (
-			typeof raw.maxStorageStateSize === "number" &&
-			raw.maxStorageStateSize > 0 &&
-			Number.isFinite(raw.maxStorageStateSize)
-		) {
-			config.maxStorageStateSize = raw.maxStorageStateSize;
-		} else {
-			errors.push(
-				`browser.maxStorageStateSize: expected a positive number, got ${JSON.stringify(raw.maxStorageStateSize)}`,
-			);
-		}
-	}
-
-	// ── profiles ──────────────────────────────────────────────
-	if (raw.profiles !== undefined) {
-		if (
-			typeof raw.profiles !== "object" ||
-			Array.isArray(raw.profiles) ||
-			raw.profiles === null
-		) {
-			errors.push(
-				`browser.profiles: expected an object, got ${typeof raw.profiles}`,
-			);
-		} else {
-			const profilesRaw = raw.profiles as Record<string, unknown>;
-			for (const [name, entry] of Object.entries(profilesRaw)) {
-				try {
-					sanitizeProfileName(name);
-				} catch (err) {
-					errors.push(
-						`browser.profiles['${name}']: ${err instanceof Error ? err.message : String(err)}`,
-					);
-					continue;
-				}
-
-				if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-					errors.push(
-						`browser.profiles['${name}']: expected an object, got ${typeof entry}`,
-					);
-					continue;
-				}
-
-				const profileEntry = entry as Record<string, unknown>;
-				const persist =
-					typeof profileEntry.persist === "boolean"
-						? profileEntry.persist
-						: true;
-
-				config.profiles[name] = { persist };
-			}
 		}
 	}
 

@@ -80,8 +80,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 	private _browser: Browser | null = null;
 
 	/**
-	 * Per-task page tracking.
-	 * For shared profiles, multiple tasks' pages reference the same BrowserContext.
+	 * Per-task context + page tracking.
+	 * Each task gets its own isolated BrowserContext created fresh per navigate.
 	 */
 	private _pages = new Map<
 		string,
@@ -90,29 +90,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 			page: Page;
 			/** Profile name if this page belongs to a named/session profile, undefined for ephemeral */
 			profileName?: string;
-			/** Whether this task is sharing a context with other tasks */
-			isSharedContext: boolean;
 		}
-	>();
-
-	/**
-	 * Shared BrowserContexts for named profiles, with reference counting.
-	 * Keyed by profile name. Entries exist as long as at least one task
-	 * holds a reference. When refCount hits 0, the context is closed and removed.
-	 */
-	private _sharedContexts = new Map<
-		string,
-		{ context: BrowserContext; refCount: number }
-	>();
-
-	/**
-	 * In-progress shared context creations — prevents concurrent double-creation
-	 * when two tasks request the same named profile simultaneously.
-	 * The Promise resolves when the context is fully created and stored in _sharedContexts.
-	 */
-	private _sharedContextCreations = new Map<
-		string,
-		Promise<{ context: BrowserContext; refCount: number }>
 	>();
 
 	/** Per-task element cache (ref → AriaCachedNode) */
@@ -134,25 +112,10 @@ export class ChromiumPlugin implements BrowserPlugin {
 	}
 
 	async cleanupAll(): Promise<void> {
-		// Close all pages — ref counting in cleanup() handles shared context lifecycle
+		// Close all pages — each cleanup() handles page + context lifecycle
 		for (const taskId of [...this._pages.keys()]) {
 			await this.cleanup(taskId).catch(() => {});
 		}
-
-		// Safety net: any remaining shared contexts should have been closed
-		// when the last page referencing them was cleaned up, but handle orphans
-		for (const [name, entry] of this._sharedContexts) {
-			console.warn(
-				`[pi-browser] Orphaned shared context '${name}' during cleanupAll — closing`,
-			);
-			try {
-				await entry.context.close();
-			} catch {
-				/* best-effort */
-			}
-		}
-		this._sharedContexts.clear();
-		this._sharedContextCreations.clear();
 
 		if (this._browser) {
 			try {
@@ -171,12 +134,9 @@ export class ChromiumPlugin implements BrowserPlugin {
 	/**
 	 * Get or create a BrowserContext and Page for a task.
 	 *
-	 * For named profiles (`profileMode="named"`), shares a single BrowserContext
-	 * across all tasks using the same profile name. For ephemeral (`"none"`) and
-	 * session-scoped (`"session"`) profiles, each task gets an isolated context.
-	 *
-	 * Concurrent creation of the same named profile is safe via the
-	 * `_sharedContextCreations` promise-map singleton pattern.
+	 * Always creates a fresh BrowserContext per navigate, closing any
+	 * existing page/context for the task first. Storage state from disk
+	 * is applied when a named/session profile is active.
 	 */
 	private async getOrCreateContext(
 		taskId: string,
@@ -190,174 +150,38 @@ export class ChromiumPlugin implements BrowserPlugin {
 		page: Page;
 		isNew: boolean;
 	}> {
-		// 1. Check if task already has a page
+		// 1. Check if task already has a page/context — close it (fresh per navigate)
 		const existing = this._pages.get(taskId);
 		if (existing) {
-			if (existing.page.isClosed()) {
-				try {
-					const newPage = await existing.context.newPage();
-					installDialogHandlers(taskId, newPage);
-					existing.page = newPage;
-				} catch {
-					// Context is also dead — remove stale page entry
-					// If this was a shared context page, decrement refCount
-					if (existing.isSharedContext && existing.profileName) {
-						const shared = this._sharedContexts.get(existing.profileName);
-						if (shared) {
-							shared.refCount--;
-							if (shared.refCount <= 0) {
-								this._sharedContexts.delete(existing.profileName);
-							}
-						}
-					}
-					this._pages.delete(taskId);
-					this._elementCache.delete(taskId);
-				}
-			} else {
-				return { context: existing.context, page: existing.page, isNew: false };
-			}
-		}
-
-		// 2. Named profile — try to reuse shared context
-		if (options?.profileMode === "named" && options.profileName) {
-			return this._getOrCreateSharedContext(taskId, {
-				storageState: options.storageState,
-				profileName: options.profileName,
-				profileMode: options.profileMode,
-			});
-		}
-
-		// 3. Ephemeral or session profile — create isolated context
-		return this._createEphemeralContext(taskId, options?.storageState);
-	}
-
-	/**
-	 * Get an existing shared context for a named profile, or create one.
-	 * Uses a promise-map singleton to prevent concurrent double-creation.
-	 */
-	private async _getOrCreateSharedContext(
-		taskId: string,
-		options: {
-			storageState?: unknown;
-			profileName: string;
-			profileMode?: "none" | "session" | "named";
-		},
-	): Promise<{ context: BrowserContext; page: Page; isNew: boolean }> {
-		const profileName = options.profileName;
-
-		// Check for existing shared context
-		const shared = this._sharedContexts.get(profileName);
-		if (shared) {
 			try {
-				// Verify context is still alive by checking its pages
-				if (shared.context.pages() !== undefined) {
-					const page = await shared.context.newPage();
-					shared.refCount++;
-					this._pages.set(taskId, {
-						context: shared.context,
-						page,
-						profileName,
-						isSharedContext: true,
-					});
-					installDialogHandlers(taskId, page);
-					this._elementCache.set(taskId, new Map());
-					return { context: shared.context, page, isNew: true };
-				}
+				await existing.page.close();
 			} catch {
-				// Context is dead — remove stale reference and fall through
-				this._sharedContexts.delete(profileName);
+				/* page may already be closed */
 			}
+			try {
+				await existing.context.close();
+			} catch {
+				/* context may already be closed */
+			}
+			this._pages.delete(taskId);
+			this._elementCache.delete(taskId);
 		}
 
-		// No existing shared context — check if creation is already in progress
-		const inProgress = this._sharedContextCreations.get(profileName);
-		if (inProgress) {
-			// Another task is creating this context — await the same creation
-			const sharedEntry = await inProgress;
-			const page = await sharedEntry.context.newPage();
-			sharedEntry.refCount++;
-			this._pages.set(taskId, {
-				context: sharedEntry.context,
-				page,
-				profileName,
-				isSharedContext: true,
-			});
-			installDialogHandlers(taskId, page);
-			this._elementCache.set(taskId, new Map());
-			return { context: sharedEntry.context, page, isNew: true };
-		}
-
-		// We're the first — create the shared context and store the creation promise
-		const creationPromise = this._doCreateSharedContext(
-			taskId,
-			profileName,
-			options.storageState,
-		);
-		this._sharedContextCreations.set(profileName, creationPromise);
-
-		try {
-			const sharedEntry = await creationPromise;
-			// The creating task's page is already set inside _doCreateSharedContext
-			return {
-				context: sharedEntry.context,
-				page: this._pages.get(taskId)!.page,
-				isNew: true,
-			};
-		} finally {
-			this._sharedContextCreations.delete(profileName);
-		}
-	}
-
-	/**
-	 * Create a shared BrowserContext for a named profile.
-	 * Called only once per profile — subsequent callers await the stored promise.
-	 */
-	private async _doCreateSharedContext(
-		taskId: string,
-		profileName: string,
-		storageState?: unknown,
-	): Promise<{ context: BrowserContext; refCount: number }> {
-		const context = await this._newBrowserContext(storageState);
+		// 2. Create fresh context (storage state passed through from router)
+		const context = await this._newBrowserContext(options?.storageState);
 		const page = await context.newPage();
 
-		const sharedEntry = { context, refCount: 1 };
-		this._sharedContexts.set(profileName, sharedEntry);
-
-		this._pages.set(taskId, {
-			context,
-			page,
-			profileName,
-			isSharedContext: true,
-		});
+		const pageEntry: {
+			context: BrowserContext;
+			page: Page;
+			profileName?: string;
+		} = { context, page };
+		if (options?.profileName) {
+			pageEntry.profileName = options.profileName;
+		}
+		this._pages.set(taskId, pageEntry);
 		installDialogHandlers(taskId, page);
 		this._elementCache.set(taskId, new Map());
-
-		const session = sessionManager.getSession(taskId);
-		if (session) session.context = context;
-
-		return sharedEntry;
-	}
-
-	/**
-	 * Create an isolated (ephemeral or session-scoped) BrowserContext.
-	 */
-	private async _createEphemeralContext(
-		taskId: string,
-		storageState?: unknown,
-	): Promise<{ context: BrowserContext; page: Page; isNew: boolean }> {
-		const context = await this._newBrowserContext(storageState);
-		const page = await context.newPage();
-
-		this._pages.set(taskId, {
-			context,
-			page,
-			isSharedContext: false,
-		});
-		installDialogHandlers(taskId, page);
-		this._elementCache.set(taskId, new Map());
-
-		const session = sessionManager.getSession(taskId);
-		if (session) session.context = context;
 
 		return { context, page, isNew: true };
 	}
@@ -380,19 +204,15 @@ export class ChromiumPlugin implements BrowserPlugin {
 					"--disable-gpu",
 				],
 			});
-			sessionManager.setPlaywrightBrowser(this._browser);
 
 			// Auto-recover from browser crash/disconnect
 			this._browser.on("disconnected", () => {
 				this._browser = null;
-				sessionManager.setPlaywrightBrowser(null);
 				for (const tid of this._pages.keys()) {
 					sessionManager.updateSession(tid, { crashed: true });
 					this._elementCache.delete(tid);
 				}
 				this._pages.clear();
-				this._sharedContexts.clear();
-				this._sharedContextCreations.clear();
 			});
 		}
 
@@ -436,41 +256,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 	 */
 	getElementCache(taskId: string): Map<string, AriaCachedNode> | null {
 		return this._elementCache.get(taskId) ?? null;
-	}
-
-	// ── Test helpers (only used in tests) ─────────────────────────
-
-	/**
-	 * Expose the page map for testing.
-	 * Returns read-only metadata — no direct access to Playwright objects.
-	 */
-	getPagesForTesting(): ReadonlyMap<
-		string,
-		{
-			profileName?: string;
-			isSharedContext: boolean;
-		}
-	> {
-		return this._pages;
-	}
-
-	/**
-	 * Expose the shared context map for testing.
-	 * Returns read-only metadata — no direct access to Playwright objects.
-	 */
-	getSharedContextsForTesting(): ReadonlyMap<string, { refCount: number }> {
-		return this._sharedContexts;
-	}
-
-	/**
-	 * Expose the raw shared context entries for testing.
-	 * Returns the actual context objects so tests can verify identity.
-	 */
-	getSharedContextsRawForTesting(): Map<
-		string,
-		{ context: BrowserContext; refCount: number }
-	> {
-		return this._sharedContexts;
 	}
 
 	/**
@@ -1550,9 +1335,9 @@ export class ChromiumPlugin implements BrowserPlugin {
 		const entry = this._pages.get(taskId);
 		if (!entry) return;
 
-		const { context, page, profileName, isSharedContext } = entry;
+		const { context, page } = entry;
 
-		// ── Auto-save storage state before closing ──────────────────
+		// ── Auto-save storage state for persistent profiles ──────────
 		const session = sessionManager.getSession(taskId);
 		if (session?.persistState) {
 			try {
@@ -1569,17 +1354,9 @@ export class ChromiumPlugin implements BrowserPlugin {
 			}
 		}
 
-		// ── Tracing: stop before closing ────────────────────────────
-		// For shared contexts, we only stop tracing when the last page closes.
-		const isLastPageForSharedContext =
-			isSharedContext &&
-			profileName !== undefined &&
-			(this._sharedContexts.get(profileName)?.refCount ?? 1) <= 1;
-
-		// Stop tracing only for ephemeral contexts or the last page of a shared context.
-		// Shared contexts: tracing runs until the context is closed.
+		// ── Tracing: stop before closing (if enabled) ────────────────
 		const traceDir = process.env.BROWSER_TRACE_DIR;
-		if (traceDir && (!isSharedContext || isLastPageForSharedContext)) {
+		if (traceDir) {
 			try {
 				mkdirSync(traceDir, { recursive: true });
 				await context.tracing.stop({
@@ -1595,45 +1372,19 @@ export class ChromiumPlugin implements BrowserPlugin {
 			}
 		}
 
-		// ── Close resources ──────────────────────────────────────────
-		if (isSharedContext && profileName) {
-			// Shared context: close page only, decrement ref count
-			try {
-				await page.close();
-			} catch {
-				/* page may already be closed */
-			}
-			this._pages.delete(taskId);
-			this._elementCache.delete(taskId);
-
-			const shared = this._sharedContexts.get(profileName);
-			if (shared) {
-				shared.refCount--;
-				if (shared.refCount <= 0) {
-					// Last page closed — close the shared context
-					try {
-						await context.close();
-					} catch {
-						/* context may already be closed */
-					}
-					this._sharedContexts.delete(profileName);
-				}
-			}
-		} else {
-			// Ephemeral or session context: close page + context
-			try {
-				await page.close();
-			} catch {
-				/* page may already be closed */
-			}
-			try {
-				await context.close();
-			} catch {
-				/* context may already be closed */
-			}
-			this._pages.delete(taskId);
-			this._elementCache.delete(taskId);
+		// ── Close page + context (always — no ref-counting) ──────────
+		try {
+			await page.close();
+		} catch {
+			/* page may already be closed */
 		}
+		try {
+			await context.close();
+		} catch {
+			/* context may already be closed */
+		}
+		this._pages.delete(taskId);
+		this._elementCache.delete(taskId);
 	}
 }
 

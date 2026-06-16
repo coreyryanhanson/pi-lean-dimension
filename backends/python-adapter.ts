@@ -233,40 +233,16 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	 */
 	private _elementCaches = new Map<string, Map<string, AriaCachedNode>>();
 
-	// ── Shared-context tracking (Phase 5) ────────────────────────
-
 	/**
 	 * Per-taskId page metadata.
-	 * Used to determine whether cleanup should send ``browser.cleanup``
-	 * (isolated context) or ``browser.closePage`` (shared context).
+	 * Used to track profile names for storage state save on cleanup.
 	 */
 	private _pages = new Map<
 		string,
 		{
 			profileName?: string;
-			isSharedContext: boolean;
 		}
 	>();
-
-	/**
-	 * Per-profile-name shared-context tracking.
-	 * The actual BrowserContext lives in the Python bridge process;
-	 * this is a logical mirror for orphan detection on bridge restart.
-	 */
-	private _sharedBridgeContexts = new Map<
-		string,
-		{
-			/** @deprecated Not a real context — kept for structural parity */
-			_refCount: number;
-		}
-	>();
-
-	/**
-	 * In-progress shared-context creation promises (promise-map singleton).
-	 * Prevents two concurrent tasks from both creating a BrowserContext
-	 * for the same named profile.  Stores the raw bridge response.
-	 */
-	private _sharedContextCreations = new Map<string, Promise<unknown>>();
 
 	/**
 	 * @param name  Unique plugin identifier (e.g. "chromium-py").
@@ -330,27 +306,12 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	}
 
 	/**
-	 * Clean up ALL resources.  Closes all pages (sends ``browser.closePage``
-	 * for shared contexts, ``browser.cleanup`` for isolated), sweeps orphaned
-	 * shared-context entries, then sends ``shutdown`` to the bridge.
+	 * Clean up ALL resources.  Closes all pages, then sends ``shutdown`` to the bridge.
 	 */
 	async cleanupAll(): Promise<void> {
-		// Close all pages — shared context pages get browser.closePage
 		for (const taskId of [...this._pages.keys()]) {
 			await this.cleanup(taskId).catch(() => {});
 		}
-
-		// Safety net: any remaining shared-context entries are orphans
-		if (this._sharedBridgeContexts.size > 0) {
-			console.warn(
-				`[pi-browser] PythonPluginAdapter('${this.name}'): ` +
-					`${this._sharedBridgeContexts.size} orphaned shared context(s) ` +
-					`during cleanupAll — bridge will clean up on shutdown`,
-			);
-			this._sharedBridgeContexts.clear();
-		}
-		this._sharedContextCreations.clear();
-
 		await this._stopProcess();
 	}
 
@@ -550,13 +511,10 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	private _killProcess(): void {
 		this._stopHeartbeat();
 
-		// Clear all per-task and shared-context tracking — the bridge
-		// process is dead, so all Python-side state (pages, contexts,
-		// in-flight creations) is lost.
+		// Clear all per-task tracking — the bridge
+		// process is dead, so all Python-side state is lost.
 		this._elementCaches.clear();
 		this._pages.clear();
-		this._sharedBridgeContexts.clear();
-		this._sharedContextCreations.clear();
 
 		const proc = this._process;
 		if (!proc) return;
@@ -899,25 +857,14 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		// but we accept it for interface compatibility.
 
 		try {
-			const profileName = options?.profileName;
-			const profileMode = options?.profileMode;
-
-			// ── Named profile: shared-context path ────────────────
-			if (profileMode === "named" && profileName) {
-				return await this._navigateShared(
-					url,
-					taskId,
-					timeoutMs,
-					profileName,
-					options?.storageState,
-				);
-			}
-
-			// ── Ephemeral or session profile: isolated context ────
-			// Build RPC params — include storageState if provided
+			// Build RPC params — include storageState and profileName if provided
 			const rpcParams: Record<string, unknown> = { url, taskId, timeoutMs };
 			if (options?.storageState !== undefined) {
 				rpcParams.storageState = options.storageState;
+			}
+			if (options?.profileName !== undefined) {
+				rpcParams.profileName = options.profileName;
+				rpcParams.profileMode = options.profileMode ?? "named";
 			}
 
 			// Give the bridge slightly more time so navigation timeouts
@@ -932,8 +879,12 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			const result = raw as Record<string, unknown>;
 			const success = !!result.success;
 
-			// Track that this task uses an isolated context
-			this._pages.set(taskId, { isSharedContext: false });
+			// Track this task for cleanup
+			const pageMeta: { profileName?: string } = {};
+			if (options?.profileName) {
+				pageMeta.profileName = options.profileName;
+			}
+			this._pages.set(taskId, pageMeta);
 
 			// Update session manager
 			if (success) {
@@ -967,174 +918,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				error: err instanceof Error ? err.message : String(err),
 			};
 		}
-	}
-
-	/**
-	 * Navigate using a shared named profile context.
-	 *
-	 * If a shared BrowserContext already exists in the bridge for this
-	 * profile name, creates a new Page within it (``browser.newPage``
-	 * RPC) rather than creating a new context.  Uses the promise-map
-	 * singleton pattern to prevent concurrent double-creation.
-	 */
-	private async _navigateShared(
-		url: string,
-		taskId: string,
-		timeoutMs: number,
-		profileName: string,
-		storageState?: unknown,
-	): Promise<NavigateResult> {
-		// Check if a shared context already exists for this profile
-		const existing = this._sharedBridgeContexts.get(profileName);
-
-		if (existing) {
-			// Shared context exists in the bridge — create a new page in it
-			const newPageResult = await this._rpcCall("browser.newPage", {
-				taskId,
-				profileName,
-			});
-			if (!(newPageResult as Record<string, unknown>)?.success) {
-				// Bridge couldn't create the page (context may have crashed)
-				this._sharedBridgeContexts.delete(profileName);
-			}
-		}
-
-		if (!existing) {
-			// Check for in-progress creation from another task
-			const inProgress = this._sharedContextCreations.get(profileName);
-			if (inProgress) {
-				// Another task is creating this context — wait for it
-				await inProgress;
-				// Now send newPage RPC to create a page in the new shared context
-				await this._rpcCall("browser.newPage", {
-					taskId,
-					profileName,
-				});
-			} else {
-				// First usage — create the shared context
-				const creationPromise = this._doCreateSharedContext(
-					taskId,
-					url,
-					timeoutMs,
-					profileName,
-					storageState,
-				);
-				this._sharedContextCreations.set(profileName, creationPromise);
-				try {
-					const raw = await creationPromise;
-					const result = raw as Record<string, unknown>;
-					const success = !!result.success;
-
-					// Track this page as shared
-					this._pages.set(taskId, {
-						profileName,
-						isSharedContext: true,
-					});
-					this._sharedBridgeContexts.set(profileName, { _refCount: 1 });
-
-					if (success) {
-						sessionManager.updateSession(taskId, {
-							currentUrl: (result.url as string) ?? url,
-							currentTitle: (result.title as string) ?? "",
-							pluginName: this.name,
-						});
-						this._populateElementCache(taskId, result.elements);
-					}
-
-					const navResult: NavigateResult = {
-						success,
-						url: (result.url as string) ?? url,
-						title: (result.title as string) ?? "",
-						snapshot: (result.snapshot as string) ?? "",
-						elementCount: (result.elementCount as number) ?? 0,
-					};
-					if (result.botDetected) navResult.botDetected = true;
-					if (result.error !== undefined)
-						navResult.error = result.error as string;
-					return navResult;
-				} finally {
-					this._sharedContextCreations.delete(profileName);
-				}
-			}
-		}
-
-		// ── Shared context exists — navigate the new page to the URL ──
-		// The page was created via browser.newPage above; now tell the
-		// bridge to navigate it.  The bridge already has the page keyed
-		// by taskId from the newPage call.
-		const rpcParams: Record<string, unknown> = {
-			url,
-			taskId,
-			timeoutMs,
-			profileName,
-			profileMode: "named",
-		};
-		if (storageState !== undefined) {
-			rpcParams.storageState = storageState;
-		}
-
-		const transportTimeout = timeoutMs + 10_000;
-		const raw = await this._rpcCall(
-			"browser.navigate",
-			rpcParams,
-			transportTimeout,
-		);
-
-		const result = raw as Record<string, unknown>;
-		const success = !!result.success;
-
-		// Track this page as shared
-		this._pages.set(taskId, {
-			profileName,
-			isSharedContext: true,
-		});
-
-		if (success) {
-			sessionManager.updateSession(taskId, {
-				currentUrl: (result.url as string) ?? url,
-				currentTitle: (result.title as string) ?? "",
-				pluginName: this.name,
-			});
-			this._populateElementCache(taskId, result.elements);
-		}
-
-		const navResult: NavigateResult = {
-			success,
-			url: (result.url as string) ?? url,
-			title: (result.title as string) ?? "",
-			snapshot: (result.snapshot as string) ?? "",
-			elementCount: (result.elementCount as number) ?? 0,
-		};
-		if (result.botDetected) navResult.botDetected = true;
-		if (result.error !== undefined) navResult.error = result.error as string;
-		return navResult;
-	}
-
-	/**
-	 * Create a new shared BrowserContext on the bridge for a named profile.
-	 * Called by the first task to navigate with this profile name.
-	 * Returns the raw bridge response.
-	 */
-	private async _doCreateSharedContext(
-		taskId: string,
-		url: string,
-		timeoutMs: number,
-		profileName: string,
-		storageState?: unknown,
-	): Promise<unknown> {
-		const rpcParams: Record<string, unknown> = {
-			url,
-			taskId,
-			timeoutMs,
-			profileName,
-			profileMode: "named",
-		};
-		if (storageState !== undefined) {
-			rpcParams.storageState = storageState;
-		}
-
-		const transportTimeout = timeoutMs + 10_000;
-		return await this._rpcCall("browser.navigate", rpcParams, transportTimeout);
 	}
 
 	async snapshot(taskId: string): Promise<SnapshotResult> {
@@ -1454,41 +1237,14 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	async cleanup(taskId: string): Promise<void> {
 		const pageEntry = this._pages.get(taskId);
 		if (!pageEntry) {
-			// Already cleaned up, or no session ever created — safe no-op
 			this._elementCaches.delete(taskId);
 			return;
 		}
 
-		// ── Shared context: close page only, don't close BrowserContext ─
-		if (pageEntry?.isSharedContext && pageEntry.profileName) {
-			// Notify the bridge to close this page and decrement ref count
-			try {
-				await this._rpcCall("browser.closePage", {
-					taskId,
-					profileName: pageEntry.profileName,
-				});
-			} catch (err: unknown) {
-				console.error(
-					`[pi-browser] PythonPluginAdapter('${this.name}'): closePage failed for ` +
-						`task '${taskId}' profile '${pageEntry.profileName}':`,
-					err,
-				);
-			}
-
-			this._pages.delete(taskId);
-			this._elementCaches.delete(taskId);
-
-			// If the bridge process is still alive, the bridge handles ref count.
-			// If the bridge crashes, _sharedBridgeContexts is cleared on next restart.
-			return;
-		}
-
-		// ── Isolated context: auto-save storage state, close context ──
-		// ── Auto-save storage state if session is persistent ──────
+		// Auto-save storage state if session is persistent
 		const session = sessionManager.getSession(taskId);
 		if (session?.persistState) {
 			try {
-				// Retrieve state from the Python bridge before it closes
 				const raw = await this._rpcCall("browser.getStorageState", {
 					taskId,
 				});
@@ -1510,14 +1266,13 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			}
 		}
 
-		// Clean up local element cache
+		// Clean up local state and tell the bridge to close the context
 		this._elementCaches.delete(taskId);
 		this._pages.delete(taskId);
 
 		try {
 			await this._rpcCall("browser.cleanup", { taskId });
 		} catch (err: unknown) {
-			// Best-effort — session may already be gone
 			console.error(
 				`[pi-browser] PythonPluginAdapter('${this.name}'): cleanup failed for task '${taskId}':`,
 				err,
