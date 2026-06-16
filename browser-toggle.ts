@@ -48,6 +48,8 @@ const BROWSER_TOOL_NAMES = new Set([
 	"browser-back",
 	"browser-press",
 	"browser-console",
+	"browser-inspect",
+	"web-guide",
 ]);
 
 /** Names of learn tools (web-learn) that require /web learn to be active. */

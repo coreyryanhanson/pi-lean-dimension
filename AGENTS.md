@@ -184,8 +184,6 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
   - When snapshot is truncated but not cached, a fallback hint is shown instead
   - All I/O is try-catched — graceful degradation to inline-only on failure
   - Cleaned up on session removal and shutdown
-- **`browser_finetuning.md`** — occlusion/dialog/timing hardening strategy. Read before touching ChromiumPlugin click or snapshot logic
-- **`plan_v2.md`** — full plugin-refactor architecture doc. Read before adding a new plugin type or changing the registry
 - **`browser-inspect`** (`core/shared/dom-extractor.ts`): element + text extraction tool. Uses an inline `EXTRACTOR_SCRIPT` evaluated via `page.evaluate()` (bypasses CSP). Requires `getElementCache()` on the plugin. Staleness detection via `lastInteractionAt` vs `cachePopulatedAt`. Python parity is in-scope — bridge must include `elements` dict in responses for adapter-level cache to work.
   - **Text output truncation**: when `text=true` without an explicit `maxChars`, the output is truncated at ~2500 characters by default. Pass `maxChars=0` for full content. Truncated output appends `"\n… X more chars (use maxChars=0 for full content)"` so the agent knows how to retrieve the complete text.
   - **Keyword filtering**: the optional `query` parameter filters extracted content to only include elements whose text matches the given case-insensitive substring. Applied before correlation, so only matching elements get @e ref annotations. When no content matches, a notice is appended to the output. Also checks link `href` and image `src` fields.

@@ -7,7 +7,7 @@
  *
  * Plugins return **raw results**.  The router is responsible for
  * cross-cutting transformations (truncation, count fields, botDetected
- * warning injection, etc.) — see §3 of plan_v2.md.
+ * warning injection, etc.).
  */
 
 import type { AriaCachedNode } from "./shared/accessibility-tree.js";

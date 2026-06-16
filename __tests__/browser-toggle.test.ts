@@ -55,6 +55,8 @@ const ALL_BROWSER_TOOLS = [
 	{ name: "browser-back", description: "back" },
 	{ name: "browser-press", description: "press" },
 	{ name: "browser-console", description: "console" },
+	{ name: "browser-inspect", description: "inspect" },
+	{ name: "web-guide", description: "guide" },
 ];
 
 const SOME_BROWSER_TOOLS = [
@@ -141,7 +143,7 @@ describe("getRegisteredBrowserTools", () => {
 		);
 	});
 
-	it("returns all 11 browser tools when fully loaded", () => {
+	it("returns all 13 browser tools when fully loaded", () => {
 		const pi = mockPi({ tools: ALL_BROWSER_TOOLS });
 		expect(getRegisteredBrowserTools(pi)).toEqual(
 			ALL_BROWSER_TOOLS.map((t) => t.name),

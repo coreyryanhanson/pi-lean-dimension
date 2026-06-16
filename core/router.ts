@@ -5,9 +5,6 @@
  * backends. All dispatch now goes through the PluginRegistry, which resolves
  * the correct plugin based on the `strategy` parameter.
  *
- * In Phase A, only "auto" and "chromium" strategies are accepted.
- * The stealth backend is offline until Phase C.
- *
  * Cross-cutting concerns handled here (not in plugins):
  * - Snapshot truncation (compactSnapshot)
  * - URL safety validation
