@@ -6,7 +6,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import * as router from "../core/router.js";
-import { taskId } from "./utils.js";
+import { taskId } from "../core/shared/task-id.js";
 
 export const browserInspectTool = defineTool({
 	name: "browser-inspect",

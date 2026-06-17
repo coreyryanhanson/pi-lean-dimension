@@ -38,8 +38,8 @@ pi-browser/
 │   ├── router.ts             # Dispatch, session lifecycle, truncation, cookie/profile dispatch
 │   ├── guides.ts             # Guide types, builtin guides, file loader, presence resolution
 │   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
-│   └── shared/               # accessibility-tree, bot-detection, dom-extractor, session-manager,
-│                              # settings-reader, snapshot-cache, storage-state, url-safety
+│   └── shared/               # paths, task-id, accessibility-tree, bot-detection, dom-extractor,
+│                              # session-manager, settings-reader, snapshot-cache, storage-state, url-safety
 ├── guides/                   # User-authored guide files (gitignored)
 ├── tools/                    # Tool definitions — one file per tool (12 files) + index.ts + utils.ts
 ├── scripts/                  # dialog-gate.ts, experiment reports
@@ -161,11 +161,11 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
 
 - **Console capture only on Chromium** — Python adapter's `BridgeBase` has capture but `chromium-py` bridge doesn't call it yet
 - **AbortSignal not supported on Python bridge** — `supportsAbortSignal: false`, router skips signal wiring
-- **Sessions are per taskId** — mapped to `browser-NNN` keys via `_sessionKeys`/`_sessionCounter` in `tools/utils.ts`. Created on first navigate, cleaned up on `session_shutdown`
+- **Sessions are per taskId** — mapped to `browser-NNN` keys via `_sessionKeys`/`_sessionCounter` in `core/shared/task-id.ts`. Created on first navigate, cleaned up on `session_shutdown`
 - **Role-based locators only**: never XPath/CSS — always `getByRole()` via `buildLocator()` with positional `.nth()` for duplicates. The `INTERACTIVE_ROLES` set defines which roles get @e refs
 - **All URLs go through `url-safety.ts`** — blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.169.254), dangerous schemes (file:, ftp:, data:, javascript:, vbscript:), and heuristically detects secrets in URLs
 - **Screenshot**: JPEG 80% quality, viewport constrained to 1024px wide, returns data URI
-- **Compact truncation everywhere**: snapshots truncated at ~2500 chars (with `\nfingerprint:XXXXX`), fetch content at ~4000 chars with temp file spill to `/tmp/pi-browser-fetch-*`
+- **Compact truncation everywhere**: snapshots truncated at ~2500 chars (with `\nfingerprint:XXXXX`), fetch content at ~4000 chars with temp file spill to `/tmp/pi-browser/fetch-*.md`
 - **Snapshot Disk Cache** (`core/shared/snapshot-cache.ts`): when truncated, full tree written to `/tmp/pi-browser/snapshot-*.txt`. Last 2 files per task. Bot-detected snapshots are never cached. I/O failures degrade gracefully to inline-only.
 - **`browser-inspect`** (`core/shared/dom-extractor.ts`): runs inline JS via `page.evaluate()`. Requires `getElementCache()` on the plugin. Text output truncated at ~2500 chars by default; pass `maxChars=0` for full. Keyword filtering via `query` parameter (case-insensitive substring on text, href, src).
 - **`parentRef` on `AriaCachedNode`**: enables `subtree=...` queries in `browser-inspect`. Set by depth-based parent stack in `parseSnapshot()`'s second pass. Dialogs become parent of interior elements.

@@ -12,8 +12,8 @@
  * - Auto-recovery from crashed sessions (via lastNav)
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
+import { BROWSER_TEMP_DIR, ensureBrowserTempDir } from "./shared/paths.js";
 import { pluginRegistry } from "./plugin-registry.js";
 import { sessionManager } from "./shared/session-manager.js";
 import type { BrowserSession } from "./shared/session-manager.js";
@@ -793,10 +793,9 @@ export async function screenshotToTemp(
 		if (!base64Data) return null;
 
 		const buffer = Buffer.from(base64Data, "base64");
-		const dir = `${tmpdir()}/pi-browser`;
-		mkdirSync(dir, { recursive: true });
+		ensureBrowserTempDir();
 		const filename = `screenshot-${tid}.jpg`;
-		const path = `${dir}/${filename}`;
+		const path = `${BROWSER_TEMP_DIR}/${filename}`;
 		writeFileSync(path, buffer);
 		return path;
 	} catch {

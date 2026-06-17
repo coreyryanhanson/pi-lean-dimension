@@ -6,6 +6,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { webFetch } from "../core/fetch-backend.js";
+import { taskId } from "../core/shared/task-id.js";
 
 export const webFetchTool = defineTool({
 	name: "web-fetch",
@@ -34,17 +35,23 @@ export const webFetchTool = defineTool({
 		),
 	}),
 
-	async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
+	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 		const { url, timeout = 30 } = params as {
 			url: string;
 			timeout?: number;
 		};
+		const tid = taskId(ctx);
 
-		const fetchOptions: { url: string; timeout: number; signal?: AbortSignal } =
-			{
-				url,
-				timeout,
-			};
+		const fetchOptions: {
+			url: string;
+			timeout: number;
+			signal?: AbortSignal;
+			taskId?: string;
+		} = {
+			url,
+			timeout,
+			taskId: tid,
+		};
 		if (signal) fetchOptions.signal = signal;
 
 		const result = await webFetch(fetchOptions);

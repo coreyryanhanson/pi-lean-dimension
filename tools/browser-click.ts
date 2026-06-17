@@ -6,7 +6,8 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import * as router from "../core/router.js";
-import { taskId, updateFooterStatus } from "./utils.js";
+import { taskId } from "../core/shared/task-id.js";
+import { updateFooterStatus } from "./utils.js";
 
 export const browserClickTool = defineTool({
 	name: "browser-click",

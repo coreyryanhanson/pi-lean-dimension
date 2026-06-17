@@ -10,7 +10,8 @@ import { resolveGuidePresence } from "../core/guides.js";
 import { getConversationDefaultProfile } from "../browser-toggle.js";
 import { sessionManager } from "../core/shared/session-manager.js";
 import { removeSnapshotFiles } from "../core/shared/snapshot-cache.js";
-import { taskId, updateFooterStatus, profileLine } from "./utils.js";
+import { taskId } from "../core/shared/task-id.js";
+import { updateFooterStatus, profileLine } from "./utils.js";
 
 export const browserNavigateTool = defineTool({
 	name: "browser-navigate",

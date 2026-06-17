@@ -14,9 +14,13 @@
  *
  */
 
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { writeFileSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
+import {
+	BROWSER_TEMP_DIR,
+	safeTaskId,
+	ensureBrowserTempDir,
+} from "./shared/paths.js";
 import TurndownService from "turndown";
 import { parse as parseHtml } from "node-html-parser";
 import { validateUrl } from "./shared/url-safety.js";
@@ -194,6 +198,8 @@ export interface WebFetchOptions {
 	url: string;
 	timeout?: number; // seconds, default 30, max 120
 	signal?: AbortSignal;
+	/** Conversation-scoped taskId; defaults to "web-fetch-default" when not provided. */
+	taskId?: string;
 }
 
 export interface WebFetchResult {
@@ -220,9 +226,6 @@ const COMPACT_FETCH_LIMIT = 4000;
 /** Only spill fetch content to a temp file when it exceeds this threshold. */
 const FETCH_SPILL_THRESHOLD = 5000;
 
-/** Directory for fetch temp files under /tmp. */
-const FETCH_TEMP_DIR = `${tmpdir()}/pi-browser`;
-
 /** Tracks active fetch temp files per task so stale ones can be cleaned up. */
 const activeFetchFiles = new Map<string, string[]>();
 
@@ -235,15 +238,11 @@ function formatBytes(bytes: number): string {
 }
 
 function writeFetchTempFile(content: string, taskId: string): string {
-	try {
-		mkdirSync(FETCH_TEMP_DIR, { recursive: true });
-	} catch {
-		/* best-effort */
-	}
+	ensureBrowserTempDir();
 
 	const hash = createHash("sha256").update(content).digest("hex").slice(0, 8);
-	const safeTaskId = taskId.replace(/[^a-zA-Z0-9-]/g, "_");
-	const filePath = `${FETCH_TEMP_DIR}/fetch-${safeTaskId}-${hash}.md`;
+	const safe = safeTaskId(taskId);
+	const filePath = `${BROWSER_TEMP_DIR}/fetch-${safe}-${hash}.md`;
 
 	writeFileSync(filePath, content, "utf-8");
 	return filePath;
@@ -314,7 +313,7 @@ export function cleanupFetchTempFiles(taskId?: string): void {
 		}
 		activeFetchFiles.clear();
 		try {
-			rmSync(FETCH_TEMP_DIR, { recursive: true, force: true });
+			rmSync(BROWSER_TEMP_DIR, { recursive: true, force: true });
 		} catch {
 			/* best-effort */
 		}
@@ -428,8 +427,8 @@ export async function webFetch(
 	const markdown = htmlToMarkdown(result.root);
 
 	// Step 5: Cap content
-	const taskId = "web-fetch-default"; // No session concept — single shared task key
-	const { inline, filePath, totalChars } = capFetchContent(markdown, taskId);
+	const tid = options.taskId ?? "web-fetch-default";
+	const { inline, filePath, totalChars } = capFetchContent(markdown, tid);
 
 	// Assemble result
 	const lines: string[] = [];

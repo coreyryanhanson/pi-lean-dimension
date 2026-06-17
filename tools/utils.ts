@@ -46,37 +46,6 @@ export function setLastCtx(ctx: typeof _lastCtx): void {
 	_lastCtx = ctx;
 }
 
-// ─── Task ID resolution ─────────────────────────────────────────
-
-const _sessionKeys = new Map<string, string>();
-let _sessionCounter = 0;
-
-/**
- * Get a stable taskId for the current tool call context.
- *
- * Maps pi session IDs to monotonic "browser-N" keys so that all
- * tool calls within the same pi conversation share the same browser
- * session.
- */
-export function taskId(ctx: {
-	toolCallId?: string;
-	sessionManager?: { getSessionId?: () => string };
-}): string {
-	const piSessionId = ctx?.sessionManager?.getSessionId?.();
-	if (piSessionId) {
-		if (!_sessionKeys.has(piSessionId)) {
-			_sessionKeys.set(piSessionId, `browser-${++_sessionCounter}`);
-		}
-		return _sessionKeys.get(piSessionId)!;
-	}
-	return "browser-default";
-}
-
-/** @internal — for cleanup in index.ts's session_shutdown handler */
-export function deleteSessionKey(piSessionId: string): void {
-	_sessionKeys.delete(piSessionId);
-}
-
 // ─── Profile line formatting ────────────────────────────────────
 
 /**
