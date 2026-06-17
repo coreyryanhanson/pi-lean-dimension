@@ -920,28 +920,23 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	}
 
 	async snapshot(taskId: string): Promise<SnapshotResult> {
-		try {
-			const raw = await this._rpcCall("browser.snapshot", { taskId });
-			const result = raw as Record<string, unknown>;
-
-			// Populate local element cache from bridge response
-			this._populateElementCache(taskId, result.elements);
-
-			const snapResult: SnapshotResult = {
-				success: !!result.success,
-				snapshot: (result.snapshot as string) ?? "",
-				elementCount: (result.elementCount as number) ?? 0,
-			};
-			if (result.error !== undefined) snapResult.error = result.error as string;
-			return snapResult;
-		} catch (err: unknown) {
-			return {
-				success: false,
-				snapshot: "",
-				elementCount: 0,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._rpcCallTyped(
+			"browser.snapshot",
+			{ taskId },
+			(raw) => {
+				// Populate local element cache from bridge response
+				this._populateElementCache(taskId, raw.elements);
+				return {
+					success: !!raw.success,
+					snapshot: (raw.snapshot as string) ?? "",
+					elementCount: (raw.elementCount as number) ?? 0,
+					...(raw.error !== undefined
+						? { error: raw.error as string }
+						: {}),
+				};
+			},
+			(error) => ({ success: false, snapshot: "", elementCount: 0, error }),
+		);
 	}
 
 	// ═════════════════════════════════════════════════════════════════
@@ -949,15 +944,12 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	// ═════════════════════════════════════════════════════════════════
 
 	async click(taskId: string, ref: string): Promise<InteractionResult> {
-		try {
-			const raw = await this._rpcCall("browser.click", { taskId, ref });
-			return this._toInteractionResult(raw);
-		} catch (err: unknown) {
-			return {
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._rpcCallTyped(
+			"browser.click",
+			{ taskId, ref },
+			(raw) => this._toInteractionResult(raw),
+			(error) => ({ success: false, error }),
+		);
 	}
 
 	async type(
@@ -965,54 +957,42 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		ref: string,
 		text: string,
 	): Promise<InteractionResult> {
-		try {
-			const raw = await this._rpcCall("browser.type", { taskId, ref, text });
-			return this._toInteractionResult(raw);
-		} catch (err: unknown) {
-			return {
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._rpcCallTyped(
+			"browser.type",
+			{ taskId, ref, text },
+			(raw) => this._toInteractionResult(raw),
+			(error) => ({ success: false, error }),
+		);
 	}
 
 	async scroll(
 		taskId: string,
 		direction: "up" | "down",
 	): Promise<InteractionResult> {
-		try {
-			const raw = await this._rpcCall("browser.scroll", { taskId, direction });
-			return this._toInteractionResult(raw);
-		} catch (err: unknown) {
-			return {
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._rpcCallTyped(
+			"browser.scroll",
+			{ taskId, direction },
+			(raw) => this._toInteractionResult(raw),
+			(error) => ({ success: false, error }),
+		);
 	}
 
 	async goBack(taskId: string): Promise<InteractionResult> {
-		try {
-			const raw = await this._rpcCall("browser.goBack", { taskId });
-			return this._toInteractionResult(raw);
-		} catch (err: unknown) {
-			return {
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._rpcCallTyped(
+			"browser.goBack",
+			{ taskId },
+			(raw) => this._toInteractionResult(raw),
+			(error) => ({ success: false, error }),
+		);
 	}
 
 	async press(taskId: string, key: string): Promise<InteractionResult> {
-		try {
-			const raw = await this._rpcCall("browser.press", { taskId, key });
-			return this._toInteractionResult(raw);
-		} catch (err: unknown) {
-			return {
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._rpcCallTyped(
+			"browser.press",
+			{ taskId, key },
+			(raw) => this._toInteractionResult(raw),
+			(error) => ({ success: false, error }),
+		);
 	}
 
 	// ═════════════════════════════════════════════════════════════════
@@ -1023,32 +1003,23 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		taskId: string,
 		options?: { fullPage?: boolean },
 	): Promise<ScreenshotResult> {
-		try {
-			// If capabilities don't support fullPage, never pass it
-			const fullPage =
-				this.capabilities.supportsFullPageScreenshot &&
-				options?.fullPage === true;
+		// If capabilities don't support fullPage, never pass it
+		const fullPage =
+			this.capabilities.supportsFullPageScreenshot &&
+			options?.fullPage === true;
 
-			const raw = await this._rpcCall("browser.screenshot", {
-				taskId,
-				fullPage,
-			});
-			const result = raw as Record<string, unknown>;
-
-			const screenshotResult: ScreenshotResult = {
-				success: !!result.success,
-				dataUri: (result.dataUri as string) ?? "",
-			};
-			if (result.error !== undefined)
-				screenshotResult.error = result.error as string;
-			return screenshotResult;
-		} catch (err: unknown) {
-			return {
-				success: false,
-				dataUri: "",
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._rpcCallTyped(
+			"browser.screenshot",
+			{ taskId, fullPage },
+			(raw) => ({
+				success: !!raw.success,
+				dataUri: (raw.dataUri as string) ?? "",
+				...(raw.error !== undefined
+					? { error: raw.error as string }
+					: {}),
+			}),
+			(error) => ({ success: false, dataUri: "", error }),
+		);
 	}
 
 	// ═════════════════════════════════════════════════════════════════
@@ -1056,24 +1027,18 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	// ═════════════════════════════════════════════════════════════════
 
 	async getConsoleMessages(taskId: string): Promise<ConsoleMessagesResult> {
-		try {
-			const raw = await this._rpcCall("browser.getConsoleMessages", { taskId });
-			const result = raw as Record<string, unknown>;
-
-			const consoleResult: ConsoleMessagesResult = {
-				success: !!result.success,
-				messages: (result.messages as ConsoleMessagesResult["messages"]) ?? [],
-			};
-			if (result.error !== undefined)
-				consoleResult.error = result.error as string;
-			return consoleResult;
-		} catch (err: unknown) {
-			return {
-				success: false,
-				messages: [],
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._rpcCallTyped(
+			"browser.getConsoleMessages",
+			{ taskId },
+			(raw) => ({
+				success: !!raw.success,
+				messages: (raw.messages as ConsoleMessagesResult["messages"]) ?? [],
+				...(raw.error !== undefined
+					? { error: raw.error as string }
+					: {}),
+			}),
+			(error) => ({ success: false, messages: [], error }),
+		);
 	}
 
 	async clearConsole(taskId: string): Promise<void> {
@@ -1089,25 +1054,18 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	}
 
 	async evaluate(taskId: string, expression: string): Promise<EvaluateResult> {
-		try {
-			const raw = await this._rpcCall("browser.evaluate", {
-				taskId,
-				expression,
-			});
-			const result = raw as Record<string, unknown>;
-
-			const evalResult: EvaluateResult = {
-				success: !!result.success,
-				result: result.result,
-			};
-			if (result.error !== undefined) evalResult.error = result.error as string;
-			return evalResult;
-		} catch (err: unknown) {
-			return {
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._rpcCallTyped(
+			"browser.evaluate",
+			{ taskId, expression },
+			(raw) => ({
+				success: !!raw.success,
+				result: raw.result,
+				...(raw.error !== undefined
+					? { error: raw.error as string }
+					: {}),
+			}),
+			(error) => ({ success: false, error, result: undefined }),
+		);
 	}
 
 	// ═════════════════════════════════════════════════════════════════
@@ -1115,97 +1073,70 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	// ═════════════════════════════════════════════════════════════════
 
 	async getCookies(taskId: string, urls?: string[]): Promise<CookieResult> {
-		try {
-			const raw = await this._rpcCall("browser.getCookies", {
-				taskId,
-				...(urls ? { urls } : {}),
-			});
-			const result = raw as Record<string, unknown>;
-			return {
-				success: !!result.success,
-				cookies: (result.cookies as Cookie[]) ?? [],
-				...(result.error !== undefined
-					? { error: result.error as string }
+		return this._rpcCallTyped(
+			"browser.getCookies",
+			{ taskId, ...(urls ? { urls } : {}) },
+			(raw) => ({
+				success: !!raw.success,
+				cookies: (raw.cookies as Cookie[]) ?? [],
+				...(raw.error !== undefined
+					? { error: raw.error as string }
 					: {}),
-			};
-		} catch (err: unknown) {
-			return {
-				success: false,
-				cookies: [],
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+			}),
+			(error) => ({ success: false, cookies: [], error }),
+		);
 	}
 
 	async addCookies(taskId: string, cookies: Cookie[]): Promise<ResultBase> {
-		try {
-			const raw = await this._rpcCall("browser.addCookies", {
-				taskId,
-				cookies,
-			});
-			const result = raw as Record<string, unknown>;
-			return {
-				success: !!result.success,
-				...(result.error !== undefined
-					? { error: result.error as string }
+		return this._rpcCallTyped(
+			"browser.addCookies",
+			{ taskId, cookies },
+			(raw) => ({
+				success: !!raw.success,
+				...(raw.error !== undefined
+					? { error: raw.error as string }
 					: {}),
-			};
-		} catch (err: unknown) {
-			return {
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+			}),
+			(error) => ({ success: false, error }),
+		);
 	}
 
 	async clearCookies(
 		taskId: string,
 		options?: ClearCookiesOptions,
 	): Promise<ResultBase> {
-		try {
-			const raw = await this._rpcCall("browser.clearCookies", {
+		return this._rpcCallTyped(
+			"browser.clearCookies",
+			{
 				taskId,
 				...(options?.name ? { name: options.name } : {}),
 				...(options?.domain ? { domain: options.domain } : {}),
 				...(options?.path ? { path: options.path } : {}),
-			});
-			const result = raw as Record<string, unknown>;
-			return {
-				success: !!result.success,
-				...(result.error !== undefined
-					? { error: result.error as string }
+			},
+			(raw) => ({
+				success: !!raw.success,
+				...(raw.error !== undefined
+					? { error: raw.error as string }
 					: {}),
-			};
-		} catch (err: unknown) {
-			return {
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+			}),
+			(error) => ({ success: false, error }),
+		);
 	}
 
 	async getStorageState(taskId: string): Promise<StorageStateResult> {
-		try {
-			const raw = await this._rpcCall("browser.getStorageState", {
-				taskId,
-			});
-			const result = raw as Record<string, unknown>;
-			return {
-				success: !!result.success,
-				cookies: (result.cookies as StorageStateResult["cookies"]) ?? [],
-				origins: (result.origins as StorageStateResult["origins"]) ?? [],
-				...(result.error !== undefined
-					? { error: result.error as string }
+		return this._rpcCallTyped(
+			"browser.getStorageState",
+			{ taskId },
+			(raw) => ({
+				success: !!raw.success,
+				cookies: (raw.cookies as StorageStateResult["cookies"]) ?? [],
+				origins: (raw.origins as StorageStateResult["origins"]) ?? [],
+				...(raw.error !== undefined
+					? { error: raw.error as string }
 					: {}),
-			};
-		} catch (err: unknown) {
-			return {
-				success: false,
-				cookies: [],
-				origins: [],
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+			}),
+			(error) => ({ success: false, cookies: [], origins: [], error }),
+		);
 	}
 
 	// ═════════════════════════════════════════════════════════════════
@@ -1312,6 +1243,36 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	}
 
 	// ═════════════════════════════════════════════════════════════════
+
+	/**
+	 * Execute an RPC method with consistent error handling.
+	 *
+	 * Calls `_rpcCall(method, params)`, then passes the raw response to
+	 * `onSuccess` for type-specific processing.  On failure, calls `onError`
+	 * with the formatted error message.
+	 *
+	 * This eliminates the duplicated try/catch + `err instanceof Error`
+	 * pattern that was repeated in every standard BrowserPlugin method.
+	 *
+	 * @param method  JSON-RPC method name (e.g. "browser.click").
+	 * @param params  Parameters object.
+	 * @param onSuccess  Transforms the raw RPC response into the result type.
+	 * @param onError  Returns a failure result for the given error message.
+	 * @returns The transformed result on success, or the error result on failure.
+	 */
+	private async _rpcCallTyped<T extends { success: boolean }>(
+		method: string,
+		params: Record<string, unknown>,
+		onSuccess: (raw: Record<string, unknown>) => T,
+		onError: (error: string) => T,
+	): Promise<T> {
+		try {
+			const raw = await this._rpcCall(method, params);
+			return onSuccess(raw as Record<string, unknown>);
+		} catch (err: unknown) {
+			return onError(err instanceof Error ? err.message : String(err));
+		}
+	}
 
 	/**
 	 * Check whether the configured Python interpreter exists in PATH.
