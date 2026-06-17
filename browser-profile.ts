@@ -136,7 +136,7 @@ export async function handleProfileSubcommand(
 			ctx.ui.notify(
 				"Usage: /web profile create <name>\n" +
 					"  Profile names must be alphanumeric, hyphens, and underscores only.\n" +
-					"  Reserved names: none, session, create.",
+					"  Reserved names: none, session, create, list, clear, clear-all, prune.",
 				"warning",
 			);
 			return;
@@ -155,8 +155,33 @@ export async function handleProfileSubcommand(
 			);
 		}
 
+		// --- prune [--confirm] ---
+	} else if (sub === "prune" || sub === "prune --confirm") {
+		const result = pruneStaleSessionProfiles();
+		if (result.pruned.length === 0) {
+			ctx.ui.notify("No stale session profiles to prune.", "info");
+			return;
+		}
+		if (sub === "prune") {
+			ctx.ui.notify(
+				`Found ${result.pruned.length} stale session profile(s): ${result.pruned.join(", ")}\n` +
+					`  Run /web profile prune --confirm to delete.`,
+				"warning",
+			);
+		} else {
+			ctx.ui.notify(
+				`Pruned ${result.pruned.length} stale session profile(s).`,
+				"info",
+			);
+		}
+
 		// --- switch to existing named profile ---
-	} else if (!sub.includes(" ") && sub !== "clear" && sub !== "clear-all") {
+	} else if (
+		!sub.includes(" ") &&
+		sub !== "clear" &&
+		sub !== "clear-all" &&
+		sub !== "prune"
+	) {
 		// Single word that isn't a known keyword — try as a named profile switch
 		try {
 			const targetDir = profileDir(sub);
@@ -222,26 +247,6 @@ export async function handleProfileSubcommand(
 				cleared++;
 			}
 			ctx.ui.notify(`Cleared ${cleared} profile(s).`, "info");
-		}
-
-		// --- prune [--confirm] ---
-	} else if (sub === "prune" || sub === "prune --confirm") {
-		const result = pruneStaleSessionProfiles();
-		if (result.pruned.length === 0) {
-			ctx.ui.notify("No stale session profiles to prune.", "info");
-			return;
-		}
-		if (sub === "prune") {
-			ctx.ui.notify(
-				`Found ${result.pruned.length} stale session profile(s): ${result.pruned.join(", ")}\n` +
-					`  Run /web profile prune --confirm to delete.`,
-				"warning",
-			);
-		} else {
-			ctx.ui.notify(
-				`Pruned ${result.pruned.length} stale session profile(s).`,
-				"info",
-			);
 		}
 
 		// --- unknown ---

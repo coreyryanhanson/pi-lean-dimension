@@ -38,7 +38,11 @@ const PROFILE_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const RESERVED_PROFILE_NAMES = new Set([
 	"none",
 	"session", // profile modes
-	"create", // subcommand
+	"create",
+	"list",
+	"clear",
+	"clear-all",
+	"prune", // subcommands
 ]);
 
 /** Prefix for auto-generated session-scoped profiles. */
@@ -95,7 +99,7 @@ export interface StorageStateFile {
  * Rules:
  * - Must be 1-64 characters long
  * - Only alphanumeric, hyphens, and underscores allowed
- * - Must not be a reserved keyword ("none", "session", "create")
+ * - Must not be a reserved keyword ("none", "session", "create", "list", "clear", "clear-all", "prune")
  * - Session-scoped names (`_session-*`) are allowed with embedded ID validation
  *
  * @throws {Error} If the name is invalid.
