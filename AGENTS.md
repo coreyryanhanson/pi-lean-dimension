@@ -12,8 +12,6 @@ A pi extension that registers **12 tools + 1 command** for web browsing. Archite
 npm test              # vitest run — 687 tests across 19 files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npm run test:watch    # vitest in watch mode
-npx tsx scripts/dialog-gate.ts        # side-by-side backend comparison
-npx tsx scripts/dialog-gate.ts --preset basic-close --repeat 20  # with preset
 ```
 
 There is no build step (`noEmit: true` in tsconfig). The extension is loaded directly by pi from the source TypeScript files. No linter or formatter is configured.
@@ -42,7 +40,6 @@ pi-browser/
 │                              # session-manager, settings-reader, snapshot-cache, storage-state, url-safety
 ├── guides/                   # User-authored guide files (gitignored)
 ├── tools/                    # Tool definitions — one file per tool (12 files) + index.ts + utils.ts
-├── scripts/                  # dialog-gate.ts, experiment reports
 └── __tests__/                # 19 test files + helpers/
 ```
 
