@@ -36,7 +36,6 @@ import type {
 	SnapshotResult,
 	InteractionResult,
 	ScreenshotResult,
-	GetImagesResult,
 	ConsoleMessagesResult,
 	EvaluateResult,
 	Cookie,
@@ -1047,27 +1046,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			return {
 				success: false,
 				dataUri: "",
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
-	}
-
-	async getImages(taskId: string): Promise<GetImagesResult> {
-		try {
-			const raw = await this._rpcCall("browser.getImages", { taskId });
-			const result = raw as Record<string, unknown>;
-
-			const imagesResult: GetImagesResult = {
-				success: !!result.success,
-				images: (result.images as GetImagesResult["images"]) ?? [],
-			};
-			if (result.error !== undefined)
-				imagesResult.error = result.error as string;
-			return imagesResult;
-		} catch (err: unknown) {
-			return {
-				success: false,
-				images: [],
 				error: err instanceof Error ? err.message : String(err),
 			};
 		}

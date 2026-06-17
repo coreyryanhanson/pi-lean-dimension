@@ -31,7 +31,6 @@ import {
 	browserClickTool,
 	browserTypeTool,
 	browserScrollTool,
-	browserGetImagesTool,
 	browserBackTool,
 	browserPressTool,
 	browserConsoleTool,
@@ -149,7 +148,6 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(browserClickTool);
 	pi.registerTool(browserTypeTool);
 	pi.registerTool(browserScrollTool);
-	pi.registerTool(browserGetImagesTool);
 	pi.registerTool(browserBackTool);
 	pi.registerTool(browserPressTool);
 	pi.registerTool(browserConsoleTool);

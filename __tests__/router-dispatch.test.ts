@@ -418,26 +418,6 @@ describe("Router dispatch", () => {
 		});
 	});
 
-	// ─── getImages() ───────────────────────────────────────────
-
-	describe("getImages()", () => {
-		it("dispatches to plugin.getImages", async () => {
-			await router.navigate("https://example.com");
-			mock.calls.delete("navigate");
-
-			const result = await router.getImages("default");
-			expect(result.success).toBe(true);
-			expect(result.images).toHaveLength(1);
-			expect(result.images[0]!.src).toBe("https://example.com/img.png");
-		});
-
-		it("returns error without a session", async () => {
-			const result = await router.getImages("default");
-			expect(result.success).toBe(false);
-			expect(result.images).toEqual([]);
-		});
-	});
-
 	// ─── Console & eval ────────────────────────────────────────
 
 	describe("getConsoleMessages()", () => {
@@ -638,13 +618,6 @@ describe("session persistence across sequential calls", () => {
 		await router.navigate("https://example.com", { taskId: "seq-test-7" });
 
 		const result = await router.press("seq-test-7", "Enter");
-		expect(result.success).toBe(true);
-	});
-
-	it("navigate then getImages succeeds", async () => {
-		await router.navigate("https://example.com", { taskId: "seq-test-8" });
-
-		const result = await router.getImages("seq-test-8");
 		expect(result.success).toBe(true);
 	});
 

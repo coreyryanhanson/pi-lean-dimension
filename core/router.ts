@@ -43,7 +43,6 @@ import type {
 	NavigateResult,
 	SnapshotResult,
 	InteractionResult,
-	GetImagesResult,
 	ConsoleMessagesResult,
 	EvaluateResult,
 	Cookie,
@@ -795,21 +794,6 @@ export async function screenshotToTemp(
 	} catch {
 		return null; // Non-critical — snapshot tree is still valid
 	}
-}
-
-export async function getImages(taskId?: string): Promise<GetImagesResult> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return { success: false, images: [], error: noSessionMsg };
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin)
-		return {
-			success: false,
-			images: [],
-			error: `Plugin '${sr.session.pluginName}' is not available`,
-		};
-
-	return plugin.getImages(tid);
 }
 
 // ─── Console & eval ─────────────────────────────────────────────────

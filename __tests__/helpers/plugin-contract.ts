@@ -531,31 +531,6 @@ export function runContractTests(
 			});
 		});
 
-		// ─── GetImages ───────────────────────────────────────
-
-		describe("getImages()", () => {
-			it("returns a GetImagesResult with required fields", async () => {
-				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
-
-				const result = await plugin.getImages(TASK_ID);
-
-				expect(result).toBeDefined();
-				expect(typeof result.success).toBe("boolean");
-
-				if (result.success) {
-					expect(Array.isArray(result.images)).toBe(true);
-					for (const img of result.images) {
-						expect(typeof img.src).toBe("string");
-						expect(typeof img.alt).toBe("string");
-						expect(typeof img.width).toBe("number");
-						expect(typeof img.height).toBe("number");
-					}
-				} else {
-					expect(result.error).toBeTruthy();
-				}
-			});
-		});
-
 		// ─── Console ─────────────────────────────────────────
 
 		describe("getConsoleMessages()", () => {
@@ -1037,23 +1012,6 @@ export function runContractTests(
 				// Should have reasonable base64 length (at least a few KB)
 				const base64 = result.dataUri.split(",")[1]!;
 				expect(base64.length).toBeGreaterThan(100);
-			});
-		});
-
-		// ─── GetImages ───────────────────────────────────────
-
-		describe("getImages() — real extraction", () => {
-			it("extracts images from the page", async () => {
-				await plugin.navigate(`${server.url}/images`, TASK_ID, navigateTimeout);
-
-				const result = await plugin.getImages(TASK_ID);
-
-				expect(result.success).toBe(true);
-				expect(result.images.length).toBeGreaterThanOrEqual(2);
-
-				const srcs = result.images.map((img) => img.src);
-				expect(srcs.some((s) => s.includes("logo.png"))).toBe(true);
-				expect(srcs.some((s) => s.includes("photo.jpg"))).toBe(true);
 			});
 		});
 

@@ -366,16 +366,6 @@ class BrowserBridge:
             f"{type(self).__name__} must implement do_screenshot()"
         )
 
-    def do_get_images(self, task_id: str) -> dict[str, Any]:
-        """Extract all img tags from the current page.
-
-        Must return a dict with keys:
-            success (bool), images (list) — each with src, alt, width, height
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement do_get_images()"
-        )
-
     def do_get_console_messages(self, task_id: str) -> dict[str, Any]:
         """Get captured console messages.
 
@@ -578,11 +568,6 @@ class BrowserBridge:
                 task_id = self._require_param(params, "taskId", str, cmd_id)
                 full_page = params.get("fullPage", False)
                 result = self.do_screenshot(task_id, full_page)
-                return make_success_response(cmd_id, result)
-
-            if method == "browser.getImages":
-                task_id = self._require_param(params, "taskId", str, cmd_id)
-                result = self.do_get_images(task_id)
                 return make_success_response(cmd_id, result)
 
             if method == "browser.getConsoleMessages":

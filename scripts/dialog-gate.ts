@@ -486,7 +486,6 @@ function parseCliArgs(): GateOptions {
  *   "goBack"                            — no args
  *   "press Enter"                       — key
  *   "screenshot"                        — no args
- *   "getImages"                         — no args
  *   "getConsoleMessages"                — no args
  *   "clearConsole"                      — no args
  *   "evaluate document.title"           — expression
@@ -508,8 +507,6 @@ function parseAction(raw: string): ParsedAction {
 		case "goBack":
 			return { command };
 		case "screenshot":
-			return { command };
-		case "getImages":
 			return { command };
 		case "getConsoleMessages":
 			return { command };
@@ -1141,13 +1138,6 @@ async function runAction(
 			case "screenshot": {
 				const result = await plugin.screenshot(taskId);
 				return record("screenshot", result.success, start, {
-					error: result.error,
-				});
-			}
-
-			case "getImages": {
-				const result = await plugin.getImages(taskId);
-				return record("getImages", result.success, start, {
 					error: result.error,
 				});
 			}

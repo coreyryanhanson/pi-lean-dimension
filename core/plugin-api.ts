@@ -102,19 +102,6 @@ export interface ScreenshotResult extends ResultBase {
 	dataUri: string;
 }
 
-/** Single image extracted from the page */
-export interface PageImage {
-	src: string;
-	alt: string;
-	width: number;
-	height: number;
-}
-
-/** Result from browser-get-images */
-export interface GetImagesResult extends ResultBase {
-	images: PageImage[];
-}
-
 /** Result from getConsoleMessages */
 export interface ConsoleMessagesResult extends ResultBase {
 	messages: Array<{ type: string; text: string }>;
@@ -263,8 +250,6 @@ export interface BrowserPlugin {
 		taskId: string,
 		options?: { fullPage?: boolean },
 	): Promise<ScreenshotResult>;
-
-	getImages(taskId: string): Promise<GetImagesResult>;
 
 	// ── Console & eval ────────────────────────────────────────
 

@@ -10,7 +10,6 @@ export { browserSnapshotTool } from "./browser-snapshot.js";
 export { browserClickTool } from "./browser-click.js";
 export { browserTypeTool } from "./browser-type.js";
 export { browserScrollTool } from "./browser-scroll.js";
-export { browserGetImagesTool } from "./browser-get-images.js";
 export { browserBackTool } from "./browser-back.js";
 export { browserPressTool } from "./browser-press.js";
 export { browserConsoleTool } from "./browser-console.js";

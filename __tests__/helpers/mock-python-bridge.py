@@ -155,15 +155,6 @@ def main() -> None:
                 },
             )
 
-        elif method == "browser.getImages":
-            write_response(
-                req_id,
-                result={
-                    "success": True,
-                    "images": [{"src": "https://example.com/img.png", "alt": "test", "width": 100, "height": 50}],
-                },
-            )
-
         elif method == "browser.getConsoleMessages":
             write_response(
                 req_id,

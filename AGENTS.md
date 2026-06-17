@@ -4,7 +4,7 @@
 
 ## What This Is
 
-A pi extension that registers **14 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
+A pi extension that registers **13 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
 
 ## Developer Commands
 
@@ -48,11 +48,11 @@ pi-browser/
 
 ### Plugin system
 
-All interactive backends implement `BrowserPlugin` (`core/plugin-api.ts`). 14 required operations:
+All interactive backends implement `BrowserPlugin` (`core/plugin-api.ts`). 13 required operations:
 
 ```
 navigate, snapshot, click, type, scroll, goBack, press,
-screenshot, getImages, getConsoleMessages, clearConsole,
+screenshot, getConsoleMessages, clearConsole,
 evaluate, getElementCache, cleanup  (+ lifecycle: init, cleanupAll)
 ```
 
@@ -92,7 +92,7 @@ All tool calls dispatch through the router. Key responsibilities:
 
 ### Registered tools (13 total)
 
-web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-get-images, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
+web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
 
 ### Registered commands (2 total)
 

@@ -14,7 +14,6 @@ import type {
 	SnapshotResult,
 	InteractionResult,
 	ScreenshotResult,
-	GetImagesResult,
 	ConsoleMessagesResult,
 	EvaluateResult,
 	CookieResult,
@@ -37,7 +36,6 @@ export class MockPlugin implements BrowserPlugin {
 	snapResult: Partial<SnapshotResult> = {};
 	interactResult: Partial<InteractionResult> = {};
 	screenshotResult: Partial<ScreenshotResult> = {};
-	imagesResult: Partial<GetImagesResult> = {};
 	consoleResult: Partial<ConsoleMessagesResult> = {};
 	evalResult: Partial<EvaluateResult> = {};
 	cookieResult: Partial<CookieResult> = {};
@@ -179,23 +177,6 @@ export class MockPlugin implements BrowserPlugin {
 			success: true,
 			dataUri: "data:image/jpeg;base64,mockdata",
 			...this.screenshotResult,
-		};
-	}
-
-	async getImages(taskId: string): Promise<GetImagesResult> {
-		this.record("getImages", [taskId]);
-		if (this.shouldThrow.has("getImages")) throw new Error("getImages failed");
-		return {
-			success: true,
-			images: [
-				{
-					src: "https://example.com/img.png",
-					alt: "test",
-					width: 100,
-					height: 50,
-				},
-			],
-			...this.imagesResult,
 		};
 	}
 

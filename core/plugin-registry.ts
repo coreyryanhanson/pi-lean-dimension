@@ -23,7 +23,6 @@ const REQUIRED_OPERATIONS: ReadonlyArray<keyof BrowserPlugin> = [
 	"goBack",
 	"press",
 	"screenshot",
-	"getImages",
 	"getConsoleMessages",
 	"clearConsole",
 	"evaluate",

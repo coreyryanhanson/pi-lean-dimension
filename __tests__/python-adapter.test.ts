@@ -394,20 +394,6 @@ describeIntegration("integration with mock Python bridge", () => {
 		expect(result.dataUri).toContain("data:image/jpeg;base64,");
 	});
 
-	it("gets images", async () => {
-		await adapter.navigate("https://example.com", "t9", 30_000);
-		const result = await adapter.getImages("t9");
-
-		expect(result.success).toBe(true);
-		expect(result.images).toHaveLength(1);
-		expect(result.images[0]).toMatchObject({
-			src: "https://example.com/img.png",
-			alt: "test",
-			width: 100,
-			height: 50,
-		});
-	});
-
 	it("gets console messages", async () => {
 		await adapter.navigate("https://example.com", "t10", 30_000);
 		const result = await adapter.getConsoleMessages("t10");

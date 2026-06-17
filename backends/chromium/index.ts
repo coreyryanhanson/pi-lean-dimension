@@ -38,7 +38,6 @@ import type {
 	SnapshotResult,
 	InteractionResult,
 	ScreenshotResult,
-	GetImagesResult,
 	ConsoleMessagesResult,
 	EvaluateResult,
 	ResultBase,
@@ -1087,38 +1086,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 			return {
 				success: false,
 				dataUri: "",
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
-	}
-
-	async getImages(taskId: string): Promise<GetImagesResult> {
-		const page = this.getPage(taskId);
-		if (!page) {
-			return {
-				success: false,
-				images: [],
-				error: "No active session",
-			};
-		}
-
-		try {
-			const images = await page.evaluate(() => {
-				return Array.from(document.querySelectorAll("img"))
-					.map((img) => ({
-						src: img.src,
-						alt: img.alt || "",
-						width: img.naturalWidth || img.width || 0,
-						height: img.naturalHeight || img.height || 0,
-					}))
-					.filter((img) => !img.src.startsWith("data:"));
-			});
-
-			return { success: true, images };
-		} catch (err: unknown) {
-			return {
-				success: false,
-				images: [],
 				error: err instanceof Error ? err.message : String(err),
 			};
 		}

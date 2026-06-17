@@ -39,7 +39,6 @@ const BROWSER_TOOL_NAMES = new Set([
 	"browser-click",
 	"browser-type",
 	"browser-scroll",
-	"browser-get-images",
 	"browser-back",
 	"browser-press",
 	"browser-console",

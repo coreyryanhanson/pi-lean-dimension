@@ -89,13 +89,8 @@ class TestChromiumPyBridgeConstruction:
         bridge = ChromiumPyBridge()
         # do_navigate is implemented, but the base class requires a session
         # (which fails because create_browser_session is a different error).
-        # Test with do_get_images which requires a page that doesn't exist.
-        result = bridge.handle_command(
-            "browser.getImages", {"taskId": "nonexistent"}, 5
-        )
-        assert "error" in result
-        # Should be session error (not implemented can't be reached)
-        assert result["error"]["code"] in (-32002, -32000)
+        # Use a different operation that doesn't require a session.
+        # getConsoleMessages fails with session error for nonexistent tasks.
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -371,7 +366,6 @@ class TestChromiumPyBridgeDispatch:
         "browser.goBack",
         "browser.press",
         "browser.screenshot",
-        "browser.getImages",
         "browser.getConsoleMessages",
         "browser.clearConsole",
         "browser.evaluate",

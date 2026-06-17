@@ -211,9 +211,6 @@ describe("runExtractor()", () => {
 			async screenshot() {
 				return { success: true, dataUri: "" };
 			},
-			async getImages() {
-				return { success: true, images: [] };
-			},
 			async getConsoleMessages() {
 				return { success: true, messages: [] };
 			},
@@ -293,9 +290,6 @@ describe("runExtractor()", () => {
 			async screenshot() {
 				return { success: true, dataUri: "" };
 			},
-			async getImages() {
-				return { success: true, images: [] };
-			},
 			async getConsoleMessages() {
 				return { success: true, messages: [] };
 			},
@@ -367,9 +361,6 @@ describe("runExtractor()", () => {
 			},
 			async screenshot() {
 				return { success: true, dataUri: "" };
-			},
-			async getImages() {
-				return { success: true, images: [] };
 			},
 			async getConsoleMessages() {
 				return { success: true, messages: [] };
@@ -445,9 +436,6 @@ describe("runExtractor()", () => {
 			},
 			async screenshot() {
 				return { success: true, dataUri: "" };
-			},
-			async getImages() {
-				return { success: true, images: [] };
 			},
 			async getConsoleMessages() {
 				return { success: true, messages: [] };
