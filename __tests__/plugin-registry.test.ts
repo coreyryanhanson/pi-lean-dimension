@@ -9,7 +9,7 @@ import { MockPlugin, makeConfig } from "./helpers/mock-plugin";
 // ─── validatePlugin ──────────────────────────────────────────────
 
 describe("validatePlugin", () => {
-	it("returns empty array for a plugin with all 13 operations", () => {
+	it("returns empty array for a plugin with all required operations", () => {
 		const plugin = new MockPlugin();
 		const missing = validatePlugin(plugin);
 		expect(missing).toEqual([]);

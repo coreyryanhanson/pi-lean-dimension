@@ -9,7 +9,7 @@
  *
  * Tests that DO require Python (run only when python3 is available):
  *   - Full JSON-RPC cycle via mock-python-bridge.py
- *   - All 13 BrowserPlugin operations
+ *   - All BrowserPlugin operations
  *   - Error handling (bridge errors, protocol violations, timeouts)
  *   - Process lifecycle (spawn, ping handshake, shutdown, crash recovery)
  *   - Stderr capture

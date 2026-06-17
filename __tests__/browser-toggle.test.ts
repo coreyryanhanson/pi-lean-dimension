@@ -141,7 +141,7 @@ describe("getRegisteredBrowserTools", () => {
 		);
 	});
 
-	it("returns all 13 browser tools when fully loaded", () => {
+	it("returns all browser tools when fully loaded", () => {
 		const pi = mockPi({ tools: ALL_BROWSER_TOOLS });
 		expect(getRegisteredBrowserTools(pi)).toEqual(
 			ALL_BROWSER_TOOLS.map((t) => t.name),

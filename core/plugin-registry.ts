@@ -2,7 +2,7 @@
  * Plugin Registry — typed registration, validation, and lookup for BrowserPlugins.
  *
  * The registry holds all registered plugins and provides:
- * - `register(name, plugin)` — with validation that all 13 operations exist
+ * - `register(name, plugin)` — with validation that all required operations exist
  * - `get(name)` → BrowserPlugin | undefined
  * - `getDefault()` → first enabled plugin from the configured `plugins` array
  * - `getOrdered()` → all enabled plugins in array order (with stealth levels)
@@ -13,7 +13,7 @@ import type { BrowserPlugin, PluginConfig } from "./plugin-api.js";
 
 // ─── Validation ───────────────────────────────────────────────────
 
-/** The 13 agent-facing operation method names (lifecycle hooks excluded) */
+/** The required operation method names (tool-mapped only; lifecycle, cookie, storage excluded) */
 const REQUIRED_OPERATIONS: ReadonlyArray<keyof BrowserPlugin> = [
 	"navigate",
 	"snapshot",
@@ -76,7 +76,7 @@ export class PluginRegistry {
 			);
 		}
 
-		// Validate all 13 operations
+		// Validate all required operations
 		const missing = validatePlugin(plugin);
 		if (missing.length > 0) {
 			throw new Error(

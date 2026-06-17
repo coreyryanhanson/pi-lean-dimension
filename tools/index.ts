@@ -1,5 +1,5 @@
 /**
- * Tool definitions barrel — exports all 13 tool definitions for registration.
+ * Tool definitions barrel — exports all 12 tool definitions for registration.
  *
  * Each tool is defined in its own file under tools/ for maintainability.
  * This barrel collects them for import by index.ts.

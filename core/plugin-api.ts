@@ -2,8 +2,9 @@
  * Plugin Architecture v2 — Core Interface & Unified Result Types
  *
  * This module defines the contract that every interactive browser backend
- * must satisfy.  The 13 agent-facing operations map 1:1 to tool calls;
- * lifecycle hooks (init, cleanupAll) are called by the framework.
+ * must satisfy.  The 12 required operations map to the registered tools
+ * (screenshot is required internally for auto-capture). Lifecycle hooks
+ * (init, cleanupAll) are called by the framework.
  *
  * Plugins return **raw results**.  The router is responsible for
  * cross-cutting transformations (truncation, count fields, botDetected
@@ -161,8 +162,9 @@ export interface StorageStateResult extends ResultBase {
 /**
  * The contract every interactive browser backend must implement.
  *
- * The 13 agent-facing operations map 1:1 to tool calls.
- * Lifecycle hooks are called by the framework, not the agent.
+ * The 12 required operations (plus getElementCache and cookie/storage
+ * methods) make up the full contract. Lifecycle hooks are called by
+ * the framework, not the agent.
  */
 export interface BrowserPlugin {
 	// ── Identity ───────────────────────────────────────────────
