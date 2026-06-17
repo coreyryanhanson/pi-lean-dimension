@@ -1051,7 +1051,7 @@ describe("Router cookie dispatch", () => {
 
 			// Session still exists with "mock" pluginName, but only "other" is registered
 			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/not available/i);
+			expect(result.error).toMatch(/no active session/i);
 		});
 	});
 
@@ -1099,7 +1099,7 @@ describe("Router cookie dispatch", () => {
 			]);
 
 			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/not available/i);
+			expect(result.error).toMatch(/no active session/i);
 		});
 	});
 
@@ -1158,7 +1158,7 @@ describe("Router cookie dispatch", () => {
 			const result = await router.clearCookies("default");
 
 			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/not available/i);
+			expect(result.error).toMatch(/no active session/i);
 		});
 	});
 
