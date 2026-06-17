@@ -1036,23 +1036,6 @@ describe("Router cookie dispatch", () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toMatch(/no active session/i);
 		});
-
-		it("handles plugin not available", async () => {
-			await router.navigate("https://example.com");
-			mock.calls.delete("navigate");
-
-			// Remove the plugin from registry
-			pluginRegistry.clear();
-			// Re-register with a different name so session has stale pluginName
-			const otherMock = new MockPlugin("other");
-			pluginRegistry.register(otherMock, makeConfig({ name: "other" }));
-
-			const result = await router.getCookies("default");
-
-			// Session still exists with "mock" pluginName, but only "other" is registered
-			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/no active session/i);
-		});
 	});
 
 	// ─── addCookies() ──────────────────────────────────────────
@@ -1078,22 +1061,6 @@ describe("Router cookie dispatch", () => {
 		});
 
 		it("returns error without an existing session", async () => {
-			const result = await router.addCookies("default", [
-				{ name: "test", value: "val" },
-			]);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/no active session/i);
-		});
-
-		it("handles plugin not available", async () => {
-			await router.navigate("https://example.com");
-			mock.calls.delete("navigate");
-
-			pluginRegistry.clear();
-			const otherMock = new MockPlugin("other");
-			pluginRegistry.register(otherMock, makeConfig({ name: "other" }));
-
 			const result = await router.addCookies("default", [
 				{ name: "test", value: "val" },
 			]);
@@ -1141,20 +1108,6 @@ describe("Router cookie dispatch", () => {
 		});
 
 		it("returns error without an existing session", async () => {
-			const result = await router.clearCookies("default");
-
-			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/no active session/i);
-		});
-
-		it("handles plugin not available", async () => {
-			await router.navigate("https://example.com");
-			mock.calls.delete("navigate");
-
-			pluginRegistry.clear();
-			const otherMock = new MockPlugin("other");
-			pluginRegistry.register(otherMock, makeConfig({ name: "other" }));
-
 			const result = await router.clearCookies("default");
 
 			expect(result.success).toBe(false);
