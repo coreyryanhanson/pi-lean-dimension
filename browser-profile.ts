@@ -106,7 +106,7 @@ export function formatProfileList(
 export async function handleProfileSubcommand(
 	sub: string,
 	ctx: ExtensionContext,
-	pi: ExtensionAPI,
+	_pi: ExtensionAPI,
 	setConversationDefaultProfile: (profile: string) => void,
 ): Promise<void> {
 	// --- list (default) ---

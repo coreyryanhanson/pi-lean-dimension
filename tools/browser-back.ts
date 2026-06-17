@@ -14,7 +14,7 @@ export const browserBackTool = defineTool({
 	description: "Navigate back in browser history.",
 	parameters: Type.Object({}),
 
-	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+	async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
 		return executeInteractionTool(
 			ctx,
 			"Go back",
