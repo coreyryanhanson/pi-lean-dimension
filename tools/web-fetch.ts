@@ -81,7 +81,7 @@ export const webFetchTool = defineTool({
 				? "⚠ This page appears to need JavaScript for full rendering."
 				: "",
 			result.botDetected
-				? "⚠ Bot detection triggered — may need stealth backend."
+				? "⚠ Bot detection triggered — the page may be blocking automation. Try browser-navigate with a stealth backend instead if one is configured."
 				: "",
 			"",
 			result.content,

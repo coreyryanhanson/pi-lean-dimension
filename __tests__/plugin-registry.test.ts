@@ -230,7 +230,7 @@ describe("PluginRegistry.getOrdered", () => {
 		expect(ordered.map((e) => e.plugin.name)).toEqual(["alpha", "gamma"]);
 	});
 
-	it("assigns correct stealth levels", () => {
+	it("assigns correct priority levels", () => {
 		const p1 = new MockPlugin("alpha");
 		const p2 = new MockPlugin("beta");
 		registry.register(p1, makeConfig({ name: "alpha" }));
@@ -297,7 +297,7 @@ describe("PluginRegistry.getHigherStealth", () => {
 		registry = new PluginRegistry();
 	});
 
-	it("returns plugins at higher stealth levels", () => {
+	it("returns plugins at higher priority levels", () => {
 		const p1 = new MockPlugin("chromium");
 		const p2 = new MockPlugin("stealth");
 		registry.register(p1, makeConfig({ name: "chromium" }));
@@ -306,13 +306,13 @@ describe("PluginRegistry.getHigherStealth", () => {
 		expect(higher.map((e) => e.plugin.name)).toEqual(["stealth"]);
 	});
 
-	it("returns empty array when no higher-level plugins exist", () => {
+	it("returns empty array when no higher-priority plugins exist", () => {
 		const p1 = new MockPlugin("chromium");
 		registry.register(p1, makeConfig({ name: "chromium" }));
 		expect(registry.getHigherStealth(0)).toEqual([]);
 	});
 
-	it("excludes disabled plugins from higher stealth", () => {
+	it("excludes disabled plugins from higher priority", () => {
 		const p1 = new MockPlugin("chromium");
 		const p2 = new MockPlugin("stealth");
 		registry.register(p1, makeConfig({ name: "chromium" }));
@@ -395,7 +395,7 @@ describe("PluginRegistry.clear", () => {
 // ─── PluginRegistry.getLevel ─────────────────────────────────────
 
 describe("PluginRegistry.getLevel", () => {
-	it("returns the stealth level of a registered plugin", () => {
+	it("returns the priority level of a registered plugin", () => {
 		const registry = new PluginRegistry();
 		const p1 = new MockPlugin("chromium");
 		const p2 = new MockPlugin("stealth");

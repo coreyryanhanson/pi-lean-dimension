@@ -2,8 +2,10 @@
  * Bot detection heuristics.
  *
  * Analyzes page content to determine if a site is blocking
- * automation tools (Cloudflare, CAPTCHA, etc.), triggering escalation
- * from Level 2 (Playwright Chromium) to Level 3 (stealth Firefox).
+ * automation tools (Cloudflare, CAPTCHA, etc.). When detected,
+ * the router flags the navigation as bot-blocked so the agent
+ * can decide how to proceed — try web-fetch, try a different URL,
+ * or switch to a stealth browser backend if one is configured.
  */
 
 export interface BotDetectionResult {

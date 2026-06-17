@@ -1,8 +1,7 @@
 /**
  * Plugin Router — registry-based dispatch for interactive browser operations.
  *
- * Replaces the old hardcoded if/else dispatch between chromium and stealth
- * backends. All dispatch now goes through the PluginRegistry, which resolves
+ * All dispatch goes through the PluginRegistry, which resolves
  * the correct plugin based on the `strategy` parameter.
  *
  * Cross-cutting concerns handled here (not in plugins):

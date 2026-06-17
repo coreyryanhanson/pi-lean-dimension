@@ -45,7 +45,7 @@ export interface Guide {
 export interface DomainEntry {
 	/** Guide name for lookup in GUIDE_CONTENT. */
 	guide?: string;
-	/** Suggested backend strategy (reserved for stealth). */
+	/** Suggested backend strategy hint for the LLM (e.g. "stealth" when a known site blocks automation). */
 	strategy?: string;
 }
 

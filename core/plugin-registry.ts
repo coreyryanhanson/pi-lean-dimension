@@ -5,7 +5,7 @@
  * - `register(name, plugin)` — with validation that all required operations exist
  * - `get(name)` → BrowserPlugin | undefined
  * - `getDefault()` → first enabled plugin from the configured `plugins` array
- * - `getOrdered()` → all enabled plugins in array order (with stealth levels)
+ * - `getOrdered()` → all enabled plugins in array order (lower index = higher priority)
  * - `available()` → list of registered plugin names
  */
 
@@ -48,7 +48,7 @@ export function validatePlugin(plugin: BrowserPlugin): string[] {
 /** Internal tracking for a registered plugin */
 interface RegistryEntry {
 	plugin: BrowserPlugin;
-	/** Position in the user's plugins config array (= stealth level) */
+	/** Position in the user's plugins config array (lower = higher priority, used for LLM escalation hints) */
 	level: number;
 	/** Whether this plugin is enabled */
 	enabled: boolean;
@@ -60,7 +60,7 @@ export class PluginRegistry {
 	/** Map of plugin name → registry entry */
 	private entries = new Map<string, RegistryEntry>();
 
-	/** Ordered list of plugin names from config (defines stealth levels) */
+	/** Ordered list of plugin names from config (defines escalation priority — lower index = recommended first) */
 	private orderedNames: string[] = [];
 
 	/**
@@ -123,8 +123,8 @@ export class PluginRegistry {
 	}
 
 	/**
-	 * Get all enabled plugins in config order (stealth level order).
-	 * Each entry includes the plugin and its stealth level.
+	 * Get all enabled plugins in config order (priority order).
+	 * Each entry includes the plugin and its priority level (lower = recommended first).
 	 */
 	getOrdered(): Array<{ plugin: BrowserPlugin; level: number }> {
 		const result: Array<{ plugin: BrowserPlugin; level: number }> = [];
@@ -155,7 +155,8 @@ export class PluginRegistry {
 	}
 
 	/**
-	 * Get the stealth level for a plugin.
+	 * Get the priority level for a plugin (lower = recommended first).
+	 * Used by the LLM to decide whether to escalate to a different backend.
 	 * Returns undefined if the plugin is not registered.
 	 */
 	getLevel(name: string): number | undefined {
@@ -163,8 +164,8 @@ export class PluginRegistry {
 	}
 
 	/**
-	 * Get plugins at higher stealth levels than the given level.
-	 * Used to suggest alternatives when bot detection fires.
+	 * Get plugins at higher priority levels (further in the backup chain) than the given level.
+	 * Used to suggest alternative backends when bot detection fires.
 	 */
 	getHigherStealth(currentLevel: number): Array<{
 		plugin: BrowserPlugin;

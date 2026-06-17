@@ -440,7 +440,9 @@ export async function webFetch(
 			: "",
 	);
 	if (botDetected)
-		lines.push("⚠ Bot detection triggered — may need stealth backend.");
+		lines.push(
+			"⚠ Bot detection triggered — the page may be blocking automation. Try browser-navigate with a stealth backend instead if one is configured.",
+		);
 	lines.push(statusCode ? `HTTP ${statusCode}` : "");
 	lines.push("");
 
