@@ -1239,44 +1239,6 @@ class ChromiumPyBridge(BrowserBridge):
                 "error": str(exc),
             }
 
-    def do_get_images(self, task_id: str) -> dict[str, Any]:
-        """Extract all ``<img>`` tags from the current page."""
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            return {
-                "success": False,
-                "images": [],
-                "error": str(exc),
-            }
-
-        try:
-            images: list[dict[str, Any]] = page.evaluate(
-                """() =>
-                    Array.from(document.querySelectorAll('img'))
-                        .map(img => ({
-                            src: img.src,
-                            alt: img.alt || '',
-                            width: img.naturalWidth || img.width || 0,
-                            height: img.naturalHeight || img.height || 0,
-                        }))
-                        .filter(img => !img.src.startsWith('data:'))
-                """
-            )
-            return {
-                "success": True,
-                "images": images,
-            }
-
-        except Exception as exc:
-            return {
-                "success": False,
-                "images": [],
-                "error": str(exc),
-            }
-
     # ── Console & eval ──────────────────────────────────────────────
 
     def do_get_console_messages(self, task_id: str) -> dict[str, Any]:
