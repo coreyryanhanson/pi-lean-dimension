@@ -27,6 +27,7 @@ import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 
 import { sessionManager } from "../core/shared/session-manager.js";
+import { saveStorageState } from "../core/shared/storage-state.js";
 
 import type {
 	BrowserPlugin,
@@ -38,6 +39,11 @@ import type {
 	GetImagesResult,
 	ConsoleMessagesResult,
 	EvaluateResult,
+	Cookie,
+	CookieResult,
+	ClearCookiesOptions,
+	StorageStateResult,
+	ResultBase,
 } from "../core/plugin-api.js";
 import type { AriaCachedNode } from "../core/shared/accessibility-tree.js";
 
@@ -228,6 +234,17 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	private _elementCaches = new Map<string, Map<string, AriaCachedNode>>();
 
 	/**
+	 * Per-taskId page metadata.
+	 * Used to track profile names for storage state save on cleanup.
+	 */
+	private _pages = new Map<
+		string,
+		{
+			profileName?: string;
+		}
+	>();
+
+	/**
 	 * @param name  Unique plugin identifier (e.g. "chromium-py").
 	 * @param config  Bridge configuration.
 	 */
@@ -289,10 +306,12 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	}
 
 	/**
-	 * Clean up ALL resources.  Sends `shutdown` to the bridge, waits
-	 * for graceful exit, then force-kills if unresponsive.
+	 * Clean up ALL resources.  Closes all pages, then sends ``shutdown`` to the bridge.
 	 */
 	async cleanupAll(): Promise<void> {
+		for (const taskId of [...this._pages.keys()]) {
+			await this.cleanup(taskId).catch(() => {});
+		}
 		await this._stopProcess();
 	}
 
@@ -492,8 +511,10 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	private _killProcess(): void {
 		this._stopHeartbeat();
 
-		// Clear element caches — they're tied to the old process's DOM state
+		// Clear all per-task tracking — the bridge
+		// process is dead, so all Python-side state is lost.
 		this._elementCaches.clear();
+		this._pages.clear();
 
 		const proc = this._process;
 		if (!proc) return;
@@ -825,24 +846,45 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		url: string,
 		taskId: string,
 		timeoutMs: number = 30_000,
-		options?: { signal?: AbortSignal },
+		options?: {
+			signal?: AbortSignal;
+			storageState?: unknown;
+			profileName?: string;
+			profileMode?: "none" | "session" | "named";
+		},
 	): Promise<NavigateResult> {
 		// We don't use the AbortSignal directly (supportsAbortSignal: false),
 		// but we accept it for interface compatibility.
-		void options;
 
 		try {
+			// Build RPC params — include storageState and profileName if provided
+			const rpcParams: Record<string, unknown> = { url, taskId, timeoutMs };
+			if (options?.storageState !== undefined) {
+				rpcParams.storageState = options.storageState;
+			}
+			if (options?.profileName !== undefined) {
+				rpcParams.profileName = options.profileName;
+				rpcParams.profileMode = options.profileMode ?? "named";
+			}
+
 			// Give the bridge slightly more time so navigation timeouts
 			// are reported by the bridge, not the transport layer.
 			const transportTimeout = timeoutMs + 10_000;
 			const raw = await this._rpcCall(
 				"browser.navigate",
-				{ url, taskId, timeoutMs },
+				rpcParams,
 				transportTimeout,
 			);
 
 			const result = raw as Record<string, unknown>;
 			const success = !!result.success;
+
+			// Track this task for cleanup
+			const pageMeta: { profileName?: string } = {};
+			if (options?.profileName) {
+				pageMeta.profileName = options.profileName;
+			}
+			this._pages.set(taskId, pageMeta);
 
 			// Update session manager
 			if (success) {
@@ -1091,17 +1133,146 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	}
 
 	// ═════════════════════════════════════════════════════════════════
+	//  BrowserPlugin: Cookies & storage state
+	// ═════════════════════════════════════════════════════════════════
+
+	async getCookies(taskId: string, urls?: string[]): Promise<CookieResult> {
+		try {
+			const raw = await this._rpcCall("browser.getCookies", {
+				taskId,
+				...(urls ? { urls } : {}),
+			});
+			const result = raw as Record<string, unknown>;
+			return {
+				success: !!result.success,
+				cookies: (result.cookies as Cookie[]) ?? [],
+				...(result.error !== undefined
+					? { error: result.error as string }
+					: {}),
+			};
+		} catch (err: unknown) {
+			return {
+				success: false,
+				cookies: [],
+				error: err instanceof Error ? err.message : String(err),
+			};
+		}
+	}
+
+	async addCookies(taskId: string, cookies: Cookie[]): Promise<ResultBase> {
+		try {
+			const raw = await this._rpcCall("browser.addCookies", {
+				taskId,
+				cookies,
+			});
+			const result = raw as Record<string, unknown>;
+			return {
+				success: !!result.success,
+				...(result.error !== undefined
+					? { error: result.error as string }
+					: {}),
+			};
+		} catch (err: unknown) {
+			return {
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+			};
+		}
+	}
+
+	async clearCookies(
+		taskId: string,
+		options?: ClearCookiesOptions,
+	): Promise<ResultBase> {
+		try {
+			const raw = await this._rpcCall("browser.clearCookies", {
+				taskId,
+				...(options?.name ? { name: options.name } : {}),
+				...(options?.domain ? { domain: options.domain } : {}),
+				...(options?.path ? { path: options.path } : {}),
+			});
+			const result = raw as Record<string, unknown>;
+			return {
+				success: !!result.success,
+				...(result.error !== undefined
+					? { error: result.error as string }
+					: {}),
+			};
+		} catch (err: unknown) {
+			return {
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+			};
+		}
+	}
+
+	async getStorageState(taskId: string): Promise<StorageStateResult> {
+		try {
+			const raw = await this._rpcCall("browser.getStorageState", {
+				taskId,
+			});
+			const result = raw as Record<string, unknown>;
+			return {
+				success: !!result.success,
+				cookies: (result.cookies as StorageStateResult["cookies"]) ?? [],
+				origins: (result.origins as StorageStateResult["origins"]) ?? [],
+				...(result.error !== undefined
+					? { error: result.error as string }
+					: {}),
+			};
+		} catch (err: unknown) {
+			return {
+				success: false,
+				cookies: [],
+				origins: [],
+				error: err instanceof Error ? err.message : String(err),
+			};
+		}
+	}
+
+	// ═════════════════════════════════════════════════════════════════
 	//  BrowserPlugin: Per-task cleanup
 	// ═════════════════════════════════════════════════════════════════
 
 	async cleanup(taskId: string): Promise<void> {
-		// Clean up local element cache
+		const pageEntry = this._pages.get(taskId);
+		if (!pageEntry) {
+			this._elementCaches.delete(taskId);
+			return;
+		}
+
+		// Auto-save storage state if session is persistent
+		const session = sessionManager.getSession(taskId);
+		if (session?.persistState) {
+			try {
+				const raw = await this._rpcCall("browser.getStorageState", {
+					taskId,
+				});
+				const result = raw as Record<string, unknown>;
+				if (result.success) {
+					const name = session.profileName ?? "default";
+					saveStorageState(name, {
+						cookies: (result.cookies ?? []) as Record<string, unknown>[],
+						origins: (result.origins ?? []) as Record<string, unknown>[],
+					});
+				}
+			} catch (err) {
+				console.warn(
+					`[pi-browser] Failed to auto-save storage state for profile ` +
+						`'${session.profileName ?? "default"}' via Python bridge: ` +
+						`${err instanceof Error ? err.message : String(err)}. ` +
+						"Session state may be lost.",
+				);
+			}
+		}
+
+		// Clean up local state and tell the bridge to close the context
 		this._elementCaches.delete(taskId);
+		this._pages.delete(taskId);
 
 		try {
 			await this._rpcCall("browser.cleanup", { taskId });
 		} catch (err: unknown) {
-			// Best-effort — session may already be gone
 			console.error(
 				`[pi-browser] PythonPluginAdapter('${this.name}'): cleanup failed for task '${taskId}':`,
 				err,

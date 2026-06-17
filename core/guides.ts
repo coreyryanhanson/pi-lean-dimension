@@ -12,6 +12,7 @@
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { readMergedSettings } from "./shared/settings-reader.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -87,7 +88,7 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 			"### What NOT to Do",
 			"- Don't try to click through CAPTCHA challenges — automated clicks are fingerprinted and often cause permanent blocks",
 			"- Don't retry navigation rapidly — rate limits escalate the challenge difficulty",
-			"- Don't assume the page is broken — `browser-screenshot` can show you what's actually rendered",
+			"- Don't assume the page is broken — use `read` on the auto-captured screenshot path shown in the navigate output",
 			"",
 			"### Backend Strategy",
 			"- The default `chromium` backend is detected by many anti-automation systems",
@@ -99,7 +100,7 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 			"- If the dialog is gone, use `browser-inspect text=true` to read the actual page content",
 			"- If `browser-inspect` shows stale refs, take a fresh `browser-snapshot`",
 			"",
-			"_Last verified against common Cloudflare and Akamai challenge patterns. If the described elements don't appear, fall back to `browser-inspect` and `browser-screenshot` to discover the current page structure._",
+			"_Last verified against common Cloudflare and Akamai challenge patterns. If the described elements don't appear, fall back to `browser-inspect` and `browser-snapshot` (which includes a screenshot path) to discover the current page structure._",
 		].join("\n"),
 	},
 
@@ -388,6 +389,8 @@ export function dialogPresentInSnapshot(snapshot: string): boolean {
 
 /**
  * Read the autoInject config from settings.json.
+ * Uses the shared settings-reader module for canonical path resolution
+ * and file reading — avoiding duplication of path/file logic.
  *
  * @param override - Optional override for testing. If provided, overrides file-based config.
  */
@@ -396,24 +399,16 @@ export function readGuidesConfig(override?: { autoInject: boolean }): {
 } {
 	if (override !== undefined) return override;
 
-	try {
-		const home = process.env.HOME || "/root";
-		const paths = [
-			join(home, ".pi", "agent", "settings.json"),
-			".pi/settings.json",
-		];
-		for (const p of paths) {
-			if (existsSync(p)) {
-				const raw = readFileSync(p, "utf-8");
-				const parsed = JSON.parse(raw);
-				const browser = parsed?.browser;
-				if (browser?.guides?.autoInject === false) {
-					return { autoInject: false };
-				}
-			}
-		}
-	} catch {
-		// config file may not exist or be malformed — use default
+	// Read global + project settings (project overrides global)
+	const merged = readMergedSettings();
+	const browser = merged.browser as Record<string, unknown> | undefined;
+	if (
+		browser &&
+		typeof browser === "object" &&
+		!Array.isArray(browser) &&
+		(browser as any)?.guides?.autoInject === false
+	) {
+		return { autoInject: false };
 	}
 	return { autoInject: true };
 }

@@ -9,7 +9,7 @@ A pi extension that registers **14 tools + 2 commands** for web browsing. Archit
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 493 tests across 15 files (all pass)
+npm test              # vitest run — 735 tests across 20 files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npm run test:watch    # vitest in watch mode
 npx tsx scripts/dialog-gate.ts        # side-by-side backend comparison
@@ -22,8 +22,10 @@ There is no build step (`noEmit: true` in tsconfig). The extension is loaded dir
 
 ```
 pi-browser/
-├── index.ts                  # Entry: registers 14 tools + 2 commands
+├── index.ts                  # Entry: imports & registers tool definitions + lifecycle
 ├── browser-toggle.ts         # /web on|off|learn|status — three-state toggle
+├── browser-cookies.ts        # /web cookies subcommand (extracted from toggle)
+├── browser-profile.ts        # /web profile subcommand (extracted from toggle)
 ├── backends/                 # Plugin implementations
 │   ├── chromium/index.ts     # Node/Playwright, reference ~1100 lines
 │   ├── python-adapter.ts     # JSON-RPC bridge for subprocess plugins
@@ -35,10 +37,11 @@ pi-browser/
 │   ├── router.ts             # Dispatch, session lifecycle, truncation, browser-inspect
 │   ├── guides.ts             # Guide types, builtin guides, file loader, presence resolution
 │   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
-│   └── shared/               # session-manager, url-safety, bot-detection, cdp-supervisor, accessibility-tree, snapshot-cache, dom-extractor
+│   └── shared/               # accessibility-tree, bot-detection, dom-extractor, session-manager, settings-reader, snapshot-cache, storage-state, url-safety
 ├── guides/                  # User-authored guide files (gitignored)
+├── tools/                   # Tool definitions — one file per tool (14 files) + barrel + utils
 ├── scripts/                  # dialog-gate.ts, experiment reports
-└── __tests__/                # 13 test files + helpers/
+└── __tests__/                # 20 test files + helpers/
 ```
 
 ## Architecture
@@ -58,12 +61,14 @@ Capabilities (`PluginCapabilities`) advertise quirks. The router checks them at 
 Plugin loading: reads `browser.plugins` from `~/.pi/agent/settings.json` (global, merged with `.pi/settings.json` project-local). Each entry is `{name, dir, enabled, config}`. `dir` maps to `backends/<dir>/`; entry point is auto-detected (`index.ts` = Node plugin, `bridge.py` = Python plugin). If no plugins configure, a default ChromiumPlugin is created.
 
 **Active plugins (config-driven):**
+
 - **`chromium`** — Node/Playwright (~1100 lines), always enabled by default, reference implementation
 - **`chromium-py`** — Python/Playwright (~950 lines bridge.py), disabled by default
 
 ### Router (`core/router.ts`)
 
 All tool calls dispatch through the router. Key responsibilities:
+
 - **Strategy resolution**: `PluginRegistry.resolveStrategy("auto")` → first enabled plugin; `"<name>"` → named plugin
 - **Session lifecycle**: per-taskId sessions created on first navigate, cleaned up on shutdown
 - **Compact truncation**: `< 2800 chars` raw, cut at ~2500; `> 8000 chars` preserve top ~2000
@@ -85,9 +90,9 @@ All tool calls dispatch through the router. Key responsibilities:
 
 `web-fetch` uses plain `fetch()` + `node-html-parser` + `turndown`. Returns ~4000 chars inline, spills to temp file when larger. `browser-navigate` uses Playwright Chromium, returns accessibility tree with @e1/@e2 refs.
 
-### Registered tools (14 total)
+### Registered tools (13 total)
 
-web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-screenshot, browser-get-images, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
+web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-get-images, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
 
 ### Registered commands (2 total)
 
@@ -102,7 +107,8 @@ Type definitions (`Guide`, `GuideTrigger`, `GuideCategory`, `GuideSource`,
 `DomainEntry`, `GuidePresenceResult`), the `BUILTIN_GUIDES` record (4 pattern guides + 1 test-only site fixture),
 `DOMAIN_MAP` for domain-to-guide resolution,
 `loadUserGuides()`/`parseGuideFile()` for user-authored guides (YAML frontmatter
-+ markdown body), `resolveGuidePresence()` for three-tier auto-presence
+
+- markdown body), `resolveGuidePresence()` for three-tier auto-presence
 (auto-inject / auto-hint / on-demand), `dialogPresentInSnapshot()` for dialog
 detection from accessibility tree text, `readGuidesConfig()` for
 `browser.guides.autoInject` from settings.json, and `cleanupInjectedGuides()`
@@ -123,7 +129,7 @@ Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-
 
 ## Testing
 
-### Test files (16 files, 527 tests passing)
+### Test files (20 files, 735 tests passing)
 
 | File | Requires Chromium? |
 |------|--------------------|
@@ -139,12 +145,11 @@ Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-
 | snapshot-cache.test.ts | No |
 | browser-inspect.test.ts | No |
 | web-guides.test.ts | No |
-| dialog-compaction.test.ts (archived) | No |
 | occlusion-live.test.ts | Yes (auto-skip) |
 | reddit-dialog.test.ts | Yes (auto-skip) |
 | chromium-py.test.ts | Yes (auto-skip) |
 
-Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automatically when Playwright Chromium is unavailable. The archived dialog-compaction test lives under `core/archived/`.
+Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automatically when Playwright Chromium is unavailable.
 
 ### Shared test utilities (`__tests__/helpers/`)
 
@@ -162,7 +167,7 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
 
 - **Console capture only on Chromium** — Python adapter's `BridgeBase` has capture but `chromium-py` bridge doesn't call it yet
 - **AbortSignal not supported on Python bridge** — `supportsAbortSignal: false`, router skips signal wiring
-- **Sessions are per taskId** — tasks are stable pi session IDs mapped to `browser-NNN` keys via `_sessionKeys`/`_sessionCounter` in index.ts. Created on first navigate, cleaned up on session_shutdown
+- **Sessions are per taskId** — tasks are stable pi session IDs mapped to `browser-NNN` keys via `_sessionKeys`/`_sessionCounter` in `tools/utils.ts`. Created on first navigate, cleaned up on session_shutdown
 - **Role-based locators only**: never XPath/CSS — always `getByRole()` via `buildLocator()` with positional `.nth()` for duplicates. The `INTERACTIVE_ROLES` set defines which roles get @e refs
 - **All URLs go through `url-safety.ts`** — blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.169.254), dangerous schemes (file:, ftp:, data:, javascript:, vbscript:), and heuristically detects secrets in URLs
 - **Screenshot**: JPEG 80% quality, viewport constrained to 1024px wide, returns data URI
@@ -179,8 +184,6 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
   - When snapshot is truncated but not cached, a fallback hint is shown instead
   - All I/O is try-catched — graceful degradation to inline-only on failure
   - Cleaned up on session removal and shutdown
-- **`browser_finetuning.md`** — occlusion/dialog/timing hardening strategy. Read before touching ChromiumPlugin click or snapshot logic
-- **`plan_v2.md`** — full plugin-refactor architecture doc. Read before adding a new plugin type or changing the registry
 - **`browser-inspect`** (`core/shared/dom-extractor.ts`): element + text extraction tool. Uses an inline `EXTRACTOR_SCRIPT` evaluated via `page.evaluate()` (bypasses CSP). Requires `getElementCache()` on the plugin. Staleness detection via `lastInteractionAt` vs `cachePopulatedAt`. Python parity is in-scope — bridge must include `elements` dict in responses for adapter-level cache to work.
   - **Text output truncation**: when `text=true` without an explicit `maxChars`, the output is truncated at ~2500 characters by default. Pass `maxChars=0` for full content. Truncated output appends `"\n… X more chars (use maxChars=0 for full content)"` so the agent knows how to retrieve the complete text.
   - **Keyword filtering**: the optional `query` parameter filters extracted content to only include elements whose text matches the given case-insensitive substring. Applied before correlation, so only matching elements get @e ref annotations. When no content matches, a notice is appended to the output. Also checks link `href` and image `src` fields.

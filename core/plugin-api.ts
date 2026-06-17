@@ -7,7 +7,7 @@
  *
  * Plugins return **raw results**.  The router is responsible for
  * cross-cutting transformations (truncation, count fields, botDetected
- * warning injection, etc.) — see §3 of plan_v2.md.
+ * warning injection, etc.).
  */
 
 import type { AriaCachedNode } from "./shared/accessibility-tree.js";
@@ -55,7 +55,7 @@ export const DEFAULT_CAPABILITIES: PluginCapabilities = {
  * They **may throw** for infrastructure failures (process crash, OOM).
  * The router catches throws and normalises them.
  */
-interface ResultBase {
+export interface ResultBase {
 	success: boolean;
 	error?: string;
 }
@@ -70,6 +70,10 @@ export interface NavigateResult extends ResultBase {
 	elementCount: number;
 	/** Plugin-internal signal: page may be blocked by bot detection */
 	botDetected?: boolean;
+	/** The active profile mode for this session. */
+	profileMode?: "none" | "session" | "named";
+	/** Phase 2: Which profile was loaded for this session (if any) */
+	profileName?: string;
 }
 
 /** Result from browser-snapshot */
@@ -92,7 +96,7 @@ export interface InteractionResult extends ResultBase {
 	elementCount?: number;
 }
 
-/** Result from browser-screenshot */
+/** Result from plugin.screenshot() */
 export interface ScreenshotResult extends ResultBase {
 	/** JPEG data URI of the screenshot */
 	dataUri: string;
@@ -119,6 +123,48 @@ export interface ConsoleMessagesResult extends ResultBase {
 /** Result from evaluate (browser-console JS eval) */
 export interface EvaluateResult extends ResultBase {
 	result?: unknown;
+}
+
+// ─── Cookie & Storage State Types ─────────────────────────────────
+
+/**
+ * A single browser cookie, matching Playwright's Cookie shape.
+ * Fields are optional to accommodate both directions:
+ * - Reading (cookies() output): all fields are always populated
+ * - Writing (addCookies() input): domain and path are effectively required
+ *   at runtime by Playwright; sameSite defaults to browser policy (Lax).
+ */
+export interface Cookie {
+	name: string;
+	value: string;
+	domain?: string;
+	path?: string;
+	/** Unix timestamp in seconds; -1 for session cookies */
+	expires?: number;
+	httpOnly?: boolean;
+	secure?: boolean;
+	sameSite?: "Strict" | "Lax" | "None";
+}
+
+/** Result from browser-getCookies */
+export interface CookieResult extends ResultBase {
+	cookies: Cookie[];
+}
+
+/** Options for browser-clearCookies — all fields optional (omit all to clear everything) */
+export interface ClearCookiesOptions {
+	name?: string;
+	domain?: string;
+	path?: string;
+}
+
+/** Result from browser-getStorageState */
+export interface StorageStateResult extends ResultBase {
+	cookies: Cookie[];
+	origins: Array<{
+		origin: string;
+		localStorage: Array<{ name: string; value: string }>;
+	}>;
 }
 
 // ─── BrowserPlugin Interface ──────────────────────────────────────
@@ -158,10 +204,46 @@ export interface BrowserPlugin {
 		url: string,
 		taskId: string,
 		timeoutMs: number,
-		options?: { signal?: AbortSignal },
+		options?: {
+			signal?: AbortSignal;
+			/** Phase 2: Playwright storage state for profile-based session restoration */
+			storageState?: unknown;
+			/** Phase 2: Profile name for shared-context resolution */
+			profileName?: string;
+			/** Phase 2: Profile mode for shared-context resolution */
+			profileMode?: "none" | "session" | "named";
+		},
 	): Promise<NavigateResult>;
 
 	snapshot(taskId: string): Promise<SnapshotResult>;
+
+	// ── Cookies & storage state ────────────────────────────────
+
+	/**
+	 * Get all browser cookies for the session, optionally filtered by URL.
+	 */
+	getCookies(taskId: string, urls?: string[]): Promise<CookieResult>;
+
+	/**
+	 * Add cookies to the browser context.
+	 * Playwright requires name, value, domain, and path at runtime.
+	 */
+	addCookies(taskId: string, cookies: Cookie[]): Promise<ResultBase>;
+
+	/**
+	 * Clear cookies from the browser context.
+	 * With no options, ALL cookies are cleared (Playwright default).
+	 */
+	clearCookies(
+		taskId: string,
+		options?: ClearCookiesOptions,
+	): Promise<ResultBase>;
+
+	/**
+	 * Get the full storage state (cookies + localStorage + IndexedDB).
+	 * Primarily used by Phase 2 storage-state persistence.
+	 */
+	getStorageState(taskId: string): Promise<StorageStateResult>;
 
 	// ── Interaction ───────────────────────────────────────────
 

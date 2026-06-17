@@ -5,9 +5,6 @@
  * backends. All dispatch now goes through the PluginRegistry, which resolves
  * the correct plugin based on the `strategy` parameter.
  *
- * In Phase A, only "auto" and "chromium" strategies are accepted.
- * The stealth backend is offline until Phase C.
- *
  * Cross-cutting concerns handled here (not in plugins):
  * - Snapshot truncation (compactSnapshot)
  * - URL safety validation
@@ -15,6 +12,8 @@
  * - Auto-recovery from crashed sessions (via lastNav)
  */
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { pluginRegistry } from "./plugin-registry.js";
 import { sessionManager } from "./shared/session-manager.js";
 import type { BrowserSession } from "./shared/session-manager.js";
@@ -24,8 +23,14 @@ import {
 	cacheSnapshot,
 	formatCacheNotice,
 	removeSnapshotFiles,
+	SNAPSHOT_TRUNCATE_THRESHOLD,
 	type CacheResult,
 } from "./shared/snapshot-cache.js";
+import {
+	sanitizeProfileName,
+	sessionProfileName,
+} from "./shared/storage-state.js";
+import { loadBrowserConfig } from "./plugin-config.js";
 import {
 	runExtractor,
 	correlateElements,
@@ -38,16 +43,16 @@ import type {
 	NavigateResult,
 	SnapshotResult,
 	InteractionResult,
-	ScreenshotResult,
 	GetImagesResult,
 	ConsoleMessagesResult,
 	EvaluateResult,
+	Cookie,
+	CookieResult,
+	ClearCookiesOptions,
+	ResultBase,
 } from "./plugin-api.js";
 
 // ─── Snapshot truncation constants ────────────────────────────────────
-
-/** Snapshots shorter than this are returned as-is (no truncation). */
-const COMPACT_SNAPSHOT_NO_TRUNCATE = 2800;
 
 /** Target truncation length for compact snapshots (newline-aware). */
 const COMPACT_SNAPSHOT_LIMIT = 2500;
@@ -70,6 +75,48 @@ export interface NavigateOptions {
 	timeout?: number;
 	signal?: AbortSignal;
 	taskId?: string;
+	/**
+	 * Profile mode or named profile.
+	 * - "none": clean slate, no persistence
+	 * - "session": persist for this conversation
+	 * - A named profile string (e.g. "shopping", "work")
+	 */
+	profile?: "none" | "session" | string;
+	/**
+	 * pi session ID for session-scoped profiles (profile="session").
+	 * Used to derive the internal `_session-<piSessionId>` profile name.
+	 */
+	piSessionId?: string;
+}
+
+// ─── Profile Change Callback ───────────────────────────────────────
+
+/**
+ * Simple nullable callback for profile changes.
+ * Used by index.ts to update the TUI status bar.
+ */
+let _onProfileChange:
+	| ((
+			taskId: string,
+			profileName?: string,
+			profileMode?: "none" | "session" | "named",
+	  ) => void)
+	| null = null;
+
+/**
+ * Set the profile change callback.
+ * Called once at extension startup from index.ts.
+ */
+export function setOnProfileChange(
+	handler:
+		| ((
+				taskId: string,
+				profileName?: string,
+				profileMode?: "none" | "session" | "named",
+		  ) => void)
+		| null,
+): void {
+	_onProfileChange = handler;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -80,6 +127,9 @@ export interface NavigateOptions {
  * If a session already exists, returns it. If no session exists but
  * a last-navigation URL is available, auto-creates a session and
  * navigates to that URL.
+ *
+ * When restoring from a lastNav with a profile, the storage state
+ * for that profile is loaded and passed to the plugin.
  *
  * Returns null if no session can be established.
  */
@@ -106,15 +156,37 @@ async function requireInteractiveSession(taskId: string): Promise<{
 	if (!plugin) return null;
 
 	sessionManager.createSession(taskId, lastNav.pluginName);
-	const session = sessionManager.getSession(taskId)!;
-	session.currentUrl = lastNav.url;
-	session.currentTitle = lastNav.title;
+	sessionManager.updateSession(taskId, {
+		currentUrl: lastNav.url,
+		currentTitle: lastNav.title,
+	});
 
-	const navResult = await plugin.navigate(lastNav.url, taskId, 30_000);
+	// Restore profile name if the last navigation used a profile
+	if (lastNav.profileName) {
+		sessionManager.updateSession(taskId, {
+			persistState: true,
+			profileName: lastNav.profileName,
+		});
+	}
+
+	// Navigate — plugin loads its own storage state if needed
+	const navOptions: { signal?: AbortSignal } = {};
+	const navResult = await plugin.navigate(
+		lastNav.url,
+		taskId,
+		30_000,
+		navOptions,
+	);
 	if (navResult.success) {
-		session.currentUrl = navResult.url;
-		session.currentTitle = navResult.title;
-		return { session, pluginName: lastNav.pluginName, wasAutoCreated: true };
+		sessionManager.updateSession(taskId, {
+			currentUrl: navResult.url,
+			currentTitle: navResult.title,
+		});
+		return {
+			session: sessionManager.getSession(taskId)!,
+			pluginName: lastNav.pluginName,
+			wasAutoCreated: true,
+		};
 	}
 
 	// Failed — clean up
@@ -145,7 +217,7 @@ export function compactSnapshot(
 	snapshot: string,
 	elementCount: number,
 ): string {
-	if (snapshot.length <= COMPACT_SNAPSHOT_NO_TRUNCATE) return snapshot;
+	if (snapshot.length <= SNAPSHOT_TRUNCATE_THRESHOLD) return snapshot;
 
 	const remaining = elementCount > 0 ? elementCount : undefined;
 
@@ -187,7 +259,9 @@ async function refBasedInteractionOrSnapshot(
 		// Mark interaction time for staleness detection (Phase 2)
 		const sess = sessionManager.getSession(taskId);
 		if (sess) {
-			sess.lastInteractionAt = Date.now();
+			sessionManager.updateSession(taskId, {
+				lastInteractionAt: Date.now(),
+			});
 		}
 	}
 
@@ -197,7 +271,7 @@ async function refBasedInteractionOrSnapshot(
 			const session = sessionManager.getSession(taskId);
 
 			// Cache the auto-snapshot before compaction
-			const truncated = snap.snapshot.length > COMPACT_SNAPSHOT_NO_TRUNCATE;
+			const truncated = snap.snapshot.length > SNAPSHOT_TRUNCATE_THRESHOLD;
 			const fingerprint = snapshotFingerprint(snap.snapshot);
 			const cacheResult = cacheSnapshot(
 				taskId,
@@ -239,7 +313,7 @@ function compactInteractionResult(
 
 		// Cache (before compacting) — no bot detection here because interaction
 		// tools only run after navigation succeeded.
-		const truncated = rawSnapshot.length > COMPACT_SNAPSHOT_NO_TRUNCATE;
+		const truncated = rawSnapshot.length > SNAPSHOT_TRUNCATE_THRESHOLD;
 		const cacheResult = cacheSnapshot(
 			taskId,
 			rawSnapshot,
@@ -260,10 +334,10 @@ function compactInteractionResult(
 
 		const session = sessionManager.getSession(taskId);
 		if (session) {
-			session.currentSnapshotFingerprint = newFingerprint;
-			if (cacheResult) {
-				session.cachePopulatedAt = Date.now();
-			}
+			sessionManager.updateSession(taskId, {
+				currentSnapshotFingerprint: newFingerprint,
+				...(cacheResult ? { cachePopulatedAt: Date.now() } : {}),
+			});
 		}
 	}
 	return result;
@@ -336,13 +410,83 @@ export async function navigate(
 		};
 	}
 
-	// Create session
-	sessionManager.createSession(taskId, plugin.name);
-	const session = sessionManager.getSession(taskId)!;
-	session.currentUrl = normalizedUrl;
+	// ── Resolve profile mode ───────────────────────────────────
+	let resolvedProfileName: string | undefined;
+	let profileMode: "none" | "session" | "named" | undefined;
 
-	const navOptions: { signal?: AbortSignal } = {};
+	const browserConfig = loadBrowserConfig();
+	const profileInput = options.profile ?? browserConfig.defaultProfile;
+
+	if (profileInput === "none") {
+		profileMode = "none";
+	} else if (profileInput === "session") {
+		profileMode = "session";
+		const piSessionId = options.piSessionId;
+		if (piSessionId) {
+			resolvedProfileName = sessionProfileName(piSessionId);
+		} else {
+			// Can't resolve session profile without piSessionId — fall back with warning
+			console.warn(
+				"[pi-browser] profile='session' requested but piSessionId unavailable. " +
+					"Falling back to profile='none'.",
+			);
+			profileMode = "none";
+		}
+	} else {
+		// Named profile
+		profileMode = "named";
+		try {
+			sanitizeProfileName(profileInput);
+		} catch (err) {
+			return {
+				success: false,
+				url: normalizedUrl,
+				title: "",
+				snapshot: "",
+				elementCount: 0,
+				error: `Invalid profile name: ${err instanceof Error ? err.message : String(err)}`,
+				backendUsed: plugin.name,
+			} as NavigateResult & {
+				backendUsed: string;
+				botDetectionWarning?: boolean;
+			};
+		}
+		resolvedProfileName = profileInput;
+	}
+
+	// ── Notify profile change callback ─────────────────────
+	_onProfileChange?.(taskId, resolvedProfileName, profileMode);
+
+	// ── Create session and navigate ───────────────────────────
+	sessionManager.createSession(taskId, plugin.name);
+	sessionManager.updateSession(taskId, {
+		currentUrl: normalizedUrl,
+		persistState: resolvedProfileName !== undefined,
+		...(options.piSessionId !== undefined
+			? { piSessionId: options.piSessionId }
+			: {}),
+	});
+
+	// Set/clear profileName directly
+	const session = sessionManager.getSession(taskId)!;
+	if (session) {
+		if (resolvedProfileName !== undefined) {
+			session.profileName = resolvedProfileName;
+		} else {
+			delete session.profileName;
+		}
+	}
+
+	const navOptions: {
+		signal?: AbortSignal;
+		profileName?: string;
+		profileMode?: "none" | "session" | "named";
+	} = {};
 	if (options.signal) navOptions.signal = options.signal;
+	if (resolvedProfileName !== undefined) {
+		navOptions.profileName = resolvedProfileName;
+		navOptions.profileMode = profileMode;
+	}
 	const result = await plugin.navigate(
 		normalizedUrl,
 		taskId,
@@ -351,14 +495,20 @@ export async function navigate(
 	);
 
 	if (result.success) {
-		session.currentUrl = result.url;
-		session.currentTitle = result.title;
+		sessionManager.updateSession(taskId, {
+			currentUrl: result.url,
+			currentTitle: result.title,
+			currentSnapshotFingerprint: snapshotFingerprint(result.snapshot),
+		});
 
-		// Store snapshot fingerprint (passive — surfaced in output)
-		session.currentSnapshotFingerprint = snapshotFingerprint(result.snapshot);
-
-		// Store as last-nav for auto-recovery
-		sessionManager.setLastNav(taskId, result.url, result.title, plugin.name);
+		// Store as last-nav for auto-recovery (include profileName)
+		sessionManager.setLastNav(
+			taskId,
+			result.url,
+			result.title,
+			plugin.name,
+			resolvedProfileName,
+		);
 
 		const botWarn = result.botDetected ?? false;
 
@@ -366,6 +516,10 @@ export async function navigate(
 		// it's likely a challenge/block page. Downgrade to failure so the
 		// agent gets a clear signal rather than a misleading partial page.
 		if (botWarn && result.elementCount < 5) {
+			// Prevent auto-save of empty/blocked-page state which would
+			// overwrite previously saved good state
+			sessionManager.updateSession(taskId, { persistState: false });
+
 			await plugin.cleanup(taskId).catch(() => {});
 			sessionManager.removeSession(taskId);
 			removeSnapshotFiles(taskId);
@@ -392,7 +546,7 @@ export async function navigate(
 
 		// --- Cache the raw snapshot before compaction ---
 		const rawSnapshot = result.snapshot;
-		const isTruncated = rawSnapshot.length > COMPACT_SNAPSHOT_NO_TRUNCATE;
+		const isTruncated = rawSnapshot.length > SNAPSHOT_TRUNCATE_THRESHOLD;
 		const cacheResult: CacheResult | null = rawSnapshot
 			? cacheSnapshot(taskId, rawSnapshot, fp, botWarn)
 			: null;
@@ -413,7 +567,9 @@ export async function navigate(
 
 		// Track cache population time for staleness detection (Phase 2)
 		if (cacheResult) {
-			session.cachePopulatedAt = Date.now();
+			sessionManager.updateSession(taskId, {
+				cachePopulatedAt: Date.now(),
+			});
 		}
 
 		const successResult: NavigateResult & {
@@ -427,11 +583,20 @@ export async function navigate(
 			elementCount: result.elementCount,
 			backendUsed: plugin.name,
 		};
+		if (profileMode !== undefined) successResult.profileMode = profileMode;
+		if (resolvedProfileName !== undefined)
+			successResult.profileName = resolvedProfileName;
 		if (botWarn) successResult.botDetectionWarning = true;
 		return successResult;
 	}
 
 	// Navigation failed — clean up
+	// Prevent auto-save of empty state which would overwrite
+	// previously saved good state from a prior successful session
+	if (session) {
+		sessionManager.updateSession(taskId, { persistState: false });
+	}
+
 	await plugin.cleanup(taskId).catch(() => {});
 	sessionManager.removeSession(taskId);
 	removeSnapshotFiles(taskId);
@@ -487,11 +652,13 @@ export async function snapshot(
 		const session = sessionManager.getSession(tid);
 		const fp = snapshotFingerprint(result.snapshot);
 		if (session) {
-			session.currentSnapshotFingerprint = fp;
+			sessionManager.updateSession(tid, {
+				currentSnapshotFingerprint: fp,
+			});
 		}
 		if (!full) {
 			const rawLength = result.snapshot.length;
-			const wasTruncated = rawLength > COMPACT_SNAPSHOT_NO_TRUNCATE;
+			const wasTruncated = rawLength > SNAPSHOT_TRUNCATE_THRESHOLD;
 			result.snapshot =
 				compactSnapshot(result.snapshot, result.elementCount) +
 				formatCacheNotice(null, rawLength, wasTruncated, result.elementCount) +
@@ -593,30 +760,41 @@ export async function press(
 	);
 }
 
-// ─── Media ───────────────────────────────────────────────────────────
-
-export async function screenshot(
+/**
+ * Capture a screenshot and save it to a temp file.
+ * Returns the file path on success, or null on failure (graceful degradation).
+ * Does NOT resize the viewport — captures at whatever the current viewport is.
+ *
+ * Uses a stable filename per task so new captures overwrite old ones.
+ * The LLM can use `read` on the returned path to visually inspect the page.
+ */
+export async function screenshotToTemp(
 	taskId?: string,
-	fullPage?: boolean,
-): Promise<ScreenshotResult> {
+): Promise<string | null> {
 	const tid = taskId ?? "default";
 	const sr = await requireInteractiveSession(tid);
-	if (!sr) return { success: false, dataUri: "", error: noSessionMsg };
+	if (!sr) return null;
 	const plugin = getPluginForSession(sr.session);
-	if (!plugin)
-		return {
-			success: false,
-			dataUri: "",
-			error: `Plugin '${sr.session.pluginName}' is not available`,
-		};
+	if (!plugin) return null;
 
-	// Respect capability: if fullPage is requested but not supported, fall back
-	const screenshotOpts: { fullPage?: boolean } = {};
-	if (fullPage && plugin.capabilities.supportsFullPageScreenshot) {
-		screenshotOpts.fullPage = true;
+	try {
+		const result = await plugin.screenshot(tid, { fullPage: false });
+		if (!result.success || !result.dataUri) return null;
+
+		// Decode the base64 data URI
+		const base64Data = result.dataUri.replace(/^data:image\/\w+;base64,/, "");
+		if (!base64Data) return null;
+
+		const buffer = Buffer.from(base64Data, "base64");
+		const dir = `${tmpdir()}/pi-browser`;
+		mkdirSync(dir, { recursive: true });
+		const filename = `screenshot-${tid}.jpg`;
+		const path = `${dir}/${filename}`;
+		writeFileSync(path, buffer);
+		return path;
+	} catch {
+		return null; // Non-critical — snapshot tree is still valid
 	}
-
-	return plugin.screenshot(tid, screenshotOpts);
 }
 
 export async function getImages(taskId?: string): Promise<GetImagesResult> {
@@ -929,6 +1107,60 @@ function stalenessCheck(session: BrowserSession | undefined): boolean {
 	if (session.cachePopulatedAt === undefined) return true; // No cache time — assume fresh
 	if (session.lastInteractionAt === undefined) return true; // No interactions — assume fresh
 	return session.cachePopulatedAt >= session.lastInteractionAt;
+}
+
+// ─── Cookie dispatch ──────────────────────────────────────────────
+
+export async function getCookies(
+	taskId: string | undefined,
+	urls?: string[],
+): Promise<CookieResult> {
+	const tid = taskId ?? "default";
+	const sr = await requireInteractiveSession(tid);
+	if (!sr) return { success: false, cookies: [], error: noSessionMsg };
+	const plugin = getPluginForSession(sr.session);
+	if (!plugin)
+		return {
+			success: false,
+			cookies: [],
+			error: `Plugin '${sr.session.pluginName}' is not available`,
+		};
+
+	return plugin.getCookies(tid, urls);
+}
+
+export async function addCookies(
+	taskId: string | undefined,
+	cookies: Cookie[],
+): Promise<ResultBase> {
+	const tid = taskId ?? "default";
+	const sr = await requireInteractiveSession(tid);
+	if (!sr) return { success: false, error: noSessionMsg };
+	const plugin = getPluginForSession(sr.session);
+	if (!plugin)
+		return {
+			success: false,
+			error: `Plugin '${sr.session.pluginName}' is not available`,
+		};
+
+	return plugin.addCookies(tid, cookies);
+}
+
+export async function clearCookies(
+	taskId: string | undefined,
+	options?: ClearCookiesOptions,
+): Promise<ResultBase> {
+	const tid = taskId ?? "default";
+	const sr = await requireInteractiveSession(tid);
+	if (!sr) return { success: false, error: noSessionMsg };
+	const plugin = getPluginForSession(sr.session);
+	if (!plugin)
+		return {
+			success: false,
+			error: `Plugin '${sr.session.pluginName}' is not available`,
+		};
+
+	return plugin.clearCookies(tid, options);
 }
 
 // ─── Error message constants ─────────────────────────────────────────

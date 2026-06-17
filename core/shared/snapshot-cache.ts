@@ -21,8 +21,12 @@ import { tmpdir } from "node:os";
 
 // ─── Constants ──────────────────────────────────────────────────────────
 
-/** Only cache when the snapshot exceeds this threshold (same as router.ts's COMPACT_SNAPSHOT_NO_TRUNCATE). */
-const CACHE_TRUNCATE_THRESHOLD = 2800;
+/**
+ * Snapshot truncation threshold.
+ * Snapshots shorter than this are returned as-is (no truncation).
+ * Shared with router.ts — both must agree on the cut-off.
+ */
+export const SNAPSHOT_TRUNCATE_THRESHOLD = 2800;
 
 /** Maximum cached snapshot files per task. */
 const MAX_FILES_PER_TASK = 2;
@@ -119,7 +123,7 @@ export function cacheSnapshot(
 	botDetected: boolean,
 ): CacheResult | null {
 	// Only cache when truncation occurred
-	if (snapshot.length <= CACHE_TRUNCATE_THRESHOLD) {
+	if (snapshot.length <= SNAPSHOT_TRUNCATE_THRESHOLD) {
 		return null;
 	}
 
@@ -241,7 +245,7 @@ export function formatCacheNotice(
 	truncated: boolean,
 	elementCount?: number,
 ): string {
-	if (truncated && snapshotLength > CACHE_TRUNCATE_THRESHOLD) {
+	if (truncated && snapshotLength > SNAPSHOT_TRUNCATE_THRESHOLD) {
 		if (cacheResult) {
 			// Cache was written — show cache path + action guidance
 			const guidance =

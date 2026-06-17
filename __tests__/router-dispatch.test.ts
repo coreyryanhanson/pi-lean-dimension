@@ -391,54 +391,30 @@ describe("Router dispatch", () => {
 		});
 	});
 
-	// ─── screenshot() ──────────────────────────────────────────
+	// ─── screenshotToTemp() ─────────────────────────────────────
 
-	describe("screenshot()", () => {
-		it("dispatches to plugin.screenshot", async () => {
+	describe("screenshotToTemp()", () => {
+		it("returns a file path on success", async () => {
 			await router.navigate("https://example.com");
 			mock.calls.delete("navigate");
 
-			const result = await router.screenshot("default");
-			expect(result.success).toBe(true);
-			expect(result.dataUri).toBe("data:image/jpeg;base64,mockdata");
+			const path = await router.screenshotToTemp("default");
+			expect(path).toBeDefined();
+			expect(path).toMatch(/\/screenshot-default\.jpg$/);
 		});
 
-		it("returns error without a session", async () => {
-			const result = await router.screenshot("default");
-			expect(result.success).toBe(false);
-			expect(result.dataUri).toBe("");
+		it("returns null without a session", async () => {
+			const path = await router.screenshotToTemp("default");
+			expect(path).toBeNull();
 		});
 
-		it("passes fullPage option when capabilities support it", async () => {
+		it("returns null when screenshot fails", async () => {
 			await router.navigate("https://example.com");
 			mock.calls.delete("navigate");
+			mock.shouldThrow.add("screenshot");
 
-			await router.screenshot("default", true);
-			const [, opts] = mock.calls.get("screenshot")![0] as [
-				string,
-				{ fullPage?: boolean } | undefined,
-			];
-			expect(opts).toEqual({ fullPage: true });
-		});
-
-		it("omits fullPage option when plugin does not support it", async () => {
-			// Register a limited-capability plugin
-			const limited = new MockPlugin("limited", {
-				supportsFullPageScreenshot: false,
-			});
-			await pluginRegistry.register(limited, makeConfig({ name: "limited" }));
-
-			// Navigate with the limited plugin
-			await router.navigate("https://example.com", { strategy: "limited" });
-
-			limited.calls.delete("navigate");
-			await router.screenshot("default", true);
-			const [, opts] = limited.calls.get("screenshot")![0] as [
-				string,
-				{ fullPage?: boolean } | undefined,
-			];
-			// fullPage should NOT be passed since capability is false
-			expect(opts).toEqual({});
+			const path = await router.screenshotToTemp("default");
+			expect(path).toBeNull();
 		});
 	});
 
@@ -611,12 +587,12 @@ describe("session persistence across sequential calls", () => {
 		pluginRegistry.clear();
 	});
 
-	it("navigate then screenshot succeeds with same taskId", async () => {
+	it("navigate then screenshotToTemp succeeds with same taskId", async () => {
 		await router.navigate("https://example.com", { taskId: "seq-test-1" });
 
-		const result = await router.screenshot("seq-test-1");
-		expect(result.success).toBe(true);
-		expect(result.dataUri).toMatch(/^data:image\/jpeg;base64,/);
+		const path = await router.screenshotToTemp("seq-test-1");
+		expect(path).toBeDefined();
+		expect(path).toMatch(/\/screenshot-seq-test-1\.jpg$/);
 	});
 
 	it("navigate then snapshot succeeds with same taskId", async () => {
@@ -940,6 +916,342 @@ describe("bot detection UX", () => {
 			expect(session!.currentSnapshotFingerprint).toBe(
 				snapshotFingerprint(snapSnap),
 			);
+		});
+	});
+
+	// ─── Profile-aware auto-recovery (Phase 7) ─────────────────
+	describe("profile-aware auto-recovery", () => {
+		it("restores profileName from lastNav on auto-creation", async () => {
+			await sessionManager.removeAll();
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"mock",
+				"work",
+			);
+
+			const result = await router.snapshot("default");
+			expect(result.success).toBe(true);
+
+			const session = sessionManager.getSession("default");
+			expect(session).toBeDefined();
+			expect(session!.profileName).toBe("work");
+		});
+
+		it("restores session profile from lastNav on auto-creation", async () => {
+			await sessionManager.removeAll();
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"mock",
+				"_session-test-session-abc",
+			);
+
+			const result = await router.snapshot("default");
+			expect(result.success).toBe(true);
+
+			const session = sessionManager.getSession("default");
+			expect(session).toBeDefined();
+			expect(session!.profileName).toBe("_session-test-session-abc");
+		});
+
+		it("no profileName restored when lastNav has no profile", async () => {
+			await sessionManager.removeAll();
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"mock",
+			);
+
+			const result = await router.snapshot("default");
+			expect(result.success).toBe(true);
+
+			const session = sessionManager.getSession("default");
+			expect(session).toBeDefined();
+			expect(session!.profileName).toBeUndefined();
+		});
+
+		it("click auto-recovers and returns stale ref hint", async () => {
+			await sessionManager.removeAll();
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"mock",
+				"work",
+			);
+
+			const result = await router.click("default", "@e5");
+			expect(result.success).toBe(true);
+			expect(mock.calls.get("click")).toBeUndefined();
+			expect(mock.calls.get("navigate")).toBeDefined();
+			expect(result.snapshot).toMatch(/accessibility tree/i);
+		});
+
+		it("type auto-recovers and returns stale ref hint", async () => {
+			await sessionManager.removeAll();
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"mock",
+				"work",
+			);
+
+			const result = await router.type("default", "@e3", "hello");
+			expect(result.success).toBe(true);
+			expect(mock.calls.get("type")).toBeUndefined();
+			expect(mock.calls.get("navigate")).toBeDefined();
+		});
+	});
+});
+
+// ─── Cookie dispatch ──────────────────────────────────────────
+
+describe("Router cookie dispatch", () => {
+	let mock: MockPlugin;
+
+	beforeEach(() => {
+		pluginRegistry.clear();
+		mock = new MockPlugin("mock");
+		pluginRegistry.register(mock, makeConfig({ name: "mock" }));
+	});
+
+	afterEach(async () => {
+		await sessionManager.removeAll();
+		pluginRegistry.clear();
+	});
+
+	// ─── getCookies() ──────────────────────────────────────────
+
+	describe("getCookies()", () => {
+		it("dispatches to plugin.getCookies with an existing session", async () => {
+			await router.navigate("https://example.com");
+			mock.calls.delete("navigate");
+
+			const result = await router.getCookies("default");
+
+			expect(result.success).toBe(true);
+			expect(mock.calls.get("getCookies")).toHaveLength(1);
+			const [taskId, urls] = mock.calls.get("getCookies")![0] as [
+				string,
+				string[] | undefined,
+			];
+			expect(taskId).toBe("default");
+			expect(urls).toBeUndefined();
+		});
+
+		it("passes optional urls filter", async () => {
+			await router.navigate("https://example.com");
+			mock.calls.delete("navigate");
+
+			await router.getCookies("default", ["https://example.com"]);
+
+			const [, urls] = mock.calls.get("getCookies")![0] as [
+				string,
+				string[] | undefined,
+			];
+			expect(urls).toEqual(["https://example.com"]);
+		});
+
+		it("returns error without an existing session", async () => {
+			const result = await router.getCookies("default");
+
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/no active session/i);
+		});
+
+		it("handles plugin not available", async () => {
+			await router.navigate("https://example.com");
+			mock.calls.delete("navigate");
+
+			// Remove the plugin from registry
+			pluginRegistry.clear();
+			// Re-register with a different name so session has stale pluginName
+			const otherMock = new MockPlugin("other");
+			pluginRegistry.register(otherMock, makeConfig({ name: "other" }));
+
+			const result = await router.getCookies("default");
+
+			// Session still exists with "mock" pluginName, but only "other" is registered
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/not available/i);
+		});
+	});
+
+	// ─── addCookies() ──────────────────────────────────────────
+
+	describe("addCookies()", () => {
+		it("dispatches to plugin.addCookies with the cookies array", async () => {
+			await router.navigate("https://example.com");
+			mock.calls.delete("navigate");
+
+			const cookies = [
+				{ name: "test", value: "val", domain: ".example.com", path: "/" },
+			];
+			const result = await router.addCookies("default", cookies);
+
+			expect(result.success).toBe(true);
+			expect(mock.calls.get("addCookies")).toHaveLength(1);
+			const [taskId, passedCookies] = mock.calls.get("addCookies")![0] as [
+				string,
+				unknown[],
+			];
+			expect(taskId).toBe("default");
+			expect(passedCookies).toEqual(cookies);
+		});
+
+		it("returns error without an existing session", async () => {
+			const result = await router.addCookies("default", [
+				{ name: "test", value: "val" },
+			]);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/no active session/i);
+		});
+
+		it("handles plugin not available", async () => {
+			await router.navigate("https://example.com");
+			mock.calls.delete("navigate");
+
+			pluginRegistry.clear();
+			const otherMock = new MockPlugin("other");
+			pluginRegistry.register(otherMock, makeConfig({ name: "other" }));
+
+			const result = await router.addCookies("default", [
+				{ name: "test", value: "val" },
+			]);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/not available/i);
+		});
+	});
+
+	// ─── clearCookies() ────────────────────────────────────────
+
+	describe("clearCookies()", () => {
+		it("dispatches to plugin.clearCookies with no options", async () => {
+			await router.navigate("https://example.com");
+			mock.calls.delete("navigate");
+
+			const result = await router.clearCookies("default");
+
+			expect(result.success).toBe(true);
+			expect(mock.calls.get("clearCookies")).toHaveLength(1);
+			const [taskId, options] = mock.calls.get("clearCookies")![0] as [
+				string,
+				unknown,
+			];
+			expect(taskId).toBe("default");
+			expect(options).toBeUndefined();
+		});
+
+		it("passes filter options", async () => {
+			await router.navigate("https://example.com");
+			mock.calls.delete("navigate");
+
+			await router.clearCookies("default", {
+				name: "session",
+				domain: ".example.com",
+			});
+
+			const [, options] = mock.calls.get("clearCookies")![0] as [
+				string,
+				{ name?: string; domain?: string; path?: string } | undefined,
+			];
+			expect(options).toBeDefined();
+			expect(options!.name).toBe("session");
+			expect(options!.domain).toBe(".example.com");
+		});
+
+		it("returns error without an existing session", async () => {
+			const result = await router.clearCookies("default");
+
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/no active session/i);
+		});
+
+		it("handles plugin not available", async () => {
+			await router.navigate("https://example.com");
+			mock.calls.delete("navigate");
+
+			pluginRegistry.clear();
+			const otherMock = new MockPlugin("other");
+			pluginRegistry.register(otherMock, makeConfig({ name: "other" }));
+
+			const result = await router.clearCookies("default");
+
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/not available/i);
+		});
+	});
+
+	// ─── Session auto-recovery ─────────────────────────────────
+
+	describe("auto-recovery on cookie operations", () => {
+		it("getCookies auto-creates a session from lastNav if none exists", async () => {
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"mock",
+			);
+
+			const result = await router.getCookies("default");
+
+			expect(result.success).toBe(true);
+			// Should have navigated to recreate the session
+			expect(mock.calls.get("navigate")).toHaveLength(1);
+			expect(mock.calls.get("getCookies")).toHaveLength(1);
+		});
+
+		it("addCookies auto-creates a session from lastNav", async () => {
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"mock",
+			);
+
+			const result = await router.addCookies("default", [
+				{ name: "test", value: "val" },
+			]);
+
+			expect(result.success).toBe(true);
+			expect(mock.calls.get("navigate")).toHaveLength(1);
+			expect(mock.calls.get("addCookies")).toHaveLength(1);
+		});
+
+		it("clearCookies auto-creates a session from lastNav", async () => {
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"mock",
+			);
+
+			const result = await router.clearCookies("default");
+
+			expect(result.success).toBe(true);
+			expect(mock.calls.get("navigate")).toHaveLength(1);
+			expect(mock.calls.get("clearCookies")).toHaveLength(1);
+		});
+
+		it("returns error when auto-creation fails (lastNav plugin gone)", async () => {
+			sessionManager.setLastNav(
+				"default",
+				"https://example.com",
+				"Mock",
+				"extinct-plugin",
+			);
+
+			const result = await router.getCookies("default");
+
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/no active session/i);
 		});
 	});
 });

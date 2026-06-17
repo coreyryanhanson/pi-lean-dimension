@@ -2,9 +2,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
+// fs functions used by profile/cookies handlers are in their respective modules
 
 /**
  * Browser Toggle — integrated into pi-browser extension.
@@ -26,13 +24,9 @@ import { homedir } from "node:os";
  * you can leave browser tools disabled and rely on web-fetch alone.
  */
 
+import { readMergedSettings } from "./core/shared/settings-reader.js";
+
 // ---- Constants -------------------------------------------------
-
-/** Global pi settings path */
-const GLOBAL_SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
-
-/** Project pi settings path (relative to current working dir) */
-const PROJECT_SETTINGS_PATH = ".pi/settings.json";
 
 /** Default toggle config key */
 const CONFIG_KEY = "browserToggle";
@@ -45,24 +39,39 @@ const BROWSER_TOOL_NAMES = new Set([
 	"browser-click",
 	"browser-type",
 	"browser-scroll",
-	"browser-screenshot",
 	"browser-get-images",
 	"browser-back",
 	"browser-press",
 	"browser-console",
+	"browser-inspect",
+	"web-guide",
 ]);
 
 /** Names of learn tools (web-learn) that require /web learn to be active. */
 const LEARN_TOOL_NAMES = new Set(["web-learn"]);
 
-/** Persisted state shape — two independent booleans. */
+/** Persisted state shape — two independent booleans plus conversation-scoped default profile. */
 interface BrowserToggleState {
 	browserToolsEnabled: boolean;
 	learnToolsEnabled: boolean;
+	/** Default profile for the current conversation. "none" means no override. */
+	defaultProfile: string;
 }
 
 /** Last known toggle state — used by status bar */
 let _lastToggleState = true;
+
+/** Conversation-scoped default profile. "none" means: read from config file. */
+let _conversationDefaultProfile: string | undefined;
+
+/**
+ * Get the effective default profile. Returns the conversation-scoped override
+ * if set, otherwise falls back to "none" (the router reads browser.defaultProfile
+ * from settings.json as its own fallback).
+ */
+export function getConversationDefaultProfile(): string | undefined {
+	return _conversationDefaultProfile;
+}
 
 // ---- Helpers ---------------------------------------------------
 
@@ -123,12 +132,32 @@ function persistState(pi: ExtensionAPI, state: BrowserToggleState): void {
 // ---- Branch-aware restoration ----------------------------------
 
 /**
- * Migrate a legacy {enabled: boolean} state to the new two-boolean schema.
+ * Migrate a legacy {enabled: boolean} state to the new three-field schema.
  */
 function migrateLegacyState(data: unknown): BrowserToggleState | null {
 	if (data && typeof data === "object" && "enabled" in data) {
 		const enabled = (data as Record<string, unknown>).enabled === true;
-		return { browserToolsEnabled: enabled, learnToolsEnabled: enabled };
+		return {
+			browserToolsEnabled: enabled,
+			learnToolsEnabled: enabled,
+			defaultProfile: "none",
+		};
+	}
+	// Also handle the two-boolean schema (missing defaultProfile)
+	if (
+		data &&
+		typeof data === "object" &&
+		typeof (data as Record<string, unknown>).browserToolsEnabled === "boolean"
+	) {
+		return {
+			browserToolsEnabled: (data as Record<string, unknown>)
+				.browserToolsEnabled as boolean,
+			learnToolsEnabled:
+				((data as Record<string, unknown>).learnToolsEnabled as boolean) ??
+				false,
+			defaultProfile:
+				((data as Record<string, unknown>).defaultProfile as string) ?? "none",
+		};
 	}
 	return null;
 }
@@ -157,6 +186,10 @@ function restoreFromBranch(pi: ExtensionAPI, ctx: ExtensionContext): boolean {
 	if (savedState !== undefined) {
 		applyBrowserState(pi, savedState.browserToolsEnabled);
 		applyLearnState(pi, savedState.learnToolsEnabled);
+		// Restore conversation-scoped default profile
+		if (savedState.defaultProfile && savedState.defaultProfile !== "none") {
+			_conversationDefaultProfile = savedState.defaultProfile;
+		}
 		return true;
 	}
 
@@ -173,7 +206,11 @@ function applyConfigDefault(pi: ExtensionAPI): void {
 	applyBrowserState(pi, enabled);
 	applyLearnState(pi, false);
 	// Persist so subsequent branch navigation sees this as the initial state
-	persistState(pi, { browserToolsEnabled: enabled, learnToolsEnabled: false });
+	persistState(pi, {
+		browserToolsEnabled: enabled,
+		learnToolsEnabled: false,
+		defaultProfile: "none",
+	});
 }
 
 // ---- Unit-test exports -----------------------------------------
@@ -206,11 +243,7 @@ export function _resetToggleStateForTest(): void {
  * Silently returns `true` on missing files, parse errors, or type mismatches.
  */
 function readBrowserToggleConfig(): boolean {
-	const global = readSettingsFile(GLOBAL_SETTINGS_PATH);
-	const project = readSettingsFile(PROJECT_SETTINGS_PATH);
-
-	// Project overrides global
-	const merged = { ...global, ...project };
+	const merged = readMergedSettings();
 	const segment = merged[CONFIG_KEY];
 
 	if (
@@ -223,21 +256,6 @@ function readBrowserToggleConfig(): boolean {
 	}
 
 	return true; // default: enabled
-}
-
-/** Read and parse a JSON settings file. Returns {} on any failure. */
-function readSettingsFile(path: string): Record<string, unknown> {
-	try {
-		if (!existsSync(path)) return {};
-		const raw = readFileSync(path, "utf-8");
-		const parsed = JSON.parse(raw);
-		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-			return parsed as Record<string, unknown>;
-		}
-		return {};
-	} catch {
-		return {};
-	}
 }
 
 /**
@@ -294,6 +312,47 @@ export {
 };
 export type { BrowserToggleState };
 
+// ---- Profile & Cookies (extracted) ------------------------------
+
+import { handleProfileSubcommand } from "./browser-profile.js";
+import { handleCookiesSubcommand } from "./browser-cookies.js";
+import { handleStatusSubcommand } from "./browser-status.js";
+
+// ---- Internal helpers (used by delegated handlers) ---------------
+
+/**
+ * Set the conversation-scoped default profile.
+ * Affects this conversation only; survives /reload, /resume, /fork.
+ * "none" resets to the config-file default.
+ */
+function setConversationDefaultProfile(
+	pi: ExtensionAPI,
+	profile: string,
+): void {
+	if (profile === "none") {
+		_conversationDefaultProfile = undefined;
+	} else {
+		_conversationDefaultProfile = profile;
+	}
+
+	// Persist so it survives /reload, /resume, /fork
+	const currentState = getCurrentState(pi);
+	persistState(pi, {
+		...currentState,
+		defaultProfile: profile,
+	});
+}
+
+/** Read the current in-memory toggle state. */
+function getCurrentState(
+	pi: ExtensionAPI,
+): Pick<BrowserToggleState, "browserToolsEnabled" | "learnToolsEnabled"> {
+	return {
+		browserToolsEnabled: isBrowserEnabled(pi),
+		learnToolsEnabled: isLearnEnabled(pi),
+	};
+}
+
 // ---- Toggle initializer ----------------------------------------
 
 /**
@@ -325,6 +384,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				persistState(pi, {
 					browserToolsEnabled: true,
 					learnToolsEnabled: false,
+					defaultProfile: _conversationDefaultProfile ?? "none",
 				});
 				ctx.ui.setStatus("browser", "🌐 idle");
 				ctx.ui.notify(
@@ -337,6 +397,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				persistState(pi, {
 					browserToolsEnabled: true,
 					learnToolsEnabled: true,
+					defaultProfile: _conversationDefaultProfile ?? "none",
 				});
 				ctx.ui.setStatus("browser", "🌐 idle");
 				ctx.ui.notify(
@@ -349,12 +410,23 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				persistState(pi, {
 					browserToolsEnabled: false,
 					learnToolsEnabled: false,
+					defaultProfile: _conversationDefaultProfile ?? "none",
 				});
 				ctx.ui.setStatus("browser", "○ web off");
 				ctx.ui.notify(
 					"🌐 Browser tools disabled. /web on to re-enable.",
 					"info",
 				);
+			} else if (cmd === "profile" || cmd.startsWith("profile ")) {
+				const sub = cmd.slice("profile".length).trim();
+				await handleProfileSubcommand(sub, ctx, pi, (profile: string) => {
+					setConversationDefaultProfile(pi, profile);
+				});
+			} else if (cmd === "cookies" || cmd.startsWith("cookies ")) {
+				const sub = cmd.slice("cookies".length).trim();
+				await handleCookiesSubcommand(sub, ctx);
+			} else if (cmd === "status") {
+				handleStatusSubcommand(ctx, isBrowserEnabled(pi), isLearnEnabled(pi));
 			} else {
 				// Default: show status
 				const browserStatus = isBrowserEnabled(pi) ? "✅ on" : "❌ off";
@@ -362,10 +434,13 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				ctx.ui.notify(
 					`🌐 Browser tools: ${browserStatus}\n` +
 						`📖 Learn mode: ${learnStatus}\n` +
-						`   /web off     disable all browser tools\n` +
-						`   /web on      enable browsing only\n` +
-						`   /web learn   enable browsing + guide-saving\n` +
-						`   /web         show this status`,
+						`   /web profile     manage browser profiles\n` +
+						`   /web cookies     inspect or clear session cookies\n` +
+						`   /web off         disable all browser tools\n` +
+						`   /web on          enable browsing only\n` +
+						`   /web learn       enable browsing + guide-saving\n` +
+						`   /web status      detailed runtime status (sessions, plugins, profiles)\n` +
+						`   /web             show this status`,
 					"info",
 				);
 			}

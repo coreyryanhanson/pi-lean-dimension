@@ -76,12 +76,18 @@ function extractTitle(root: ReturnType<typeof parseHtml>): string {
 /**
  * Perform the raw HTTP fetch, HTML parsing, and Markdown conversion.
  * Used internally by `webFetch()` to perform the raw HTTP request.
+ * Returns the parsed root alongside raw HTML so callers can avoid re-parsing.
  */
 async function performFetch(
 	url: string,
 	timeoutMs: number = 30_000,
 	signal?: AbortSignal,
-): Promise<{ html: string; title: string; needsJavaScript: boolean }> {
+): Promise<{
+	html: string;
+	title: string;
+	needsJavaScript: boolean;
+	root: ReturnType<typeof parseHtml>;
+}> {
 	const controller = new AbortController();
 	const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -113,14 +119,11 @@ async function performFetch(
 			throw new Error("Empty body");
 		}
 
-		// Parse HTML to extract title and detect JS shells.
-		// We need the root to check for these even though we'll parse again
-		// below — this avoids a second DOM construction pass.
-		const tempRoot = parseHtml(html);
-		const title = extractTitle(tempRoot);
-		const needsJavaScript = detectNeedsJavaScript(tempRoot);
+		const root = parseHtml(html);
+		const title = extractTitle(root);
+		const needsJavaScript = detectNeedsJavaScript(root);
 
-		return { html, title, needsJavaScript };
+		return { html, title, needsJavaScript, root };
 	} finally {
 		clearTimeout(timeoutId);
 	}
@@ -128,10 +131,9 @@ async function performFetch(
 
 /**
  * Parse HTML → clean up DOM → convert to Markdown.
+ * Accepts a pre-parsed HTMLElement root to avoid re-parsing.
  */
-function htmlToMarkdown(html: string): string {
-	const root = parseHtml(html);
-
+function htmlToMarkdown(root: ReturnType<typeof parseHtml>): string {
 	// Remove script, style, noscript tags for cleaner markdown.
 	root.querySelectorAll("script, style, noscript").forEach((el) => el.remove());
 	// Convert SVGs to descriptive placeholders instead of stripping
@@ -360,7 +362,12 @@ export async function webFetch(
 	}
 
 	// Step 2: Perform fetch
-	let result: { html: string; title: string; needsJavaScript: boolean };
+	let result: {
+		html: string;
+		title: string;
+		needsJavaScript: boolean;
+		root: ReturnType<typeof parseHtml>;
+	};
 	let statusCode: number | undefined;
 
 	try {
@@ -406,19 +413,19 @@ export async function webFetch(
 		};
 	}
 
-	// Step 3: Convert to Markdown
-	const markdown = htmlToMarkdown(result.html);
-
-	// Step 4: Bot detection via shared utility
+	// Step 3: Bot detection via shared utility (uses un-mutated parsed root)
 	let botDetected: boolean | undefined;
 	try {
-		const tempRoot = parseHtml(result.html);
-		const bodyText = tempRoot.textContent?.trim() || "";
+		const bodyText = result.root.textContent?.trim() || "";
 		const detection = checkPage(result.title, bodyText);
 		if (detection.isBlocked) botDetected = true;
 	} catch {
 		/* best-effort — don't fail on bot detection errors */
 	}
+
+	// Step 4: Convert to Markdown (uses pre-parsed root from performFetch)
+	// NOTE: htmlToMarkdown mutates the tree — run after bot detection
+	const markdown = htmlToMarkdown(result.root);
 
 	// Step 5: Cap content
 	const taskId = "web-fetch-default"; // No session concept — single shared task key

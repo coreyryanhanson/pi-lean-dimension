@@ -1,14 +1,9 @@
 /**
  * Session manager — tracks browser session lifecycle per task_id.
  *
- * Design: one shared Browser instance, one BrowserContext per active taskId.
- * Contexts are created on first use and disposed on task completion or error.
- *
- * v2 change: Sessions use `pluginName: string` instead of a backend-level enum.
- * The `processHandle` field has been removed.
+ * Design: sessions track metadata; browsers and contexts are managed
+ * entirely by the plugin. The session manager is Playwright-agnostic.
  */
-
-import type { Browser, BrowserContext } from "playwright";
 
 /** Runtime state of a single browsing session */
 export interface BrowserSession {
@@ -29,8 +24,12 @@ export interface BrowserSession {
 	lastActive: number;
 	/** Whether the session has crashed and needs recovery */
 	crashed: boolean;
-	/** Playwright browser context (undefined for fetch) */
-	context?: BrowserContext;
+	/** Whether to auto-save storage state on cleanup */
+	persistState?: boolean;
+	/** Profile name used for this session (undefined = default) */
+	profileName?: string;
+	/** pi session ID for session-scoped profiles */
+	piSessionId?: string;
 }
 
 /** Stored last navigation for a task (used to auto-recover sessions) */
@@ -39,11 +38,12 @@ interface LastNavEntry {
 	title: string;
 	/** Plugin name that was used for the original navigation */
 	pluginName: string;
+	/** Phase 2: Profile name active during this navigation (for restoring state on recovery) */
+	profileName?: string;
 }
 
 class SessionManager {
 	#sessions = new Map<string, BrowserSession>();
-	#playwrightBrowser: Browser | null = null;
 	/** Last navigation URL per task (survives session removal, cleared explicitly) */
 	#lastNav = new Map<string, LastNavEntry>();
 
@@ -83,6 +83,9 @@ class SessionManager {
 				| "currentSnapshotFingerprint"
 				| "cachePopulatedAt"
 				| "lastInteractionAt"
+				| "persistState"
+				| "profileName"
+				| "piSessionId"
 			>
 		>,
 	): void {
@@ -101,6 +104,12 @@ class SessionManager {
 				session.cachePopulatedAt = updates.cachePopulatedAt;
 			if (updates.lastInteractionAt !== undefined)
 				session.lastInteractionAt = updates.lastInteractionAt;
+			if (updates.persistState !== undefined)
+				session.persistState = updates.persistState;
+			if (updates.profileName !== undefined)
+				session.profileName = updates.profileName;
+			if (updates.piSessionId !== undefined)
+				session.piSessionId = updates.piSessionId;
 			session.lastActive = Date.now();
 		}
 	}
@@ -112,8 +121,13 @@ class SessionManager {
 		url: string,
 		title: string,
 		pluginName: string,
+		profileName?: string,
 	): void {
-		this.#lastNav.set(taskId, { url, title, pluginName });
+		const entry: LastNavEntry = { url, title, pluginName };
+		if (profileName !== undefined) {
+			entry.profileName = profileName;
+		}
+		this.#lastNav.set(taskId, entry);
 	}
 
 	getLastNav(taskId: string): LastNavEntry | undefined {
@@ -127,32 +141,13 @@ class SessionManager {
 	// ─── Session lifecycle ────────────────────────────────────────────
 
 	removeSession(taskId: string): void {
-		const session = this.#sessions.get(taskId);
-		if (session?.context) {
-			session.context.close().catch(() => {});
-		}
 		this.#sessions.delete(taskId);
 		this.#lastNav.delete(taskId);
 	}
 
 	async removeAll(): Promise<void> {
-		const closePromises: Promise<void>[] = [];
-		for (const [, session] of this.#sessions) {
-			if (session.context) {
-				closePromises.push(session.context.close().catch(() => {}));
-			}
-		}
-		await Promise.all(closePromises);
 		this.#sessions.clear();
 		this.#lastNav.clear();
-		if (this.#playwrightBrowser) {
-			try {
-				await this.#playwrightBrowser.close();
-			} catch {
-				/* browser may already be closed */
-			}
-			this.#playwrightBrowser = null;
-		}
 	}
 
 	/**
@@ -185,17 +180,30 @@ class SessionManager {
 			const s = active[0]!;
 			const domain = s.currentUrl ? extractDomain(s.currentUrl) : undefined;
 			const sym = this.pluginSymbol(s.pluginName);
-			let status = domain ? `▶ ${sym}: ${domain}` : `▶ ${sym}`;
+			const profileTag = s.profileName
+				? ` [${profileDisplayName(s.profileName)}]`
+				: "";
+			let status = domain
+				? `▶ ${sym}: ${domain}${profileTag}`
+				: `▶ ${sym}${profileTag}`;
 			if (crashed.length > 0) {
 				status += ` · ${crashed.length} crashed`;
 			}
 			return status;
 		}
-		const plugins = new Set(active.map((s) => s.pluginName));
-		const pluginStr = Array.from(plugins)
-			.map((p) => this.pluginSymbol(p))
-			.join(",");
-		let status = `🌐 ${active.length} active (${pluginStr})`;
+		// Multiple active sessions — group by profile
+		const byProfile = new Map<string, number>();
+		for (const s of active) {
+			const key = s.profileName ?? "ephemeral";
+			byProfile.set(key, (byProfile.get(key) ?? 0) + 1);
+		}
+		const profileParts = Array.from(byProfile.entries()).map(([name, count]) =>
+			count > 1
+				? `${profileDisplayName(name)}×${count}`
+				: profileDisplayName(name),
+		);
+		const sym = this.pluginSymbol(active[0]!.pluginName);
+		let status = `🌐 ${active.length} active (${sym}): ${profileParts.join(", ")}`;
 		if (crashed.length > 0) {
 			status += ` · ${crashed.length} crashed`;
 		}
@@ -212,12 +220,29 @@ class SessionManager {
 		return this.getActiveSessions().length;
 	}
 
-	getPlaywrightBrowser(): Browser | null {
-		return this.#playwrightBrowser;
+	/**
+	 * Find the taskId for a given pi session ID.
+	 * Used by command handlers (like `/web cookies`) to resolve the correct
+	 * taskId without duplicating index.ts's monotonic counter logic.
+	 */
+	getTaskIdForPiSessionId(piSessionId: string): string | undefined {
+		for (const [taskId, session] of this.#sessions.entries()) {
+			if (session.piSessionId === piSessionId) return taskId;
+		}
+		return undefined;
 	}
-	setPlaywrightBrowser(b: Browser | null): void {
-		this.#playwrightBrowser = b;
-	}
+}
+
+/**
+ * Short display name for a profile in the TUI status bar.
+ * Session-scoped profiles render as a "📋 session" badge;
+ * named profiles show their name;
+ * "ephemeral" (no profile) label shows as-is.
+ */
+function profileDisplayName(name: string): string {
+	if (name.startsWith("_session-")) return "📋 session";
+	if (name === "ephemeral") return "ephemeral";
+	return name;
 }
 
 function extractDomain(url: string): string {

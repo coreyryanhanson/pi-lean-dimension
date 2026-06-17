@@ -15,32 +15,16 @@ import type { BrowserPlugin } from "../plugin-api.js";
 import type { AriaCachedNode } from "./accessibility-tree.js";
 import { roleIcon } from "./accessibility-tree.js";
 
-// ─── Boilerplate filtering ────────────────────────────────────────
-
-/**
- * Patterns identifying boilerplate/cookie/legal content that should
- * be excluded from text extraction. Applied to paragraph/link text
- * only when the element is in a contentinfo or complementary region.
- */
-const BOILERPLATE_PATTERNS: readonly RegExp[] = [
-	/^©\s*\d{4}/,
-	/^all rights reserved/i,
-	/^terms\s+of\s+(service|use)/i,
-	/^privacy\s+policy/i,
-	/^cookie\s+(policy|settings|consent)/i,
-	/^subscribe/i,
-	/^newsletter/i,
-	/^skip\s+to\s+content/i,
-];
+// ─── Text length filter ────────────────────────────────────────────
 
 /**
  * Minimum trimmed text length for an extracted element to be included.
  *
  * Set to 3 to capture short-but-meaningful labels like "FAQ", "Top", "Map"
  * while still filtering out true noise (single chars, whitespace-only text).
- * The existing visibility filters (offsetParent, getClientRects, visibility,
- * boilerplate patterns) handle most garbage — lowering from 5 to 3 only
- * adds short categories/links that are clearly intentional content.
+ * Visibility filters (offsetParent, getClientRects, visibility) handle most
+ * garbage — lowering from 5 to 3 adds short categories/links that are clearly
+ * intentional content.
  */
 const MIN_TEXT_LENGTH = 3;
 
@@ -122,17 +106,6 @@ const EXTRACTOR_SCRIPT = `(() => {
       const text = p.innerText.trim();
       if (text.length < ${MIN_TEXT_LENGTH}) continue;
 
-      // Check boilerplate
-      const isBoilerplate = (${JSON.stringify(
-				BOILERPLATE_PATTERNS.map((r) => r.source),
-			)}).some(function(pattern) {
-        return new RegExp(pattern, 'i').test(text);
-      });
-      const role = p.getAttribute('role') || '';
-      if (isBoilerplate && (role === 'contentinfo' || role === 'complementary')) {
-        continue;
-      }
-
       const region = p.closest('[role="region"], [aria-labelledby], [aria-label]');
       const regionLabel = region
         ? (region.getAttribute('aria-label') || region.getAttribute('aria-labelledby') || '')
@@ -148,16 +121,6 @@ const EXTRACTOR_SCRIPT = `(() => {
       if (window.getComputedStyle(a).visibility === 'hidden') continue;
       const text = a.innerText.trim();
       if (text.length < ${MIN_TEXT_LENGTH}) continue;
-
-      // Check boilerplate (same pattern as paragraphs section)
-      const aRole = a.getAttribute('role') || '';
-      if ((${JSON.stringify(
-				BOILERPLATE_PATTERNS.map((r) => r.source),
-			)}).some(function(pattern) {
-        return new RegExp(pattern, 'i').test(text);
-      }) && (aRole === 'contentinfo' || aRole === 'complementary')) {
-        continue;
-      }
 
       result.links.push({ text: text, href: a.href });
     }

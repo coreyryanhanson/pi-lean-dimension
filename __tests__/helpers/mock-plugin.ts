@@ -17,6 +17,10 @@ import type {
 	GetImagesResult,
 	ConsoleMessagesResult,
 	EvaluateResult,
+	CookieResult,
+	ClearCookiesOptions,
+	StorageStateResult,
+	ResultBase,
 } from "../../core/plugin-api";
 import { DEFAULT_CAPABILITIES } from "../../core/plugin-api";
 import type { AriaCachedNode } from "../../core/shared/accessibility-tree";
@@ -36,6 +40,10 @@ export class MockPlugin implements BrowserPlugin {
 	imagesResult: Partial<GetImagesResult> = {};
 	consoleResult: Partial<ConsoleMessagesResult> = {};
 	evalResult: Partial<EvaluateResult> = {};
+	cookieResult: Partial<CookieResult> = {};
+	addCookieResult: Partial<ResultBase> = {};
+	clearCookieResult: Partial<ResultBase> = {};
+	storageStateResult: Partial<StorageStateResult> = {};
 
 	/** If set, this operation throws instead of returning */
 	shouldThrow: Set<string> = new Set();
@@ -72,7 +80,7 @@ export class MockPlugin implements BrowserPlugin {
 		url: string,
 		taskId: string,
 		timeoutMs: number,
-		options?: { signal?: AbortSignal },
+		options?: { signal?: AbortSignal; storageState?: unknown },
 	): Promise<NavigateResult> {
 		this.record("navigate", [url, taskId, timeoutMs, options]);
 		if (this.shouldThrow.has("navigate")) throw new Error("navigate failed");
@@ -228,6 +236,74 @@ export class MockPlugin implements BrowserPlugin {
 	async cleanup(taskId: string): Promise<void> {
 		this.record("cleanup", [taskId]);
 		if (this.shouldThrow.has("cleanup")) throw new Error("cleanup failed");
+	}
+
+	async getCookies(taskId: string, urls?: string[]): Promise<CookieResult> {
+		this.record("getCookies", [taskId, urls]);
+		if (this.shouldThrow.has("getCookies"))
+			throw new Error("getCookies failed");
+		return {
+			success: true,
+			cookies: [
+				{
+					name: "mock",
+					value: "value",
+					domain: ".example.com",
+					path: "/",
+				},
+			],
+			...this.cookieResult,
+		};
+	}
+
+	async addCookies(
+		taskId: string,
+		cookies: import("../../core/plugin-api").Cookie[],
+	): Promise<ResultBase> {
+		this.record("addCookies", [taskId, cookies]);
+		if (this.shouldThrow.has("addCookies"))
+			throw new Error("addCookies failed");
+		return {
+			success: true,
+			...this.addCookieResult,
+		};
+	}
+
+	async clearCookies(
+		taskId: string,
+		options?: ClearCookiesOptions,
+	): Promise<ResultBase> {
+		this.record("clearCookies", [taskId, options]);
+		if (this.shouldThrow.has("clearCookies"))
+			throw new Error("clearCookies failed");
+		return {
+			success: true,
+			...this.clearCookieResult,
+		};
+	}
+
+	async getStorageState(taskId: string): Promise<StorageStateResult> {
+		this.record("getStorageState", [taskId]);
+		if (this.shouldThrow.has("getStorageState"))
+			throw new Error("getStorageState failed");
+		return {
+			success: true,
+			cookies: [
+				{
+					name: "mock",
+					value: "value",
+					domain: ".example.com",
+					path: "/",
+				},
+			],
+			origins: [
+				{
+					origin: "https://example.com",
+					localStorage: [],
+				},
+			],
+			...this.storageStateResult,
+		};
 	}
 }
 

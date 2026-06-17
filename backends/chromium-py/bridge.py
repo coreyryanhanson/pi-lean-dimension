@@ -185,9 +185,17 @@ class ChromiumPyBridge(BrowserBridge):
     Snapshots after each interaction are taken automatically, matching
     the behavior of the TypeScript ChromiumPlugin.
 
+    Session isolation model
+    -----------------------
+    - *Ephemeral / session profiles*: each task gets its own
+      BrowserContext + Page (current default behaviour).
+    - *Named profiles* (Phase 5): tasks sharing the same named profile
+      reuse a single shared BrowserContext.  Each task gets its own
+      Page within that context.  Reference counting ensures the shared
+      context is closed when the last task's page closes.
+
     A single Playwright instance and Browser are shared across all
-    sessions; each task gets its own BrowserContext + Page for
-    isolation.
+    sessions, regardless of the isolation model.
     """
 
     _pw: Any  # Playwright instance (lazy, shared)
@@ -228,8 +236,8 @@ class ChromiumPyBridge(BrowserBridge):
         return self._pw, self._browser
 
     def _maybe_stop_playwright(self) -> None:
-        """Stop the shared Playwright if no sessions remain."""
-        if not self.sessions and self._pw is not None:
+        """Stop the shared Playwright if no sessions or profile contexts remain."""
+        if not self.sessions and not self._profile_contexts and self._pw is not None:
             try:
                 if self._browser:
                     self._browser.close()
@@ -244,24 +252,29 @@ class ChromiumPyBridge(BrowserBridge):
 
     # ── Session lifecycle ──────────────────────────────────────────
 
-    def create_browser_session(
-        self, task_id: str, config: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Create a new BrowserContext + Page for the given task.
+    def create_browser_context(self, config: dict[str, Any]) -> Any:
+        """Create a standalone BrowserContext for shared named profiles.
 
-        Reuses the shared Playwright instance and Browser across tasks.
-        Returns a session dict containing the page, context, and
-        console-message accumulator.
+        Applies the default viewport, user agent, and ``storageState``
+        from config.  Starts Playwright tracing if ``BROWSER_TRACE_DIR``
+        is set.
+
+        Returns a Playwright ``BrowserContext`` (no Page yet).
         """
         _pw, browser = self._ensure_playwright()
 
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 720},
-            user_agent=(
+        context_kwargs: dict[str, Any] = {
+            "viewport": {"width": 1280, "height": 720},
+            "user_agent": (
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             ),
-        )
+        }
+        storage_state = config.get("storageState")
+        if storage_state is not None:
+            context_kwargs["storage_state"] = storage_state
+
+        context = browser.new_context(**context_kwargs)
 
         # Start Playwright trace capture if BROWSER_TRACE_DIR is set.
         _trace_dir = os.environ.get("BROWSER_TRACE_DIR")
@@ -272,13 +285,19 @@ class ChromiumPyBridge(BrowserBridge):
                     snapshots=True,
                     sources=True,
                 )
-                _log("tracing", taskId=task_id, action="start",
-                     dir=_trace_dir)
+                _log("tracing", taskId=config.get("_task_id", "shared"),
+                     action="start", dir=_trace_dir)
             except Exception:
                 pass  # Best-effort
 
-        page = context.new_page()
+        return context
 
+    def _setup_page_session(self, page: Any) -> dict[str, Any]:
+        """Attach console capture and dialog handlers to a new page.
+
+        Returns a session dict with ``page``, ``console_messages``, and
+        ``dialog_log``.
+        """
         # ── Console capture ─────────────────────────────────────
         console_messages: list[dict[str, str]] = []
         page.on("console", lambda msg: console_messages.append(
@@ -297,16 +316,51 @@ class ChromiumPyBridge(BrowserBridge):
         ))
 
         return {
-            "context": context,
             "page": page,
             "console_messages": console_messages,
             "dialog_log": dialog_log,
         }
 
+    def create_browser_session(
+        self, task_id: str, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Create a new BrowserContext + Page for the given task.
+
+        Reuses the shared Playwright instance and Browser across tasks.
+        Returns a session dict containing the page, context, and
+        console-message accumulator.
+
+        If ``config`` contains a ``storageState`` key, it is passed
+        to ``create_browser_context()`` to restore cookies and localStorage.
+        """
+        context = self.create_browser_context(config)
+        page = context.new_page()
+        session = self._setup_page_session(page)
+        session["context"] = context
+        return session
+
     def close_browser_session(self, task_id: str) -> None:
-        """Close the BrowserContext (and Page) for the given task."""
+        """Close the BrowserContext (and Page) for the given task.
+
+        If the session's context is managed by a shared named profile
+        (tracked in ``_profile_contexts``), delegates to
+        ``remove_profile_session()`` instead of closing the context
+        directly — the context must stay alive for other tasks sharing
+        the same profile.
+        """
         session = self.sessions.get(task_id)
         if session is not None:
+            # Check if this session belongs to a shared profile context
+            context: Any = session.get("context")
+            if context is not None:
+                for pname, pent in list(self._profile_contexts.items()):
+                    if pent.get("context") is context:
+                        # Shared profile context — don't close it directly.
+                        # remove_profile_session handles ref count, trace
+                        # stop (on last close), and _maybe_stop_playwright.
+                        self.remove_profile_session(task_id, pname)
+                        return
+
             try:
                 page: Any = session.get("page")
                 if page and not page.is_closed():
@@ -317,22 +371,9 @@ class ChromiumPyBridge(BrowserBridge):
             # Stop and save Playwright trace if BROWSER_TRACE_DIR is set.
             _trace_dir = os.environ.get("BROWSER_TRACE_DIR")
             if _trace_dir:
-                try:
-                    os.makedirs(_trace_dir, exist_ok=True)
-                    _ctx: Any = session.get("context")
-                    if _ctx:
-                        _trace_path = os.path.join(
-                            _trace_dir,
-                            f"trace-{task_id}-{int(time.time() * 1000)}.zip",
-                        )
-                        _ctx.tracing.stop(path=_trace_path)
-                        _log("tracing", taskId=task_id, action="stop",
-                             dir=_trace_dir)
-                except Exception:
-                    pass  # Best-effort
+                self._stop_trace(task_id, context, _trace_dir)
 
             try:
-                context: Any = session.get("context")
                 if context:
                     context.close()
             except Exception:
@@ -343,6 +384,83 @@ class ChromiumPyBridge(BrowserBridge):
         self.element_caches.pop(task_id, None)
 
         # Stop shared Playwright if no sessions remain
+        self._maybe_stop_playwright()
+
+    def ensure_profile_session(
+        self, task_id: str, profile_name: str, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Get or create a page in a shared profile context.
+
+        Overrides the base implementation to insert ``context`` into the
+        session dict (needed by ``do_get_cookies``, ``do_clear_cookies``,
+        etc. which access ``session["context"]``).
+        """
+        result = super().ensure_profile_session(task_id, profile_name, config)
+        # Ensure the session dict has a "context" key pointing to the
+        # shared BrowserContext (required by cookie/storage operations).
+        session = self.sessions.get(task_id)
+        if session is not None and session.get("context") is None:
+            pent = self._profile_contexts.get(profile_name)
+            if pent is not None:
+                session["context"] = pent["context"]
+        return result
+
+    def _stop_trace(
+        self, task_id: str, context: Any, trace_dir: str
+    ) -> None:
+        """Stop and save Playwright trace for a task's context.
+
+        Only stops tracing for shared contexts when the last page closes
+        (ref count reaches zero).  For isolated contexts, always stops.
+        """
+        try:
+            os.makedirs(trace_dir, exist_ok=True)
+            _trace_path = os.path.join(
+                trace_dir,
+                f"trace-{task_id}-{int(time.time() * 1000)}.zip",
+            )
+            context.tracing.stop(path=_trace_path)
+            _log("tracing", taskId=task_id, action="stop", dir=trace_dir)
+        except Exception:
+            pass  # Best-effort
+
+    def remove_profile_session(self, task_id: str, profile_name: str) -> None:
+        """Close a page in a shared profile context and decrement ref count.
+
+        Stops tracing only when the last page closes (ref count reaches
+        zero).  Then closes the shared BrowserContext."""
+        session = self.sessions.get(task_id)
+        profile_entry = self._profile_contexts.get(profile_name)
+
+        if session is not None:
+            page = session.get("page")
+            if page is not None:
+                try:
+                    if not page.is_closed():
+                        page.close()
+                except Exception:
+                    pass
+
+            context = session.get("context")
+            if context is not None and profile_entry is not None:
+                # Stop trace only on last page close
+                if profile_entry["ref_count"] <= 1:
+                    _trace_dir = os.environ.get("BROWSER_TRACE_DIR")
+                    if _trace_dir:
+                        self._stop_trace(task_id, context, _trace_dir)
+
+            self.sessions.pop(task_id, None)
+            self.element_caches.pop(task_id, None)
+
+        if profile_entry is not None:
+            profile_entry["ref_count"] -= 1
+            if profile_entry["ref_count"] <= 0:
+                try:
+                    profile_entry["context"].close()
+                except Exception:
+                    pass
+                self._profile_contexts.pop(profile_name, None)
+
         self._maybe_stop_playwright()
 
     # ── Internal helpers ───────────────────────────────────────────
@@ -439,14 +557,35 @@ class ChromiumPyBridge(BrowserBridge):
         task_id: str,
         url: str,
         timeout_ms: int = 30_000,
+        storageState: Optional[dict[str, Any]] = None,
+        profileName: Optional[str] = None,
+        profileMode: Optional[str] = None,
     ) -> dict[str, Any]:
         """Navigate the browser to a URL.
 
         Includes retry on transient network errors, DOM stabilisation
         wait, bot detection, and accessibility snapshot.
+
+        When ``profileMode == "named"`` and ``profileName`` is provided,
+        the session is created inside a shared BrowserContext for that
+        profile (other tasks using the same profile name will share the
+        same context / cookie jar).  Otherwise, each task gets its own
+        isolated context.
+
+        If ``storageState`` is provided, it is passed to the context
+        creation so saved cookies and localStorage are restored.
         """
         _t_start = time.time()
-        session = self.ensure_session(task_id)
+        config: dict[str, Any] = {}
+        if storageState is not None:
+            config["storageState"] = storageState
+
+        if profileMode == "named" and profileName is not None:
+            # Named profile — use shared context (create or join)
+            session = self.ensure_profile_session(task_id, profileName, config)
+        else:
+            # Isolated context (session profile or ephemeral)
+            session = self.ensure_session(task_id, config)
         page: Any = session["page"]
 
         # ── Navigate (with retry on transient errors) ───────────
@@ -550,6 +689,69 @@ class ChromiumPyBridge(BrowserBridge):
                 "botDetected": bot_detected,
                 "error": last_error,
             }
+
+    def do_new_page(self, task_id: str, profile_name: str) -> dict[str, Any]:
+        """Create a new Page in an existing shared profile context.
+
+        Called when a second (or third, …) task joins a named profile
+        whose shared BrowserContext already exists.  Attaches console
+        capture and dialog handlers to the new page.
+        """
+        profile_entry = self._profile_contexts.get(profile_name)
+        if profile_entry is None:
+            return {
+                "success": False,
+                "error": f"No shared context for profile '{profile_name}'. "
+                         "Call browser.navigate with profileMode='named' first.",
+            }
+
+        context = profile_entry["context"]
+        try:
+            page = context.new_page()
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
+        session = self._setup_page_session(page)
+        session["context"] = context
+        self.sessions[task_id] = session
+        profile_entry["ref_count"] += 1
+
+        _log("newPage", taskId=task_id, profileName=profile_name,
+             refCount=profile_entry["ref_count"])
+        return {"success": True}
+
+    def do_close_page(self, task_id: str, profile_name: str) -> dict[str, Any]:
+        """Close one page in a shared profile context (decrement ref count)."""
+        profile_entry = self._profile_contexts.get(profile_name)
+        if profile_entry is None:
+            # Context already gone — just clean up session
+            self.close_browser_session(task_id)
+            return {"success": True, "refCount": 0}
+
+        self._do_close_page_in_context(task_id, profile_name, profile_entry)
+        return {"success": True, "refCount": max(profile_entry["ref_count"], 0)}
+
+    def _do_close_page_in_context(
+        self, task_id: str, profile_name: str, _profile_entry: dict[str, Any]
+    ) -> None:
+        """Internal: close one page and decrement ref count.
+
+        Delegates to ``remove_profile_session()`` which handles page close,
+        trace stop (on last page), context close, and playlist stop.
+        """
+        self.remove_profile_session(task_id, profile_name)
+
+    def do_cleanup(self, task_id: str, profileName: Optional[str] = None) -> dict[str, Any]:
+        """Clean up resources for a specific task.
+
+        When ``profileName`` is provided and references a shared profile
+        context, delegates to ``do_close_page()``.  Otherwise, closes the
+        isolated BrowserContext via ``close_browser_session()``.
+        """
+        if profileName is not None:
+            return self.do_close_page(task_id, profileName)
+        self.close_browser_session(task_id)
+        return {"success": True}
 
     def do_snapshot(self, task_id: str) -> dict[str, Any]:
         """Take a fresh accessibility snapshot and refresh element cache."""
@@ -1137,6 +1339,97 @@ class ChromiumPyBridge(BrowserBridge):
         except Exception as exc:
             return {
                 "success": False,
+                "error": str(exc),
+            }
+
+    # ── Cookies & storage state ─────────────────────────────────
+
+    def do_get_cookies(
+        self, task_id: str, urls: Optional[list[str]] = None
+    ) -> dict[str, Any]:
+        """Get cookies, optionally filtered by URL."""
+        try:
+            session = self.require_session(task_id)
+            context: Any = session["context"]
+            raw = context.cookies(urls or [])
+            # Normalise to our Cookie shape
+            cookies = [
+                {
+                    "name": c["name"],
+                    "value": c["value"],
+                    "domain": c.get("domain"),
+                    "path": c.get("path"),
+                    "expires": c.get("expires"),
+                    "httpOnly": c.get("httpOnly"),
+                    "secure": c.get("secure"),
+                    "sameSite": c.get("sameSite"),
+                }
+                for c in raw
+            ]
+            return {"success": True, "cookies": cookies}
+        except SessionNotFoundError:
+            raise
+        except Exception as exc:
+            return {"success": False, "cookies": [], "error": str(exc)}
+
+    def do_add_cookies(
+        self, task_id: str, cookies: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Add cookies to the browser context."""
+        try:
+            session = self.require_session(task_id)
+            context: Any = session["context"]
+            context.add_cookies(cookies)
+            return {"success": True}
+        except SessionNotFoundError:
+            raise
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
+    def do_clear_cookies(
+        self,
+        task_id: str,
+        name: Optional[str] = None,
+        domain: Optional[str] = None,
+        path: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Clear cookies, optionally filtered by name/domain/path."""
+        try:
+            session = self.require_session(task_id)
+            context: Any = session["context"]
+            # Playwright Python accepts name/domain/path as kwargs
+            kwargs: dict[str, Any] = {}
+            if name is not None:
+                kwargs["name"] = name
+            if domain is not None:
+                kwargs["domain"] = domain
+            if path is not None:
+                kwargs["path"] = path
+            context.clear_cookies(**kwargs)
+            return {"success": True}
+        except SessionNotFoundError:
+            raise
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
+    def do_get_storage_state(self, task_id: str) -> dict[str, Any]:
+        """Get full storage state (cookies + localStorage + IndexedDB)."""
+        try:
+            session = self.require_session(task_id)
+            context: Any = session["context"]
+            state: dict[str, Any] = context.storage_state()
+            return {
+                "success": True,
+                "cookies": state.get("cookies", []),
+                "origins": state.get("origins", []),
+            }
+        except SessionNotFoundError:
+            raise
+        except Exception as exc:
+            return {
+                "success": False,
+                "cookies": [],
+                "origins": [],
                 "error": str(exc),
             }
 

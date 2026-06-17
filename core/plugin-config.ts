@@ -5,24 +5,27 @@
  * Config is read once at startup. Hot-reload is future work.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { PluginConfig, PluginDetection } from "./plugin-api.js";
-
-// ─── Config paths ─────────────────────────────────────────────────
-
-/** Global pi settings path */
-const GLOBAL_SETTINGS_PATH = join(
-	process.env.HOME || "/root",
-	".pi",
-	"agent",
-	"settings.json",
-);
-
-/** Project pi settings path (relative to cwd) */
-const PROJECT_SETTINGS_PATH = ".pi/settings.json";
+import { sanitizeProfileName } from "./shared/storage-state.js";
+import { readMergedSettings } from "./shared/settings-reader.js";
 
 // ─── Types ────────────────────────────────────────────────────────
+
+/**
+ * Parsed browser configuration from settings.json.
+ * Provides defaults for all fields — every field is always present.
+ */
+export interface BrowserConfig {
+	/**
+	 * Default profile mode or named profile when `browser-navigate` omits the `profile` parameter.
+	 * - "none": clean slate, no persistence
+	 * - "session": persist for this conversation
+	 * - A named profile string (e.g. "shopping", "work")
+	 */
+	defaultProfile: "none" | "session" | string;
+}
 
 /** Raw plugin entry from settings.json (before validation) */
 interface RawPluginEntry {
@@ -42,36 +45,17 @@ export interface PluginConfigLoadResult {
 
 // ─── Config reading ───────────────────────────────────────────────
 
-/** Read and parse a JSON settings file. Returns {} on any failure. */
-function readSettingsFile(path: string): Record<string, unknown> {
-	try {
-		if (!existsSync(path)) return {};
-		const raw = readFileSync(path, "utf-8");
-		const parsed = JSON.parse(raw);
-		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-			return parsed as Record<string, unknown>;
-		}
-		return {};
-	} catch {
-		return {};
-	}
-}
-
 /**
- * Read the browser.plugins array from settings.json.
+ * Read the merged browser config object from settings.json.
  *
  * Looks in:
  *   1. `~/.pi/agent/settings.json` (global)
  *   2. `.pi/settings.json` (project-local, overrides global)
  *
- * Returns the merged plugins array, or undefined if not configured.
+ * Returns the browser config object, or undefined if not present or invalid.
  */
-function readPluginsFromSettings(): unknown[] | undefined {
-	const global = readSettingsFile(GLOBAL_SETTINGS_PATH);
-	const project = readSettingsFile(PROJECT_SETTINGS_PATH);
-
-	// Project overrides global
-	const merged = { ...global, ...project };
+function readBrowserConfigRaw(): Record<string, unknown> | undefined {
+	const merged = readMergedSettings();
 	const browserConfig = merged["browser"];
 
 	if (
@@ -82,10 +66,74 @@ function readPluginsFromSettings(): unknown[] | undefined {
 		return undefined;
 	}
 
-	const plugins = (browserConfig as Record<string, unknown>)["plugins"];
+	return browserConfig as Record<string, unknown>;
+}
+
+/**
+ * Read the browser.plugins array from settings.json.
+ *
+ * Returns the merged plugins array, or undefined if not configured.
+ */
+function readPluginsFromSettings(): unknown[] | undefined {
+	const browserConfig = readBrowserConfigRaw();
+	if (!browserConfig) return undefined;
+
+	const plugins = browserConfig["plugins"];
 	if (!Array.isArray(plugins)) return undefined;
 
 	return plugins;
+}
+
+/**
+ * Load and validate the browser configuration from settings.json.
+ *
+ * Reads the `browser` section and extracts:
+ * - `defaultProfile` (string, default "none")
+ *
+ * Profile names are validated via `sanitizeProfileName()`.
+ * Validation errors are collected but non-fatal — invalid entries
+ * fall back to sensible defaults.
+ */
+export function loadBrowserConfig(): BrowserConfig {
+	const raw = readBrowserConfigRaw();
+	const errors: string[] = [];
+
+	// Defaults
+	const config: BrowserConfig = {
+		defaultProfile: "none",
+	};
+
+	if (!raw) return config;
+
+	// ── defaultProfile ───────────────────────────────────────────
+	if (raw.defaultProfile !== undefined) {
+		if (typeof raw.defaultProfile === "string" && raw.defaultProfile.trim()) {
+			const v = raw.defaultProfile.trim();
+			// Validate: "none", "session", or a named profile
+			if (v === "none" || v === "session") {
+				config.defaultProfile = v;
+			} else {
+				try {
+					config.defaultProfile = sanitizeProfileName(v);
+				} catch (err) {
+					errors.push(
+						`browser.defaultProfile: ${err instanceof Error ? err.message : String(err)}`,
+					);
+				}
+			}
+		} else {
+			errors.push(
+				`browser.defaultProfile: expected a non-empty string, got ${typeof raw.defaultProfile}`,
+			);
+		}
+	}
+
+	// Log validation errors (non-fatal, but surfaced in return)
+	for (const err of errors) {
+		console.warn(`[pi-browser] Config warning: ${err}`);
+	}
+
+	return config;
 }
 
 // ─── Validation ───────────────────────────────────────────────────

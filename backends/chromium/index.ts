@@ -25,11 +25,12 @@ import {
 	formatDialogLog,
 	getConsoleLog as getRawConsoleLog,
 	clearConsoleLog,
-} from "../../core/shared/cdp-supervisor.js";
+} from "./browser-events.js";
 import { sessionManager } from "../../core/shared/session-manager.js";
 import { checkPage } from "../../core/shared/bot-detection.js";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
+import { saveStorageState } from "../../core/shared/storage-state.js";
 import type {
 	BrowserPlugin,
 	PluginCapabilities,
@@ -40,6 +41,11 @@ import type {
 	GetImagesResult,
 	ConsoleMessagesResult,
 	EvaluateResult,
+	ResultBase,
+	Cookie,
+	CookieResult,
+	ClearCookiesOptions,
+	StorageStateResult,
 } from "../../core/plugin-api.js";
 
 // ─── Capabilities ──────────────────────────────────────────────────
@@ -73,10 +79,18 @@ export class ChromiumPlugin implements BrowserPlugin {
 	/** Shared browser instance (lazy-initialised) */
 	private _browser: Browser | null = null;
 
-	/** Per-task context + page */
-	private _contexts = new Map<
+	/**
+	 * Per-task context + page tracking.
+	 * Each task gets its own isolated BrowserContext created fresh per navigate.
+	 */
+	private _pages = new Map<
 		string,
-		{ context: BrowserContext; page: Page }
+		{
+			context: BrowserContext;
+			page: Page;
+			/** Profile name if this page belongs to a named/session profile, undefined for ephemeral */
+			profileName?: string;
+		}
 	>();
 
 	/** Per-task element cache (ref → AriaCachedNode) */
@@ -98,9 +112,11 @@ export class ChromiumPlugin implements BrowserPlugin {
 	}
 
 	async cleanupAll(): Promise<void> {
-		for (const taskId of this._contexts.keys()) {
-			await this.cleanup(taskId);
+		// Close all pages — each cleanup() handles page + context lifecycle
+		for (const taskId of [...this._pages.keys()]) {
+			await this.cleanup(taskId).catch(() => {});
 		}
+
 		if (this._browser) {
 			try {
 				await this._browser.close();
@@ -113,29 +129,70 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	// ── Internal helpers ───────────────────────────────────────
 
-	private async getOrCreateContext(taskId: string): Promise<{
+	// ── Context lifecycle ────────────────────────────────────
+
+	/**
+	 * Get or create a BrowserContext and Page for a task.
+	 *
+	 * Always creates a fresh BrowserContext per navigate, closing any
+	 * existing page/context for the task first. Storage state from disk
+	 * is applied when a named/session profile is active.
+	 */
+	private async getOrCreateContext(
+		taskId: string,
+		options?: {
+			storageState?: unknown;
+			profileName?: string;
+			profileMode?: "none" | "session" | "named";
+		},
+	): Promise<{
 		context: BrowserContext;
 		page: Page;
 		isNew: boolean;
 	}> {
-		const existing = this._contexts.get(taskId);
+		// 1. Check if task already has a page/context — close it (fresh per navigate)
+		const existing = this._pages.get(taskId);
 		if (existing) {
-			// Check if the page is still alive (not closed/crashed)
-			if (existing.page.isClosed()) {
-				try {
-					const newPage = await existing.context.newPage();
-					installDialogHandlers(taskId, newPage);
-					existing.page = newPage;
-				} catch {
-					// Context is also dead — remove and recreate
-					this._contexts.delete(taskId);
-					this._elementCache.delete(taskId);
-				}
-			} else {
-				return { ...existing, isNew: false };
+			try {
+				await existing.page.close();
+			} catch {
+				/* page may already be closed */
 			}
+			try {
+				await existing.context.close();
+			} catch {
+				/* context may already be closed */
+			}
+			this._pages.delete(taskId);
+			this._elementCache.delete(taskId);
 		}
 
+		// 2. Create fresh context (storage state passed through from router)
+		const context = await this._newBrowserContext(options?.storageState);
+		const page = await context.newPage();
+
+		const pageEntry: {
+			context: BrowserContext;
+			page: Page;
+			profileName?: string;
+		} = { context, page };
+		if (options?.profileName) {
+			pageEntry.profileName = options.profileName;
+		}
+		this._pages.set(taskId, pageEntry);
+		installDialogHandlers(taskId, page);
+		this._elementCache.set(taskId, new Map());
+
+		return { context, page, isNew: true };
+	}
+
+	/**
+	 * Create a new BrowserContext on the shared browser instance.
+	 * Lazily initialises the shared browser if needed.
+	 */
+	private async _newBrowserContext(
+		storageState?: unknown,
+	): Promise<BrowserContext> {
 		// Lazy-init the shared browser
 		if (!this._browser) {
 			this._browser = await chromium.launch({
@@ -147,28 +204,32 @@ export class ChromiumPlugin implements BrowserPlugin {
 					"--disable-gpu",
 				],
 			});
-			sessionManager.setPlaywrightBrowser(this._browser);
 
 			// Auto-recover from browser crash/disconnect
 			this._browser.on("disconnected", () => {
 				this._browser = null;
-				sessionManager.setPlaywrightBrowser(null);
-				for (const tid of this._contexts.keys()) {
+				for (const tid of this._pages.keys()) {
 					sessionManager.updateSession(tid, { crashed: true });
 					this._elementCache.delete(tid);
 				}
-				this._contexts.clear();
+				this._pages.clear();
 			});
 		}
 
-		const context = await this._browser.newContext({
+		const contextOptions: Record<string, unknown> = {
 			viewport: { width: 1280, height: 720 },
 			userAgent:
 				"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-		});
+		};
+
+		// Apply storage state (cookies + localStorage) for profile restoration
+		if (storageState !== undefined) {
+			contextOptions.storageState = storageState;
+		}
+
+		const context = await this._browser.newContext(contextOptions);
 
 		// Start Playwright trace capture if BROWSER_TRACE_DIR is set.
-		// Traces include screenshots, DOM snapshots, and source for debugging.
 		const traceDir = process.env.BROWSER_TRACE_DIR;
 		if (traceDir) {
 			try {
@@ -177,34 +238,16 @@ export class ChromiumPlugin implements BrowserPlugin {
 					snapshots: true,
 					sources: true,
 				});
-				this._log("tracing", {
-					taskId,
-					action: "start",
-					dir: traceDir,
-				});
 			} catch {
 				// Best-effort — trace is diagnostic only
 			}
 		}
 
-		const page = await context.newPage();
-		this._contexts.set(taskId, { context, page });
-		this._elementCache.set(taskId, new Map());
-
-		// Install dialog handlers (auto-dismiss JS alerts/confirms/prompts)
-		installDialogHandlers(taskId, page);
-
-		// Update session manager with the context
-		const session = sessionManager.getSession(taskId);
-		if (session) {
-			session.context = context;
-		}
-
-		return { context, page, isNew: true };
+		return context;
 	}
 
 	private getPage(taskId: string): Page | undefined {
-		return this._contexts.get(taskId)?.page;
+		return this._pages.get(taskId)?.page;
 	}
 
 	/**
@@ -354,11 +397,27 @@ export class ChromiumPlugin implements BrowserPlugin {
 		url: string,
 		taskId: string,
 		timeoutMs: number = 30_000,
-		options?: { signal?: AbortSignal },
+		options?: {
+			signal?: AbortSignal;
+			storageState?: unknown;
+			profileName?: string;
+			profileMode?: "none" | "session" | "named";
+		},
 	): Promise<NavigateResult> {
 		const _start = performance.now();
 		try {
-			const { page } = await this.getOrCreateContext(taskId);
+			const ctxOpts: {
+				storageState?: unknown;
+				profileName?: string;
+				profileMode?: "none" | "session" | "named";
+			} = {};
+			if (options?.storageState !== undefined)
+				ctxOpts.storageState = options.storageState;
+			if (options?.profileName !== undefined)
+				ctxOpts.profileName = options.profileName;
+			if (options?.profileMode !== undefined)
+				ctxOpts.profileMode = options.profileMode;
+			const { page } = await this.getOrCreateContext(taskId, ctxOpts);
 
 			// Wire up abort
 			if (options?.signal) {
@@ -1015,15 +1074,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 
 		try {
-			// Constrain viewport width for manageable screenshots
-			const currentViewport = page.viewportSize();
-			if (currentViewport && currentViewport.width > 1024) {
-				await page.setViewportSize({
-					width: 1024,
-					height: currentViewport.height,
-				});
-			}
-
 			const buffer = await page.screenshot({
 				type: "jpeg",
 				quality: 80,
@@ -1105,41 +1155,228 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 	}
 
+	// ── Cookies & storage state ───────────────────────────────
+
+	async getCookies(taskId: string, urls?: string[]): Promise<CookieResult> {
+		const _start = performance.now();
+		const entry = this._pages.get(taskId);
+		if (!entry) {
+			this._log("getCookies", {
+				taskId,
+				success: false,
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
+			return { success: false, cookies: [], error: "No active session" };
+		}
+
+		try {
+			const cookies = await entry.context.cookies(urls);
+			this._log("getCookies", {
+				taskId,
+				success: true,
+				count: cookies.length,
+				time: Math.round(performance.now() - _start),
+			});
+			return { success: true, cookies };
+		} catch (err: unknown) {
+			this._log("getCookies", {
+				taskId,
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+				time: Math.round(performance.now() - _start),
+			});
+			return {
+				success: false,
+				cookies: [],
+				error: err instanceof Error ? err.message : String(err),
+			};
+		}
+	}
+
+	async addCookies(taskId: string, cookies: Cookie[]): Promise<ResultBase> {
+		const _start = performance.now();
+		const entry = this._pages.get(taskId);
+		if (!entry) {
+			this._log("addCookies", {
+				taskId,
+				success: false,
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
+			return { success: false, error: "No active session" };
+		}
+
+		try {
+			await entry.context.addCookies(cookies);
+			this._log("addCookies", {
+				taskId,
+				success: true,
+				count: cookies.length,
+				time: Math.round(performance.now() - _start),
+			});
+			return { success: true };
+		} catch (err: unknown) {
+			this._log("addCookies", {
+				taskId,
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+				time: Math.round(performance.now() - _start),
+			});
+			return {
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+			};
+		}
+	}
+
+	async clearCookies(
+		taskId: string,
+		options?: ClearCookiesOptions,
+	): Promise<ResultBase> {
+		const _start = performance.now();
+		const entry = this._pages.get(taskId);
+		if (!entry) {
+			this._log("clearCookies", {
+				taskId,
+				success: false,
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
+			return { success: false, error: "No active session" };
+		}
+
+		try {
+			await entry.context.clearCookies({
+				...(options?.name ? { name: options.name } : {}),
+				...(options?.domain ? { domain: options.domain } : {}),
+				...(options?.path ? { path: options.path } : {}),
+			});
+			this._log("clearCookies", {
+				taskId,
+				success: true,
+				time: Math.round(performance.now() - _start),
+			});
+			return { success: true };
+		} catch (err: unknown) {
+			this._log("clearCookies", {
+				taskId,
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+				time: Math.round(performance.now() - _start),
+			});
+			return {
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+			};
+		}
+	}
+
+	async getStorageState(taskId: string): Promise<StorageStateResult> {
+		const _start = performance.now();
+		const entry = this._pages.get(taskId);
+		if (!entry) {
+			this._log("getStorageState", {
+				taskId,
+				success: false,
+				error: "No active session",
+				time: Math.round(performance.now() - _start),
+			});
+			return {
+				success: false,
+				cookies: [],
+				origins: [],
+				error: "No active session",
+			};
+		}
+
+		try {
+			const state = await entry.context.storageState();
+			this._log("getStorageState", {
+				taskId,
+				success: true,
+				cookies: state.cookies.length,
+				origins: state.origins.length,
+				time: Math.round(performance.now() - _start),
+			});
+			return {
+				success: true,
+				cookies: state.cookies,
+				origins: state.origins,
+			};
+		} catch (err: unknown) {
+			this._log("getStorageState", {
+				taskId,
+				success: false,
+				error: err instanceof Error ? err.message : String(err),
+				time: Math.round(performance.now() - _start),
+			});
+			return {
+				success: false,
+				cookies: [],
+				origins: [],
+				error: err instanceof Error ? err.message : String(err),
+			};
+		}
+	}
+
 	// ── Per-task cleanup ───────────────────────────────────────
 
 	async cleanup(taskId: string): Promise<void> {
-		const entry = this._contexts.get(taskId);
-		if (entry) {
-			// Stop and save Playwright trace if BROWSER_TRACE_DIR is set.
-			// Traces are stored as trace-{taskId}-{timestamp}.zip.
-			const traceDir = process.env.BROWSER_TRACE_DIR;
-			if (traceDir) {
-				try {
-					mkdirSync(traceDir, { recursive: true });
-					await entry.context.tracing.stop({
-						path: join(traceDir, `trace-${taskId}-${Date.now()}.zip`),
-					});
-					this._log("tracing", {
-						taskId,
-						action: "stop",
-						dir: traceDir,
-					});
-				} catch {
-					// Best-effort — trace is diagnostic only
-				}
-			}
+		const entry = this._pages.get(taskId);
+		if (!entry) return;
+
+		const { context, page } = entry;
+
+		// ── Auto-save storage state for persistent profiles ──────────
+		const session = sessionManager.getSession(taskId);
+		if (session?.persistState) {
 			try {
-				await entry.page.close();
-			} catch {
-				/* page may already be closed */
+				const state = await context.storageState();
+				const name = session.profileName ?? "default";
+				saveStorageState(name, state);
+			} catch (err) {
+				console.warn(
+					`[pi-browser] Failed to auto-save storage state for profile ` +
+						`'${session.profileName ?? "default"}': ` +
+						`${err instanceof Error ? err.message : String(err)}. ` +
+						"Session state may be lost.",
+				);
 			}
-			try {
-				await entry.context.close();
-			} catch {
-				/* context may already be closed */
-			}
-			this._contexts.delete(taskId);
-			this._elementCache.delete(taskId);
 		}
+
+		// ── Tracing: stop before closing (if enabled) ────────────────
+		const traceDir = process.env.BROWSER_TRACE_DIR;
+		if (traceDir) {
+			try {
+				mkdirSync(traceDir, { recursive: true });
+				await context.tracing.stop({
+					path: join(traceDir, `trace-${taskId}-${Date.now()}.zip`),
+				});
+				this._log("tracing", {
+					taskId,
+					action: "stop",
+					dir: traceDir,
+				});
+			} catch {
+				// Best-effort — trace is diagnostic only
+			}
+		}
+
+		// ── Close page + context (always — no ref-counting) ──────────
+		try {
+			await page.close();
+		} catch {
+			/* page may already be closed */
+		}
+		try {
+			await context.close();
+		} catch {
+			/* context may already be closed */
+		}
+		this._pages.delete(taskId);
+		this._elementCache.delete(taskId);
 	}
 }
+
+export default ChromiumPlugin;

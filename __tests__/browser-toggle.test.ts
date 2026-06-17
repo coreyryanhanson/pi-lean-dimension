@@ -50,11 +50,12 @@ const ALL_BROWSER_TOOLS = [
 	{ name: "browser-click", description: "click" },
 	{ name: "browser-type", description: "type" },
 	{ name: "browser-scroll", description: "scroll" },
-	{ name: "browser-screenshot", description: "screenshot" },
 	{ name: "browser-get-images", description: "get images" },
 	{ name: "browser-back", description: "back" },
 	{ name: "browser-press", description: "press" },
 	{ name: "browser-console", description: "console" },
+	{ name: "browser-inspect", description: "inspect" },
+	{ name: "web-guide", description: "guide" },
 ];
 
 const SOME_BROWSER_TOOLS = [
@@ -141,7 +142,7 @@ describe("getRegisteredBrowserTools", () => {
 		);
 	});
 
-	it("returns all 11 browser tools when fully loaded", () => {
+	it("returns all 13 browser tools when fully loaded", () => {
 		const pi = mockPi({ tools: ALL_BROWSER_TOOLS });
 		expect(getRegisteredBrowserTools(pi)).toEqual(
 			ALL_BROWSER_TOOLS.map((t) => t.name),
@@ -380,6 +381,7 @@ describe("persistState", () => {
 		persistState(pi, {
 			browserToolsEnabled: true,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 		expect(pi.appendEntry).toHaveBeenCalledWith(
 			"browser-toggle-state",
@@ -392,10 +394,12 @@ describe("persistState", () => {
 		persistState(pi, {
 			browserToolsEnabled: true,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 		expect(pi.appendEntry).toHaveBeenCalledWith("browser-toggle-state", {
 			browserToolsEnabled: true,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 	});
 
@@ -404,10 +408,12 @@ describe("persistState", () => {
 		persistState(pi, {
 			browserToolsEnabled: false,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 		expect(pi.appendEntry).toHaveBeenCalledWith("browser-toggle-state", {
 			browserToolsEnabled: false,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 	});
 
@@ -416,10 +422,12 @@ describe("persistState", () => {
 		persistState(pi, {
 			browserToolsEnabled: true,
 			learnToolsEnabled: true,
+			defaultProfile: "none",
 		});
 		expect(pi.appendEntry).toHaveBeenCalledWith("browser-toggle-state", {
 			browserToolsEnabled: true,
 			learnToolsEnabled: true,
+			defaultProfile: "none",
 		});
 	});
 });
@@ -458,6 +466,7 @@ describe("getToggleState", () => {
 		persistState(mockPi(), {
 			browserToolsEnabled: true,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 		// persistState doesn't call applyBrowserState, so state is unchanged
 		expect(getToggleState()).toBe(true);
@@ -519,6 +528,7 @@ describe("restoreFromBranch", () => {
 				data: {
 					browserToolsEnabled: true,
 					learnToolsEnabled: false,
+					defaultProfile: "none",
 				} satisfies BrowserToggleState,
 			},
 		]);
@@ -542,6 +552,7 @@ describe("restoreFromBranch", () => {
 				data: {
 					browserToolsEnabled: false,
 					learnToolsEnabled: false,
+					defaultProfile: "none",
 				} satisfies BrowserToggleState,
 			},
 		]);
@@ -607,6 +618,7 @@ describe("restoreFromBranch", () => {
 				data: {
 					browserToolsEnabled: false,
 					learnToolsEnabled: false,
+					defaultProfile: "none",
 				} satisfies BrowserToggleState,
 			},
 		]);
@@ -1119,6 +1131,7 @@ describe("restoreFromBranch (return value)", () => {
 				data: {
 					browserToolsEnabled: true,
 					learnToolsEnabled: false,
+					defaultProfile: "none",
 				} satisfies BrowserToggleState,
 			},
 		]);
@@ -1156,6 +1169,7 @@ describe("restoreFromBranch (return value)", () => {
 		expect(result).toEqual({
 			browserToolsEnabled: true,
 			learnToolsEnabled: true,
+			defaultProfile: "none",
 		});
 	});
 
@@ -1164,6 +1178,7 @@ describe("restoreFromBranch (return value)", () => {
 		expect(result).toEqual({
 			browserToolsEnabled: false,
 			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 	});
 
