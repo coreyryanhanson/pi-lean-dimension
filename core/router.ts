@@ -571,6 +571,13 @@ export async function navigate(
 			});
 		}
 
+		const elementCache = plugin.getElementCache(taskId);
+		const dialogDetected = elementCache
+			? Array.from(elementCache.values()).some(
+					(n) => n.role === "dialog" || n.role === "alertdialog",
+				)
+			: false;
+
 		const successResult: NavigateResult & {
 			backendUsed: string;
 			botDetectionWarning?: boolean;
@@ -580,6 +587,7 @@ export async function navigate(
 			title: result.title,
 			snapshot: snapshotContent,
 			elementCount: result.elementCount,
+			dialogDetected,
 			backendUsed: plugin.name,
 		};
 		if (profileMode !== undefined) successResult.profileMode = profileMode;

@@ -70,6 +70,8 @@ export interface NavigateResult extends ResultBase {
 	elementCount: number;
 	/** Plugin-internal signal: page may be blocked by bot detection */
 	botDetected?: boolean;
+	/** Whether a dialog (role="dialog" or role="alertdialog") was detected in the parsed element cache */
+	dialogDetected?: boolean;
 	/** The active profile mode for this session. */
 	profileMode?: "none" | "session" | "named";
 	/** Phase 2: Which profile was loaded for this session (if any) */

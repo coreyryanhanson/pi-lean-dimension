@@ -113,81 +113,17 @@ export const INFORMATIONAL_ROLES = new Set([
 /**
  * Parse the YAML-like output of page.ariaSnapshot().
  *
- * Dialog prioritisation: interactive elements inside `dialog`/`alertdialog`
- * blocks always get @e refs even when that pushes non-dialog elements
- * beyond the maxElements cap.  This ensures modal/overlay elements are
- * always clickable regardless of where they appear in the DOM order.
+ * Assigns @e refs sequentially to all interactive elements in DOM order.
+ * Every interactive element gets a ref — no cap, no dialog prioritization.
  */
-export function parseSnapshot(
-	snap: string,
-	options?: { maxElements?: number },
-): AriaParseResult {
-	const maxElements = options?.maxElements ?? 500;
+export function parseSnapshot(snap: string): AriaParseResult {
 	const elements = new Map<string, AriaCachedNode>();
 	const outLines: string[] = [];
 	let refCounter = 0;
 	const occurrenceTracker = new Map<string, number>();
+	const parentStack: string[] = [];
 
 	const lines = snap.split("\n");
-
-	// ── First pass: count interactive elements inside dialogs ─────────
-	// This determines how many @e ref slots to reserve for dialog elements.
-	let dialogRefsNeeded = 0;
-	const countDialogDepthStack: number[] = [];
-
-	for (const rawLine of lines) {
-		if (!rawLine.trim()) continue;
-		const depth = countLeadingSpaces(rawLine);
-		const trimmed = rawLine.trim();
-		if (trimmed.startsWith("/")) continue;
-
-		const parsed = parseLine(trimmed);
-		if (!parsed) continue;
-
-		const { role } = parsed;
-
-		// Close dialogs where current depth ≤ dialog-header depth
-		while (
-			countDialogDepthStack.length > 0 &&
-			depth <= countDialogDepthStack[countDialogDepthStack.length - 1]!
-		) {
-			if (role !== "dialog" && role !== "alertdialog") {
-				countDialogDepthStack.pop();
-			} else {
-				break; // This IS a dialog header — don't close previous
-			}
-		}
-
-		// Open new dialog
-		if (role === "dialog" || role === "alertdialog") {
-			countDialogDepthStack.push(depth);
-			dialogRefsNeeded++; // count the dialog header itself
-			continue;
-		}
-
-		const isInside =
-			countDialogDepthStack.length > 0 &&
-			depth > countDialogDepthStack[countDialogDepthStack.length - 1]!;
-
-		if (
-			isInside &&
-			INTERACTIVE_ROLES.has(role) &&
-			!INFORMATIONAL_ROLES.has(role)
-		) {
-			dialogRefsNeeded++;
-		}
-	}
-
-	// ── Budget ─────────────────────────────────────────────────────
-	// Non-dialog elements compete for the remaining ref slots.
-	const nonDialogBudget = Math.max(0, maxElements - dialogRefsNeeded);
-
-	// ── Second pass: assign refs with dialog priority ──────────────
-	const dialogDepthStack: number[] = [];
-	/** Depth-based parent stack — tracks the most recent interactive ref at each depth */
-	const parentStack: string[] = [];
-	let totalInteractiveCount = 0; // all interactive elements (even those skipped)
-	let nonDialogAssigned = 0; // non-dialog refs assigned so far
 
 	for (const rawLine of lines) {
 		if (!rawLine.trim()) continue;
@@ -210,27 +146,6 @@ export function parseSnapshot(
 
 		const { role, name, props } = parsed;
 
-		// Close dialogs where current depth ≤ dialog-header depth
-		while (
-			dialogDepthStack.length > 0 &&
-			depth <= dialogDepthStack[dialogDepthStack.length - 1]!
-		) {
-			if (role !== "dialog" && role !== "alertdialog") {
-				dialogDepthStack.pop();
-			} else {
-				break; // This IS a dialog header — it replaces, not closes
-			}
-		}
-
-		// Open new dialog
-		if (role === "dialog" || role === "alertdialog") {
-			dialogDepthStack.push(depth);
-		}
-
-		const isInsideDialog =
-			dialogDepthStack.length > 0 &&
-			depth > dialogDepthStack[dialogDepthStack.length - 1]!;
-
 		// Informational roles: show in tree but no @e ref
 		if (INFORMATIONAL_ROLES.has(role)) {
 			const indent = "  ".repeat(depth);
@@ -246,25 +161,7 @@ export function parseSnapshot(
 			continue;
 		}
 
-		totalInteractiveCount++; // count every interactive element, even skipped
-
-		// Dialog priority: dialog-interior elements always get refs
-		// (within maxElements), non-dialog elements use remaining budget.
-		if (!isInsideDialog) {
-			if (nonDialogAssigned >= nonDialogBudget) {
-				outLines.push(rawLine);
-				continue;
-			}
-		}
-
 		refCounter++;
-		if (refCounter > maxElements) {
-			outLines.push(rawLine);
-			continue;
-		}
-
-		if (!isInsideDialog) nonDialogAssigned++;
-
 		const ref = `e${refCounter}`;
 		const occKey = `${role}||${name}`;
 		const occurrenceIndex = occurrenceTracker.get(occKey) ?? 0;
@@ -308,7 +205,7 @@ export function parseSnapshot(
 	return {
 		text: outLines.join("\n"),
 		elements,
-		count: totalInteractiveCount,
+		count: elements.size,
 	};
 }
 

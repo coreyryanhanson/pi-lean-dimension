@@ -1,8 +1,8 @@
 /**
  * Tests for Web Navigation Guides (core/guides.ts)
  *
- * Covers types, dialogPresentInSnapshot, resolveGuidePresence, cleanupInjectedGuides,
- * formatGuideList, parseGuideFile, and DOMAIN_MAP consistency.
+ * Covers types, resolveGuidePresence, cleanupInjectedGuides, formatGuideList,
+ * parseGuideFile, and DOMAIN_MAP consistency.
  * All tests run without Chromium.
  */
 
@@ -14,7 +14,6 @@ import {
 	type GuidePresenceResult,
 	resolveGuidePresence,
 	cleanupInjectedGuides,
-	dialogPresentInSnapshot,
 	parseGuideContent,
 	parseGuideFile,
 	formatGuideList,
@@ -62,46 +61,13 @@ describe("types", () => {
 	});
 });
 
-describe("dialogPresentInSnapshot", () => {
-	it('detects role="dialog"', () => {
-		expect(dialogPresentInSnapshot('role="dialog"')).toBe(true);
-	});
-
-	it('detects role="alertdialog"', () => {
-		expect(dialogPresentInSnapshot('role="alertdialog"')).toBe(true);
-	});
-
-	it("returns false for regular text", () => {
-		expect(dialogPresentInSnapshot("Hello world")).toBe(false);
-	});
-
-	it("returns false for dialog used as unrelated text", () => {
-		expect(dialogPresentInSnapshot('class="dialog-box"')).toBe(false);
-		expect(dialogPresentInSnapshot("some dialog content")).toBe(false);
-	});
-
-	it("handles empty string", () => {
-		expect(dialogPresentInSnapshot("")).toBe(false);
-	});
-
-	it("detects dialog in larger snapshot text", () => {
-		const snapshot = [
-			"section: Some content",
-			'  role="dialog"',
-			"    button: Accept All",
-			"",
-		].join("\n");
-		expect(dialogPresentInSnapshot(snapshot)).toBe(true);
-	});
-});
-
 // ─── resolveGuidePresence ───────────────────────────────────────
 
 describe("resolveGuidePresence", () => {
 	const TASK_A = "test-task-a";
 	const TASK_B = "test-task-b";
-	const snapshotWithDialog = 'role="dialog"';
-	const snapshotClean = "Just regular page content here";
+	const hasDialog = true;
+	const noDialog = false;
 	const anyUrl = "https://example.com/page";
 
 	beforeEach(() => {
@@ -115,7 +81,7 @@ describe("resolveGuidePresence", () => {
 	});
 
 	it("returns undefined when no trigger matches", () => {
-		const result = resolveGuidePresence(TASK_A, anyUrl, snapshotClean, false);
+		const result = resolveGuidePresence(TASK_A, anyUrl, noDialog, false);
 		expect(result).toBeUndefined();
 	});
 
@@ -125,7 +91,7 @@ describe("resolveGuidePresence", () => {
 		const result = resolveGuidePresence(
 			TASK_A,
 			"https://_internal-test.example/page",
-			snapshotClean,
+			noDialog,
 			false,
 		);
 		expect(result).not.toBeUndefined();
@@ -137,7 +103,7 @@ describe("resolveGuidePresence", () => {
 		const result = resolveGuidePresence(
 			TASK_A,
 			"https://unknown-site-12345.com/page",
-			snapshotClean,
+			noDialog,
 			false,
 		);
 		expect(result).toBeUndefined();
@@ -147,7 +113,7 @@ describe("resolveGuidePresence", () => {
 		const result = resolveGuidePresence(
 			TASK_A,
 			"https://_internal-test.example/some/path",
-			snapshotClean,
+			noDialog,
 			false,
 		);
 		expect(result).not.toBeUndefined();
@@ -159,7 +125,7 @@ describe("resolveGuidePresence", () => {
 	// ── Bot detection ──────────────────────────────────────────────
 
 	it("returns inject for first bot detection in a task", () => {
-		const result = resolveGuidePresence(TASK_A, anyUrl, snapshotClean, true);
+		const result = resolveGuidePresence(TASK_A, anyUrl, noDialog, true);
 		expect(result).not.toBeUndefined();
 		expect(result!.type).toBe("inject");
 		expect(result!.guideName).toBe("bot-detection");
@@ -170,9 +136,9 @@ describe("resolveGuidePresence", () => {
 
 	it("returns hint for repeat bot detection in same task (suppression)", () => {
 		// First call — inject
-		resolveGuidePresence(TASK_A, anyUrl, snapshotClean, true);
+		resolveGuidePresence(TASK_A, anyUrl, noDialog, true);
 		// Second call — should be downgraded to hint
-		const result = resolveGuidePresence(TASK_A, anyUrl, snapshotClean, true);
+		const result = resolveGuidePresence(TASK_A, anyUrl, noDialog, true);
 		expect(result).not.toBeUndefined();
 		expect(result!.type).toBe("hint");
 		expect(result!.guideName).toBe("bot-detection");
@@ -181,41 +147,31 @@ describe("resolveGuidePresence", () => {
 
 	it("returns inject for a different taskId (independent state)", () => {
 		// Inject in task A
-		resolveGuidePresence(TASK_A, anyUrl, snapshotClean, true);
+		resolveGuidePresence(TASK_A, anyUrl, noDialog, true);
 		// Task B should get inject again (independent)
-		const result = resolveGuidePresence(TASK_B, anyUrl, snapshotClean, true);
+		const result = resolveGuidePresence(TASK_B, anyUrl, noDialog, true);
 		expect(result).not.toBeUndefined();
 		expect(result!.type).toBe("inject");
 	});
 
 	// ── Dialog presence ────────────────────────────────────────────
 
-	it('returns hint when role="dialog" is in snapshot', () => {
-		const result = resolveGuidePresence(
-			TASK_A,
-			anyUrl,
-			snapshotWithDialog,
-			false,
-		);
+	it('returns hint when role="dialog" is detected', () => {
+		const result = resolveGuidePresence(TASK_A, anyUrl, hasDialog, false);
 		expect(result).not.toBeUndefined();
 		expect(result!.type).toBe("hint");
 		expect(result!.guideName).toBe("cookie-consent");
 	});
 
-	it('returns hint when role="alertdialog" is in snapshot', () => {
-		const result = resolveGuidePresence(
-			TASK_A,
-			anyUrl,
-			'role="alertdialog"',
-			false,
-		);
+	it('returns hint when role="alertdialog" is detected', () => {
+		const result = resolveGuidePresence(TASK_A, anyUrl, true, false);
 		expect(result).not.toBeUndefined();
 		expect(result!.type).toBe("hint");
 		expect(result!.guideName).toBe("cookie-consent");
 	});
 
-	it("does not return dialog hint when no dialog in snapshot", () => {
-		const result = resolveGuidePresence(TASK_A, anyUrl, snapshotClean, false);
+	it("does not return dialog hint when no dialog detected", () => {
+		const result = resolveGuidePresence(TASK_A, anyUrl, noDialog, false);
 		expect(result).toBeUndefined();
 	});
 
@@ -223,12 +179,7 @@ describe("resolveGuidePresence", () => {
 
 	it("bot detection wins over dialog presence (first match)", () => {
 		// Both botDetected AND dialog present — bot detection should win
-		const result = resolveGuidePresence(
-			TASK_A,
-			anyUrl,
-			snapshotWithDialog,
-			true,
-		);
+		const result = resolveGuidePresence(TASK_A, anyUrl, hasDialog, true);
 		expect(result).not.toBeUndefined();
 		expect(result!.guideName).toBe("bot-detection");
 	});
@@ -236,7 +187,7 @@ describe("resolveGuidePresence", () => {
 	// ── autoInject config override ──────────────────────────────────
 
 	it("autoInject: false suppresses inject, returns hint instead", () => {
-		const result = resolveGuidePresence(TASK_A, anyUrl, snapshotClean, true, {
+		const result = resolveGuidePresence(TASK_A, anyUrl, noDialog, true, {
 			autoInject: false,
 		});
 		expect(result).not.toBeUndefined();
@@ -251,7 +202,7 @@ describe("resolveGuidePresence", () => {
 		const result = resolveGuidePresence(
 			TASK_A,
 			"not-a-valid-url",
-			snapshotClean,
+			noDialog,
 			false,
 		);
 		expect(result).toBeUndefined();
@@ -261,11 +212,11 @@ describe("resolveGuidePresence", () => {
 
 	it("cleanupInjectedGuides resets injection state", () => {
 		// First call — inject
-		resolveGuidePresence(TASK_A, anyUrl, snapshotClean, true);
+		resolveGuidePresence(TASK_A, anyUrl, noDialog, true);
 		// Cleanup
 		cleanupInjectedGuides(TASK_A);
 		// After cleanup, should get inject again
-		const result = resolveGuidePresence(TASK_A, anyUrl, snapshotClean, true);
+		const result = resolveGuidePresence(TASK_A, anyUrl, noDialog, true);
 		expect(result).not.toBeUndefined();
 		expect(result!.type).toBe("inject");
 	});
@@ -538,7 +489,7 @@ describe("BUILTIN_GUIDES structure", () => {
 
 		const cookieGuide = BUILTIN_GUIDES["cookie-consent"]!;
 		expect(cookieGuide.trigger).toBeDefined();
-		expect(cookieGuide.trigger!.signal).toBe("dialogPresent");
+		expect(cookieGuide.trigger!.signal).toBe("dialogDetected");
 		expect(cookieGuide.trigger!.presence).toBe("hint");
 	});
 

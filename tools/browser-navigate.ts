@@ -165,7 +165,7 @@ export const browserNavigateTool = defineTool({
 		const presence = resolveGuidePresence(
 			tid,
 			result.url,
-			result.snapshot,
+			result.dialogDetected ?? false,
 			result.botDetectionWarning ?? false,
 		);
 		if (presence) {
