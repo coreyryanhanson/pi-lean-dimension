@@ -11,7 +11,7 @@
 
 1. [Quick Start](#quick-start)
 2. [`/web` Command — Browser Toggle & Profiles](#web-command--browser-toggle--profiles)
-3. [All 13 Tools](#all-13-tools)
+3. [All 12 Tools](#all-12-tools)
 4. [Stateless Fetching (web-fetch)](#stateless-fetching-web-fetch)
 5. [Navigation Guides (web-guide & web-learn)](#navigation-guides-web-guide--web-learn)
 6. [`/web status` — Detailed Runtime Status](#web-status--detailed-runtime-status)
