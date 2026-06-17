@@ -170,7 +170,7 @@ export function profileFilePath(profileName: string): string {
  */
 export function loadStorageState(
 	profileName: string,
-	maxSizeBytes: number = DEFAULT_MAX_STORAGE_STATE_SIZE,
+	_maxSizeBytes: number = DEFAULT_MAX_STORAGE_STATE_SIZE,
 ): StorageStateFile | null {
 	const path = profileFilePath(profileName);
 
@@ -270,8 +270,9 @@ export function saveStorageState(
 /**
  * Delete the storage state file for a named profile.
  *
- * Does NOT remove the profile directory (may contain other files in future).
- * Does NOT throw — failures are logged and silently ignored.
+ * Also removes the profile directory if it becomes empty (no leftover state
+ * files or other artifacts). Does NOT throw — failures are logged and
+ * silently ignored.
  *
  * @param profileName - The profile name.
  */
@@ -280,6 +281,14 @@ export function deleteStorageState(profileName: string): void {
 	try {
 		if (existsSync(path)) {
 			unlinkSync(path);
+		}
+		// Clean up the profile directory if it's now empty
+		const dir = profileDir(profileName);
+		if (existsSync(dir)) {
+			const remaining = readdirSync(dir);
+			if (remaining.length === 0) {
+				rmSync(dir, { recursive: true, force: true });
+			}
 		}
 	} catch (err) {
 		console.warn(
