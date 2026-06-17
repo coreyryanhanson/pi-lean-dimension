@@ -75,7 +75,7 @@ export interface NavigateResult extends ResultBase {
 	dialogDetected?: boolean;
 	/** The active profile mode for this session. */
 	profileMode?: "none" | "session" | "named";
-	/** Phase 2: Which profile was loaded for this session (if any) */
+	/** Which profile was loaded for this session (if any) */
 	profileName?: string;
 }
 
@@ -197,11 +197,11 @@ export interface BrowserPlugin {
 		timeoutMs: number,
 		options?: {
 			signal?: AbortSignal;
-			/** Phase 2: Playwright storage state for profile-based session restoration */
+			/** Playwright storage state for profile-based session restoration */
 			storageState?: unknown;
-			/** Phase 2: Profile name for shared-context resolution */
+			/** Profile name for shared-context resolution */
 			profileName?: string;
-			/** Phase 2: Profile mode for shared-context resolution */
+			/** Profile mode for shared-context resolution */
 			profileMode?: "none" | "session" | "named";
 		},
 	): Promise<NavigateResult>;
@@ -232,7 +232,7 @@ export interface BrowserPlugin {
 
 	/**
 	 * Get the full storage state (cookies + localStorage + IndexedDB).
-	 * Primarily used by Phase 2 storage-state persistence.
+	 * Primarily used by storage-state persistence.
 	 */
 	getStorageState(taskId: string): Promise<StorageStateResult>;
 

@@ -64,7 +64,7 @@ getCookies, addCookies, clearCookies  — cookie operations
 getStorageState     — profile storage for session restore
 ```
 
-The docstring says "The 13 agent-facing operations map 1:1 to tool calls" — this refers to the 13 tool-mapped methods (navigate through cleanup). The cookie/storage methods (4) are router-facing, not tool-mapped. The lifecycle methods (init, cleanupAll) are framework-facing. Total interface: 19 methods.
+The 12 registered tools map to 12 tool-facing plugin methods. The cookie/storage methods (getCookies, addCookies, clearCookies, getStorageState) are router-facing, not tool-mapped. Element cache access (getElementCache) is used internally by browser-inspect. The lifecycle methods (init, cleanupAll) are framework-facing. Total interface: 19 methods.
 
 Capabilities (`PluginCapabilities`) advertise quirks. The router checks them at dispatch time.
 
@@ -170,7 +170,6 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
 - **Guide staleness**: no builtin site guides shipped — entirely user-authored via `guides/*.md`. Guides carry `updated` date paired with `currentDate` in output.
 - **Learn mode toggle**: `/web learn` enables `web-learn` tool; `/web on` removes it. Agent never calls `web-learn` unprompted. Default is off on fresh sessions.
 - **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click, occlusion events). Only checked in ChromiumPlugin.
-- **Stale comment `"13 agent-facing operations"` in `plugin-api.ts`** — that count refers only to tool-mapped methods. The interface now has 19 methods total (added 4 cookie/storage + 2 lifecycle). Don't trust the docstring count; check the actual interface.
 
 ## Debugging
 

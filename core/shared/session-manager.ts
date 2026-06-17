@@ -38,7 +38,7 @@ interface LastNavEntry {
 	title: string;
 	/** Plugin name that was used for the original navigation */
 	pluginName: string;
-	/** Phase 2: Profile name active during this navigation (for restoring state on recovery) */
+	/** Profile name active during this navigation (for restoring state on recovery) */
 	profileName?: string;
 }
 

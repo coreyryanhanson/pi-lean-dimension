@@ -281,7 +281,7 @@ async function refBasedInteractionOrSnapshot(
 	action: () => Promise<InteractionResult>,
 ): Promise<InteractionResult> {
 	if (!wasAutoCreated) {
-		// Mark interaction time for staleness detection (Phase 2)
+		// Mark interaction time for staleness detection
 		const sess = sessionManager.getSession(taskId);
 		if (sess) {
 			sessionManager.updateSession(taskId, {
@@ -590,7 +590,7 @@ export async function navigate(
 					`\nfingerprint:${fp}`
 			: "";
 
-		// Track cache population time for staleness detection (Phase 2)
+		// Track cache population time for staleness detection
 		if (cacheResult) {
 			sessionManager.updateSession(taskId, {
 				cachePopulatedAt: Date.now(),

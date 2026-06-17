@@ -37,7 +37,7 @@ const MAX_FILES_PER_TASK = 2;
 export interface CacheResult {
 	/** Absolute path to the cached snapshot file. */
 	path: string;
-	/** Snapshot fingerprint (for staleness detection in Phase 2). */
+	/** Snapshot fingerprint (for staleness detection). */
 	fingerprint: string;
 }
 
