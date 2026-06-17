@@ -6,8 +6,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import * as router from "../core/router.js";
-import { taskId } from "../core/shared/task-id.js";
-import { updateFooterStatus } from "./utils.js";
+import { executeInteractionTool } from "./utils.js";
 
 export const browserTypeTool = defineTool({
 	name: "browser-type",
@@ -24,35 +23,16 @@ export const browserTypeTool = defineTool({
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-		const {
-			ref,
-			text,
-			taskId: tid,
-		} = params as { ref: string; text: string; taskId?: string };
-		const result = await router.type(tid ?? taskId(ctx), ref, text);
-		updateFooterStatus(ctx);
-
-		if (!result.success) {
-			return {
-				content: [
-					{ type: "text", text: `Type failed: ${result.error ?? "unknown"}` },
-				],
-				details: { error: true },
-			};
-		}
-
-		let content = `Typed "${text}" into ${ref}`;
-		if (result.snapshot) {
-			content += `\n\n${result.snapshot}`;
-		}
-		if (result.elementCount !== undefined) {
-			content += `\n\nInteractive elements: ${result.elementCount}`;
-		}
-
-		return {
-			content: [{ type: "text", text: content }],
-			details: { typed: true, ref, text, elementCount: result.elementCount },
-		};
+		const { ref, text } = params as { ref: string; text: string };
+		return executeInteractionTool(
+			ctx,
+			"Type",
+			(tid) => router.type(tid, ref, text),
+			(result) => ({
+				message: `Typed "${text}" into ${ref}`,
+				details: { typed: true, ref, text, elementCount: result.elementCount },
+			}),
+		);
 	},
 
 	renderCall(args, theme, _context) {

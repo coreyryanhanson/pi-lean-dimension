@@ -6,8 +6,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import * as router from "../core/router.js";
-import { taskId } from "../core/shared/task-id.js";
-import { updateFooterStatus } from "./utils.js";
+import { executeInteractionTool } from "./utils.js";
 
 export const browserPressTool = defineTool({
 	name: "browser-press",
@@ -23,31 +22,16 @@ export const browserPressTool = defineTool({
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-		const { key, taskId: tid } = params as { key: string; taskId?: string };
-		const result = await router.press(tid ?? taskId(ctx), key);
-		updateFooterStatus(ctx);
-
-		if (!result.success) {
-			return {
-				content: [
-					{ type: "text", text: `Press failed: ${result.error ?? "unknown"}` },
-				],
-				details: { error: true },
-			};
-		}
-
-		let content = `Pressed "${key}"`;
-		if (result.snapshot) {
-			content += `\n\n${result.snapshot}`;
-		}
-		if (result.elementCount !== undefined) {
-			content += `\n\nInteractive elements: ${result.elementCount}`;
-		}
-
-		return {
-			content: [{ type: "text", text: content }],
-			details: { key, elementCount: result.elementCount },
-		};
+		const { key } = params as { key: string };
+		return executeInteractionTool(
+			ctx,
+			"Press",
+			(tid) => router.press(tid, key),
+			(result) => ({
+				message: `Pressed "${key}"`,
+				details: { key, elementCount: result.elementCount },
+			}),
+		);
 	},
 
 	renderCall(args, theme, _context) {

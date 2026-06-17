@@ -6,8 +6,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type, StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import * as router from "../core/router.js";
-import { taskId } from "../core/shared/task-id.js";
-import { updateFooterStatus } from "./utils.js";
+import { executeInteractionTool } from "./utils.js";
 
 export const browserScrollTool = defineTool({
 	name: "browser-scroll",
@@ -21,34 +20,16 @@ export const browserScrollTool = defineTool({
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-		const { direction, taskId: tid } = params as {
-			direction: "up" | "down";
-			taskId?: string;
-		};
-		const result = await router.scroll(tid ?? taskId(ctx), direction);
-		updateFooterStatus(ctx);
-
-		if (!result.success) {
-			return {
-				content: [
-					{ type: "text", text: `Scroll failed: ${result.error ?? "unknown"}` },
-				],
-				details: { error: true },
-			};
-		}
-
-		let content = `Scrolled ${direction}`;
-		if (result.snapshot) {
-			content += `\n\n${result.snapshot}`;
-		}
-		if (result.elementCount !== undefined) {
-			content += `\n\nInteractive elements: ${result.elementCount}`;
-		}
-
-		return {
-			content: [{ type: "text", text: content }],
-			details: { direction, elementCount: result.elementCount },
-		};
+		const { direction } = params as { direction: "up" | "down" };
+		return executeInteractionTool(
+			ctx,
+			"Scroll",
+			(tid) => router.scroll(tid, direction),
+			(result) => ({
+				message: `Scrolled ${direction}`,
+				details: { direction, elementCount: result.elementCount },
+			}),
+		);
 	},
 
 	renderCall(args, theme, _context) {

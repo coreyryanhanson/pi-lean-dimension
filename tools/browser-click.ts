@@ -6,8 +6,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import * as router from "../core/router.js";
-import { taskId } from "../core/shared/task-id.js";
-import { updateFooterStatus } from "./utils.js";
+import { executeInteractionTool } from "./utils.js";
 
 export const browserClickTool = defineTool({
 	name: "browser-click",
@@ -22,41 +21,26 @@ export const browserClickTool = defineTool({
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-		const { ref, taskId: tid } = params as { ref: string; taskId?: string };
-		const result = await router.click(tid ?? taskId(ctx), ref);
-		updateFooterStatus(ctx);
-
-		if (!result.success) {
-			return {
-				content: [
-					{ type: "text", text: `Click failed: ${result.error ?? "unknown"}` },
-				],
-				details: { error: true },
-			};
-		}
-
-		const lines = [
-			`Clicked ${ref}`,
-			result.newUrl ? `URL: ${result.newUrl}` : "",
-			result.newTitle ? `Title: ${result.newTitle}` : "",
-		].filter(Boolean);
-
-		let content = lines.join("\n");
-		if (result.snapshot) {
-			content += `\n\n${result.snapshot}`;
-		}
-		if (result.elementCount !== undefined) {
-			content += `\n\nInteractive elements: ${result.elementCount}`;
-		}
-
-		return {
-			content: [{ type: "text", text: content }],
-			details: {
-				newUrl: result.newUrl,
-				newTitle: result.newTitle,
-				elementCount: result.elementCount,
-			},
-		};
+		const { ref } = params as { ref: string };
+		return executeInteractionTool(
+			ctx,
+			"Click",
+			(tid) => router.click(tid, ref),
+			(result) => ({
+				message: [
+					`Clicked ${ref}`,
+					result.newUrl ? `URL: ${result.newUrl}` : "",
+					result.newTitle ? `Title: ${result.newTitle}` : "",
+				]
+					.filter(Boolean)
+					.join("\n"),
+				details: {
+					newUrl: result.newUrl,
+					newTitle: result.newTitle,
+					elementCount: result.elementCount,
+				},
+			}),
+		);
 	},
 
 	renderCall(args, theme, _context) {
