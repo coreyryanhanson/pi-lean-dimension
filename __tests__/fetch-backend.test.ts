@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { webFetch, cleanupFetchTempFiles } from "../backend/fetch-backend";
+import { webFetch, cleanupFetchTempFiles } from "../core/fetch-backend";
 
 // ─── Setup / Teardown ────────────────────────────────────────
 
@@ -272,6 +272,7 @@ describe("webFetch — bot detection", () => {
 	it("detects CAPTCHA pages", async () => {
 		mockFetch({
 			body: '<form><div class="g-recaptcha"></div><p>captcha verification required</p></form>',
+			title: "Verify you are human",
 		});
 		const result = await webFetch({ url: "http://example.com/captcha" });
 		expect(result.success).toBe(true);

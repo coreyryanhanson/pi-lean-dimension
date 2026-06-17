@@ -1,0 +1,385 @@
+/**
+ * Storage State Persistence — profile-based save/restore for cookies,
+ * localStorage, and IndexedDB.
+ *
+ * Profiles are stored at ~/.pi/agent/browser-state/<profile>/storage-state.json
+ * with version headers for forward compatibility.
+ *
+ * @module
+ */
+
+import {
+	mkdirSync,
+	readFileSync,
+	writeFileSync,
+	existsSync,
+	unlinkSync,
+	rmSync,
+	readdirSync,
+} from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+
+// ─── Constants ────────────────────────────────────────────────────────
+
+/** Root directory for all browser profiles. */
+export const PROFILE_DIR = join(homedir(), ".pi", "agent", "browser-state");
+
+/** Current storage state version. Increment on breaking format changes. */
+export const STORAGE_STATE_VERSION = 1;
+
+/** Default size limit (10 MB) before a warning is logged on save. */
+export const DEFAULT_MAX_STORAGE_STATE_SIZE = 10 * 1024 * 1024;
+
+/** Profile name validation regex. */
+const PROFILE_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
+/** Reserved keywords that cannot be used as profile names. */
+const RESERVED_PROFILE_NAMES = new Set([
+	"none",
+	"session", // profile modes
+	"create", // subcommand
+]);
+
+/** Prefix for auto-generated session-scoped profiles. */
+export const SESSION_PROFILE_PREFIX = "_session-";
+
+/** Directory where pi stores active session tracking files. */
+export const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
+
+// ─── Types ────────────────────────────────────────────────────────────
+
+/** A single cookie as stored by Playwright's storageState. */
+export interface StoredCookie {
+	name: string;
+	value: string;
+	domain: string;
+	path: string;
+	expires: number;
+	httpOnly: boolean;
+	secure: boolean;
+	sameSite: "Strict" | "Lax" | "None";
+}
+
+/** A localStorage entry for a given origin. */
+export interface StoredLocalStorageEntry {
+	name: string;
+	value: string;
+}
+
+/** An origin with its localStorage data. */
+export interface StoredOrigin {
+	origin: string;
+	localStorage: StoredLocalStorageEntry[];
+}
+
+/**
+ * The on-disk format for a storage state file.
+ *
+ * The `_piVersion` and `_savedAt` fields are added by this module;
+ * `cookies` and `origins` match Playwright's storageState output.
+ */
+export interface StorageStateFile {
+	_piVersion: number;
+	_savedAt: string;
+	_playwrightVersion?: string;
+	cookies: StoredCookie[];
+	origins: StoredOrigin[];
+}
+
+// ─── Profile Name Validation ──────────────────────────────────────────
+
+/**
+ * Validate a profile name.
+ *
+ * Rules:
+ * - Must be 1-64 characters long
+ * - Only alphanumeric, hyphens, and underscores allowed
+ * - Must not be a reserved keyword ("none", "session", "create")
+ * - Session-scoped names (`_session-*`) are allowed with embedded ID validation
+ *
+ * @throws {Error} If the name is invalid.
+ * @returns The sanitized name (same as input on success).
+ */
+export function sanitizeProfileName(name: string): string {
+	if (typeof name !== "string" || name.length === 0) {
+		throw new Error("Profile name must be a non-empty string");
+	}
+
+	// Session profiles: validate the embedded session ID, then bypass regex
+	if (name.startsWith(SESSION_PROFILE_PREFIX)) {
+		const sessionId = name.slice(SESSION_PROFILE_PREFIX.length);
+		if (!sessionId || /[/\\..\s]/.test(sessionId)) {
+			throw new Error(
+				`Invalid session profile name '${name}': embedded session ID must be non-empty ` +
+					"and must not contain path traversal characters.",
+			);
+		}
+		return name; // Bypass normal regex
+	}
+
+	if (!PROFILE_NAME_RE.test(name)) {
+		throw new Error(
+			`Invalid profile name '${name}'. ` +
+				"Profile names must be 1-64 characters, alphanumeric, hyphens, and underscores only.",
+		);
+	}
+
+	if (RESERVED_PROFILE_NAMES.has(name)) {
+		throw new Error(
+			`'${name}' is a reserved session mode and cannot be used as a profile name.`,
+		);
+	}
+
+	return name;
+}
+
+// ─── Path Helpers ─────────────────────────────────────────────────────
+
+/**
+ * Get the filesystem path to a profile directory.
+ * Profile names are sanitized before path construction.
+ */
+export function profileDir(profileName: string): string {
+	const safe = sanitizeProfileName(profileName);
+	return join(PROFILE_DIR, safe);
+}
+
+/**
+ * Get the filesystem path to a profile's storage state file.
+ */
+export function profileFilePath(profileName: string): string {
+	return join(profileDir(profileName), "storage-state.json");
+}
+
+// ─── Read / Write ─────────────────────────────────────────────────────
+
+/**
+ * Load storage state for a named profile.
+ *
+ * Returns `null` if no state file exists (first use).
+ * Logs a warning if the version is higher than the current code understands.
+ *
+ * @param profileName - The profile name.
+ * @param maxSizeBytes - Optional size limit for warning (default: 10 MB).
+ * @returns The parsed storage state, or null if no file exists.
+ */
+export function loadStorageState(
+	profileName: string,
+	maxSizeBytes: number = DEFAULT_MAX_STORAGE_STATE_SIZE,
+): StorageStateFile | null {
+	const path = profileFilePath(profileName);
+
+	if (!existsSync(path)) {
+		return null;
+	}
+
+	try {
+		const raw = readFileSync(path, "utf-8");
+		const parsed = JSON.parse(raw) as StorageStateFile;
+
+		// Version check — warn on newer versions
+		if (
+			typeof parsed._piVersion === "number" &&
+			parsed._piVersion > STORAGE_STATE_VERSION
+		) {
+			console.warn(
+				`[pi-browser] Storage state for profile '${profileName}' ` +
+					`has version ${parsed._piVersion}, but this extension ` +
+					`understands version ${STORAGE_STATE_VERSION}. ` +
+					"New fields may be ignored.",
+			);
+		}
+
+		return parsed;
+	} catch (err) {
+		console.warn(
+			`[pi-browser] Failed to load storage state for profile ` +
+				`'${profileName}': ${err instanceof Error ? err.message : String(err)}. ` +
+				"Starting with fresh state.",
+		);
+		return null;
+	}
+}
+
+/**
+ * Save storage state for a named profile.
+ *
+ * Writes version headers, creates the profile directory with 0700
+ * permissions if needed, and sets file mode 0600.
+ *
+ * Logs a warning if the state exceeds `maxSizeBytes` but saves anyway.
+ *
+ * @param profileName - The profile name.
+ * @param state - The raw state object from Playwright's context.storageState().
+ *                Must be `{ cookies: [...], origins: [...] }`.
+ * @param maxSizeBytes - Optional size limit for warning (default: 10 MB).
+ * @returns true if save succeeded, false on failure (logged via console.warn).
+ */
+export function saveStorageState(
+	profileName: string,
+	state: { cookies: unknown[]; origins: unknown[] },
+	maxSizeBytes: number = DEFAULT_MAX_STORAGE_STATE_SIZE,
+): boolean {
+	const dir = profileDir(profileName);
+	const path = profileFilePath(profileName);
+
+	try {
+		// Create profile directory with restricted permissions
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
+
+		// Build the file payload with version headers
+		const payload: StorageStateFile = {
+			_piVersion: STORAGE_STATE_VERSION,
+			_savedAt: new Date().toISOString(),
+			cookies: state.cookies as StoredCookie[],
+			origins: state.origins as StoredOrigin[],
+		};
+
+		const serialized = JSON.stringify(payload, null, 2);
+		const byteSize = Buffer.byteLength(serialized, "utf-8");
+
+		// Size warning (best-effort, don't block save)
+		if (byteSize > maxSizeBytes) {
+			const mb = (byteSize / (1024 * 1024)).toFixed(1);
+			console.warn(
+				`[pi-browser] Storage state for profile '${profileName}' ` +
+					`is ${mb} MB — large states may impact startup/save latency. ` +
+					`Set browser.maxStorageStateSize to adjust the threshold.`,
+			);
+		}
+
+		// Write with restricted permissions
+		writeFileSync(path, serialized, { mode: 0o600 });
+
+		return true;
+	} catch (err) {
+		console.warn(
+			`[pi-browser] Failed to save storage state for profile ` +
+				`'${profileName}': ${err instanceof Error ? err.message : String(err)}. ` +
+				"Session state will be lost.",
+		);
+		return false;
+	}
+}
+
+/**
+ * Delete the storage state file for a named profile.
+ *
+ * Does NOT remove the profile directory (may contain other files in future).
+ * Does NOT throw — failures are logged and silently ignored.
+ *
+ * @param profileName - The profile name.
+ */
+export function deleteStorageState(profileName: string): void {
+	const path = profileFilePath(profileName);
+	try {
+		if (existsSync(path)) {
+			unlinkSync(path);
+		}
+	} catch (err) {
+		console.warn(
+			`[pi-browser] Failed to delete storage state for profile ` +
+				`'${profileName}': ${err instanceof Error ? err.message : String(err)}.`,
+		);
+	}
+}
+
+// ─── Session Profile Helpers ───────────────────────────────────────
+
+/**
+ * Check whether a profile name follows the session-scoped naming convention.
+ *
+ * Session profiles start with `SESSION_PROFILE_PREFIX` (`_session-`) and
+ * encode the pi session ID. They are auto-created for `profile="session"`
+ * and cleaned up when the pi session ends.
+ *
+ * @param name - The profile name to check.
+ * @returns `true` if the name starts with `_session-`.
+ */
+export function isSessionProfile(name: string): boolean {
+	return name.startsWith(SESSION_PROFILE_PREFIX);
+}
+
+/**
+ * Generate a session-scoped profile name from a pi session ID.
+ *
+ * The returned name follows the `_session-<piSessionId>` convention and
+ * can be used with `loadStorageState`/`saveStorageState`.
+ *
+ * @param piSessionId - The pi session ID (must be non-empty, no path chars).
+ * @returns The session-scoped profile name.
+ * @throws {Error} If the piSessionId is empty or contains path traversal characters.
+ */
+export function sessionProfileName(piSessionId: string): string {
+	if (!piSessionId || /[/\\..]/.test(piSessionId)) {
+		throw new Error(
+			`Invalid piSessionId for session profile: '${piSessionId}'`,
+		);
+	}
+	return `${SESSION_PROFILE_PREFIX}${piSessionId}`;
+}
+
+/**
+ * Check whether a session-scoped profile's backing pi session still exists.
+ *
+ * Pi writes a session tracking file at `SESSIONS_DIR/<sessionId>.json` for
+ * each active conversation. This function checks for that file. If the file
+ * is missing, the session has ended and the profile state is stale.
+ *
+ * Non-session profiles always return `false` (not stale by this metric).
+ *
+ * @param profileName - The profile name to check.
+ * @returns `true` if the profile is session-scoped and its session file is missing.
+ */
+export function isSessionStale(profileName: string): boolean {
+	if (!isSessionProfile(profileName)) return false;
+	const sessionId = profileName.slice(SESSION_PROFILE_PREFIX.length);
+	const sessionFile = join(SESSIONS_DIR, `${sessionId}.json`);
+	return !existsSync(sessionFile);
+}
+
+/**
+ * Scan the profile directory and remove state for stale session profiles.
+ *
+ * A session profile is stale when its backing pi session tracking file
+ * no longer exists at `SESSIONS_DIR/<sessionId>.json`. This can happen
+ * when a conversation ends, is deleted, or the session system is reset.
+ *
+ * Named profiles (non-`_session-*`) are never touched.
+ *
+ * @returns An object with `pruned` (removed profile names) and `kept` (active session profile names).
+ */
+export function pruneStaleSessionProfiles(): {
+	pruned: string[];
+	kept: string[];
+} {
+	const result = { pruned: [] as string[], kept: [] as string[] };
+
+	if (!existsSync(PROFILE_DIR)) return result;
+
+	let entries: string[];
+	try {
+		entries = readdirSync(PROFILE_DIR);
+	} catch {
+		return result; // Can't read directory — best-effort
+	}
+
+	for (const entry of entries) {
+		if (!isSessionProfile(entry)) continue;
+
+		try {
+			if (isSessionStale(entry)) {
+				const fullPath = join(PROFILE_DIR, entry);
+				rmSync(fullPath, { recursive: true, force: true });
+				result.pruned.push(entry);
+			} else {
+				result.kept.push(entry);
+			}
+		} catch {
+			// Best-effort — skip problematic entries
+		}
+	}
+
+	return result;
+}

@@ -1,201 +1,227 @@
 # AGENTS.md — pi-browser
 
-> Guide for AI coding agents working on this repository.
+> Compact instruction file for an agent working on this repo.
 
-## What This Project Is
+## What This Is
 
-pi-browser is a browser automation extension for the `@earendil-works/pi-coding-agent`. It gives AI agents the ability to browse the web through a two-tier escalation system (Playwright Chromium → stealth Firefox) plus a separate stateless `web-fetch` tool for fast content retrieval. The extension registers 11 tools (10 interactive browser tools + 1 stateless fetch tool) and 2 commands (`/browser-status` and `/web`) with the pi agent runtime. The `/web` command allows toggling all browser tools on/off to save tokens when browsing isn't needed.
+A pi extension that registers **14 tools + 2 commands** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool.
 
-## Repository Layout
+## Developer Commands
+
+```bash
+npm test              # vitest run — 735 tests across 20 files (all pass)
+npx vitest run __tests__/router-dispatch.test.ts  # single test file
+npm run test:watch    # vitest in watch mode
+npx tsx scripts/dialog-gate.ts        # side-by-side backend comparison
+npx tsx scripts/dialog-gate.ts --preset basic-close --repeat 20  # with preset
+```
+
+There is no build step (`noEmit: true` in tsconfig). The extension is loaded directly by pi from the source TypeScript files. No linter or formatter is configured.
+
+## Directory Layout (compact)
 
 ```
 pi-browser/
-├── index.ts                    # Tool surface: 11 tools, /browser-status + /web commands, extension entry
-├── browser-toggle.ts           # /web on|off|status — toggle all browser tools, persist state, config default
-├── package.json                # deps: playwright, node-html-parser, turndown, vitest (dev)
-├── tsconfig.json               # strict mode, noEmit (compiled externally by host)
-├── plan.md                     # Architecture analysis & phased refactor plan
-├── browser-toggle.md           # Browser toggle feature documentation
-├── vitest.config.ts            # Vitest configuration
-│
-├── __tests__/
-│   ├── helpers/
-│   │   └── test-server.ts      # HTTP test server helper for deterministic fixtures
-│   ├── browser-toggle.test.ts  # 62 tests: tool toggle, persist/restore, config defaults, command handler
-│   ├── fetch-backend.test.ts   # 24 tests: webFetch(), JS detection, bot detection, content capping
-│   └── url-safety.test.ts      # 46 tests: SSRF, schemes, secrets, malformed URLs
-│
-├── backend/
-│   ├── router.ts               # Central dispatch: auto-escalation + per-operation routing
-│   │                           # (interactive backends only — chromium/stealth)
-│   ├── fetch-backend.ts        # Stateless HTTP fetch → Markdown (decoupled, used by web-fetch tool)
-│   ├── playwright-backend.ts   # Level 2: Playwright Chromium automation
-│   ├── stealth-backend.ts      # Level 3: JSON-RPC → Python subprocess (Invisible Playwright)
-│   └── stealth_bridge.py       # Python side of the stealth JSON-RPC bridge
-│
-└── utils/
-    ├── accessibility-tree.ts   # Parse Playwright ariaSnapshot → @e1/@e2 refs + element map
-    ├── bot-detection.ts        # Cloudflare/CAPTCHA heuristic signals (shared by fetch & browser)
-    ├── session-manager.ts      # Session lifecycle (create/update/remove per taskId)
-    ├── url-safety.ts           # SSRF prevention, secret detection, scheme validation
-    └── cdp-supervisor.ts       # Chrome DevTools Protocol: dialog auto-dismiss + console capture
+├── index.ts                  # Entry: imports & registers tool definitions + lifecycle
+├── browser-toggle.ts         # /web on|off|learn|status — three-state toggle
+├── browser-cookies.ts        # /web cookies subcommand (extracted from toggle)
+├── browser-profile.ts        # /web profile subcommand (extracted from toggle)
+├── backends/                 # Plugin implementations
+│   ├── chromium/index.ts     # Node/Playwright, reference ~1100 lines
+│   ├── python-adapter.ts     # JSON-RPC bridge for subprocess plugins
+│   └── chromium-py/bridge.py # Python bridge, disabled by default
+├── core/                     # Framework: shared across all plugins
+│   ├── plugin-api.ts         # BrowserPlugin interface, 13 result types
+│   ├── plugin-registry.ts    # Registration, validation, strategy resolution
+│   ├── plugin-config.ts      # Reads browser.plugins from settings.json
+│   ├── router.ts             # Dispatch, session lifecycle, truncation, browser-inspect
+│   ├── guides.ts             # Guide types, builtin guides, file loader, presence resolution
+│   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
+│   └── shared/               # accessibility-tree, bot-detection, dom-extractor, session-manager, settings-reader, snapshot-cache, storage-state, url-safety
+├── guides/                  # User-authored guide files (gitignored)
+├── tools/                   # Tool definitions — one file per tool (14 files) + barrel + utils
+├── scripts/                  # dialog-gate.ts, experiment reports
+└── __tests__/                # 20 test files + helpers/
 ```
 
-## Key Concepts
+## Architecture
 
-### Two-Tier Auto-Escalation (Interactive Backends)
+### Plugin system
 
-When `strategy="auto"` (the default), navigation follows this escalation path:
-
-1. **Chromium** — Full Playwright Chromium session. Runs JS, takes accessibility-tree snapshots.
-2. **Stealth** — Invisible Playwright (Firefox) via Python subprocess. Anti-bot evasion.
-
-Escalation triggers:
-- Chromium → Stealth: when bot detection signals are found (Cloudflare, CAPTCHAs)
-
-Each tier can also be requested explicitly via the `strategy` parameter.
-
-### Stateless Fetch (Separate Tool)
-
-For quick content retrieval without interaction, use the **`web-fetch`** tool instead. It performs a plain HTTP fetch, converts HTML to Markdown, and returns the content inline. It does NOT create a browser session, has no `@e` refs, and is not part of the escalation chain. The agent decides which tool to use based on whether it needs to interact with the page.
-
-| Aspect | `web-fetch` | `browser-navigate` |
-|--------|-------------|--------------------|
-| **Output** | Markdown text | Accessibility tree with `@e` refs |
-| **State** | Stateless (one-shot) | Stateful session |
-| **Interactivity** | None | click, type, scroll, press |
-| **Speed** | Fast (HTTP only) | Slower (browser launch) |
-
-### Session Model
-
-- **One shared Chromium Browser** process, per-task `BrowserContext` + `Page`
-- **Per-task Python subprocess** for stealth (complete process isolation)
-- Sessions are created on first navigate, auto-recover from crashes, cleaned up on shutdown
-- `lastNav` tracking survives session removal — enables `browser-snapshot` to auto-create a session
-
-### @e References
-
-All element interaction uses **role-based locators** via Playwright's `getByRole()`. The accessibility tree parser assigns `@e1`, `@e2`, etc. references to interactive elements. Agents use these refs to click, type, and interact. No XPath or CSS selectors are exposed.
-
-### Auto-Snapshots
-
-Every interaction tool (click, type, scroll, press, goBack) returns an automatic snapshot of the resulting page state. The calling agent doesn't need a separate `browser-snapshot` call to see what changed.
-
-### Browser Tool Toggle (`/web`)
-
-All 11 browser tools can be toggled on/off via the `/web` command:
-- **`/web off`** — Removes all browser tools from the active tool set (saves ~1500–2000 tokens/turn)
-- **`/web on`** — Restores all browser tools
-- **`/web`** or **`/web status`** — Shows current state
-
-Toggle state is persisted per-session branch and survives `/reload`, `/resume`, `/fork`, and `/tree` navigation. For fresh sessions, the default can be set via `browserToggle.defaultEnabled` in pi's settings.json. When disabled, the LLM cannot see any browser tool descriptions or parameter schemas — the tools effectively don't exist.
-
-## Tool Surface (index.ts)
-
-All tools follow the same pattern: parse params → call router or backend → wrap result + render.
-
-| Tool | Purpose |
-|------|---------|
-| `web-fetch` | Stateless HTTP fetch → Markdown (fast, no JS, no session) |
-| `browser-navigate` | Open URL with strategy selection and auto-escalation |
-| `browser-snapshot` | Refresh accessibility tree, get fresh @e refs |
-| `browser-click` | Click element by @e ref |
-| `browser-type` | Type text into element by @e ref |
-| `browser-scroll` | Scroll page up/down |
-| `browser-screenshot` | Capture JPEG screenshot (data URI) |
-| `browser-get-images` | Extract all `<img>` tags from page |
-| `browser-back` | Navigate back in history |
-| `browser-press` | Press a keyboard key |
-| `browser-console` | Evaluate JS or read captured console output |
-
-## Architecture & Data Flow
+All interactive backends implement `BrowserPlugin` (`core/plugin-api.ts`). 14 required operations:
 
 ```
-Agent calls web-fetch("https://example.com/page")
-  │
-  ▼ index.ts execute handler
-  │
-  ▼ fetch-backend.ts webFetch() — direct call, no router, no session
-  │   ├─ URL safety validation
-  │   ├─ HTTP fetch → HTML → Markdown conversion
-  │   ├─ JS-shell detection
-  │   ├─ Bot-detection heuristics
-  │   └─ Content capping (inline + temp file spill for large pages)
-  │
-  ▲ returns WebFetchResult {content, title, needsJavaScript?, botDetected?, ...}
-
----
-
-Agent calls browser-click("@e5")
-  │
-  ▼ index.ts execute handler
-  │
-  ▼ router.click(taskId, "@e5")
-  │   ├─ requireInteractiveSession() — find or create session
-  │   ├─ refBasedInteractionOrSnapshot() — skip if stale refs from auto-escalation
-  │   └─ dispatch to chromium or stealth backend
-  │       ├─ getElementCache(taskId).get("e5") → buildLocator(page, node)
-  │       ├─ locator.waitFor({state:"visible"}) → locator.click()
-  │       └─ auto-snapshot after interaction
-  │
-  ▲ router returns {success, snapshot?, elementCount?}
-  │
-  ▲ index.ts wraps in tool response + auto-attaches fresh snapshot
+navigate, snapshot, click, type, scroll, goBack, press,
+screenshot, getImages, getConsoleMessages, clearConsole,
+evaluate, getElementCache, cleanup  (+ lifecycle: init, cleanupAll)
 ```
 
-## Coding Conventions
+Capabilities (`PluginCapabilities`) advertise quirks. The router checks them at dispatch time (e.g. `supportsFullPageScreenshot` for fallback, `supportsAbortSignal` to skip signal wiring, `supportsConsoleCapture` for message-capture gating).
 
-- **TypeScript strict mode** with `noEmit` — the host compiles, not this project
-- **132 tests across 3 test files** — URL safety (46), fetch-backend (24), browser-toggle (62). No tests yet for the interactive browser backends (playwright-backend, stealth-backend, router).
-- **Compact truncation everywhere**: snapshots capped ~2500 chars inline, fetch content ~4000 chars with temp file fallback for >5KB
-- **Security-first URL handling**: always route through `url-safety.ts` for validation before navigation
-- **Role-based locators only**: never introduce XPath or CSS selector-based interaction; always use `getByRole()`
-- **Backend results are not unified**: chromium and stealth return different result types; the router normalizes them. See plan.md Phase 1 for the intended `BrowserPlugin` interface
-- **Decoupled fetch**: `webFetch()` in `fetch-backend.ts` is self-contained (URL safety → fetch → JS detection → bot detection → content capping). No router involvement, no sessions.
+Plugin loading: reads `browser.plugins` from `~/.pi/agent/settings.json` (global, merged with `.pi/settings.json` project-local). Each entry is `{name, dir, enabled, config}`. `dir` maps to `backends/<dir>/`; entry point is auto-detected (`index.ts` = Node plugin, `bridge.py` = Python plugin). If no plugins configure, a default ChromiumPlugin is created.
 
-## Known Technical Debt
+**Active plugins (config-driven):**
 
-1. **No backend abstraction** — The router uses hand-written if/else dispatch across 13 operations. Adding a new backend means touching every dispatcher. The `BrowserPlugin` interface in plan.md Phase 1 is the intended fix.
-2. **Router is the bottleneck** — ~764 lines of procedural if/else. Each new operation adds ~40 lines.
-3. **Element cache inconsistency** — Chromium stores full `AriaCachedNode`; stealth stores simplified `{role, name, level}`. The stealth parser manually extracts level from props strings.
-4. **Console capture only on Chromium** — Stealth backend has stubs for `getConsoleMessages`/`clearConsole`. No CDP equivalent exists for Firefox.
-5. **Full-page screenshots broken on stealth** — Parameter is accepted but not supported.
-6. **Hard-coded Python path** — Stealth bridge expects `/opt/ipw-pyenv/bin/python`.
-7. **✅ Fetch decoupled into separate `web-fetch` tool** — Fetch is no longer part of the router. It is a standalone tool with its own `webFetch()` entry point, URL safety, JS detection, bot detection, and content capping.
-8. **132 tests** — URL safety (46), fetch-backend (24), browser-toggle (62). No tests yet for the interactive browser backends (playwright-backend, stealth-backend, router).
+- **`chromium`** — Node/Playwright (~1100 lines), always enabled by default, reference implementation
+- **`chromium-py`** — Python/Playwright (~950 lines bridge.py), disabled by default
 
-## Refactor Roadmap (from plan.md)
+### Router (`core/router.ts`)
 
-| Phase | Goal | Key Change | Status |
-|-------|------|------------|--------|
-| 1a | ✅ **Fetch decoupled into `web-fetch` tool** | Separate stateless HTTP tool, router simplified, no fetch in escalation chain | **DONE** |
-| 1b | Extract `BrowserPlugin` interface | Unified result types, typed plugin registry, remove if/else dispatch | Pending |
-| 2 | Restructure shared utilities | Move to `core/shared/`, add deprecated re-exports in `utils/` | Pending |
-| 3 | Add quirks interface | Backend-specific capability differences (e.g., no full-page screenshot on stealth) | Pending |
-| 4 | Community readiness | Full test harness, contribution guide | Pending |
+All tool calls dispatch through the router. Key responsibilities:
 
-**Fetch decoupling is done** — Phase 1a completed June 2026. The rest of Phase 1 (BrowserPlugin interface extraction) can proceed independently now that the fetch contradiction is resolved.
+- **Strategy resolution**: `PluginRegistry.resolveStrategy("auto")` → first enabled plugin; `"<name>"` → named plugin
+- **Session lifecycle**: per-taskId sessions created on first navigate, cleaned up on shutdown
+- **Compact truncation**: `< 2800 chars` raw, cut at ~2500; `> 8000 chars` preserve top ~2000
+- **Bot-detection downgrade**: when `botDetected && elementCount < 5`, navigate fails hard (blocks are unreadable)
+- **Bot-detected snapshots are NOT compacted** — full content passes through for human judgment
+- **All interaction results have fingerprint appended**: `\nfingerprint:XXXXX` for DOM-change detection
+- **Auto-recovery**: crashed sessions are detected and re-navigated to the last URL
+- **Stale @e ref handling**: if a session was just auto-created, interaction tools return a fresh snapshot instead of performing the action
 
-## Reading Order for New Contributors
+### Key Tools
 
-1. `index.ts` — understand the 11 tools and how they call the router or fetch-backend directly
-2. `backend/router.ts` — understand dispatch and escalation (start with `navigate()`)
-3. `backend/fetch-backend.ts` — understand the decoupled `webFetch()` pipeline
-4. `utils/accessibility-tree.ts` — understand how @e refs are generated and how locators are built
-5. `plan.md` — understand the intended architecture and refactor rationale
+| Tool | Use Case | State | Speed |
+|------|----------|-------|-------|
+| `web-fetch` | Static page → Markdown, no JS needed | Stateless | Fast |
+| `browser-navigate` | Interactive page → accessibility tree with @e refs | Stateful session | Slower |
+| `browser-inspect` | Element queries + text extraction with @e ref annotations | Stateful session | Fast (sync cache) |
+| `web-guide` | Get navigation guidance for a site or pattern | Stateless | Instant |
+| `web-learn` | Save or update navigation guidance for a site | Stateless | Instant |
 
-## Important Files to Tread Lightly Around
+`web-fetch` uses plain `fetch()` + `node-html-parser` + `turndown`. Returns ~4000 chars inline, spills to temp file when larger. `browser-navigate` uses Playwright Chromium, returns accessibility tree with @e1/@e2 refs.
 
-- **`backend/router.ts`** — The most complex file; changes here affect all interactive backends. Always read the full dispatcher for an operation before modifying it.
-- **`backend/fetch-backend.ts`** — The decoupled fetch backend. Changes here affect the `web-fetch` tool only.
-- **`index.ts`** — Tool definitions for all 11 tools plus `webFetchTool`, 2 commands (`/browser-status`, `/web`), and `initBrowserToggle(pi)` startup call. Adding a new tool requires understanding both the interactive (router→backend) and stateless (fetch-backend) patterns.
-- **`utils/accessibility-tree.ts`** — Both backends depend on the parser and `buildLocator()`. Changes here can break element interaction across the board.
-- **`backend/stealth_bridge.py`** — The Python bridge runs in a subprocess with limited error recovery. Test manually after any changes.
-- **`browser-toggle.ts`** — Controls tool visibility for the entire extension. Changes here affect which tools the LLM can see. The toggle state is persisted and restored across session lifecycle events.
+### Registered tools (13 total)
 
-## Security Considerations
+web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-get-images, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
 
-- All URLs must pass through `url-safety.ts` validation (blocks localhost, private IPs, dangerous schemes)
-- Secret detection runs on both raw and percent-decoded URLs
-- Bot detection is intentionally soft — it warns and escalates but never silently swaps results
-- JS dialogs are auto-dismissed to prevent agent blocking
+### Registered commands (2 total)
+
+`/browser-status` — show backend health and active sessions
+`/web on|off|learn|status` — /web on (browsing only), /web off (all disabled),
+                                 /web learn (browsing + guide-saving via web-learn),
+                                 /web (show current state)
+
+### Guides (`core/guides.ts`)
+
+Type definitions (`Guide`, `GuideTrigger`, `GuideCategory`, `GuideSource`,
+`DomainEntry`, `GuidePresenceResult`), the `BUILTIN_GUIDES` record (4 pattern guides + 1 test-only site fixture),
+`DOMAIN_MAP` for domain-to-guide resolution,
+`loadUserGuides()`/`parseGuideFile()` for user-authored guides (YAML frontmatter
+
+- markdown body), `resolveGuidePresence()` for three-tier auto-presence
+(auto-inject / auto-hint / on-demand), `dialogPresentInSnapshot()` for dialog
+detection from accessibility tree text, `readGuidesConfig()` for
+`browser.guides.autoInject` from settings.json, and `cleanupInjectedGuides()`
+for per-task injection tracking cleanup.
+
+### Guide Creation (web-learn tool)
+
+Guides are saved or updated via the `web-learn` tool, invoked in response to
+a user request (explicit or contextual). The tool creates a `.md` file with YAML
+frontmatter in `guides/`, including a `domains` field that automatically triggers
+domain hints on future navigations. Calling `web-learn` again on the same domain
+updates the existing file (new content, new date).
+
+The `/web learn` command must be active or the tool isn't in the active tool set.
+Default is `/web on` (browsing only).
+
+Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`.
+
+## Testing
+
+### Test files (20 files, 735 tests passing)
+
+| File | Requires Chromium? |
+|------|--------------------|
+| router-dispatch.test.ts | No |
+| browser-toggle.test.ts | No |
+| plugin-registry.test.ts | No |
+| plugin-contract.test.ts | No (structural) |
+| python-adapter.test.ts | No |
+| fetch-backend.test.ts | No |
+| accessibility-tree.test.ts | No |
+| url-safety.test.ts | No |
+| plugin-loading.test.ts | No |
+| snapshot-cache.test.ts | No |
+| browser-inspect.test.ts | No |
+| web-guides.test.ts | No |
+| occlusion-live.test.ts | Yes (auto-skip) |
+| reddit-dialog.test.ts | Yes (auto-skip) |
+| chromium-py.test.ts | Yes (auto-skip) |
+
+Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automatically when Playwright Chromium is unavailable.
+
+### Shared test utilities (`__tests__/helpers/`)
+
+- `plugin-contract.ts` — `runContractTests(name, factory, opts?)` validates any BrowserPlugin
+- `mock-plugin.ts` — MockPlugin for structural contract validation
+- `reddit-fixture.ts` — HTML fixtures for Reddit dialog occlusion scenarios (4 variants)
+- `test-server.ts` — `startTestServer()` returns a local HTTP server for integration tests
+- External test server: `occlusion-test-server.cjs` for local debugging
+
+### Contract test harness
+
+`runContractTests()` from `plugin-contract.ts` validates structural contracts (all 13 operations exist, result shapes) without a browser, and behavioral tests (`realBrowser: true`) with a live Chromium against the local test server.
+
+## Known Constraints & Debt
+
+- **Console capture only on Chromium** — Python adapter's `BridgeBase` has capture but `chromium-py` bridge doesn't call it yet
+- **AbortSignal not supported on Python bridge** — `supportsAbortSignal: false`, router skips signal wiring
+- **Sessions are per taskId** — tasks are stable pi session IDs mapped to `browser-NNN` keys via `_sessionKeys`/`_sessionCounter` in `tools/utils.ts`. Created on first navigate, cleaned up on session_shutdown
+- **Role-based locators only**: never XPath/CSS — always `getByRole()` via `buildLocator()` with positional `.nth()` for duplicates. The `INTERACTIVE_ROLES` set defines which roles get @e refs
+- **All URLs go through `url-safety.ts`** — blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.169.254), dangerous schemes (file:, ftp:, data:, javascript:, vbscript:), and heuristically detects secrets in URLs
+- **Screenshot**: JPEG 80% quality, viewport constrained to 1024px wide, returns data URI
+- **Compact truncation everywhere**: snapshots ~2500 chars inline (with `\nfingerprint:XXXXX` suffix), fetch content ~4000 chars with temp file spill to `/tmp/pi-browser-fetch-*`
+- **Truncation hint text** (Phase 3): The old `"(use full=true for complete tree)"` hint has been removed from compactSnapshot() and replaced with router-appended hints:
+  - **Cached snapshot**: `📄 Full snapshot cached at {path}\n   read the cache file for the exact ARIA tree, or use browser-inspect for quick targeted element discovery`
+  - **Not cached** (write failure, bot detected, or snapshot() tool): `(use browser-inspect role=... name=... to find specific elements, or use browser-snapshot full=true for the complete tree)`
+  - The cache file is the authoritative source for exact `@e` refs; `browser-inspect` is a cheaper first attempt for targeted discovery.
+- **Snapshot Disk Cache** (`core/shared/snapshot-cache.ts`): when compactSnapshot() truncates a page's accessibility tree, the full tree is written to `/tmp/pi-browser/snapshot-*.txt`. The agent can `read` this file with offset/limit to find elements past the truncation boundary. `@e` refs remain valid because the element cache is independent of what text the agent reads.
+  - Only caches when truncation actually occurred (snapshot > 2800 chars)
+  - Bot-detected snapshots are never cached
+  - Keeps last 2 files per task
+  - Cache notice is appended to truncated output with action guidance pointing to `browser-inspect`
+  - When snapshot is truncated but not cached, a fallback hint is shown instead
+  - All I/O is try-catched — graceful degradation to inline-only on failure
+  - Cleaned up on session removal and shutdown
+- **`browser-inspect`** (`core/shared/dom-extractor.ts`): element + text extraction tool. Uses an inline `EXTRACTOR_SCRIPT` evaluated via `page.evaluate()` (bypasses CSP). Requires `getElementCache()` on the plugin. Staleness detection via `lastInteractionAt` vs `cachePopulatedAt`. Python parity is in-scope — bridge must include `elements` dict in responses for adapter-level cache to work.
+  - **Text output truncation**: when `text=true` without an explicit `maxChars`, the output is truncated at ~2500 characters by default. Pass `maxChars=0` for full content. Truncated output appends `"\n… X more chars (use maxChars=0 for full content)"` so the agent knows how to retrieve the complete text.
+  - **Keyword filtering**: the optional `query` parameter filters extracted content to only include elements whose text matches the given case-insensitive substring. Applied before correlation, so only matching elements get @e ref annotations. When no content matches, a notice is appended to the output. Also checks link `href` and image `src` fields.
+- **`parentRef` on `AriaCachedNode`**: set by a depth-based parent stack in `parseSnapshot()`'s second pass. Enables `subtree=...` queries in `browser-inspect`. A `dialog`/`alertdialog` element becomes the parent of interior elements. Same-depth siblings share the same parent.
+- **Guide content discipline**: guides should be ≤800 chars. No runtime enforcement — authoring discipline.
+- **`dialogPresentInSnapshot` is a string scan**: checks for `role="dialog"` in the already-truncated snapshot. May miss dialogs below the truncation boundary. A proper `dialogDetected` field on `NavigateResult` is deferred.
+- **Guide staleness**: pattern guides (bot-detection, cookie-consent, pagination, search) are kept generic and reviewed periodically. No builtin site guides are shipped — site guidance is entirely user-authored via `guides/*.md`. Guides carry `updated` date paired with `currentDate` in output for the agent to assess freshness.
+- **Domain map is built dynamically from guide files**: the only static entry
+  is the test-only fixture (`_internal-test.example`). Any guide in `guides/`
+  with a `domains` frontmatter field automatically contributes domain hints.
+  Caches invalidate on `web-learn` tool calls — no reload needed.
+- **Learn mode toggle**: `/web learn` adds `web-learn` to the active tool set;
+  `/web on` removes it. The agent never calls `web-learn` unprompted — it only
+  saves or updates guides when the user asks or the context implies it.
+  State is persisted per-session-branch. Internally stores two independent booleans.
+  Legacy `/web on|off` branches restore correctly.
+  Learn mode defaults to off on fresh sessions.
+- **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click, occlusion events). Only checks in ChromiumPlugin
+
+## Debugging
+
+```bash
+BROWSER_DEBUG=1 npx vitest run __tests__/occlusion-live.test.ts
+```
+
+Set `BROWSER_DEBUG=1` for structured logging from ChromiumPlugin.
+
+## TypeScript Quirks
+
+- `noEmit: true` — source-only, no build step
+- `exactOptionalPropertyTypes: true` — `undefined` in optional params triggers type errors; use `Type.Optional()` wrapper (from `@earendil-works/pi-ai`) for tool parameters
+- `noUncheckedIndexedAccess: true` — all indexed accesses require null checks
+- `module: "nodenext"` — imports need `.js` extensions in source files
+
+## `backends/` vs `core/` Boundaries
+
+- `backends/` — plugin-specific implementations (Node or Python)
+- `core/` — framework: plugin API, registry, config loader, router, shared utilities
+- `core/shared/` — utilities used by both framework and plugins
+- Plugins import from `../../core/plugin-api.js` and `../../core/shared/*.js`
+- The router imports from `../../core/plugin-api.js` and `../../core/shared/*.js`

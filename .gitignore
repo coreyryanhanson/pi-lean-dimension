@@ -141,3 +141,13 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Python pycache
+__pycache__
+
+
+# Egg info
+**/*.egg-info
+
+# User-authored web navigation guides (YAML frontmatter + markdown)
+guides/*.md

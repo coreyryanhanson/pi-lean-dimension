@@ -27,6 +27,10 @@ import browserToggle, {
 	_resetToggleStateForTest,
 	readBrowserToggleConfig,
 	applyConfigDefault,
+	getRegisteredLearnTools,
+	isLearnEnabled,
+	applyLearnState,
+	migrateLegacyState,
 	type BrowserToggleState,
 } from "../browser-toggle";
 
@@ -46,11 +50,12 @@ const ALL_BROWSER_TOOLS = [
 	{ name: "browser-click", description: "click" },
 	{ name: "browser-type", description: "type" },
 	{ name: "browser-scroll", description: "scroll" },
-	{ name: "browser-screenshot", description: "screenshot" },
 	{ name: "browser-get-images", description: "get images" },
 	{ name: "browser-back", description: "back" },
 	{ name: "browser-press", description: "press" },
 	{ name: "browser-console", description: "console" },
+	{ name: "browser-inspect", description: "inspect" },
+	{ name: "web-guide", description: "guide" },
 ];
 
 const SOME_BROWSER_TOOLS = [
@@ -137,7 +142,7 @@ describe("getRegisteredBrowserTools", () => {
 		);
 	});
 
-	it("returns all 11 browser tools when fully loaded", () => {
+	it("returns all 13 browser tools when fully loaded", () => {
 		const pi = mockPi({ tools: ALL_BROWSER_TOOLS });
 		expect(getRegisteredBrowserTools(pi)).toEqual(
 			ALL_BROWSER_TOOLS.map((t) => t.name),
@@ -373,26 +378,56 @@ describe("applyBrowserState(false) — disable", () => {
 describe("persistState", () => {
 	it("calls appendEntry with customType 'browser-toggle-state'", () => {
 		const pi = mockPi();
-		persistState(pi, true);
+		persistState(pi, {
+			browserToolsEnabled: true,
+			learnToolsEnabled: false,
+			defaultProfile: "none",
+		});
 		expect(pi.appendEntry).toHaveBeenCalledWith(
 			"browser-toggle-state",
 			expect.any(Object),
 		);
 	});
 
-	it("stores enabled: true when toggling on", () => {
+	it("stores browserToolsEnabled: true and learnToolsEnabled: false on /web on", () => {
 		const pi = mockPi();
-		persistState(pi, true);
+		persistState(pi, {
+			browserToolsEnabled: true,
+			learnToolsEnabled: false,
+			defaultProfile: "none",
+		});
 		expect(pi.appendEntry).toHaveBeenCalledWith("browser-toggle-state", {
-			enabled: true,
+			browserToolsEnabled: true,
+			learnToolsEnabled: false,
+			defaultProfile: "none",
 		});
 	});
 
-	it("stores enabled: false when toggling off", () => {
+	it("stores browserToolsEnabled: false and learnToolsEnabled: false on /web off", () => {
 		const pi = mockPi();
-		persistState(pi, false);
+		persistState(pi, {
+			browserToolsEnabled: false,
+			learnToolsEnabled: false,
+			defaultProfile: "none",
+		});
 		expect(pi.appendEntry).toHaveBeenCalledWith("browser-toggle-state", {
-			enabled: false,
+			browserToolsEnabled: false,
+			learnToolsEnabled: false,
+			defaultProfile: "none",
+		});
+	});
+
+	it("stores browserToolsEnabled: true and learnToolsEnabled: true on /web learn", () => {
+		const pi = mockPi();
+		persistState(pi, {
+			browserToolsEnabled: true,
+			learnToolsEnabled: true,
+			defaultProfile: "none",
+		});
+		expect(pi.appendEntry).toHaveBeenCalledWith("browser-toggle-state", {
+			browserToolsEnabled: true,
+			learnToolsEnabled: true,
+			defaultProfile: "none",
 		});
 	});
 });
@@ -428,8 +463,23 @@ describe("getToggleState", () => {
 	});
 
 	it("is not affected by persistState", () => {
-		persistState(mockPi(), true);
+		persistState(mockPi(), {
+			browserToolsEnabled: true,
+			learnToolsEnabled: false,
+			defaultProfile: "none",
+		});
 		// persistState doesn't call applyBrowserState, so state is unchanged
+		expect(getToggleState()).toBe(true);
+	});
+
+	it("returns true when browserToolsEnabled is true (regardless of learn state)", () => {
+		const pi = mockPi({
+			tools: ALL_BROWSER_TOOLS,
+			activeTools: ALL_BROWSER_TOOLS.map((t) => t.name),
+		});
+		// getToggleState returns browserToolsEnabled only (status bar compat)
+		applyBrowserState(pi, true);
+		applyLearnState(pi, true);
 		expect(getToggleState()).toBe(true);
 	});
 
@@ -465,7 +515,7 @@ describe("restoreFromBranch", () => {
 		expect(pi.setActiveTools).not.toHaveBeenCalled();
 	});
 
-	it("applies saved enabled=true state", () => {
+	it("applies saved browserToolsEnabled=true learnToolsEnabled=false state ", () => {
 		const allNames = ALL_BROWSER_TOOLS.map((t) => t.name);
 		const pi = mockPi({
 			tools: [...ALL_BROWSER_TOOLS, ...NON_BROWSER_TOOLS],
@@ -475,7 +525,11 @@ describe("restoreFromBranch", () => {
 			{
 				type: "custom",
 				customType: "browser-toggle-state",
-				data: { enabled: true } satisfies BrowserToggleState,
+				data: {
+					browserToolsEnabled: true,
+					learnToolsEnabled: false,
+					defaultProfile: "none",
+				} satisfies BrowserToggleState,
 			},
 		]);
 		restoreFromBranch(pi, ctx);
@@ -483,7 +537,7 @@ describe("restoreFromBranch", () => {
 		expect(setActive).toHaveBeenCalledWith(expect.arrayContaining(allNames));
 	});
 
-	it("applies saved enabled=false state", () => {
+	it("applies saved browserToolsEnabled=false learnToolsEnabled=false state", () => {
 		const pi = mockPi({
 			tools: [...ALL_BROWSER_TOOLS, ...NON_BROWSER_TOOLS],
 			activeTools: [
@@ -495,7 +549,11 @@ describe("restoreFromBranch", () => {
 			{
 				type: "custom",
 				customType: "browser-toggle-state",
-				data: { enabled: false } satisfies BrowserToggleState,
+				data: {
+					browserToolsEnabled: false,
+					learnToolsEnabled: false,
+					defaultProfile: "none",
+				} satisfies BrowserToggleState,
 			},
 		]);
 		restoreFromBranch(pi, ctx);
@@ -516,17 +574,17 @@ describe("restoreFromBranch", () => {
 			{
 				type: "custom",
 				customType: "browser-toggle-state",
-				data: { enabled: true },
+				data: { browserToolsEnabled: true, learnToolsEnabled: false },
 			},
 			{
 				type: "custom",
 				customType: "browser-toggle-state",
-				data: { enabled: false },
+				data: { browserToolsEnabled: false, learnToolsEnabled: false },
 			},
 			{
 				type: "custom",
 				customType: "browser-toggle-state",
-				data: { enabled: true },
+				data: { browserToolsEnabled: true, learnToolsEnabled: true },
 			},
 		]);
 		restoreFromBranch(pi, ctx);
@@ -557,7 +615,11 @@ describe("restoreFromBranch", () => {
 			{
 				type: "custom",
 				customType: "browser-toggle-state",
-				data: { enabled: false } satisfies BrowserToggleState,
+				data: {
+					browserToolsEnabled: false,
+					learnToolsEnabled: false,
+					defaultProfile: "none",
+				} satisfies BrowserToggleState,
 			},
 		]);
 		// Should not throw — with no browser tools currently registered,
@@ -615,7 +677,8 @@ describe("command handler dispatch (via factory closure)", () => {
 		expect(pi.setActiveTools).toHaveBeenCalled();
 	});
 
-	it("handles 'on' when already enabled — no state change", () => {
+	it("handles 'on' — does not short-circuit (no early return)", () => {
+		// In the new three-state version, 'on' always calls applyBrowserState/applyLearnState
 		const pi = mockPi({
 			tools: [...ALL_BROWSER_TOOLS, ...NON_BROWSER_TOOLS],
 			activeTools: [
@@ -631,8 +694,8 @@ describe("command handler dispatch (via factory closure)", () => {
 		}) as any;
 
 		browserToggle(pi);
-		// Should short-circuit before calling setActiveTools
-		expect(pi.setActiveTools).not.toHaveBeenCalled();
+		// In the new three-state version, /web on always applies (no short-circuit)
+		expect(pi.setActiveTools).toHaveBeenCalled();
 	});
 
 	it("handles 'off' when browsers are on — updates state", () => {
@@ -653,7 +716,8 @@ describe("command handler dispatch (via factory closure)", () => {
 		expect(pi.setActiveTools).toHaveBeenCalled();
 	});
 
-	it("handles 'off' when already disabled — no state change", () => {
+	it("handles 'off' when already disabled — still updates state", () => {
+		// In the new three-state version, 'off' always applies (no early return)
 		const pi = mockPi({
 			tools: [...ALL_BROWSER_TOOLS, ...NON_BROWSER_TOOLS],
 			activeTools: NON_BROWSER_TOOLS.map((t) => t.name),
@@ -666,7 +730,23 @@ describe("command handler dispatch (via factory closure)", () => {
 		}) as any;
 
 		browserToggle(pi);
-		expect(pi.setActiveTools).not.toHaveBeenCalled();
+		expect(pi.setActiveTools).toHaveBeenCalled();
+	});
+
+	it("handles 'learn' — enables both browser and learn tools", () => {
+		const pi = mockPi({
+			tools: [...ALL_BROWSER_TOOLS, ...NON_BROWSER_TOOLS],
+			activeTools: NON_BROWSER_TOOLS.map((t) => t.name),
+		});
+		pi.setActiveTools = vi.fn();
+		pi.registerCommand = vi.fn((_name, opts) => {
+			opts.handler("learn", {
+				ui: { notify: vi.fn(), setStatus: vi.fn() },
+			} as any);
+		}) as any;
+
+		browserToggle(pi);
+		expect(pi.setActiveTools).toHaveBeenCalled();
 	});
 
 	it("handles unknown arg (e.g. 'xyz') — shows status, no state change", () => {
@@ -708,6 +788,154 @@ describe("command handler dispatch (via factory closure)", () => {
 
 		browserToggle(pi);
 		expect(pi.setActiveTools).not.toHaveBeenCalled();
+	});
+});
+
+// ==================================================================
+//  getRegisteredLearnTools / isLearnEnabled / applyLearnState
+// ==================================================================
+describe("getRegisteredLearnTools", () => {
+	it("returns empty array when no learn tools registered", () => {
+		const pi = mockPi({ tools: ALL_BROWSER_TOOLS });
+		expect(getRegisteredLearnTools(pi)).toEqual([]);
+	});
+
+	it("returns web-learn when it's in the tool list", () => {
+		const tools = [
+			...ALL_BROWSER_TOOLS,
+			{ name: "web-learn", description: "learn" },
+		];
+		const pi = mockPi({ tools });
+		expect(getRegisteredLearnTools(pi)).toEqual(["web-learn"]);
+	});
+
+	it("is case-sensitive (tool names are always lowercase)", () => {
+		const tools = [
+			...ALL_BROWSER_TOOLS,
+			{ name: "Web-Learn" },
+			{ name: "web-learn" },
+		];
+		const pi = mockPi({ tools });
+		expect(getRegisteredLearnTools(pi)).toEqual(["web-learn"]);
+	});
+});
+
+describe("isLearnEnabled", () => {
+	it("returns true when web-learn is active", () => {
+		const tools = [
+			...ALL_BROWSER_TOOLS,
+			{ name: "web-learn", description: "learn" },
+		];
+		const pi = mockPi({
+			tools,
+			activeTools: [...ALL_BROWSER_TOOLS.map((t) => t.name), "web-learn"],
+		});
+		expect(isLearnEnabled(pi)).toBe(true);
+	});
+
+	it("returns false when web-learn is not active", () => {
+		const tools = [
+			...ALL_BROWSER_TOOLS,
+			{ name: "web-learn", description: "learn" },
+		];
+		const pi = mockPi({
+			tools,
+			activeTools: ALL_BROWSER_TOOLS.map((t) => t.name),
+		});
+		expect(isLearnEnabled(pi)).toBe(false);
+	});
+
+	it("returns true when no learn tools exist (vacuously enabled)", () => {
+		const pi = mockPi({ tools: ALL_BROWSER_TOOLS });
+		expect(isLearnEnabled(pi)).toBe(true);
+	});
+});
+
+describe("applyLearnState", () => {
+	it("enable adds web-learn to active set", () => {
+		const tools = [
+			...ALL_BROWSER_TOOLS,
+			{ name: "web-learn", description: "learn" },
+		];
+		const pi = mockPi({
+			tools,
+			activeTools: ALL_BROWSER_TOOLS.map((t) => t.name),
+		});
+		applyLearnState(pi, true);
+		const setActive = pi.setActiveTools as ReturnType<typeof vi.fn>;
+		const calledWith: string[] = setActive.mock.calls[0]![0] as string[];
+		expect(calledWith).toContain("web-learn");
+	});
+
+	it("disable removes web-learn from active set", () => {
+		const tools = [
+			...ALL_BROWSER_TOOLS,
+			{ name: "web-learn", description: "learn" },
+		];
+		const allNames = [...ALL_BROWSER_TOOLS.map((t) => t.name), "web-learn"];
+		const pi = mockPi({
+			tools,
+			activeTools: allNames,
+		});
+		applyLearnState(pi, false);
+		const setActive = pi.setActiveTools as ReturnType<typeof vi.fn>;
+		const calledWith: string[] = setActive.mock.calls[0]![0] as string[];
+		expect(calledWith).not.toContain("web-learn");
+	});
+
+	it("is a no-op when no learn tools are registered", () => {
+		const pi = mockPi({ tools: ALL_BROWSER_TOOLS });
+		applyLearnState(pi, true);
+		expect(pi.setActiveTools).not.toHaveBeenCalled();
+	});
+});
+
+// ==================================================================
+//  applyConfigDefault — learn state
+// ==================================================================
+describe("applyConfigDefault (learn state)", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("learn state starts disabled", () => {
+		// applyConfigDefault should set learnToolsEnabled to false
+		const tools = [
+			...ALL_BROWSER_TOOLS,
+			{ name: "web-learn", description: "learn" },
+		];
+		const pi = mockPi({
+			tools,
+			activeTools: [...ALL_BROWSER_TOOLS.map((t) => t.name), "web-learn"],
+		});
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(readFileSync).mockReturnValue(
+			JSON.stringify({ browserToggle: { defaultEnabled: true } }),
+		);
+		applyConfigDefault(pi);
+
+		// applyConfigDefault calls setActiveTools twice:
+		// 1. applyBrowserState(true) — adds browser tools
+		// 2. applyLearnState(false) — removes web-learn
+		// Check the *last* call's result (not the first)
+		const setActive = pi.setActiveTools as ReturnType<typeof vi.fn>;
+		const lastCall = setActive.mock.calls[setActive.mock.calls.length - 1]!;
+		const calledWith: string[] = lastCall[0] as string[];
+		expect(calledWith).not.toContain("web-learn");
+	});
+
+	it("persists learnToolsEnabled: false", () => {
+		const pi = mockPi({ tools: ALL_BROWSER_TOOLS });
+		vi.mocked(existsSync).mockReturnValue(true);
+		vi.mocked(readFileSync).mockReturnValue(
+			JSON.stringify({ browserToggle: { defaultEnabled: true } }),
+		);
+		applyConfigDefault(pi);
+
+		expect(pi.appendEntry).toHaveBeenCalledWith(
+			"browser-toggle-state",
+			expect.objectContaining({ learnToolsEnabled: false }),
+		);
 	});
 });
 
@@ -867,7 +1095,10 @@ describe("applyConfigDefault", () => {
 
 		expect(pi.appendEntry).toHaveBeenCalledWith(
 			"browser-toggle-state",
-			expect.objectContaining({ enabled: true }),
+			expect.objectContaining({
+				browserToolsEnabled: true,
+				learnToolsEnabled: false,
+			}),
 		);
 	});
 
@@ -897,7 +1128,11 @@ describe("restoreFromBranch (return value)", () => {
 			{
 				type: "custom",
 				customType: "browser-toggle-state",
-				data: { enabled: true } satisfies BrowserToggleState,
+				data: {
+					browserToolsEnabled: true,
+					learnToolsEnabled: false,
+					defaultProfile: "none",
+				} satisfies BrowserToggleState,
 			},
 		]);
 		expect(restoreFromBranch(pi, ctx)).toBe(true);
@@ -921,9 +1156,74 @@ describe("restoreFromBranch (return value)", () => {
 			{
 				type: "custom",
 				customType: "browser-toggle-state",
-				data: { enabled: false },
+				data: { browserToolsEnabled: false, learnToolsEnabled: false },
 			},
 		]);
 		expect(restoreFromBranch(pi, ctx)).toBe(false);
+	});
+
+	// ── Legacy compat ──────────────────────────────────────────────
+
+	it("migrateLegacyState converts {enabled: true} to new schema", () => {
+		const result = migrateLegacyState({ enabled: true });
+		expect(result).toEqual({
+			browserToolsEnabled: true,
+			learnToolsEnabled: true,
+			defaultProfile: "none",
+		});
+	});
+
+	it("migrateLegacyState converts {enabled: false} to new schema", () => {
+		const result = migrateLegacyState({ enabled: false });
+		expect(result).toEqual({
+			browserToolsEnabled: false,
+			learnToolsEnabled: false,
+			defaultProfile: "none",
+		});
+	});
+
+	it("migrateLegacyState returns null for non-legacy objects", () => {
+		expect(migrateLegacyState({ foo: "bar" })).toBeNull();
+	});
+
+	it("restoreFromBranch handles legacy {enabled: true} entry", () => {
+		const allNames = ALL_BROWSER_TOOLS.map((t) => t.name);
+		const pi = mockPi({
+			tools: [...ALL_BROWSER_TOOLS, ...NON_BROWSER_TOOLS],
+			activeTools: NON_BROWSER_TOOLS.map((t) => t.name),
+		});
+		const ctx = mockContext([
+			{
+				type: "custom",
+				customType: "browser-toggle-state",
+				data: { enabled: true },
+			},
+		]);
+		restoreFromBranch(pi, ctx);
+		const setActive = pi.setActiveTools as ReturnType<typeof vi.fn>;
+		expect(setActive).toHaveBeenCalledWith(expect.arrayContaining(allNames));
+	});
+
+	it("restoreFromBranch handles legacy {enabled: false} entry", () => {
+		const pi = mockPi({
+			tools: [...ALL_BROWSER_TOOLS, ...NON_BROWSER_TOOLS],
+			activeTools: [
+				...NON_BROWSER_TOOLS.map((t) => t.name),
+				...ALL_BROWSER_TOOLS.map((t) => t.name),
+			],
+		});
+		const ctx = mockContext([
+			{
+				type: "custom",
+				customType: "browser-toggle-state",
+				data: { enabled: false },
+			},
+		]);
+		restoreFromBranch(pi, ctx);
+		const setActive = pi.setActiveTools as ReturnType<typeof vi.fn>;
+		const calledWith: string[] = setActive.mock.calls[0]![0] as string[];
+		for (const tool of ALL_BROWSER_TOOLS.map((t) => t.name)) {
+			expect(calledWith).not.toContain(tool);
+		}
 	});
 });
