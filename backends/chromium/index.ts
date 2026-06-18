@@ -31,32 +31,36 @@ import { checkPage } from "../../core/shared/bot-detection.js";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { saveStorageState } from "../../core/shared/storage-state.js";
-import type {
-	BrowserPlugin,
-	PluginCapabilities,
-	NavigateResult,
-	SnapshotResult,
-	InteractionResult,
-	ScreenshotResult,
-	ConsoleMessagesResult,
-	EvaluateResult,
-	ResultBase,
-	Cookie,
-	CookieResult,
-	ClearCookiesOptions,
-	StorageStateResult,
+import {
+	DEFAULT_CAPABILITIES,
+	type BrowserPlugin,
+	type PluginCapabilities,
+	type NavigateResult,
+	type SnapshotResult,
+	type InteractionResult,
+	type ScreenshotResult,
+	type ConsoleMessagesResult,
+	type EvaluateResult,
+	type ResultBase,
+	type Cookie,
+	type CookieResult,
+	type ClearCookiesOptions,
+	type StorageStateResult,
 } from "../../core/plugin-api.js";
 
 // ─── Capabilities ──────────────────────────────────────────────────
 
 const CHROMIUM_CAPABILITIES: PluginCapabilities = {
-	supportsFullPageScreenshot: true,
-	supportsConsoleCapture: true,
-	supportsJavaScriptEvaluate: true,
-	supportsBotDetection: true,
-	supportsDialogAutoDismissal: true,
-	supportsAbortSignal: true,
-	engine: "chromium",
+	...DEFAULT_CAPABILITIES,
+};
+
+// ─── Types ────────────────────────────────────────────────────────
+
+/** A per-task page entry: isolated BrowserContext + Page + optional profile name. */
+type PageEntry = {
+	context: BrowserContext;
+	page: Page;
+	profileName?: string;
 };
 
 // ─── ChromiumPlugin ───────────────────────────────────────────────
@@ -82,15 +86,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 	 * Per-task context + page tracking.
 	 * Each task gets its own isolated BrowserContext created fresh per navigate.
 	 */
-	private _pages = new Map<
-		string,
-		{
-			context: BrowserContext;
-			page: Page;
-			/** Profile name if this page belongs to a named/session profile, undefined for ephemeral */
-			profileName?: string;
-		}
-	>();
+	private _pages = new Map<string, PageEntry>();
 
 	/** Per-task element cache (ref → AriaCachedNode) */
 	private _elementCache = new Map<string, Map<string, AriaCachedNode>>();
@@ -247,6 +243,31 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	private getPage(taskId: string): Page | undefined {
 		return this._pages.get(taskId)?.page;
+	}
+
+	/**
+	 * Returns the page for `taskId` or `null` if there is no active session.
+	 * Logs a "No active session" debug event when `op` is provided.
+	 */
+	private requirePage(taskId: string, op?: string): Page | null {
+		const page = this.getPage(taskId);
+		if (!page && op) {
+			this._log(op, { taskId, success: false, error: "No active session" });
+		}
+		return page ?? null;
+	}
+
+	/**
+	 * Returns the full page entry (context + page) for `taskId` or `null`.
+	 * Logs a "No active session" debug event when `op` is provided.
+	 * Used by cookie/storage methods that also need the BrowserContext.
+	 */
+	private requireEntry(taskId: string, op?: string): PageEntry | null {
+		const entry = this._pages.get(taskId);
+		if (!entry && op) {
+			this._log(op, { taskId, success: false, error: "No active session" });
+		}
+		return entry ?? null;
 	}
 
 	/**
@@ -567,16 +588,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	async snapshot(taskId: string): Promise<SnapshotResult> {
 		const _start = performance.now();
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId, "snapshot");
 		if (!page) {
-			this._log("snapshot", {
-				taskId,
-				success: false,
-				elementCount: 0,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
-
 			return {
 				success: false,
 				snapshot: "",
@@ -637,18 +650,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 	async click(taskId: string, ref: string): Promise<InteractionResult> {
 		const _start = performance.now();
 		const phases: Record<string, number> = {};
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId, "click");
 		if (!page) {
-			this._log("click", {
-				taskId,
-				ref,
-				role: "(none)",
-				name: "(none)",
-				occlusionCheck: "skipped",
-				result: "fail",
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -786,18 +789,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 		text: string,
 	): Promise<InteractionResult> {
 		const _start = performance.now();
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId, "type");
 		if (!page) {
-			this._log("type", {
-				taskId,
-				ref,
-				role: "(none)",
-				name: "(none)",
-				occlusionCheck: "skipped",
-				result: "fail",
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -910,15 +903,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 		direction: "up" | "down",
 	): Promise<InteractionResult> {
 		const _start = performance.now();
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId, "scroll");
 		if (!page) {
-			this._log("scroll", {
-				taskId,
-				direction,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -961,14 +947,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	async goBack(taskId: string): Promise<InteractionResult> {
 		const _start = performance.now();
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId, "goBack");
 		if (!page) {
-			this._log("goBack", {
-				taskId,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -1015,15 +995,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	async press(taskId: string, key: string): Promise<InteractionResult> {
 		const _start = performance.now();
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId, "press");
 		if (!page) {
-			this._log("press", {
-				taskId,
-				key,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -1067,7 +1040,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 		taskId: string,
 		options?: { fullPage?: boolean },
 	): Promise<ScreenshotResult> {
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId);
 		if (!page) {
 			return { success: false, dataUri: "", error: "No active session" };
 		}
@@ -1106,7 +1079,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 	}
 
 	async evaluate(taskId: string, expression: string): Promise<EvaluateResult> {
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId);
 		if (!page) {
 			return { success: false, error: "No active session" };
 		}
@@ -1126,14 +1099,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	async getCookies(taskId: string, urls?: string[]): Promise<CookieResult> {
 		const _start = performance.now();
-		const entry = this._pages.get(taskId);
+		const entry = this.requireEntry(taskId, "getCookies");
 		if (!entry) {
-			this._log("getCookies", {
-				taskId,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, cookies: [], error: "No active session" };
 		}
 
@@ -1163,14 +1130,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	async addCookies(taskId: string, cookies: Cookie[]): Promise<ResultBase> {
 		const _start = performance.now();
-		const entry = this._pages.get(taskId);
+		const entry = this.requireEntry(taskId, "addCookies");
 		if (!entry) {
-			this._log("addCookies", {
-				taskId,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -1202,14 +1163,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 		options?: ClearCookiesOptions,
 	): Promise<ResultBase> {
 		const _start = performance.now();
-		const entry = this._pages.get(taskId);
+		const entry = this.requireEntry(taskId, "clearCookies");
 		if (!entry) {
-			this._log("clearCookies", {
-				taskId,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -1241,14 +1196,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	async getStorageState(taskId: string): Promise<StorageStateResult> {
 		const _start = performance.now();
-		const entry = this._pages.get(taskId);
+		const entry = this.requireEntry(taskId, "getStorageState");
 		if (!entry) {
-			this._log("getStorageState", {
-				taskId,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return {
 				success: false,
 				cookies: [],

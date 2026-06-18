@@ -29,20 +29,21 @@ import { existsSync } from "node:fs";
 import { sessionManager } from "../core/shared/session-manager.js";
 import { saveStorageState } from "../core/shared/storage-state.js";
 
-import type {
-	BrowserPlugin,
-	PluginCapabilities,
-	NavigateResult,
-	SnapshotResult,
-	InteractionResult,
-	ScreenshotResult,
-	ConsoleMessagesResult,
-	EvaluateResult,
-	Cookie,
-	CookieResult,
-	ClearCookiesOptions,
-	StorageStateResult,
-	ResultBase,
+import {
+	DEFAULT_CAPABILITIES,
+	type BrowserPlugin,
+	type PluginCapabilities,
+	type NavigateResult,
+	type SnapshotResult,
+	type InteractionResult,
+	type ScreenshotResult,
+	type ConsoleMessagesResult,
+	type EvaluateResult,
+	type Cookie,
+	type CookieResult,
+	type ClearCookiesOptions,
+	type StorageStateResult,
+	type ResultBase,
 } from "../core/plugin-api.js";
 import type { AriaCachedNode } from "../core/shared/accessibility-tree.js";
 
@@ -165,13 +166,8 @@ export interface PythonBridgeConfig {
  * - Engine: chromium
  */
 const DEFAULT_PYTHON_CAPABILITIES: PluginCapabilities = {
-	supportsFullPageScreenshot: true,
-	supportsConsoleCapture: true,
-	supportsJavaScriptEvaluate: true,
-	supportsBotDetection: true,
-	supportsDialogAutoDismissal: true,
+	...DEFAULT_CAPABILITIES,
 	supportsAbortSignal: false,
-	engine: "chromium",
 };
 
 // ─── Pending request type ─────────────────────────────────────────────
@@ -930,9 +926,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 					success: !!raw.success,
 					snapshot: (raw.snapshot as string) ?? "",
 					elementCount: (raw.elementCount as number) ?? 0,
-					...(raw.error !== undefined
-						? { error: raw.error as string }
-						: {}),
+					...(raw.error !== undefined ? { error: raw.error as string } : {}),
 				};
 			},
 			(error) => ({ success: false, snapshot: "", elementCount: 0, error }),
@@ -1014,9 +1008,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			(raw) => ({
 				success: !!raw.success,
 				dataUri: (raw.dataUri as string) ?? "",
-				...(raw.error !== undefined
-					? { error: raw.error as string }
-					: {}),
+				...(raw.error !== undefined ? { error: raw.error as string } : {}),
 			}),
 			(error) => ({ success: false, dataUri: "", error }),
 		);
@@ -1033,9 +1025,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			(raw) => ({
 				success: !!raw.success,
 				messages: (raw.messages as ConsoleMessagesResult["messages"]) ?? [],
-				...(raw.error !== undefined
-					? { error: raw.error as string }
-					: {}),
+				...(raw.error !== undefined ? { error: raw.error as string } : {}),
 			}),
 			(error) => ({ success: false, messages: [], error }),
 		);
@@ -1060,9 +1050,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			(raw) => ({
 				success: !!raw.success,
 				result: raw.result,
-				...(raw.error !== undefined
-					? { error: raw.error as string }
-					: {}),
+				...(raw.error !== undefined ? { error: raw.error as string } : {}),
 			}),
 			(error) => ({ success: false, error, result: undefined }),
 		);
@@ -1079,9 +1067,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			(raw) => ({
 				success: !!raw.success,
 				cookies: (raw.cookies as Cookie[]) ?? [],
-				...(raw.error !== undefined
-					? { error: raw.error as string }
-					: {}),
+				...(raw.error !== undefined ? { error: raw.error as string } : {}),
 			}),
 			(error) => ({ success: false, cookies: [], error }),
 		);
@@ -1093,9 +1079,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			{ taskId, cookies },
 			(raw) => ({
 				success: !!raw.success,
-				...(raw.error !== undefined
-					? { error: raw.error as string }
-					: {}),
+				...(raw.error !== undefined ? { error: raw.error as string } : {}),
 			}),
 			(error) => ({ success: false, error }),
 		);
@@ -1115,9 +1099,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			},
 			(raw) => ({
 				success: !!raw.success,
-				...(raw.error !== undefined
-					? { error: raw.error as string }
-					: {}),
+				...(raw.error !== undefined ? { error: raw.error as string } : {}),
 			}),
 			(error) => ({ success: false, error }),
 		);
@@ -1131,9 +1113,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				success: !!raw.success,
 				cookies: (raw.cookies as StorageStateResult["cookies"]) ?? [],
 				origins: (raw.origins as StorageStateResult["origins"]) ?? [],
-				...(raw.error !== undefined
-					? { error: raw.error as string }
-					: {}),
+				...(raw.error !== undefined ? { error: raw.error as string } : {}),
 			}),
 			(error) => ({ success: false, cookies: [], origins: [], error }),
 		);
