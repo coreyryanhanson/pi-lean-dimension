@@ -9,7 +9,7 @@ A pi extension that registers **12 tools + 1 command** for web browsing. Archite
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 666 tests across 19 files (all pass)
+npm test              # vitest run — 665 tests across 19 files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npm run test:watch    # vitest in watch mode
 ```
@@ -32,7 +32,7 @@ pi-browser/
 ├── core/                     # Framework: shared across all plugins
 │   ├── plugin-api.ts         # BrowserPlugin interface + result types (Cookie, StorageState, etc.)
 │   ├── plugin-registry.ts    # Registration, validation, strategy resolution
-│   ├── plugin-config.ts      # Reads browser.plugins, browser.defaultProfile from settings.json
+│   ├── plugin-config.ts      # Pipeline config loading, validation, detection + types (PluginConfig, PluginType, PluginDetection)
 │   ├── router.ts             # Dispatch, session lifecycle, truncation, cookie/profile dispatch
 │   ├── guides.ts             # Guide types, builtin guides, file loader, presence resolution
 │   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
@@ -130,7 +130,7 @@ Guide presence is three-tier: auto-inject (bot-detection), auto-hint (cookie-con
 
 ## Testing
 
-### Test files (19 files, 666 tests passing)
+### Test files (19 files, 665 tests passing)
 
 | File | Requires Chromium? |
 |------|--------------------|
@@ -166,7 +166,7 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
 - **Snapshot Disk Cache** (`core/shared/snapshot-cache.ts`): when truncated, full tree written to `/tmp/pi-browser/snapshot-*.txt`. Last 2 files per task. Bot-detected snapshots are never cached. I/O failures degrade gracefully to inline-only.
 - **`browser-inspect`** (`core/shared/dom-extractor.ts`): runs inline JS via `page.evaluate()`. Requires `getElementCache()` on the plugin. Text output truncated at ~2500 chars by default; pass `maxChars=0` for full. Keyword filtering via `query` parameter (case-insensitive substring on text, href, src).
 - **`parentRef` on `AriaCachedNode`**: enables `subtree=...` queries in `browser-inspect`. Set by depth-based parent stack in `parseSnapshot()`'s second pass. Dialogs become parent of interior elements.
-- **`dialogPresentInSnapshot` is a string scan**: checks for `role="dialog"` in the already-truncated snapshot. May miss dialogs below the truncation boundary.
+- **`dialogDetected` is resolved from element cache**: computed from the parsed `ElementCache` via `Array.some()` matching `role="dialog"` or `role="alertdialog"`. Not affected by snapshot truncation (unlike the old string-scan approach).
 - **Guide staleness**: no builtin site guides shipped — entirely user-authored via `guides/*.md`. Guides carry `updated` date paired with `currentDate` in output.
 - **Learn mode toggle**: `/web learn` enables `web-learn` tool; `/web on` removes it. Agent never calls `web-learn` unprompted. Default is off on fresh sessions.
 - **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click, occlusion events). Only checked in ChromiumPlugin.
