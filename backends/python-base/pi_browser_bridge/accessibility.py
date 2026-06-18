@@ -248,70 +248,30 @@ def _parse_line(line: str) -> Optional[_ParsedLine]:
 
 # ─── Main parser ──────────────────────────────────────────────────────
 
-def parse_snapshot(snap: str, max_elements: int = 500) -> AriaParseResult:
+def parse_snapshot(snap: str) -> AriaParseResult:
     """Parse the YAML-like output of Playwright's page.aria_snapshot().
 
-    Dialog prioritisation: interactive elements inside ``dialog``/``alertdialog``
-    blocks always get @e refs even when that pushes non-dialog elements
-    beyond the max_elements cap.  This ensures modal/overlay elements are
-    always clickable regardless of where they appear in the DOM order.
+    Single-pass parser that assigns @e refs sequentially to all interactive
+    elements in DOM order.  Every interactive element gets a ref —
+    no cap, no dialog prioritisation.
+
+    Full ARIA trees beyond truncation are cached to disk by the router,
+    so there is no need to budget or prioritise ref allocations.
+
+    Mirrors the TypeScript ``parseSnapshot()`` in
+    ``core/shared/accessibility-tree.ts``.
 
     Args:
         snap: The raw snapshot string.
-        max_elements: Maximum number of interactive elements to assign @e refs.
 
     Returns:
         An AriaParseResult with formatted text, element cache, and count.
     """
     lines = snap.split("\n")
-
-    # ── First pass: count interactive elements inside dialogs ─────────
-    dialog_refs_needed = 0
-    count_dialog_stack: list[int] = []
-
-    for raw_line in lines:
-        if not raw_line.strip():
-            continue
-        depth = _count_leading_spaces(raw_line)
-        trimmed = raw_line.strip()
-        if trimmed.startswith("/"):
-            continue
-
-        parsed = _parse_line(trimmed)
-        if parsed is None:
-            continue
-
-        role = parsed.role
-
-        # Close dialogs where current depth ≤ dialog-header depth
-        while count_dialog_stack and depth <= count_dialog_stack[-1]:
-            if role not in ("dialog", "alertdialog"):
-                count_dialog_stack.pop()
-            else:
-                break
-
-        # Open new dialog
-        if role in ("dialog", "alertdialog"):
-            count_dialog_stack.append(depth)
-            dialog_refs_needed += 1  # count the dialog header itself
-            continue
-
-        is_inside = bool(count_dialog_stack) and depth > count_dialog_stack[-1]
-
-        if is_inside and role in INTERACTIVE_ROLES and role not in INFORMATIONAL_ROLES:
-            dialog_refs_needed += 1
-
-    # ── Budget ──────────────────────────────────────────────────────
-    non_dialog_budget = max(0, max_elements - dialog_refs_needed)
-
-    # ── Second pass: assign refs with dialog priority ───────────────
     elements: dict[str, AriaCachedNode] = {}
     out_lines: list[str] = []
     ref_counter = 0
-    total_interactive_count = 0  # all interactive elements (even those skipped)
-    non_dialog_assigned = 0  # non-dialog refs assigned so far
     occurrence_tracker: dict[str, int] = {}
-    dialog_stack: list[int] = []
     # Depth-based parent stack — tracks the most recent interactive ref at each depth
     parent_stack: list[str] = []
 
@@ -336,19 +296,6 @@ def parse_snapshot(snap: str, max_elements: int = 500) -> AriaParseResult:
         name = parsed.name
         props = parsed.props
 
-        # Close dialogs where current depth ≤ dialog-header depth
-        while dialog_stack and depth <= dialog_stack[-1]:
-            if role not in ("dialog", "alertdialog"):
-                dialog_stack.pop()
-            else:
-                break
-
-        # Open new dialog
-        if role in ("dialog", "alertdialog"):
-            dialog_stack.append(depth)
-
-        is_inside_dialog = bool(dialog_stack) and depth > dialog_stack[-1]
-
         # Informational roles: show in tree but no @e ref
         if role in INFORMATIONAL_ROLES:
             indent = "  " * depth
@@ -362,27 +309,23 @@ def parse_snapshot(snap: str, max_elements: int = 500) -> AriaParseResult:
             out_lines.append(raw_line)
             continue
 
-        total_interactive_count += 1  # count every interactive element, even skipped
-
-        # Dialog priority: dialog-interior elements always get refs
-        # (within max_elements), non-dialog elements use remaining budget.
-        if not is_inside_dialog:
-            if non_dialog_assigned >= non_dialog_budget:
-                out_lines.append(raw_line)
-                continue
-
         ref_counter += 1
-        if ref_counter > max_elements:
-            out_lines.append(raw_line)
-            continue
-
-        if not is_inside_dialog:
-            non_dialog_assigned += 1
-
         ref = f"e{ref_counter}"
         occ_key = f"{role}||{name}"
         occurrence_index = occurrence_tracker.get(occ_key, 0)
         occurrence_tracker[occ_key] = occurrence_index + 1
+
+        # Parent stack: trim entries past current depth
+        while len(parent_stack) > depth:
+            parent_stack.pop()
+
+        # Determine parentRef from the element at depth-1 (if any)
+        parent_ref: Optional[str] = None
+        if len(parent_stack) >= depth and depth > 0:
+            parent_ref = parent_stack[depth - 1]
+
+        # Push this ref onto the parent stack at its depth
+        parent_stack.append(ref)
 
         node = AriaCachedNode(
             ref=ref,
@@ -392,19 +335,9 @@ def parse_snapshot(snap: str, max_elements: int = 500) -> AriaParseResult:
             depth=depth,
             raw=trimmed,
             occurrence_index=occurrence_index,
+            parent_ref=parent_ref,
         )
         elements[ref] = node
-
-        # Parent stack: trim entries past current depth
-        while len(parent_stack) > depth:
-            parent_stack.pop()
-
-        # Determine parentRef from the element at depth-1 (if any)
-        if len(parent_stack) >= depth and depth > 0:
-            node.parent_ref = parent_stack[depth - 1]
-
-        # Push this ref onto the parent stack at its depth
-        parent_stack.append(ref)
 
         indent = "  " * depth
         icon = _role_icon(role)
@@ -417,7 +350,7 @@ def parse_snapshot(snap: str, max_elements: int = 500) -> AriaParseResult:
     return AriaParseResult(
         text="\n".join(out_lines),
         elements=elements,
-        count=total_interactive_count,
+        count=len(elements),  # refs assigned, matching TS semantics
     )
 
 

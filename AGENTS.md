@@ -29,7 +29,7 @@ pi-browser/
 │   ├── chromium/index.ts     # Node/Playwright, reference ~1300 lines
 │   ├── chromium-py/bridge.py # Python/Playwright bridge, disabled by default (~1420 lines)
 │   ├── python-adapter.ts     # JSON-RPC bridge for subprocess plugins (~1100 lines)
-│   └── python-base/          # Shared Python bridge library (transport, accessibility, bridge base)
+│   └── python-base/          # Shared Python bridge library (accessibility.py, bridge.py, transport.py)
 ├── core/                     # Framework: shared across all plugins
 │   ├── plugin-api.ts         # BrowserPlugin interface + result types (Cookie, StorageState, etc.)
 │   ├── plugin-registry.ts    # Registration, validation, strategy resolution
@@ -163,10 +163,12 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
 - **Role-based locators only**: never XPath/CSS — always `getByRole()` via `buildLocator()` with positional `.nth()` for duplicates. The `INTERACTIVE_ROLES` set defines which roles get @e refs
 - **All URLs go through `url-safety.ts`** — blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.169.254), dangerous schemes (file:, ftp:, data:, javascript:, vbscript:), and heuristically detects secrets in URLs
 - **Screenshot**: JPEG 80% quality, viewport constrained to 1024px wide, returns data URI
+- **Accessibility tree parser is single-pass, no-cap**: both TypeScript (`core/shared/accessibility-tree.ts`) and Python (`backends/python-base/pi_browser_bridge/accessibility.py`) use an identical single-pass algorithm — every interactive element gets an @e ref, no dialog prioritization, no element cap. Full ARIA trees beyond truncation are cached to disk via `snapshot-cache.ts`.
+- **Bot detection has three tiers**: checked against page title (challenge phrases), body text (challenge phrases + CDN patterns), and raw HTML (CAPTCHA widget embed codes). Both the TypeScript (`core/shared/bot-detection.ts`) and Python (`chromium-py/bridge.py`) backends share the same HTML-level signal set.
 - **Compact truncation everywhere**: snapshots truncated at ~2500 chars (with `\nfingerprint:XXXXX`), fetch content at ~4000 chars with temp file spill to `/tmp/pi-browser/fetch-*.md`
 - **Snapshot Disk Cache** (`core/shared/snapshot-cache.ts`): when truncated, full tree written to `/tmp/pi-browser/snapshot-*.txt`. Last 2 files per task. Bot-detected snapshots are never cached. I/O failures degrade gracefully to inline-only.
 - **`browser-inspect`** (`core/shared/dom-extractor.ts`): runs inline JS via `page.evaluate()`. Requires `getElementCache()` on the plugin. Text output truncated at ~2500 chars by default; pass `maxChars=0` for full. Keyword filtering via `query` parameter (case-insensitive substring on text, href, src).
-- **`parentRef` on `AriaCachedNode`**: enables `subtree=...` queries in `browser-inspect`. Set by depth-based parent stack in `parseSnapshot()`'s second pass. Dialogs become parent of interior elements.
+- **`parentRef` on `AriaCachedNode`**: enables `subtree=...` queries in `browser-inspect`. Set by depth-based parent stack in `parseSnapshot()`'s single pass. Dialogs become parent of interior elements.
 - **`dialogDetected` is resolved from element cache**: computed from the parsed `ElementCache` via `Array.some()` matching `role="dialog"` or `role="alertdialog"`. Not affected by snapshot truncation (unlike the old string-scan approach).
 - **Guide staleness**: no builtin site guides shipped — entirely user-authored via `guides/*.md`. Guides carry `updated` date paired with `currentDate` in output.
 - **Learn mode toggle**: `/web learn` enables `web-learn` tool; `/web on` removes it. Agent never calls `web-learn` unprompted. Default is off on fresh sessions.

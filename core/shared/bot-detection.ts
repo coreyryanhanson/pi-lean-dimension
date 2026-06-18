@@ -61,6 +61,21 @@ const BODY_ONLY_PATTERNS: RegExp[] = [
 ];
 
 /**
+ * HTML-level signals — checked against ``document.documentElement.innerHTML``
+ * rather than visible body text.  These look for CAPTCHA widget embed codes
+ * in the raw HTML source, which is a stronger signal than visible text
+ * (generic mentions of "captcha" in body copy are excluded to avoid false
+ * positives, but embed codes in HTML attributes are unambiguous).
+ */
+const HTML_SIGNALS = [
+	"recaptcha",
+	"hcaptcha",
+	"turnstile",
+	"g-recaptcha",
+	"data-sitekey",
+];
+
+/**
  * Check if page text content suggests a bot block.
  */
 export function checkBodyText(bodyText: string): BotDetectionResult {
@@ -114,13 +129,42 @@ function checkBodyOnlyText(bodyText: string): BotDetectionResult {
 }
 
 /**
- * Combined check: analyze both page title and body text.
+ * Check raw HTML content for CAPTCHA widget embed codes.
+ *
+ * Looks for specific widget identifiers in the HTML source (not visible text),
+ * so false positive risk from generic mentions is low.  Mirrors the Python
+ * bridge's ``_HTML_SIGNALS`` in ``backends/chromium-py/bridge.py``.
+ */
+export function checkHtmlContent(html: string): BotDetectionResult {
+	if (!html) return { isBlocked: false, confidence: 0 };
+
+	const lower = html.toLowerCase();
+	for (const signal of HTML_SIGNALS) {
+		if (lower.includes(signal)) {
+			return {
+				isBlocked: true,
+				confidence: 0.85,
+				signal: `html:${signal}`,
+			};
+		}
+	}
+
+	return { isBlocked: false, confidence: 0 };
+}
+
+/**
+ * Combined check: analyze page title, body text, and (optionally) raw HTML.
  *
  * - Title is checked against BLOCK_SIGNALS only (avoids false positives).
  * - Body is checked against BLOCK_SIGNALS + BODY_ONLY_SIGNALS + BODY_ONLY_PATTERNS
  *   (catches CDN-specific block pages like Akamai "Access Denied").
+ * - HTML (if provided) is checked for CAPTCHA widget embed codes.
  */
-export function checkPage(title: string, bodyText: string): BotDetectionResult {
+export function checkPage(
+	title: string,
+	bodyText: string,
+	html?: string,
+): BotDetectionResult {
 	// Check title first (often contains "Attention Required!" etc.)
 	const titleResult = checkBodyText(title);
 	if (titleResult.isBlocked) return titleResult;
@@ -132,6 +176,12 @@ export function checkPage(title: string, bodyText: string): BotDetectionResult {
 	// Check body against CDN-specific patterns (reference #, etc.)
 	const bodyOnlyResult = checkBodyOnlyText(bodyText);
 	if (bodyOnlyResult.isBlocked) return bodyOnlyResult;
+
+	// Check HTML source for CAPTCHA widget embed codes
+	if (html !== undefined) {
+		const htmlResult = checkHtmlContent(html);
+		if (htmlResult.isBlocked) return htmlResult;
+	}
 
 	return { isBlocked: false, confidence: 0 };
 }

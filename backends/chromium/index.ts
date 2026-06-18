@@ -403,9 +403,13 @@ export class ChromiumPlugin implements BrowserPlugin {
 			const bodyText = await page.evaluate(
 				() => document.body?.innerText || "",
 			);
-			// checkPage handles both: title gets only challenge phrases,
-			// body also gets high-specificity CDN patterns via BODY_ONLY_SIGNALS.
-			return checkPage(title, bodyText).isBlocked;
+			// Also grab raw HTML to check for CAPTCHA widget embed codes.
+			const html = await page.evaluate(
+				() => document.documentElement?.innerHTML || "",
+			);
+			// checkPage handles all three: title (challenge phrases),
+			// body (challenge phrases + CDN patterns), and HTML (CAPTCHA embeds).
+			return checkPage(title, bodyText, html).isBlocked;
 		} catch {
 			return false;
 		}
