@@ -9,7 +9,6 @@
 import type {
 	BrowserPlugin,
 	PluginCapabilities,
-	PluginConfig,
 	NavigateResult,
 	SnapshotResult,
 	InteractionResult,
@@ -21,6 +20,7 @@ import type {
 	StorageStateResult,
 	ResultBase,
 } from "../../core/plugin-api";
+import type { PluginConfig } from "../../core/plugin-config";
 import { DEFAULT_CAPABILITIES } from "../../core/plugin-api";
 import type { AriaCachedNode } from "../../core/shared/accessibility-tree";
 

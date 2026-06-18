@@ -7,7 +7,29 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { PluginConfig, PluginDetection } from "./plugin-api.js";
+// ─── Plugin Config types ──────────────────────────────────────────
+
+/** A single plugin entry from the user's settings.json */
+export interface PluginConfig {
+	/** Stable identifier used in strategy param, session tracking, errors */
+	name: string;
+	/** Directory name under backends/ containing the plugin code */
+	dir: string;
+	/** Whether this plugin is active (default: true) */
+	enabled: boolean;
+	/** Plugin-specific overrides passed to init() */
+	config: Record<string, unknown>;
+}
+
+/** Plugin type — determines how the plugin is loaded and run */
+export type PluginType = "node" | "python";
+
+/** Result of inspecting a plugin directory for type detection */
+export interface PluginDetection {
+	type: PluginType;
+	/** Absolute or relative path to the entry point */
+	entryPoint: string;
+}
 import { sanitizeProfileName } from "./shared/storage-state.js";
 import { readMergedSettings } from "./shared/settings-reader.js";
 

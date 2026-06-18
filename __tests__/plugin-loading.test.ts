@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 
 import { detectPluginType, DEFAULT_BACKENDS_ROOT } from "../core/plugin-config";
 import { PluginRegistry } from "../core/plugin-registry";
-import type { PluginConfig } from "../core/plugin-api";
+import type { PluginConfig } from "../core/plugin-config";
 
 // ─── Helpers ─────────────────────────────────────────────────────
 

@@ -52,7 +52,7 @@ export default function (pi: ExtensionAPI) {
 	// (synchronous — ensures config array order is captured before any async work)
 	const validConfigs: Array<{
 		config: (typeof pluginConfigs)[number];
-		detection: import("./core/plugin-api.js").PluginDetection;
+		detection: import("./core/plugin-config.js").PluginDetection;
 	}> = [];
 
 	for (const config of pluginConfigs) {

@@ -9,7 +9,8 @@
  * - `available()` → list of registered plugin names
  */
 
-import type { BrowserPlugin, PluginConfig } from "./plugin-api.js";
+import type { BrowserPlugin } from "./plugin-api.js";
+import type { PluginConfig } from "./plugin-config.js";
 
 // ─── Validation ───────────────────────────────────────────────────
 
