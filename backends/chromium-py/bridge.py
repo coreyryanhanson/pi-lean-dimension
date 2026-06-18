@@ -1209,16 +1209,6 @@ class ChromiumPyBridge(BrowserBridge):
             }
 
         try:
-            current_size = page.viewport_size
-            if current_size and current_size.get("width", 0) > 1024:
-                page.set_viewport_size({
-                    "width": 1024,
-                    "height": current_size.get("height", 720),
-                })
-        except Exception:
-            pass
-
-        try:
             buffer: bytes = page.screenshot(
                 type="jpeg",
                 quality=80,
