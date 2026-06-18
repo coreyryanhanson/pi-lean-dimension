@@ -48,7 +48,13 @@ export default function (pi: ExtensionAPI) {
 		console.warn(`[pi-browser] Plugin config error: ${err}`);
 	}
 
-	// Register each configured plugin
+	// ── First pass: collect and validate all configs ──────────────
+	// (synchronous — ensures config array order is captured before any async work)
+	const validConfigs: Array<{
+		config: (typeof pluginConfigs)[number];
+		detection: import("./core/plugin-api.js").PluginDetection;
+	}> = [];
+
 	for (const config of pluginConfigs) {
 		let detection;
 		try {
@@ -59,7 +65,38 @@ export default function (pi: ExtensionAPI) {
 			);
 			continue;
 		}
+		validConfigs.push({ config, detection });
+	}
 
+	// ── Seed registry with config array order ────────────────────
+	// This preserves the user's declared priority even when some
+	// plugins load asynchronously (Node via dynamic import) while
+	// others register synchronously (Python adapter).
+	if (validConfigs.length > 0) {
+		pluginRegistry.seedOrder(validConfigs.map(({ config }) => config.name));
+	} else {
+		// Fallback: no valid configs → register default Chromium plugin
+		const plugin = new ChromiumPlugin();
+		pluginRegistry.register(plugin, {
+			name: "chromium",
+			dir: "chromium",
+			enabled: true,
+			config: {},
+		});
+		plugin.init({}).catch((err: unknown) => {
+			console.error(
+				"[pi-browser] Failed to init default Chromium plugin:",
+				err,
+			);
+		});
+	}
+
+	// ── Second pass: load and register plugins ───────────────────
+	// Node plugins register asynchronously (after dynamic import resolves).
+	// Python plugins register synchronously here.
+	// The pre-seeded ordering ensures all plugins get the correct priority level
+	// regardless of when register() is called.
+	for (const { config, detection } of validConfigs) {
 		if (detection.type === "node") {
 			// Node-based backend — dynamically import the detected plugin
 			(async () => {
@@ -118,23 +155,6 @@ export default function (pi: ExtensionAPI) {
 				`[pi-browser] Plugin '${config.name}' has unknown type '${_exhaustive as string}'.`,
 			);
 		}
-	}
-
-	// Fallback: if no plugins were registered, register Chromium as default
-	if (pluginRegistry.size === 0) {
-		const plugin = new ChromiumPlugin();
-		pluginRegistry.register(plugin, {
-			name: "chromium",
-			dir: "chromium",
-			enabled: true,
-			config: {},
-		});
-		plugin.init({}).catch((err: unknown) => {
-			console.error(
-				"[pi-browser] Failed to init default Chromium plugin:",
-				err,
-			);
-		});
 	}
 
 	// --- Register tools ---------------------------------------------

@@ -64,7 +64,29 @@ export class PluginRegistry {
 	private orderedNames: string[] = [];
 
 	/**
+	 * Pre-populate the ordered plugin name list.
+	 *
+	 * Call this BEFORE any `register()` calls to ensure the config array order
+	 * is preserved even when plugins are registered asynchronously (e.g. Node
+	 * plugins loaded via dynamic `import()` vs Python plugins registered
+	 * synchronously).
+	 *
+	 * If `register()` finds its name already in the seeded order, it uses the
+	 * existing position as the priority level instead of appending.
+	 *
+	 * @param names - Plugin names in the desired priority order (typically
+	 *                 the order from the user's `browser.plugins` config array).
+	 */
+	seedOrder(names: string[]): void {
+		this.orderedNames = [...names];
+	}
+
+	/**
 	 * Register a plugin with its config.
+	 *
+	 * If the plugin name was pre-seeded via `seedOrder()`, its priority level
+	 * is taken from that pre-determined position. Otherwise it is appended at
+	 * the end.
 	 *
 	 * @throws if a plugin with the same name is already registered
 	 * @throws if the plugin is missing required operations
@@ -84,12 +106,18 @@ export class PluginRegistry {
 			);
 		}
 
+		// Determine the level from the pre-seeded orderedNames, or append
+		let level = this.orderedNames.indexOf(plugin.name);
+		if (level === -1) {
+			level = this.orderedNames.length;
+			this.orderedNames.push(plugin.name);
+		}
+
 		this.entries.set(plugin.name, {
 			plugin,
-			level: this.orderedNames.length,
+			level,
 			enabled: config.enabled,
 		});
-		this.orderedNames.push(plugin.name);
 	}
 
 	/**
