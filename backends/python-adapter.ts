@@ -55,15 +55,6 @@ const DEFAULT_TRANSPORT_TIMEOUT_MS = 60_000;
 /** Default timeout for the `ping` handshake on startup. */
 const PING_TIMEOUT_MS = 10_000;
 
-/** Default heartbeat interval in milliseconds (30s). */
-const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
-
-/** Default max consecutive heartbeat misses before restart. */
-const DEFAULT_HEARTBEAT_MISSES = 3;
-
-/** Timeout for a single heartbeat ping. */
-const HEARTBEAT_PING_TIMEOUT_MS = 5_000;
-
 /** Grace period after sending `shutdown` before force-killing. */
 const SHUTDOWN_GRACE_MS = 5_000;
 
@@ -72,7 +63,6 @@ const ERROR_CODES = {
 	APPLICATION_ERROR: -32000,
 	TIMEOUT_ERROR: -32001,
 	SESSION_ERROR: -32002,
-	HEARTBEAT_ERROR: -32003,
 } as const;
 
 // ─── Custom error ─────────────────────────────────────────────────────
@@ -129,21 +119,6 @@ export interface PythonBridgeConfig {
 	 * room to report the timeout itself.
 	 */
 	transportTimeoutMs?: number;
-
-	/**
-	 * Heartbeat interval in milliseconds (default: 30 000).
-	 * Set to 0 to disable the heartbeat entirely.
-	 * The adapter sends a `ping` at this interval and restarts the
-	 * bridge process if `heartbeatMissesBeforeRestart` consecutive
-	 * pings go unanswered.
-	 */
-	heartbeatIntervalMs?: number;
-
-	/**
-	 * Max consecutive heartbeat misses before restarting the bridge
-	 * process (default: 3).  Ignored when heartbeat is disabled.
-	 */
-	heartbeatMissesBeforeRestart?: number;
 
 	/**
 	 * Override the verify-click occlusion fallback timeout in ms
@@ -204,12 +179,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	// ── Verify-click timeout (for occlusion fallback) ──────────
 	private readonly _verifyClickTimeoutMs: number;
 
-	// ── Heartbeat ───────────────────────────────────────────────
-	private readonly _heartbeatIntervalMs: number;
-	private readonly _maxHeartbeatMisses: number;
-	private _heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-	private _heartbeatMisses = 0;
-
 	// ── JSON-RPC state ─────────────────────────────────────────
 	private _reqId = 0;
 	private _pending = new Map<number, PendingRequest>();
@@ -218,9 +187,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	// ── Startup lock ───────────────────────────────────────────
 	private _startupPromise: Promise<void> | null = null;
 	private _started = false;
-
-	/** Track whether we're inside a forced restart (to avoid infinite loops). */
-	private _isRestarting = false;
 
 	/**
 	 * Local element caches per task, populated from bridge responses.
@@ -263,12 +229,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		this._pythonArgs = config.pythonArgs ?? [];
 		this._transportTimeoutMs =
 			config.transportTimeoutMs ?? DEFAULT_TRANSPORT_TIMEOUT_MS;
-
-		// Heartbeat config
-		this._heartbeatIntervalMs =
-			config.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
-		this._maxHeartbeatMisses =
-			config.heartbeatMissesBeforeRestart ?? DEFAULT_HEARTBEAT_MISSES;
 
 		// Verify-click timeout (passed to bridge via env var)
 		this._verifyClickTimeoutMs = config.verifyClickTimeoutMs ?? 1500;
@@ -349,7 +309,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			this._pending.clear();
 			this._started = false;
 			this._stderrAccumulated = "";
-			this._heartbeatMisses = 0;
 
 			const proc = spawn(
 				this._pythonPath,
@@ -406,15 +365,10 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			const onExit = (code: number | null, _signal: string | null) => {
 				this._exitCode = code;
 				this._process = null;
-				this._stopHeartbeat();
-
-				// Mark all our sessions as crashed
-				this._markSessionsCrashed();
 
 				// Build stderr guidance for error messages
 				const stderrSuffix = this._stderrAccumulated
-					? `\nstderr:\n${this._stderrAccumulated}` +
-						this._importErrorGuidance()
+					? `\nstderr:\n${this._stderrAccumulated}`
 					: "";
 
 				// Reject all pending requests
@@ -456,7 +410,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				try {
 					await this._directRpcCall("ping", {}, PING_TIMEOUT_MS);
 					this._started = true;
-					this._startHeartbeat();
 					resolve();
 				} catch (err: unknown) {
 					// If the process already exited, the exit handler will reject.
@@ -480,8 +433,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	 * Stop the Python subprocess gracefully, then force-kill if needed.
 	 */
 	private async _stopProcess(): Promise<void> {
-		this._stopHeartbeat();
-
 		const proc = this._process;
 		if (!proc || proc.killed || this._exitCode !== null) {
 			this._process = null;
@@ -504,8 +455,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	 * Force-kill the subprocess and clean up state.
 	 */
 	private _killProcess(): void {
-		this._stopHeartbeat();
-
 		// Clear all per-task tracking — the bridge
 		// process is dead, so all Python-side state is lost.
 		this._elementCaches.clear();
@@ -552,132 +501,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		this._process = null;
 		this._exitCode = 0; // Mark as dead
 		this._buffer = "";
-	}
-
-	// ═════════════════════════════════════════════════════════════════
-	//  Heartbeat
-	// ═════════════════════════════════════════════════════════════════
-
-	/**
-	 * Start the heartbeat interval timer.
-	 *
-	 * Sends `ping` at the configured interval.  If a ping times out or
-	 * returns an error, increments the miss counter.  If the miss counter
-	 * reaches the threshold, the process is killed and restarted.
-	 *
-	 * Heartbeats are skipped if there are pending user requests (the bridge
-	 * is busy), avoiding false-positive kills during long operations.
-	 */
-	private _startHeartbeat(): void {
-		if (this._heartbeatIntervalMs <= 0) return; // Heartbeat disabled
-
-		this._heartbeatMisses = 0;
-		this._heartbeatTimer = setInterval(() => {
-			void this._heartbeatTick();
-		}, this._heartbeatIntervalMs);
-		this._heartbeatTimer.unref();
-	}
-
-	/**
-	 * Stop the heartbeat interval timer.
-	 */
-	private _stopHeartbeat(): void {
-		if (this._heartbeatTimer !== null) {
-			clearInterval(this._heartbeatTimer);
-			this._heartbeatTimer = null;
-		}
-		this._heartbeatMisses = 0;
-	}
-
-	/**
-	 * Execute a single heartbeat tick: send ping, check response.
-	 */
-	private async _heartbeatTick(): Promise<void> {
-		// Skip if process is dead or already being restarted
-		if (!this._process || this._exitCode !== null || this._isRestarting) {
-			return;
-		}
-
-		// Skip if there's an in-flight user request (bridge is busy)
-		if (this._pending.size > 0) {
-			return;
-		}
-
-		try {
-			await this._directRpcCall("ping", {}, HEARTBEAT_PING_TIMEOUT_MS);
-			// Success — reset miss counter
-			this._heartbeatMisses = 0;
-		} catch {
-			this._heartbeatMisses++;
-
-			if (this._heartbeatMisses >= this._maxHeartbeatMisses) {
-				this._isRestarting = true;
-				const msg =
-					`Python bridge heartbeat failed after ${this._heartbeatMisses} consecutive misses. ` +
-					`Restarting the bridge process.`;
-				console.warn(
-					`[pi-browser] PythonPluginAdapter('${this.name}'): ${msg}`,
-				);
-
-				// Kill the stuck process — next call will auto-restart
-				this._markSessionsCrashed();
-				this._killProcess();
-
-				// Reject any pending requests with heartbeat error
-				const pendingSnapshot = new Map(this._pending);
-				this._pending.clear();
-				for (const [, pending] of pendingSnapshot) {
-					clearTimeout(pending.timer);
-					pending.reject(
-						new PythonBridgeError({
-							code: ERROR_CODES.HEARTBEAT_ERROR,
-							message: msg,
-						}),
-					);
-				}
-
-				this._isRestarting = false;
-			}
-		}
-	}
-
-	/**
-	 * No-op: the router handles session recovery via `lastNav`
-	 * (bridge crashes → pending requests rejected → next adapter call
-	 * restarts the bridge → next router call re-creates the session).
-	 */
-	private _markSessionsCrashed(): void {
-		// Intentionally empty — see JSDoc above.
-	}
-
-	/**
-	 * Generate pip install guidance if stderr contains import errors.
-	 */
-	private _importErrorGuidance(): string {
-		const stderr = this._stderrAccumulated;
-		if (!stderr) return "";
-
-		const hints: string[] = [];
-
-		if (/module\s*not\s*found|importerror|no\s*module\s*named/i.test(stderr)) {
-			hints.push(
-				"\n\nHint: A Python import failed. " +
-					"Try installing dependencies:" +
-					"\n  pip install playwright" +
-					"\n  playwright install chromium",
-			);
-		}
-
-		if (/playwright/i.test(stderr) && !/pip/.test(stderr)) {
-			hints.push(
-				"\n\nHint: Playwright may not be installed or configured. " +
-					"Run:" +
-					"\n  pip install playwright" +
-					"\n  playwright install chromium",
-			);
-		}
-
-		return hints.join("");
 	}
 
 	// ═════════════════════════════════════════════════════════════════
@@ -733,8 +556,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				// The process is stuck — kill and restart
 				this._killProcess();
 				const stderrSuffix = this._stderrAccumulated
-					? `\nstderr:\n${this._stderrAccumulated}` +
-						this._importErrorGuidance()
+					? `\nstderr:\n${this._stderrAccumulated}`
 					: "";
 				reject(
 					new PythonBridgeError({
@@ -786,7 +608,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 
 		for (const line of lines) {
 			const trimmed = line.trim();
-			if (!trimmed) continue; // Skip empty lines (heartbeats)
+			if (!trimmed) continue; // Skip empty lines
 			this._handleResponseLine(trimmed);
 		}
 	}

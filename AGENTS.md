@@ -9,7 +9,7 @@ A pi extension that registers **12 tools + 1 command** for web browsing. Archite
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 665 tests across 19 files (all pass)
+npm test              # vitest run — 659 tests across 19 files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npm run test:watch    # vitest in watch mode
 ```
@@ -26,9 +26,10 @@ pi-browser/
 ├── browser-profile.ts        # /web profile subcommand (extracted from toggle)
 ├── browser-status.ts         # /web status subcommand (extracted from toggle)
 ├── backends/                 # Plugin implementations
-│   ├── chromium/index.ts     # Node/Playwright, reference ~1350 lines
-│   ├── python-adapter.ts     # JSON-RPC bridge for subprocess plugins (~1350 lines)
-│   └── chromium-py/bridge.py # Python bridge, disabled by default
+│   ├── chromium/index.ts     # Node/Playwright, reference ~1300 lines
+│   ├── chromium-py/bridge.py # Python/Playwright bridge, disabled by default (~1420 lines)
+│   ├── python-adapter.ts     # JSON-RPC bridge for subprocess plugins (~1100 lines)
+│   └── python-base/          # Shared Python bridge library (transport, accessibility, bridge base)
 ├── core/                     # Framework: shared across all plugins
 │   ├── plugin-api.ts         # BrowserPlugin interface + result types (Cookie, StorageState, etc.)
 │   ├── plugin-registry.ts    # Registration, validation, strategy resolution
@@ -72,8 +73,8 @@ Plugin loading: reads `browser.plugins` from `~/.pi/agent/settings.json` (global
 
 **Active plugins (config-driven):**
 
-- **`chromium`** — Node/Playwright (~1350 lines), always enabled by default, reference implementation
-- **`chromium-py`** — Python/Playwright (~950 lines bridge.py), disabled by default
+- **`chromium`** — Node/Playwright (~1300 lines), always enabled by default, reference implementation
+- **`chromium-py`** — Python/Playwright (~1420 lines bridge.py), disabled by default
 
 ### Router (`core/router.ts`)
 
@@ -130,7 +131,7 @@ Guide presence is three-tier: auto-inject (bot-detection), auto-hint (cookie-con
 
 ## Testing
 
-### Test files (19 files, 665 tests passing)
+### Test files (19 files, 659 tests passing)
 
 | File | Requires Chromium? |
 |------|--------------------|
@@ -169,7 +170,7 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
 - **`dialogDetected` is resolved from element cache**: computed from the parsed `ElementCache` via `Array.some()` matching `role="dialog"` or `role="alertdialog"`. Not affected by snapshot truncation (unlike the old string-scan approach).
 - **Guide staleness**: no builtin site guides shipped — entirely user-authored via `guides/*.md`. Guides carry `updated` date paired with `currentDate` in output.
 - **Learn mode toggle**: `/web learn` enables `web-learn` tool; `/web on` removes it. Agent never calls `web-learn` unprompted. Default is off on fresh sessions.
-- **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click, occlusion events). Only checked in ChromiumPlugin.
+- **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click, occlusion events). Checked in both ChromiumPlugin and the Python bridge.
 
 ## Debugging
 
