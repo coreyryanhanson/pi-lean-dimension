@@ -9,7 +9,7 @@ A pi extension that registers **12 tools + 1 command** for web browsing. Archite
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 671 tests across 19 files (all pass)
+npm test              # vitest run — 666 tests across 19 files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npm run test:watch    # vitest in watch mode
 ```
@@ -130,7 +130,7 @@ Guide presence is three-tier: auto-inject (bot-detection), auto-hint (cookie-con
 
 ## Testing
 
-### Test files (19 files, 671 tests passing)
+### Test files (19 files, 666 tests passing)
 
 | File | Requires Chromium? |
 |------|--------------------|
