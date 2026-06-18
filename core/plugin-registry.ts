@@ -123,7 +123,6 @@ export class PluginRegistry {
 
 	/**
 	 * Get a plugin by name. Returns undefined if not registered or disabled.
-	 * Use `getAny()` to include disabled plugins.
 	 */
 	get(name: string): BrowserPlugin | undefined {
 		const entry = this.entries.get(name);
@@ -135,7 +134,7 @@ export class PluginRegistry {
 	 * Get a plugin by name, even if disabled.
 	 * Useful for error messages ("Plugin 'X' is disabled, not missing").
 	 */
-	getAny(name: string): RegistryEntry | undefined {
+	private getAny(name: string): RegistryEntry | undefined {
 		return this.entries.get(name);
 	}
 

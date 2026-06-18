@@ -128,37 +128,6 @@ describe("PluginRegistry.get", () => {
 	});
 });
 
-// ─── PluginRegistry.getAny ───────────────────────────────────────
-
-describe("PluginRegistry.getAny", () => {
-	let registry: PluginRegistry;
-
-	beforeEach(() => {
-		registry = new PluginRegistry();
-	});
-
-	it("returns entry for disabled plugin", () => {
-		const plugin = new MockPlugin("chromium");
-		registry.register(plugin, makeConfig({ name: "chromium", enabled: false }));
-		const entry = registry.getAny("chromium");
-		expect(entry).toBeDefined();
-		expect(entry!.enabled).toBe(false);
-		expect(entry!.plugin).toBe(plugin);
-	});
-
-	it("returns entry for enabled plugin", () => {
-		const plugin = new MockPlugin("chromium");
-		registry.register(plugin, makeConfig({ name: "chromium", enabled: true }));
-		const entry = registry.getAny("chromium");
-		expect(entry).toBeDefined();
-		expect(entry!.enabled).toBe(true);
-	});
-
-	it("returns undefined for unknown plugin", () => {
-		expect(registry.getAny("nonexistent")).toBeUndefined();
-	});
-});
-
 // ─── PluginRegistry.getDefault ───────────────────────────────────
 
 describe("PluginRegistry.getDefault", () => {
@@ -360,12 +329,29 @@ describe("PluginRegistry.resolveStrategy", () => {
 		const result = registry.resolveStrategy("chromium");
 		expect(result.plugin).toBeUndefined();
 		expect(result.error).toContain("disabled");
+		expect(result.error).not.toContain("not registered");
 	});
 
 	it("returns error when no plugins are registered for 'auto'", () => {
 		const result = registry.resolveStrategy("auto");
 		expect(result.plugin).toBeUndefined();
 		expect(result.error).toContain("No browser plugins");
+	});
+
+	it("returns error for unknown strategy when no plugins exist", () => {
+		const result = registry.resolveStrategy("nonexistent");
+		expect(result.plugin).toBeUndefined();
+		expect(result.error).toContain("not registered");
+	});
+
+	it("lists available plugins in disabled error", () => {
+		const p1 = new MockPlugin("alpha");
+		const p2 = new MockPlugin("chromium");
+		registry.register(p1, makeConfig({ name: "alpha" }));
+		registry.register(p2, makeConfig({ name: "chromium", enabled: false }));
+		const result = registry.resolveStrategy("chromium");
+		expect(result.error).toContain("disabled");
+		expect(result.error).toContain("alpha");
 	});
 
 	it("lists available plugins in error message", () => {
