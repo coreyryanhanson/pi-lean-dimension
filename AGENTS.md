@@ -9,7 +9,7 @@ A pi extension that registers **12 tools + 1 command** for web browsing. Archite
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 659 tests across 19 files (all pass)
+npm test              # vitest run — 645 tests across 18 files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npm run test:watch    # vitest in watch mode
 ```
@@ -136,20 +136,18 @@ Guide presence is three-tier: auto-inject (bot-detection), auto-hint (cookie-con
 | File | Requires Chromium? |
 |------|--------------------|
 | All structural/unit tests (router-dispatch, browser-toggle, browser-toggle-profile, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state) | No |
-| occlusion-live.test.ts | Yes (auto-skip) |
 | reddit-dialog.test.ts | Yes (auto-skip) |
 | chromium-py.test.ts | Yes (auto-skip) |
 
-Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automatically when Playwright Chromium is unavailable. `browser-toggle-profile` tests exercise the full profile lifecycle via mock API.
+Integration tests (`reddit-dialog`, `chromium-py`) skip automatically when Playwright Chromium is unavailable. `browser-toggle-profile` tests exercise the full profile lifecycle via mock API.
 
 ### Shared test utilities (`__tests__/helpers/`)
 
 - `plugin-contract.ts` — `runContractTests(name, factory, opts?)` validates any BrowserPlugin
 - `mock-plugin.ts` — MockPlugin for structural contract validation
-- `reddit-fixture.ts` — HTML fixtures for Reddit dialog occlusion scenarios (4 variants)
+- `reddit-fixture.ts` — HTML fixtures for Reddit dialog scenarios (4 variants)
 - `test-server.ts` — `startTestServer()` returns a local HTTP server for integration tests
 - `mock-python-bridge.py` — Python bridge stub used by python-adapter tests
-- External test server: `occlusion-test-server.cjs` for local debugging
 
 ### Contract test harness
 
@@ -172,12 +170,12 @@ Integration tests (`occlusion-live`, `reddit-dialog`, `chromium-py`) skip automa
 - **`dialogDetected` is resolved from element cache**: computed from the parsed `ElementCache` via `Array.some()` matching `role="dialog"` or `role="alertdialog"`. Not affected by snapshot truncation (unlike the old string-scan approach).
 - **Guide staleness**: no builtin site guides shipped — entirely user-authored via `guides/*.md`. Guides carry `updated` date paired with `currentDate` in output.
 - **Learn mode toggle**: `/web learn` enables `web-learn` tool; `/web on` removes it. Agent never calls `web-learn` unprompted. Default is off on fresh sessions.
-- **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click, occlusion events). Checked in both ChromiumPlugin and the Python bridge.
+- **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click). Checked in both ChromiumPlugin and the Python bridge.
 
 ## Debugging
 
 ```bash
-BROWSER_DEBUG=1 npx vitest run __tests__/occlusion-live.test.ts
+BROWSER_DEBUG=1 npx vitest run __tests__/reddit-dialog.test.ts
 ```
 
 ## TypeScript Quirks

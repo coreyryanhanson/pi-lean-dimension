@@ -10,7 +10,7 @@
  *   REDDIT_DIALOG_HTML   — feed + consent dialog overlay (baseline)
  *   REDDIT_STACKED_HTML  — feed → consent dialog → "Welcome Back" dialog
  *   REDDIT_ASYNC_HTML    — feed loads first, dialog appears via setTimeout
- *   REDDIT_FEED_ONLY_HTML— feed without dialog (baseline for occlusion)
+ *   REDDIT_FEED_ONLY_HTML— feed without dialog (baseline)
  *   findRef(snapshot, text) → {ref, role?, name?, line} | null
  *   dialogCount(snapshot) → number
  */

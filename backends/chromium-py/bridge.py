@@ -205,13 +205,6 @@ class ChromiumPyBridge(BrowserBridge):
         super().__init__()
         self._pw = None
         self._browser = None
-        # Read verify-click timeout from env (default: 1500ms)
-        try:
-            self._verify_click_timeout = int(
-                os.environ.get("PY_BRIDGE_VERIFY_CLICK_TIMEOUT_MS", "1500")
-            )
-        except (ValueError, TypeError):
-            self._verify_click_timeout = 1500
 
     # ── Shared Playwright lifecycle ────────────────────────────
 
@@ -799,76 +792,11 @@ class ChromiumPyBridge(BrowserBridge):
                 "error": str(exc),
             }
 
-        # ── Occlusion detection ───────────────────────────────────────
-
-    def _check_occlusion(
-        self, locator: Any, ref: str
-    ) -> Optional[dict[str, Any]]:
-        """Check if a locator is obscured by another element.
-
-        Uses ``document.elementFromPoint()`` at the locator's center to verify
-        the target is the top-most element at those coordinates. Returns an
-        error dict if obscured, or None if clear to proceed.
-
-        Args:
-            locator: A Playwright Locator.
-            ref: The @e reference (for the error message).
-
-        Returns:
-            An error dict if obscured, or None if not obscured.
-        """
-        try:
-            # Scroll element into view with center alignment so the center
-            # point is within the viewport for elementFromPoint() checking.
-            # Single evaluate to avoid layout races between scroll and check.
-            is_obscured = locator.evaluate("""(el) => {
-                el.scrollIntoView({ block: 'center', inline: 'nearest' });
-                const rect = el.getBoundingClientRect();
-                if (rect.width === 0 || rect.height === 0) return true;
-                const x = rect.left + rect.width / 2;
-                const y = rect.top + rect.height / 2;
-                if (
-                    y < 0 ||
-                    y > (window.innerHeight || document.documentElement.clientHeight) ||
-                    x < 0 ||
-                    x > (window.innerWidth || document.documentElement.clientWidth)
-                ) {
-                    return true;
-                }
-                const topEl = document.elementFromPoint(x, y);
-                if (!topEl) return true;
-                return !(topEl === el || el.contains(topEl));
-            }""")
-            if is_obscured:
-                _log("occlusion", ref=ref, isObscured=True,
-                     verifyClick="skipped", reason="elementFromPoint")
-                return {
-                    "success": False,
-                    "error": (
-                        f"Element {ref} is obscured by another element "
-                        "(likely a modal/overlay). Try pressing Escape "
-                        '(browser-press key="Escape") to dismiss the '
-                        "overlay, then retry."
-                    ),
-                }
-            _log("occlusion", ref=ref, isObscured=False,
-                 verifyClick="skipped", reason="elementFromPoint")
-        except Exception:
-            _log("occlusion", ref=ref, isObscured=False,
-                 verifyClick="skipped", reason="elementFromPoint",
-                 error="check failed")
-            pass  # Fail-safe: proceed with click if check itself fails
-        return None
-
     # ── Interaction ─────────────────────────────────────────────────
 
     def do_click(self, task_id: str, ref: str) -> dict[str, Any]:
         """Click an element by @e ref."""
         _t_start = time.time()
-        _t_phases: dict[str, int | None] = {
-            "locate": None, "occlusion": None,
-            "click": None, "wait": None, "snapshot": None,
-        }
 
         # Extract role/name from element cache for debug logging
         _key = ref[1:] if ref.startswith("@") else ref
@@ -883,8 +811,7 @@ class ChromiumPyBridge(BrowserBridge):
             raise
         except Exception as exc:
             _log("click", taskId=task_id, ref=ref, role=_role, name=_name,
-                 occlusionCheck="skipped", result="fail",
-                 timings=_t_phases,
+                 result="fail",
                  time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
@@ -893,41 +820,16 @@ class ChromiumPyBridge(BrowserBridge):
 
         try:
             locator = self._locate_element(page, task_id, ref)
-            _t_phases["locate"] = round((time.time() - _t_start) * 1000)
         except RuntimeError as exc:
-            _t_phases["locate"] = round((time.time() - _t_start) * 1000)
             _log("click", taskId=task_id, ref=ref, role=_role, name=_name,
-                 occlusionCheck="skipped", result="fail",
-                 timings=_t_phases,
+                 result="fail",
                  time=round((time.time() - _t_start) * 1000))
             return {"success": False, "error": str(exc)}
 
-        # Fast occlusion check — verify with short click if flagged to
-        # eliminate false positives (e.g., child elements with pointer-events:none).
-        occlusion = self._check_occlusion(locator, ref)
-        _t_phases["occlusion"] = round((time.time() - _t_start) * 1000)
-
-        occlusion_check: str = "verified"
-        if occlusion is not None:
-            try:
-                locator.click(timeout=self._verify_click_timeout)
-                occlusion_check = "blocked_verify_ok"
-                # Succeeded — false positive, proceed below
-            except Exception:
-                _t_phases["click"] = round((time.time() - _t_start) * 1000)
-                _log("click", taskId=task_id, ref=ref, role=_role, name=_name,
-                     occlusionCheck="blocked", result="fail",
-                     timings=_t_phases,
-                     time=round((time.time() - _t_start) * 1000))
-                return occlusion
-
         try:
-            if occlusion is None:
-                locator.click(timeout=5_000)
-            _t_phases["click"] = round((time.time() - _t_start) * 1000)
+            locator.click(timeout=5_000)
 
             time.sleep(0.3)
-            _t_phases["wait"] = round((time.time() - _t_start) * 1000)
 
             new_url: Optional[str] = None
             new_title: Optional[str] = None
@@ -940,11 +842,9 @@ class ChromiumPyBridge(BrowserBridge):
             snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
-            _t_phases["snapshot"] = round((time.time() - _t_start) * 1000)
 
             _log("click", taskId=task_id, ref=ref, role=_role, name=_name,
-                 occlusionCheck=occlusion_check, result="success",
-                 timings=_t_phases,
+                 result="success",
                  time=round((time.time() - _t_start) * 1000))
 
             result: dict[str, Any] = {
@@ -960,10 +860,8 @@ class ChromiumPyBridge(BrowserBridge):
             return result
 
         except Exception as exc:
-            _t_phases["snapshot"] = round((time.time() - _t_start) * 1000)
             _log("click", taskId=task_id, ref=ref, role=_role, name=_name,
-                 occlusionCheck=occlusion_check, result="fail",
-                 timings=_t_phases,
+                 result="fail",
                  time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
@@ -987,7 +885,7 @@ class ChromiumPyBridge(BrowserBridge):
             raise
         except Exception as exc:
             _log("type", taskId=task_id, ref=ref, role=_role, name=_name,
-                 occlusionCheck="skipped", result="fail",
+                 result="fail",
                  time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
@@ -998,27 +896,12 @@ class ChromiumPyBridge(BrowserBridge):
             locator = self._locate_element(page, task_id, ref)
         except RuntimeError as exc:
             _log("type", taskId=task_id, ref=ref, role=_role, name=_name,
-                 occlusionCheck="skipped", result="fail",
+                 result="fail",
                  time=round((time.time() - _t_start) * 1000))
             return {"success": False, "error": str(exc)}
 
-        # Fast occlusion check — verify with short click if flagged
-        occlusion = self._check_occlusion(locator, ref)
-
-        occlusion_check: str = "verified"
-        if occlusion is not None:
-            try:
-                locator.click(timeout=self._verify_click_timeout)
-                occlusion_check = "blocked_verify_ok"
-            except Exception:
-                _log("type", taskId=task_id, ref=ref, role=_role, name=_name,
-                     occlusionCheck="blocked", result="fail",
-                     time=round((time.time() - _t_start) * 1000))
-                return occlusion
-
         try:
-            if occlusion is None:
-                locator.click(timeout=5_000)  # Focus first
+            locator.click(timeout=5_000)  # Focus first
             locator.fill(text)
 
             snap_text, element_count, elements = self._take_snapshot_and_cache(
@@ -1026,7 +909,7 @@ class ChromiumPyBridge(BrowserBridge):
             )
 
             _log("type", taskId=task_id, ref=ref, role=_role, name=_name,
-                 occlusionCheck=occlusion_check, result="success",
+                 result="success",
                  elementCount=element_count,
                  time=round((time.time() - _t_start) * 1000))
 
@@ -1039,7 +922,7 @@ class ChromiumPyBridge(BrowserBridge):
 
         except Exception as exc:
             _log("type", taskId=task_id, ref=ref, role=_role, name=_name,
-                 occlusionCheck=occlusion_check, result="fail",
+                 result="fail",
                  time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,

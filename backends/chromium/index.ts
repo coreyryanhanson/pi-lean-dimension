@@ -91,19 +91,10 @@ export class ChromiumPlugin implements BrowserPlugin {
 	/** Per-task element cache (ref → AriaCachedNode) */
 	private _elementCache = new Map<string, Map<string, AriaCachedNode>>();
 
-	/** Timeout (ms) for verify-click occlusion fallback. Default: 1500. */
-	private _verifyClickTimeoutMs = 1500;
-
 	// ── Lifecycle ───────────────────────────────────────────────
 
-	async init(config?: Record<string, unknown>): Promise<void> {
-		// Accept verifyClickTimeoutMs from config for Experiment 2
-		if (config?.verifyClickTimeoutMs != null) {
-			const v = Number(config.verifyClickTimeoutMs);
-			if (Number.isFinite(v) && v > 0) {
-				this._verifyClickTimeoutMs = v;
-			}
-		}
+	async init(_config?: Record<string, unknown>): Promise<void> {
+		// No config needed — all behavior is hardcoded defaults.
 	}
 
 	async cleanupAll(): Promise<void> {
@@ -316,77 +307,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 		} catch {
 			return { snapshot: "(snapshot not available)", elementCount: 0 };
 		}
-	}
-
-	/**
-	 * Check if a locator is visually obscured by another element (modal, overlay).
-	 *
-	 * Uses `document.elementFromPoint()` at the locator's center to verify the
-	 * target is the top-most element at that coordinate. Returns the occlusion
-	 * error if obscured, or null if clear to proceed.
-	 */
-	private async checkOcclusion(
-		locator: import("playwright").Locator,
-		ref: string,
-	): Promise<{ success: false; error: string } | null> {
-		try {
-			// Scroll element into view with center alignment so the center
-			// point is within the viewport for elementFromPoint() checking.
-			// Then check occlusion in a single evaluate to avoid layout races.
-			const isObscured = await locator.evaluate((el: Element) => {
-				el.scrollIntoView({ block: "center", inline: "nearest" });
-				const rect = el.getBoundingClientRect();
-				if (rect.width === 0 || rect.height === 0) return true;
-				const x = rect.left + rect.width / 2;
-				const y = rect.top + rect.height / 2;
-				if (
-					y < 0 ||
-					y > (window.innerHeight || document.documentElement.clientHeight) ||
-					x < 0 ||
-					x > (window.innerWidth || document.documentElement.clientWidth)
-				) {
-					return true;
-				}
-				const topEl = document.elementFromPoint(x, y);
-				if (!topEl) return true;
-				// If topEl is our element or a descendant, we're clear
-				return !(topEl === el || el.contains(topEl));
-			});
-
-			if (isObscured) {
-				const occlusionResult = {
-					success: false as const,
-					error:
-						`Element ${ref} is obscured by another element (likely a modal/overlay). ` +
-						`Try pressing Escape (browser-press key="Escape") to dismiss the overlay, then retry.`,
-				};
-
-				this._log("occlusion", {
-					ref,
-					isObscured: true,
-					verifyClick: "skipped",
-					reason: "elementFromPoint",
-				});
-
-				return occlusionResult;
-			}
-
-			this._log("occlusion", {
-				ref,
-				isObscured: false,
-				verifyClick: "skipped",
-				reason: "elementFromPoint",
-			});
-		} catch {
-			// If the check itself fails, proceed with click (fail-safe)
-			this._log("occlusion", {
-				ref,
-				isObscured: false,
-				verifyClick: "skipped",
-				reason: "elementFromPoint",
-			});
-		}
-		return null;
 	}
 
 	/**
@@ -668,7 +588,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: "(none)",
 				name: "(none)",
-				occlusionCheck: "skipped",
 				result: "fail",
 				error: `Element ${ref} not found in accessibility tree`,
 				time: Math.round(performance.now() - _start),
@@ -686,7 +605,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: node.role,
 				name: node.name,
-				occlusionCheck: "skipped",
 				result: "fail",
 				error: `Could not build locator (role: ${node.role})`,
 				time: Math.round(performance.now() - _start),
@@ -698,40 +616,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 		phases.locate = Math.round(performance.now() - _start);
 
-		// Fast occlusion check — if elementFromPoint says blocked, verify with a
-		// short click attempt to eliminate false positives (Reddit's close button
-		// uses pointer-events: none child elements that confuse elementFromPoint).
-		const occlusionCheck = await this.checkOcclusion(locator, ref);
-		phases.occlusion = Math.round(performance.now() - _start);
-
-		let occlusionStatus = "verified";
-		if (occlusionCheck) {
-			// Element appears obscured — verify with a quick click attempt
-			try {
-				await locator.click({ timeout: this._verifyClickTimeoutMs });
-				// Click succeeded — occlusion was a false positive, continue below
-				occlusionStatus = "blocked_verify_ok";
-			} catch {
-				// Confirmed obscured — return the helpful error
-				this._log("click", {
-					taskId,
-					ref,
-					role: node.role,
-					name: node.name,
-					occlusionCheck: "blocked",
-					result: "fail",
-					error: `Occlusion blocked: ${occlusionCheck.error}`,
-					timings: phases,
-					time: Math.round(performance.now() - _start),
-				});
-				return occlusionCheck;
-			}
-		}
-
 		try {
-			if (!occlusionCheck) {
-				await locator.click({ timeout: 5000 });
-			}
+			await locator.click({ timeout: 5000 });
 			phases.click = Math.round(performance.now() - _start);
 
 			// Wait for potential navigation
@@ -754,7 +640,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: node.role,
 				name: node.name,
-				occlusionCheck: occlusionStatus,
 				result: "success",
 				timings: phases,
 				time: Math.round(performance.now() - _start),
@@ -773,7 +658,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: node.role,
 				name: node.name,
-				occlusionCheck: occlusionStatus,
 				result: "fail",
 				error: err instanceof Error ? err.message : String(err),
 				timings: phases,
@@ -807,7 +691,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: "(none)",
 				name: "(none)",
-				occlusionCheck: "skipped",
 				result: "fail",
 				error: `Element ${ref} not found in accessibility tree`,
 				time: Math.round(performance.now() - _start),
@@ -825,7 +708,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: node.role,
 				name: node.name,
-				occlusionCheck: "skipped",
 				result: "fail",
 				error: `Could not build locator (role: ${node.role})`,
 				time: Math.round(performance.now() - _start),
@@ -836,33 +718,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 			};
 		}
 
-		// Fast occlusion check — verify with short click if flagged
-		const occlusionCheck = await this.checkOcclusion(locator, ref);
-
-		let occlusionStatus = "verified";
-		if (occlusionCheck) {
-			try {
-				await locator.click({ timeout: this._verifyClickTimeoutMs });
-				occlusionStatus = "blocked_verify_ok";
-			} catch {
-				this._log("type", {
-					taskId,
-					ref,
-					role: node.role,
-					name: node.name,
-					occlusionCheck: "blocked",
-					result: "fail",
-					error: `Occlusion blocked: ${occlusionCheck.error}`,
-					time: Math.round(performance.now() - _start),
-				});
-				return occlusionCheck;
-			}
-		}
-
 		try {
-			if (!occlusionCheck) {
-				await locator.click({ timeout: 5000 }); // Focus first
-			}
+			await locator.click({ timeout: 5000 }); // Focus first
 			await locator.fill(text);
 
 			// Auto-snapshot
@@ -873,7 +730,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: node.role,
 				name: node.name,
-				occlusionCheck: occlusionStatus,
 				result: "success",
 				elementCount: snapResult.elementCount,
 				time: Math.round(performance.now() - _start),
@@ -890,7 +746,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: node.role,
 				name: node.name,
-				occlusionCheck: occlusionStatus,
 				result: "fail",
 				error: err instanceof Error ? err.message : String(err),
 				time: Math.round(performance.now() - _start),

@@ -119,12 +119,6 @@ export interface PythonBridgeConfig {
 	 * room to report the timeout itself.
 	 */
 	transportTimeoutMs?: number;
-
-	/**
-	 * Override the verify-click occlusion fallback timeout in ms
-	 * (default: 1500).  Passed to the bridge via environment variable.
-	 */
-	verifyClickTimeoutMs?: number;
 }
 
 // ─── Default capabilities ─────────────────────────────────────────────
@@ -176,9 +170,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	// ── Stderr capture ─────────────────────────────────────────
 	private _stderrAccumulated = "";
 
-	// ── Verify-click timeout (for occlusion fallback) ──────────
-	private readonly _verifyClickTimeoutMs: number;
-
 	// ── JSON-RPC state ─────────────────────────────────────────
 	private _reqId = 0;
 	private _pending = new Map<number, PendingRequest>();
@@ -229,9 +220,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		this._pythonArgs = config.pythonArgs ?? [];
 		this._transportTimeoutMs =
 			config.transportTimeoutMs ?? DEFAULT_TRANSPORT_TIMEOUT_MS;
-
-		// Verify-click timeout (passed to bridge via env var)
-		this._verifyClickTimeoutMs = config.verifyClickTimeoutMs ?? 1500;
 
 		// Merge capabilities
 		this.capabilities = {
@@ -318,9 +306,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 					env: {
 						...process.env,
 						PYTHONUNBUFFERED: "1",
-						PY_BRIDGE_VERIFY_CLICK_TIMEOUT_MS: String(
-							this._verifyClickTimeoutMs,
-						),
 					},
 				},
 			);

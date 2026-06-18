@@ -636,55 +636,6 @@ describe("session persistence across sequential calls", () => {
 	});
 });
 
-// ─── Occlusion error propagation ────────────────────────────────
-
-describe("occlusion error propagation", () => {
-	let mock: MockPlugin;
-
-	beforeEach(() => {
-		pluginRegistry.clear();
-		mock = new MockPlugin("mock");
-		pluginRegistry.register(mock, makeConfig({ name: "mock", enabled: true }));
-	});
-
-	afterEach(async () => {
-		await sessionManager.removeAll();
-		pluginRegistry.clear();
-	});
-
-	it("passes through occlusion errors from click", async () => {
-		mock.interactResult = {
-			success: false,
-			error:
-				"Element @e1 is obscured by another element (likely a modal/overlay). " +
-				'Try pressing Escape (browser-press key="Escape") to dismiss the overlay, then retry.',
-		};
-
-		await router.navigate("https://example.com", { taskId: "occ-test-1" });
-		const result = await router.click("occ-test-1", "@e1");
-
-		expect(result.success).toBe(false);
-		expect(result.error).toMatch(/obscured/i);
-		expect(result.error).toMatch(/Escape/i);
-	});
-
-	it("passes through occlusion errors from type", async () => {
-		mock.interactResult = {
-			success: false,
-			error:
-				"Element @e1 is obscured by another element (likely a modal/overlay). " +
-				'Try pressing Escape (browser-press key="Escape") to dismiss the overlay, then retry.',
-		};
-
-		await router.navigate("https://example.com", { taskId: "occ-test-2" });
-		const result = await router.type("occ-test-2", "@e1", "hello");
-
-		expect(result.success).toBe(false);
-		expect(result.error).toMatch(/obscured/i);
-		expect(result.error).toMatch(/Escape/i);
-	});
-});
-
 // ─── Bot detection UX ───────────────────────────────────────────
 
 describe("bot detection UX", () => {
