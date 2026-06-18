@@ -11,7 +11,7 @@ import type { PluginConfig, PluginDetection } from "./plugin-api.js";
 import { sanitizeProfileName } from "./shared/storage-state.js";
 import { readMergedSettings } from "./shared/settings-reader.js";
 
-// ─── Types ────────────────────────────────────────────────────────
+// ─── Config types & loading ────────────────────────────────────────
 
 /**
  * Parsed browser configuration from settings.json.
@@ -43,59 +43,24 @@ export interface PluginConfigLoadResult {
 	errors: string[];
 }
 
-// ─── Config reading ───────────────────────────────────────────────
-
 /**
- * Read the merged browser config object from settings.json.
- *
- * Looks in:
- *   1. `~/.pi/agent/settings.json` (global)
- *   2. `.pi/settings.json` (project-local, overrides global)
- *
- * Returns the browser config object, or undefined if not present or invalid.
+ * Unified full configuration result — includes both browser and plugin config.
  */
-function readBrowserConfigRaw(): Record<string, unknown> | undefined {
-	const merged = readMergedSettings();
-	const browserConfig = merged["browser"];
-
-	if (
-		!browserConfig ||
-		typeof browserConfig !== "object" ||
-		Array.isArray(browserConfig)
-	) {
-		return undefined;
-	}
-
-	return browserConfig as Record<string, unknown>;
+export interface FullConfig {
+	browser: BrowserConfig;
+	plugins: PluginConfigLoadResult;
 }
 
-/**
- * Read the browser.plugins array from settings.json.
- *
- * Returns the merged plugins array, or undefined if not configured.
- */
-function readPluginsFromSettings(): unknown[] | undefined {
-	const browserConfig = readBrowserConfigRaw();
-	if (!browserConfig) return undefined;
-
-	const plugins = browserConfig["plugins"];
-	if (!Array.isArray(plugins)) return undefined;
-
-	return plugins;
-}
+/** Internal cache for loadFullConfig() — invalidated via invalidateConfigCache() */
+let _fullConfigCache: FullConfig | null = null;
 
 /**
- * Load and validate the browser configuration from settings.json.
- *
- * Reads the `browser` section and extracts:
- * - `defaultProfile` (string, default "none")
- *
- * Profile names are validated via `sanitizeProfileName()`.
- * Validation errors are collected but non-fatal — invalid entries
- * fall back to sensible defaults.
+ * Parse the browser config section from settings JSON.
+ * Extracts and validates defaultProfile.
  */
-export function loadBrowserConfig(): BrowserConfig {
-	const raw = readBrowserConfigRaw();
+function parseBrowserConfig(
+	raw: Record<string, unknown> | undefined,
+): BrowserConfig {
 	const errors: string[] = [];
 
 	// Defaults
@@ -134,6 +99,124 @@ export function loadBrowserConfig(): BrowserConfig {
 	}
 
 	return config;
+}
+
+/**
+ * Parse and validate the plugin config section from settings JSON.
+ *
+ * Extracts and validates the `browser.plugins` array.
+ * If no plugins are configured, returns a single default Chromium plugin.
+ */
+function parsePluginConfig(
+	raw: Record<string, unknown> | undefined,
+	backendsRoot: string,
+): PluginConfigLoadResult {
+	const errors: string[] = [];
+
+	// Extract plugins from the raw browser config section
+	const rawPlugins = raw?.["plugins"];
+
+	// Default fallback: single chromium plugin
+	if (!Array.isArray(rawPlugins)) {
+		return {
+			plugins: [
+				{
+					name: "chromium",
+					dir: "chromium",
+					enabled: true,
+					config: {},
+				},
+			],
+			errors: [],
+		};
+	}
+
+	// Validate each entry
+	const seenNames = new Set<string>();
+	const plugins: PluginConfig[] = [];
+
+	for (let i = 0; i < rawPlugins.length; i++) {
+		const validated = validateEntry(rawPlugins[i], i, errors, seenNames);
+		if (validated) {
+			// Also validate that the directory exists and is unambiguous
+			try {
+				detectPluginType(validated.dir, backendsRoot);
+			} catch (err) {
+				errors.push(
+					`plugins[${i}] ('${validated.name}'): ${err instanceof Error ? err.message : String(err)}`,
+				);
+				continue; // Skip this plugin
+			}
+			plugins.push(validated);
+		}
+	}
+
+	return { plugins, errors };
+}
+
+/**
+ * Read the merged browser config object from settings.json.
+ *
+ * Looks in:
+ *   1. `~/.pi/agent/settings.json` (global)
+ *   2. `.pi/settings.json` (project-local, overrides global)
+ *
+ * Returns the browser config object, or undefined if not present or invalid.
+ */
+function readBrowserConfigRaw(): Record<string, unknown> | undefined {
+	const merged = readMergedSettings();
+	const browserConfig = merged["browser"];
+
+	if (
+		!browserConfig ||
+		typeof browserConfig !== "object" ||
+		Array.isArray(browserConfig)
+	) {
+		return undefined;
+	}
+
+	return browserConfig as Record<string, unknown>;
+}
+
+/**
+ * Load and cache the full browser configuration from settings.json.
+ *
+ * Reads settings.json once on first call and caches the result for
+ * subsequent calls. Both `loadBrowserConfig()` and `loadPluginConfig()`
+ * delegate to this function.
+ */
+export function loadFullConfig(backendsRoot?: string): FullConfig {
+	if (_fullConfigCache) return _fullConfigCache;
+
+	const raw = readBrowserConfigRaw();
+
+	_fullConfigCache = {
+		browser: parseBrowserConfig(raw),
+		plugins: parsePluginConfig(raw, backendsRoot ?? DEFAULT_BACKENDS_ROOT),
+	};
+
+	return _fullConfigCache;
+}
+
+/**
+ * Invalidate the config cache — forces the next call to re-read from disk.
+ * Used in tests to reset state between test cases.
+ */
+export function invalidateConfigCache(): void {
+	_fullConfigCache = null;
+}
+
+/**
+ * Convenience wrapper — returns the `defaultProfile` setting from the
+ * cached browser configuration. Delegates to `loadFullConfig()` which
+ * reads `settings.json` once and caches the result.
+ *
+ * The `browser.defaultProfile` field controls what happens when
+ * `browser-navigate` is called without an explicit `profile` parameter.
+ * See `BrowserConfig` for valid values.
+ */
+export function loadBrowserConfig(): BrowserConfig {
+	return loadFullConfig().browser;
 }
 
 // ─── Validation ───────────────────────────────────────────────────
@@ -261,45 +344,5 @@ export const DEFAULT_BACKENDS_ROOT = join(__dirname, "..", "backends");
 export function loadPluginConfig(
 	backendsRoot: string = DEFAULT_BACKENDS_ROOT,
 ): PluginConfigLoadResult {
-	const errors: string[] = [];
-
-	// Read raw plugins array from settings
-	const rawPlugins = readPluginsFromSettings();
-
-	// Default fallback: single chromium plugin
-	if (!rawPlugins) {
-		return {
-			plugins: [
-				{
-					name: "chromium",
-					dir: "chromium",
-					enabled: true,
-					config: {},
-				},
-			],
-			errors: [],
-		};
-	}
-
-	// Validate each entry
-	const seenNames = new Set<string>();
-	const plugins: PluginConfig[] = [];
-
-	for (let i = 0; i < rawPlugins.length; i++) {
-		const validated = validateEntry(rawPlugins[i], i, errors, seenNames);
-		if (validated) {
-			// Also validate that the directory exists and is unambiguous
-			try {
-				detectPluginType(validated.dir, backendsRoot);
-			} catch (err) {
-				errors.push(
-					`plugins[${i}] ('${validated.name}'): ${err instanceof Error ? err.message : String(err)}`,
-				);
-				continue; // Skip this plugin
-			}
-			plugins.push(validated);
-		}
-	}
-
-	return { plugins, errors };
+	return loadFullConfig(backendsRoot).plugins;
 }
