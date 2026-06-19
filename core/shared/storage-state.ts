@@ -26,10 +26,10 @@ import { homedir } from "node:os";
 export const PROFILE_DIR = join(homedir(), ".pi", "agent", "browser-state");
 
 /** Current storage state version. Increment on breaking format changes. */
-export const STORAGE_STATE_VERSION = 1;
+const STORAGE_STATE_VERSION = 1;
 
 /** Default size limit (10 MB) before a warning is logged on save. */
-export const DEFAULT_MAX_STORAGE_STATE_SIZE = 10 * 1024 * 1024;
+const DEFAULT_MAX_STORAGE_STATE_SIZE = 10 * 1024 * 1024;
 
 /** Profile name validation regex. */
 const PROFILE_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -38,11 +38,15 @@ const PROFILE_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const RESERVED_PROFILE_NAMES = new Set([
 	"none",
 	"session", // profile modes
-	"create", // subcommand
+	"create",
+	"list",
+	"clear",
+	"clear-all",
+	"prune", // subcommands
 ]);
 
 /** Prefix for auto-generated session-scoped profiles. */
-export const SESSION_PROFILE_PREFIX = "_session-";
+const SESSION_PROFILE_PREFIX = "_session-";
 
 /** Directory where pi stores active session tracking files. */
 export const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
@@ -50,7 +54,7 @@ export const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
 // ─── Types ────────────────────────────────────────────────────────────
 
 /** A single cookie as stored by Playwright's storageState. */
-export interface StoredCookie {
+interface StoredCookie {
 	name: string;
 	value: string;
 	domain: string;
@@ -62,13 +66,13 @@ export interface StoredCookie {
 }
 
 /** A localStorage entry for a given origin. */
-export interface StoredLocalStorageEntry {
+interface StoredLocalStorageEntry {
 	name: string;
 	value: string;
 }
 
 /** An origin with its localStorage data. */
-export interface StoredOrigin {
+interface StoredOrigin {
 	origin: string;
 	localStorage: StoredLocalStorageEntry[];
 }
@@ -95,7 +99,7 @@ export interface StorageStateFile {
  * Rules:
  * - Must be 1-64 characters long
  * - Only alphanumeric, hyphens, and underscores allowed
- * - Must not be a reserved keyword ("none", "session", "create")
+ * - Must not be a reserved keyword ("none", "session", "create", "list", "clear", "clear-all", "prune")
  * - Session-scoped names (`_session-*`) are allowed with embedded ID validation
  *
  * @throws {Error} If the name is invalid.
@@ -166,7 +170,7 @@ export function profileFilePath(profileName: string): string {
  */
 export function loadStorageState(
 	profileName: string,
-	maxSizeBytes: number = DEFAULT_MAX_STORAGE_STATE_SIZE,
+	_maxSizeBytes: number = DEFAULT_MAX_STORAGE_STATE_SIZE,
 ): StorageStateFile | null {
 	const path = profileFilePath(profileName);
 
@@ -266,8 +270,9 @@ export function saveStorageState(
 /**
  * Delete the storage state file for a named profile.
  *
- * Does NOT remove the profile directory (may contain other files in future).
- * Does NOT throw — failures are logged and silently ignored.
+ * Also removes the profile directory if it becomes empty (no leftover state
+ * files or other artifacts). Does NOT throw — failures are logged and
+ * silently ignored.
  *
  * @param profileName - The profile name.
  */
@@ -276,6 +281,14 @@ export function deleteStorageState(profileName: string): void {
 	try {
 		if (existsSync(path)) {
 			unlinkSync(path);
+		}
+		// Clean up the profile directory if it's now empty
+		const dir = profileDir(profileName);
+		if (existsSync(dir)) {
+			const remaining = readdirSync(dir);
+			if (remaining.length === 0) {
+				rmSync(dir, { recursive: true, force: true });
+			}
 		}
 	} catch (err) {
 		console.warn(

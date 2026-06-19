@@ -2,18 +2,19 @@
  * Plugin Registry — typed registration, validation, and lookup for BrowserPlugins.
  *
  * The registry holds all registered plugins and provides:
- * - `register(name, plugin)` — with validation that all 13 operations exist
+ * - `register(name, plugin)` — with validation that all required operations exist
  * - `get(name)` → BrowserPlugin | undefined
  * - `getDefault()` → first enabled plugin from the configured `plugins` array
- * - `getOrdered()` → all enabled plugins in array order (with stealth levels)
+ * - `getOrdered()` → all enabled plugins in array order (lower index = higher priority)
  * - `available()` → list of registered plugin names
  */
 
-import type { BrowserPlugin, PluginConfig } from "./plugin-api.js";
+import type { BrowserPlugin } from "./plugin-api.js";
+import type { PluginConfig } from "./plugin-config.js";
 
 // ─── Validation ───────────────────────────────────────────────────
 
-/** The 13 agent-facing operation method names (lifecycle hooks excluded) */
+/** The required operation method names (tool-mapped only; lifecycle, cookie, storage excluded) */
 const REQUIRED_OPERATIONS: ReadonlyArray<keyof BrowserPlugin> = [
 	"navigate",
 	"snapshot",
@@ -23,7 +24,6 @@ const REQUIRED_OPERATIONS: ReadonlyArray<keyof BrowserPlugin> = [
 	"goBack",
 	"press",
 	"screenshot",
-	"getImages",
 	"getConsoleMessages",
 	"clearConsole",
 	"evaluate",
@@ -49,7 +49,7 @@ export function validatePlugin(plugin: BrowserPlugin): string[] {
 /** Internal tracking for a registered plugin */
 interface RegistryEntry {
 	plugin: BrowserPlugin;
-	/** Position in the user's plugins config array (= stealth level) */
+	/** Position in the user's plugins config array (lower = higher priority, used for LLM escalation hints) */
 	level: number;
 	/** Whether this plugin is enabled */
 	enabled: boolean;
@@ -61,11 +61,33 @@ export class PluginRegistry {
 	/** Map of plugin name → registry entry */
 	private entries = new Map<string, RegistryEntry>();
 
-	/** Ordered list of plugin names from config (defines stealth levels) */
+	/** Ordered list of plugin names from config (defines escalation priority — lower index = recommended first) */
 	private orderedNames: string[] = [];
 
 	/**
+	 * Pre-populate the ordered plugin name list.
+	 *
+	 * Call this BEFORE any `register()` calls to ensure the config array order
+	 * is preserved even when plugins are registered asynchronously (e.g. Node
+	 * plugins loaded via dynamic `import()` vs Python plugins registered
+	 * synchronously).
+	 *
+	 * If `register()` finds its name already in the seeded order, it uses the
+	 * existing position as the priority level instead of appending.
+	 *
+	 * @param names - Plugin names in the desired priority order (typically
+	 *                 the order from the user's `browser.plugins` config array).
+	 */
+	seedOrder(names: string[]): void {
+		this.orderedNames = [...names];
+	}
+
+	/**
 	 * Register a plugin with its config.
+	 *
+	 * If the plugin name was pre-seeded via `seedOrder()`, its priority level
+	 * is taken from that pre-determined position. Otherwise it is appended at
+	 * the end.
 	 *
 	 * @throws if a plugin with the same name is already registered
 	 * @throws if the plugin is missing required operations
@@ -77,7 +99,7 @@ export class PluginRegistry {
 			);
 		}
 
-		// Validate all 13 operations
+		// Validate all required operations
 		const missing = validatePlugin(plugin);
 		if (missing.length > 0) {
 			throw new Error(
@@ -85,17 +107,22 @@ export class PluginRegistry {
 			);
 		}
 
+		// Determine the level from the pre-seeded orderedNames, or append
+		let level = this.orderedNames.indexOf(plugin.name);
+		if (level === -1) {
+			level = this.orderedNames.length;
+			this.orderedNames.push(plugin.name);
+		}
+
 		this.entries.set(plugin.name, {
 			plugin,
-			level: this.orderedNames.length,
+			level,
 			enabled: config.enabled,
 		});
-		this.orderedNames.push(plugin.name);
 	}
 
 	/**
 	 * Get a plugin by name. Returns undefined if not registered or disabled.
-	 * Use `getAny()` to include disabled plugins.
 	 */
 	get(name: string): BrowserPlugin | undefined {
 		const entry = this.entries.get(name);
@@ -107,7 +134,7 @@ export class PluginRegistry {
 	 * Get a plugin by name, even if disabled.
 	 * Useful for error messages ("Plugin 'X' is disabled, not missing").
 	 */
-	getAny(name: string): RegistryEntry | undefined {
+	private getAny(name: string): RegistryEntry | undefined {
 		return this.entries.get(name);
 	}
 
@@ -124,8 +151,8 @@ export class PluginRegistry {
 	}
 
 	/**
-	 * Get all enabled plugins in config order (stealth level order).
-	 * Each entry includes the plugin and its stealth level.
+	 * Get all enabled plugins in config order (priority order).
+	 * Each entry includes the plugin and its priority level (lower = recommended first).
 	 */
 	getOrdered(): Array<{ plugin: BrowserPlugin; level: number }> {
 		const result: Array<{ plugin: BrowserPlugin; level: number }> = [];
@@ -156,7 +183,8 @@ export class PluginRegistry {
 	}
 
 	/**
-	 * Get the stealth level for a plugin.
+	 * Get the priority level for a plugin (lower = recommended first).
+	 * Used by the LLM to decide whether to escalate to a different backend.
 	 * Returns undefined if the plugin is not registered.
 	 */
 	getLevel(name: string): number | undefined {
@@ -164,8 +192,8 @@ export class PluginRegistry {
 	}
 
 	/**
-	 * Get plugins at higher stealth levels than the given level.
-	 * Used to suggest alternatives when bot detection fires.
+	 * Get plugins at higher priority levels (further in the backup chain) than the given level.
+	 * Used to suggest alternative backends when bot detection fires.
 	 */
 	getHigherStealth(currentLevel: number): Array<{
 		plugin: BrowserPlugin;

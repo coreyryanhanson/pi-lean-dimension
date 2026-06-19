@@ -1,8 +1,7 @@
 /**
  * Plugin Router — registry-based dispatch for interactive browser operations.
  *
- * Replaces the old hardcoded if/else dispatch between chromium and stealth
- * backends. All dispatch now goes through the PluginRegistry, which resolves
+ * All dispatch goes through the PluginRegistry, which resolves
  * the correct plugin based on the `strategy` parameter.
  *
  * Cross-cutting concerns handled here (not in plugins):
@@ -12,8 +11,8 @@
  * - Auto-recovery from crashed sessions (via lastNav)
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
+import { BROWSER_TEMP_DIR, ensureBrowserTempDir } from "./shared/paths.js";
 import { pluginRegistry } from "./plugin-registry.js";
 import { sessionManager } from "./shared/session-manager.js";
 import type { BrowserSession } from "./shared/session-manager.js";
@@ -40,10 +39,10 @@ import {
 	type ExtractResult,
 } from "./shared/dom-extractor.js";
 import type {
+	DialogEvent,
 	NavigateResult,
 	SnapshotResult,
 	InteractionResult,
-	GetImagesResult,
 	ConsoleMessagesResult,
 	EvaluateResult,
 	Cookie,
@@ -120,6 +119,22 @@ export function setOnProfileChange(
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Format dialog events for appending to snapshot output.
+ * Returns an empty string when there are no events.
+ */
+function formatDialogEvents(events: DialogEvent[]): string {
+	if (events.length === 0) return "";
+
+	const lines = events.map((d) => {
+		const prefix =
+			d.type === "alert" ? "📢" : d.type === "confirm" ? "❓" : "💬";
+		return `${prefix} [${d.type}] ${d.message} (auto-${d.handledAs})`;
+	});
+
+	return "\n\n--- Auto-dismissed dialogs ---\n" + lines.join("\n");
+}
 
 /**
  * Get or create an interactive session for the given task.
@@ -206,6 +221,33 @@ function getPluginForSession(
 	return pluginRegistry.get(session.pluginName);
 }
 
+interface ResolvedSession {
+	tid: string;
+	session: BrowserSession;
+	plugin: import("./plugin-api.js").BrowserPlugin;
+	wasAutoCreated: boolean;
+}
+
+/**
+ * Resolve a task ID and require an active interactive session + plugin.
+ * Returns null if no session exists or the plugin is unavailable.
+ */
+async function resolveSession(
+	taskId: string | undefined,
+): Promise<ResolvedSession | null> {
+	const tid = taskId ?? "default";
+	const sr = await requireInteractiveSession(tid);
+	if (!sr) return null;
+	const plugin = getPluginForSession(sr.session);
+	if (!plugin) return null;
+	return {
+		tid,
+		session: sr.session,
+		plugin,
+		wasAutoCreated: sr.wasAutoCreated,
+	};
+}
+
 /**
  * Compact a snapshot to a manageable size for LLM consumption.
  *
@@ -256,7 +298,7 @@ async function refBasedInteractionOrSnapshot(
 	action: () => Promise<InteractionResult>,
 ): Promise<InteractionResult> {
 	if (!wasAutoCreated) {
-		// Mark interaction time for staleness detection (Phase 2)
+		// Mark interaction time for staleness detection
 		const sess = sessionManager.getSession(taskId);
 		if (sess) {
 			sessionManager.updateSession(taskId, {
@@ -330,7 +372,8 @@ function compactInteractionResult(
 				truncated,
 				result.elementCount,
 			) +
-			`\nfingerprint:${newFingerprint}`;
+			`\nfingerprint:${newFingerprint}` +
+			formatDialogEvents(result.dialogEvents ?? []);
 
 		const session = sessionManager.getSession(taskId);
 		if (session) {
@@ -552,9 +595,10 @@ export async function navigate(
 			: null;
 		// ---
 
+		const dialogContent = formatDialogEvents(result.dialogEvents ?? []);
 		const snapshotContent = rawSnapshot
 			? botWarn
-				? rawSnapshot + `\nfingerprint:${fp}`
+				? rawSnapshot + `\nfingerprint:${fp}` + dialogContent
 				: compactSnapshot(rawSnapshot, result.elementCount) +
 					formatCacheNotice(
 						cacheResult,
@@ -562,15 +606,23 @@ export async function navigate(
 						isTruncated,
 						result.elementCount,
 					) +
-					`\nfingerprint:${fp}`
+					`\nfingerprint:${fp}` +
+					dialogContent
 			: "";
 
-		// Track cache population time for staleness detection (Phase 2)
+		// Track cache population time for staleness detection
 		if (cacheResult) {
 			sessionManager.updateSession(taskId, {
 				cachePopulatedAt: Date.now(),
 			});
 		}
+
+		const elementCache = plugin.getElementCache(taskId);
+		const dialogDetected = elementCache
+			? Array.from(elementCache.values()).some(
+					(n) => n.role === "dialog" || n.role === "alertdialog",
+				)
+			: false;
 
 		const successResult: NavigateResult & {
 			backendUsed: string;
@@ -581,6 +633,7 @@ export async function navigate(
 			title: result.title,
 			snapshot: snapshotContent,
 			elementCount: result.elementCount,
+			dialogDetected,
 			backendUsed: plugin.name,
 		};
 		if (profileMode !== undefined) successResult.profileMode = profileMode;
@@ -623,29 +676,17 @@ export async function snapshot(
 	taskId?: string,
 	full?: boolean,
 ): Promise<SnapshotResult> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-
-	if (!sr) {
+	const resolved = await resolveSession(taskId);
+	if (!resolved) {
 		return {
 			success: false,
 			snapshot: "",
 			elementCount: 0,
-			error:
-				"No active session — use browser-navigate to visit a page first, then retry",
+			error: noSessionMsg,
 		};
 	}
 
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin) {
-		return {
-			success: false,
-			snapshot: "",
-			elementCount: 0,
-			error: `Plugin '${sr.session.pluginName}' is not available`,
-		};
-	}
-
+	const { tid, plugin } = resolved;
 	const result = await plugin.snapshot(tid);
 	if (result.success) {
 		// Update snapshot fingerprint (passive — surfaced in output)
@@ -664,6 +705,7 @@ export async function snapshot(
 				formatCacheNotice(null, rawLength, wasTruncated, result.elementCount) +
 				`\nfingerprint:${fp}`;
 		}
+		result.snapshot += formatDialogEvents(result.dialogEvents ?? []);
 	}
 	return result;
 }
@@ -674,17 +716,18 @@ export async function click(
 	taskId: string | undefined,
 	ref: string,
 ): Promise<InteractionResult> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return noSessionError();
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin) return pluginNotAvailableError(sr.session.pluginName);
+	const resolved = await resolveSession(taskId);
+	if (!resolved) return noSessionError();
 
 	return refBasedInteractionOrSnapshot(
-		tid,
-		sr.wasAutoCreated,
-		plugin,
-		async () => compactInteractionResult(tid, await plugin.click(tid, ref)),
+		resolved.tid,
+		resolved.wasAutoCreated,
+		resolved.plugin,
+		async () =>
+			compactInteractionResult(
+				resolved.tid,
+				await resolved.plugin.click(resolved.tid, ref),
+			),
 	);
 }
 
@@ -693,18 +736,18 @@ export async function type(
 	ref: string,
 	text: string,
 ): Promise<InteractionResult> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return noSessionError();
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin) return pluginNotAvailableError(sr.session.pluginName);
+	const resolved = await resolveSession(taskId);
+	if (!resolved) return noSessionError();
 
 	return refBasedInteractionOrSnapshot(
-		tid,
-		sr.wasAutoCreated,
-		plugin,
+		resolved.tid,
+		resolved.wasAutoCreated,
+		resolved.plugin,
 		async () =>
-			compactInteractionResult(tid, await plugin.type(tid, ref, text)),
+			compactInteractionResult(
+				resolved.tid,
+				await resolved.plugin.type(resolved.tid, ref, text),
+			),
 	);
 }
 
@@ -712,33 +755,34 @@ export async function scroll(
 	taskId: string | undefined,
 	direction: "up" | "down",
 ): Promise<InteractionResult> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return noSessionError();
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin) return pluginNotAvailableError(sr.session.pluginName);
+	const resolved = await resolveSession(taskId);
+	if (!resolved) return noSessionError();
 
 	return refBasedInteractionOrSnapshot(
-		tid,
-		sr.wasAutoCreated,
-		plugin,
+		resolved.tid,
+		resolved.wasAutoCreated,
+		resolved.plugin,
 		async () =>
-			compactInteractionResult(tid, await plugin.scroll(tid, direction)),
+			compactInteractionResult(
+				resolved.tid,
+				await resolved.plugin.scroll(resolved.tid, direction),
+			),
 	);
 }
 
 export async function goBack(taskId?: string): Promise<InteractionResult> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return noSessionError();
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin) return pluginNotAvailableError(sr.session.pluginName);
+	const resolved = await resolveSession(taskId);
+	if (!resolved) return noSessionError();
 
 	return refBasedInteractionOrSnapshot(
-		tid,
-		sr.wasAutoCreated,
-		plugin,
-		async () => compactInteractionResult(tid, await plugin.goBack(tid)),
+		resolved.tid,
+		resolved.wasAutoCreated,
+		resolved.plugin,
+		async () =>
+			compactInteractionResult(
+				resolved.tid,
+				await resolved.plugin.goBack(resolved.tid),
+			),
 	);
 }
 
@@ -746,17 +790,18 @@ export async function press(
 	taskId: string | undefined,
 	key: string,
 ): Promise<InteractionResult> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return noSessionError();
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin) return pluginNotAvailableError(sr.session.pluginName);
+	const resolved = await resolveSession(taskId);
+	if (!resolved) return noSessionError();
 
 	return refBasedInteractionOrSnapshot(
-		tid,
-		sr.wasAutoCreated,
-		plugin,
-		async () => compactInteractionResult(tid, await plugin.press(tid, key)),
+		resolved.tid,
+		resolved.wasAutoCreated,
+		resolved.plugin,
+		async () =>
+			compactInteractionResult(
+				resolved.tid,
+				await resolved.plugin.press(resolved.tid, key),
+			),
 	);
 }
 
@@ -771,12 +816,10 @@ export async function press(
 export async function screenshotToTemp(
 	taskId?: string,
 ): Promise<string | null> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return null;
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin) return null;
+	const resolved = await resolveSession(taskId);
+	if (!resolved) return null;
 
+	const { tid, plugin } = resolved;
 	try {
 		const result = await plugin.screenshot(tid, { fullPage: false });
 		if (!result.success || !result.dataUri) return null;
@@ -786,10 +829,9 @@ export async function screenshotToTemp(
 		if (!base64Data) return null;
 
 		const buffer = Buffer.from(base64Data, "base64");
-		const dir = `${tmpdir()}/pi-browser`;
-		mkdirSync(dir, { recursive: true });
+		ensureBrowserTempDir();
 		const filename = `screenshot-${tid}.jpg`;
-		const path = `${dir}/${filename}`;
+		const path = `${BROWSER_TEMP_DIR}/${filename}`;
 		writeFileSync(path, buffer);
 		return path;
 	} catch {
@@ -797,72 +839,39 @@ export async function screenshotToTemp(
 	}
 }
 
-export async function getImages(taskId?: string): Promise<GetImagesResult> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return { success: false, images: [], error: noSessionMsg };
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin)
-		return {
-			success: false,
-			images: [],
-			error: `Plugin '${sr.session.pluginName}' is not available`,
-		};
-
-	return plugin.getImages(tid);
-}
-
 // ─── Console & eval ─────────────────────────────────────────────────
 
 export async function getConsoleMessages(
 	taskId?: string,
 ): Promise<ConsoleMessagesResult> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return { success: false, messages: [], error: noSessionMsg };
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin)
-		return {
-			success: false,
-			messages: [],
-			error: `Plugin '${sr.session.pluginName}' is not available`,
-		};
-
-	return plugin.getConsoleMessages(tid);
+	const resolved = await resolveSession(taskId);
+	if (!resolved) {
+		return { success: false, messages: [], error: noSessionMsg };
+	}
+	return resolved.plugin.getConsoleMessages(resolved.tid);
 }
 
 export async function evaluate(
 	taskId: string | undefined,
 	expression: string,
 ): Promise<EvaluateResult> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return { success: false, error: noSessionMsg };
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin)
-		return {
-			success: false,
-			error: `Plugin '${sr.session.pluginName}' is not available`,
-		};
-
-	return plugin.evaluate(tid, expression);
+	const resolved = await resolveSession(taskId);
+	if (!resolved) {
+		return { success: false, error: noSessionMsg };
+	}
+	return resolved.plugin.evaluate(resolved.tid, expression);
 }
 
 export async function clearConsole(
 	taskId?: string,
 ): Promise<{ success: boolean; error?: string }> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return { success: false, error: "No active session" };
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin)
-		return {
-			success: false,
-			error: `Plugin '${sr.session.pluginName}' is not available`,
-		};
+	const resolved = await resolveSession(taskId);
+	if (!resolved) {
+		return { success: false, error: noSessionMsg };
+	}
 
 	try {
-		await plugin.clearConsole(tid);
+		await resolved.plugin.clearConsole(resolved.tid);
 		return { success: true };
 	} catch (err: unknown) {
 		return {
@@ -910,34 +919,22 @@ export async function browserInspect(
 	taskId: string | undefined,
 	params: InspectParams,
 ): Promise<InspectResult> {
-	const tid = taskId ?? "default";
-
-	// 1. Require an active session
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) {
+	const resolved = await resolveSession(taskId);
+	if (!resolved) {
 		return {
 			success: false,
 			content: "",
-			error:
-				"No active session — use browser-navigate to visit a page first, then retry",
+			error: noSessionMsg,
 		};
 	}
 
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin) {
-		return {
-			success: false,
-			content: "",
-			error: `Plugin '${sr.session.pluginName}' is not available`,
-		};
-	}
+	const { tid, plugin, session } = resolved;
 
 	// 2. Get element cache from the plugin
 	const cache = plugin.getElementCache(tid);
 	const cacheExists = cache !== null && cache.size > 0;
 
 	// 3. Staleness check
-	const session = sessionManager.getSession(tid);
 	const cacheFresh = stalenessCheck(session);
 
 	// 4. Dispatch based on params
@@ -1115,52 +1112,33 @@ export async function getCookies(
 	taskId: string | undefined,
 	urls?: string[],
 ): Promise<CookieResult> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return { success: false, cookies: [], error: noSessionMsg };
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin)
-		return {
-			success: false,
-			cookies: [],
-			error: `Plugin '${sr.session.pluginName}' is not available`,
-		};
-
-	return plugin.getCookies(tid, urls);
+	const resolved = await resolveSession(taskId);
+	if (!resolved) {
+		return { success: false, cookies: [], error: noSessionMsg };
+	}
+	return resolved.plugin.getCookies(resolved.tid, urls);
 }
 
 export async function addCookies(
 	taskId: string | undefined,
 	cookies: Cookie[],
 ): Promise<ResultBase> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return { success: false, error: noSessionMsg };
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin)
-		return {
-			success: false,
-			error: `Plugin '${sr.session.pluginName}' is not available`,
-		};
-
-	return plugin.addCookies(tid, cookies);
+	const resolved = await resolveSession(taskId);
+	if (!resolved) {
+		return { success: false, error: noSessionMsg };
+	}
+	return resolved.plugin.addCookies(resolved.tid, cookies);
 }
 
 export async function clearCookies(
 	taskId: string | undefined,
 	options?: ClearCookiesOptions,
 ): Promise<ResultBase> {
-	const tid = taskId ?? "default";
-	const sr = await requireInteractiveSession(tid);
-	if (!sr) return { success: false, error: noSessionMsg };
-	const plugin = getPluginForSession(sr.session);
-	if (!plugin)
-		return {
-			success: false,
-			error: `Plugin '${sr.session.pluginName}' is not available`,
-		};
-
-	return plugin.clearCookies(tid, options);
+	const resolved = await resolveSession(taskId);
+	if (!resolved) {
+		return { success: false, error: noSessionMsg };
+	}
+	return resolved.plugin.clearCookies(resolved.tid, options);
 }
 
 // ─── Error message constants ─────────────────────────────────────────
@@ -1170,11 +1148,4 @@ const noSessionMsg =
 
 function noSessionError(): InteractionResult {
 	return { success: false, error: noSessionMsg };
-}
-
-function pluginNotAvailableError(pluginName: string): InteractionResult {
-	return {
-		success: false,
-		error: `Plugin '${pluginName}' is not available`,
-	};
 }

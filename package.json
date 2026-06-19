@@ -2,7 +2,7 @@
   "name": "pi-browser",
   "version": "0.1.0",
   "private": true,
-  "description": "Web browsing plugin for pi with HTTP fetch, Playwright Chromium, and Invisible Playwright stealth backends",
+  "description": "Web browsing plugin for pi — HTTP fetch, Playwright Chromium, plugin-based backends",
   "dependencies": {
     "node-html-parser": "^6.1.0",
     "playwright": "^1.60.0",

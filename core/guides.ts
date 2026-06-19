@@ -23,7 +23,7 @@ export type GuideSource = "builtin" | "user";
 
 export interface GuideTrigger {
 	/** Which navigate-result signal to check. */
-	signal: "botDetected" | "dialogPresent";
+	signal: "botDetected" | "dialogDetected";
 	/** How to surface the guide when the signal fires. */
 	presence: "inject" | "hint";
 }
@@ -45,7 +45,7 @@ export interface Guide {
 export interface DomainEntry {
 	/** Guide name for lookup in GUIDE_CONTENT. */
 	guide?: string;
-	/** Suggested backend strategy (reserved for stealth). */
+	/** Suggested backend strategy hint for the LLM (e.g. "stealth" when a known site blocks automation). */
 	strategy?: string;
 }
 
@@ -108,7 +108,7 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 		category: "pattern",
 		source: "builtin",
 		updated: "2026-06-12",
-		trigger: { signal: "dialogPresent", presence: "hint" },
+		trigger: { signal: "dialogDetected", presence: "hint" },
 		content: [
 			"## Cookie Consent Patterns",
 			"",
@@ -379,14 +379,6 @@ export function invalidateDomainMap(): void {
 	_domainMapCache = null;
 }
 
-/** Check if a dialog is present in the snapshot/accessibility tree text. */
-export function dialogPresentInSnapshot(snapshot: string): boolean {
-	return (
-		snapshot.includes('role="dialog"') ||
-		snapshot.includes('role="alertdialog"')
-	);
-}
-
 /**
  * Read the autoInject config from settings.json.
  * Uses the shared settings-reader module for canonical path resolution
@@ -426,7 +418,7 @@ export function readGuidesConfig(override?: { autoInject: boolean }): {
 export function resolveGuidePresence(
 	taskId: string,
 	url: string,
-	snapshot: string,
+	dialogDetected: boolean,
 	botDetected: boolean,
 	configOverride?: { autoInject: boolean },
 ): GuidePresenceResult | undefined {
@@ -459,10 +451,10 @@ export function resolveGuidePresence(
 		}
 	}
 
-	// 2. Dialog trigger — check for consent dialogs in snapshot
-	if (dialogPresentInSnapshot(snapshot)) {
+	// 2. Dialog trigger — check for consent dialogs via element cache
+	if (dialogDetected) {
 		const guide = getGuideContent()["cookie-consent"];
-		if (guide?.trigger?.signal === "dialogPresent") {
+		if (guide?.trigger?.signal === "dialogDetected") {
 			return {
 				type: "hint",
 				guideName: "cookie-consent",

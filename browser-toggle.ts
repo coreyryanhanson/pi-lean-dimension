@@ -39,7 +39,6 @@ const BROWSER_TOOL_NAMES = new Set([
 	"browser-click",
 	"browser-type",
 	"browser-scroll",
-	"browser-get-images",
 	"browser-back",
 	"browser-press",
 	"browser-console",
@@ -131,37 +130,6 @@ function persistState(pi: ExtensionAPI, state: BrowserToggleState): void {
 
 // ---- Branch-aware restoration ----------------------------------
 
-/**
- * Migrate a legacy {enabled: boolean} state to the new three-field schema.
- */
-function migrateLegacyState(data: unknown): BrowserToggleState | null {
-	if (data && typeof data === "object" && "enabled" in data) {
-		const enabled = (data as Record<string, unknown>).enabled === true;
-		return {
-			browserToolsEnabled: enabled,
-			learnToolsEnabled: enabled,
-			defaultProfile: "none",
-		};
-	}
-	// Also handle the two-boolean schema (missing defaultProfile)
-	if (
-		data &&
-		typeof data === "object" &&
-		typeof (data as Record<string, unknown>).browserToolsEnabled === "boolean"
-	) {
-		return {
-			browserToolsEnabled: (data as Record<string, unknown>)
-				.browserToolsEnabled as boolean,
-			learnToolsEnabled:
-				((data as Record<string, unknown>).learnToolsEnabled as boolean) ??
-				false,
-			defaultProfile:
-				((data as Record<string, unknown>).defaultProfile as string) ?? "none",
-		};
-	}
-	return null;
-}
-
 function restoreFromBranch(pi: ExtensionAPI, ctx: ExtensionContext): boolean {
 	const registered = getRegisteredBrowserTools(pi);
 	if (registered.length === 0) return false;
@@ -174,11 +142,8 @@ function restoreFromBranch(pi: ExtensionAPI, ctx: ExtensionContext): boolean {
 			entry.customType === "browser-toggle-state"
 		) {
 			const data = entry.data as Record<string, unknown>;
-			// Try new schema first, then legacy
 			if (data && typeof data.browserToolsEnabled === "boolean") {
 				savedState = data as unknown as BrowserToggleState;
-			} else {
-				savedState = migrateLegacyState(data) ?? undefined;
 			}
 		}
 	}
@@ -225,8 +190,8 @@ export function getToggleState(): boolean {
 	return _lastToggleState;
 }
 
-/** @internal Exported for testing only: reset the toggle tracker to its default */
-export function _resetToggleStateForTest(): void {
+/** @internal Reset the toggle tracker to its default (test helper). */
+function _resetToggleStateForTest(): void {
 	_lastToggleState = true;
 }
 
@@ -297,6 +262,11 @@ function applyLearnState(pi: ExtensionAPI, enable: boolean): void {
 	}
 }
 
+// ── Test-only exports ──────────────────────────────────
+// These are exported solely for unit testing via
+// __tests__/helpers/toggle-test-utils.ts. Do not import
+// them directly from production code.
+/** @internal */
 export {
 	getRegisteredBrowserTools,
 	isBrowserEnabled,
@@ -308,7 +278,7 @@ export {
 	getRegisteredLearnTools,
 	isLearnEnabled,
 	applyLearnState,
-	migrateLegacyState,
+	_resetToggleStateForTest,
 };
 export type { BrowserToggleState };
 

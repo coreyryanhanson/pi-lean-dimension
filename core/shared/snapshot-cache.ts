@@ -15,9 +15,9 @@
  * @module snapshot-cache
  */
 
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { writeFileSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
+import { BROWSER_TEMP_DIR, safeTaskId, ensureBrowserTempDir } from "./paths.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────
 
@@ -31,16 +31,13 @@ export const SNAPSHOT_TRUNCATE_THRESHOLD = 2800;
 /** Maximum cached snapshot files per task. */
 const MAX_FILES_PER_TASK = 2;
 
-/** Temp file directory for snapshot caches. */
-const SNAPSHOT_CACHE_DIR = `${tmpdir()}/pi-browser`;
-
 // ─── Types ──────────────────────────────────────────────────────────────
 
 /** Result of a cache attempt (null = not cached for any reason). */
 export interface CacheResult {
 	/** Absolute path to the cached snapshot file. */
 	path: string;
-	/** Snapshot fingerprint (for staleness detection in Phase 2). */
+	/** Snapshot fingerprint (for staleness detection). */
 	fingerprint: string;
 }
 
@@ -69,13 +66,6 @@ function sha256Prefix(content: string): string {
 }
 
 /**
- * Sanitize a taskId for use in filenames.
- */
-function safeTaskId(taskId: string): string {
-	return taskId.replace(/[^a-zA-Z0-9-]/g, "_");
-}
-
-/**
  * Build a snapshot cache file path.
  */
 function buildCacheFilePath(
@@ -84,18 +74,7 @@ function buildCacheFilePath(
 	index: number,
 ): string {
 	const tid = safeTaskId(taskId);
-	return `${SNAPSHOT_CACHE_DIR}/snapshot-${tid}-${digest}-${index}.txt`;
-}
-
-/**
- * Ensure the cache directory exists.
- */
-function ensureCacheDir(): void {
-	try {
-		mkdirSync(SNAPSHOT_CACHE_DIR, { recursive: true });
-	} catch {
-		// best-effort — writeFileSync will fail below and be caught
-	}
+	return `${BROWSER_TEMP_DIR}/snapshot-${tid}-${digest}-${index}.txt`;
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────
@@ -133,7 +112,7 @@ export function cacheSnapshot(
 	}
 
 	try {
-		ensureCacheDir();
+		ensureBrowserTempDir();
 
 		const digest = sha256Prefix(snapshot);
 		const existingEntries = activeSnapshotFiles.get(taskId) ?? [];
@@ -218,7 +197,7 @@ export function removeAllSnapshotFiles(): void {
 
 	// Also attempt to remove the cache directory itself
 	try {
-		rmSync(SNAPSHOT_CACHE_DIR, { recursive: true, force: true });
+		rmSync(BROWSER_TEMP_DIR, { recursive: true, force: true });
 	} catch {
 		/* best-effort — dir may not be empty due to other files */
 	}

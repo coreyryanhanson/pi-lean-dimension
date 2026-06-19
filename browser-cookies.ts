@@ -7,31 +7,7 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as router from "./core/router.js";
-import { sessionManager } from "./core/shared/session-manager.js";
-
-// ─── Helpers ─────────────────────────────────────────────────────
-
-/**
- * Resolve the taskId for the current pi session.
- *
- * This matches the taskId assigned by index.ts's monotonic counter
- * (which can't be replicated here), so we look it up from the session
- * manager instead.
- */
-function resolveTaskId(ctx: ExtensionContext): string {
-	const mgr = (ctx as unknown as Record<string, unknown>)?.sessionManager as
-		| { getSessionId?: () => string }
-		| undefined;
-	const piSessionId = mgr?.getSessionId?.();
-	if (piSessionId) {
-		const found = sessionManager.getTaskIdForPiSessionId(piSessionId);
-		if (found) return found;
-	}
-	// Fallback: use the first active session
-	const active = sessionManager.getActiveSessions();
-	if (active.length > 0) return active[0]!.taskId;
-	return "browser-default";
-}
+import { taskId } from "./core/shared/task-id.js";
 
 // ─── Handler ─────────────────────────────────────────────────────
 
@@ -46,7 +22,9 @@ export async function handleCookiesSubcommand(
 	ctx: ExtensionContext,
 ): Promise<void> {
 	if (sub === "" || sub === "list") {
-		const result = await router.getCookies(resolveTaskId(ctx));
+		const result = await router.getCookies(
+			taskId(ctx as { sessionManager?: { getSessionId?(): string } }),
+		);
 		if (!result.success) {
 			ctx.ui.notify(
 				`Failed to get cookies: ${result.error ?? "unknown error"}`,
@@ -89,7 +67,9 @@ export async function handleCookiesSubcommand(
 			);
 			return;
 		}
-		const result = await router.clearCookies(resolveTaskId(ctx));
+		const result = await router.clearCookies(
+			taskId(ctx as { sessionManager?: { getSessionId?(): string } }),
+		);
 		if (!result.success) {
 			ctx.ui.notify(
 				`Failed to clear cookies: ${result.error ?? "unknown error"}`,

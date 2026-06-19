@@ -57,26 +57,17 @@ class BrowserBridge:
     Subclass this and override:
 
     * ``create_browser_session(task_id, config)`` — mandatory
-    * ``create_browser_context(config)`` — mandatory for shared-context support
+    * ``create_browser_context(config)`` — mandatory (creates isolated context per task)
     * Any operation methods you want to customise (optional)
     * ``close_browser_session(task_id)`` — optional (default unregisters)
 
     Call ``run()`` to start the JSON-RPC command loop.
 
-    Shared contexts (Phase 5+)
-    --------------------------
-    Named profiles share a single BrowserContext across multiple tasks
-    (Firefox-tab model).  The bridge tracks per-profile BrowserContexts
-    in ``_profile_contexts`` with reference counting.
-
-    - ``ensure_profile_session(task_id, profile_name, config)`` — get or
-      create a page in a shared profile context.
-    - ``remove_profile_session(task_id, profile_name)`` — close a page and
-      decrement ref count; last page closes the shared context.
-    - ``do_new_page(task_id, profile_name)`` — create a page in an existing
-      shared context (called when a second task joins a profile).
-    - ``do_close_page(task_id, profile_name)`` — close one page without
-      closing the shared context.
+        Named profiles are fully handled by the TypeScript side via
+    ``core/shared/storage-state.ts`` (disk persistence).  The Python
+    bridge receives ``storageState`` in the navigate request and applies
+    it when creating a new BrowserContext — it does NOT track shared
+    contexts across tasks.
     """
 
     # ── Session storage ─────────────────────────────────────────
@@ -92,14 +83,9 @@ class BrowserBridge:
     #: Whether the bridge is still running.
     _running: bool
 
-    #: Per-profile-name shared BrowserContext tracking for named profiles.
-    #: ``{profile_name: {"context": <BrowserContext>, "ref_count": int}}``
-    _profile_contexts: dict[str, dict[str, Any]]
-
     def __init__(self) -> None:
         self.sessions = {}
         self.element_caches = {}
-        self._profile_contexts = {}
         self._running = False
 
     # ── Subclass hooks ──────────────────────────────────────────
@@ -127,11 +113,12 @@ class BrowserBridge:
         self.element_caches.pop(task_id, None)
 
     def create_browser_context(self, config: dict[str, Any]) -> Any:
-        """Create a standalone BrowserContext (no Page) for shared profiles.
+        """Create a new isolated BrowserContext for a task session.
 
-        Used by ``ensure_profile_session()`` when a named profile's
-        BrowserContext doesn't exist yet.  The returned context is stored
-        in ``_profile_contexts`` and reused across tasks.
+        Each task gets its own BrowserContext with no sharing between
+        tasks.  Named profiles are handled by the TypeScript side via
+        ``core/shared/storage-state.ts`` — the ``config`` may contain
+        ``storageState`` to restore cookies and localStorage.
 
         Args:
             config: Configuration dict (may contain ``storageState``,
@@ -141,11 +128,10 @@ class BrowserBridge:
             A backend-specific BrowserContext object.
 
         Raises:
-            NotImplementedError: if the subclass doesn't support shared contexts.
+            NotImplementedError: if the subclass doesn't implement this.
         """
         raise NotImplementedError(
-            f"{type(self).__name__} must implement create_browser_context() "
-            "for shared-context (named profile) support"
+            f"{type(self).__name__} must implement create_browser_context()"
         )
 
     # ── Session helpers ─────────────────────────────────────────
@@ -173,69 +159,8 @@ class BrowserBridge:
         self.sessions[task_id] = new_session
         return new_session
 
-    def ensure_profile_session(
-        self, task_id: str, profile_name: str, config: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Get or create a page within a shared profile context.
+    # ── Page session setup hook ──────────────────────────────────
 
-        If a shared BrowserContext for ``profile_name`` already exists,
-        create a new Page within it (incrementing the ref count).
-        Otherwise, create a new BrowserContext via
-        ``create_browser_context(config)`` and set ref count to 1.
-
-        Returns a session dict (same shape as ``create_browser_session()``).
-        """
-        # Check if this task already has a session (shouldn't, but be safe)
-        existing = self.get_session(task_id)
-        if existing is not None:
-            return existing
-
-        # Get or create the shared BrowserContext for this profile
-        profile_entry = self._profile_contexts.get(profile_name)
-        if profile_entry is None:
-            context = self.create_browser_context(config)
-            profile_entry = {"context": context, "ref_count": 0}
-            self._profile_contexts[profile_name] = profile_entry
-
-        context = profile_entry["context"]
-
-        # Create a page in the shared context and set up event handlers
-        page = context.new_page()
-        new_session = self._setup_page_session(page)
-        profile_entry["ref_count"] += 1
-
-        self.sessions[task_id] = new_session
-        return new_session
-
-    def remove_profile_session(self, task_id: str, profile_name: str) -> None:
-        """Close a page in a shared profile context and decrement ref count.
-
-        When the ref count reaches zero, the shared BrowserContext is closed
-        and removed from ``_profile_contexts``.
-        """
-        session = self.sessions.get(task_id)
-        if session is not None:
-            page = session.get("page")
-            if page is not None:
-                try:
-                    if not page.is_closed():
-                        page.close()
-                except Exception:
-                    pass
-            self.sessions.pop(task_id, None)
-            self.element_caches.pop(task_id, None)
-
-        profile_entry = self._profile_contexts.get(profile_name)
-        if profile_entry is not None:
-            profile_entry["ref_count"] -= 1
-            if profile_entry["ref_count"] <= 0:
-                try:
-                    profile_entry["context"].close()
-                except Exception:
-                    pass
-                self._profile_contexts.pop(profile_name, None)
-
-    # Shared-context page setup — override in subclasses that handle console/dialog capture
     def _setup_page_session(self, page: Any) -> dict[str, Any]:
         """Set up event handlers (console capture, dialog dismissal) on a new page.
 
@@ -271,12 +196,9 @@ class BrowserBridge:
         - ``storageState``: Playwright storage state for session restoration.
         - ``profileName``: Named profile name (e.g. "work", "shopping").
         - ``profileMode``: ``"none"`` / ``"session"`` / ``"named"``.
-
-          - ``"named"``: use/create a shared BrowserContext for this profile.
-          - ``"session"`` or ``None``: create a task-isolated BrowserContext
-            (current default behaviour).
-          - ``"none"``: create a fresh task-isolated context (equivalent
-            to profileMode=None).
+          All modes create task-isolated BrowserContexts; named profiles
+          are handled by the TypeScript side via ``storageState``
+          (``core/shared/storage-state.ts``, disk persistence).
 
         Must return a dict with keys:
             success (bool), url (str), title (str),
@@ -366,16 +288,6 @@ class BrowserBridge:
             f"{type(self).__name__} must implement do_screenshot()"
         )
 
-    def do_get_images(self, task_id: str) -> dict[str, Any]:
-        """Extract all img tags from the current page.
-
-        Must return a dict with keys:
-            success (bool), images (list) — each with src, alt, width, height
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} must implement do_get_images()"
-        )
-
     def do_get_console_messages(self, task_id: str) -> dict[str, Any]:
         """Get captured console messages.
 
@@ -457,50 +369,17 @@ class BrowserBridge:
             f"{type(self).__name__} must implement do_get_storage_state()"
         )
 
-    def do_new_page(self, task_id: str, profile_name: str) -> dict[str, Any]:
-        """Create a new Page in an existing shared profile context.
-
-        Called when a second (or third, …) task joins a named profile whose
-        shared BrowserContext already exists.  Subclasses must override this
-        to create a page, set up event handlers, and store the session.
-
-        Must return a dict with keys:
-            success (bool)
-        Optionally: error (str)
-        """
-        try:
-            self.ensure_profile_session(task_id, profile_name, {})
-            return {"success": True}
-        except Exception as exc:
-            return {"success": False, "error": str(exc)}
-
-    def do_close_page(self, task_id: str, profile_name: str) -> dict[str, Any]:
-        """Close one page in a shared profile context (decrement ref count).
-
-        When the last page is closed (ref count reaches zero), the shared
-        BrowserContext is also closed.
-
-        Must return a dict with keys:
-            success (bool), refCount (int) — remaining pages in this context
-        """
-        profile_entry = self._profile_contexts.get(profile_name)
-        remaining = profile_entry["ref_count"] - 1 if profile_entry else 0
-        self.remove_profile_session(task_id, profile_name)
-        return {"success": True, "refCount": max(remaining, 0)}
-
     def do_cleanup(self, task_id: str, profileName: Optional[str] = None) -> dict[str, Any]:
         """Clean up resources for a specific task.
 
-        When ``profileName`` is provided and the task belongs to a shared
-        profile context, delegates to ``do_close_page()`` instead of
-        ``close_browser_session()``.
+        Named profiles are handled by the TypeScript side
+        (``python-adapter.ts`` auto-saves storage state before calling
+        cleanup), so this method always calls ``close_browser_session()``
+        regardless of ``profileName``.
 
         Must return a dict with keys:
             success (bool)
-        Optionally: refCount (int) — remaining pages when profileName set
         """
-        if profileName is not None:
-            return self.do_close_page(task_id, profileName)
         self.close_browser_session(task_id)
         return {"success": True}
 
@@ -580,11 +459,6 @@ class BrowserBridge:
                 result = self.do_screenshot(task_id, full_page)
                 return make_success_response(cmd_id, result)
 
-            if method == "browser.getImages":
-                task_id = self._require_param(params, "taskId", str, cmd_id)
-                result = self.do_get_images(task_id)
-                return make_success_response(cmd_id, result)
-
             if method == "browser.getConsoleMessages":
                 task_id = self._require_param(params, "taskId", str, cmd_id)
                 result = self.do_get_console_messages(task_id)
@@ -625,18 +499,6 @@ class BrowserBridge:
             if method == "browser.getStorageState":
                 task_id = self._require_param(params, "taskId", str, cmd_id)
                 result = self.do_get_storage_state(task_id)
-                return make_success_response(cmd_id, result)
-
-            if method == "browser.newPage":
-                task_id = self._require_param(params, "taskId", str, cmd_id)
-                profile_name = self._require_param(params, "profileName", str, cmd_id)
-                result = self.do_new_page(task_id, profile_name)
-                return make_success_response(cmd_id, result)
-
-            if method == "browser.closePage":
-                task_id = self._require_param(params, "taskId", str, cmd_id)
-                profile_name = self._require_param(params, "profileName", str, cmd_id)
-                result = self.do_close_page(task_id, profile_name)
                 return make_success_response(cmd_id, result)
 
             if method == "browser.cleanup":

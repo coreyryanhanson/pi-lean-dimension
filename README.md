@@ -11,7 +11,7 @@
 
 1. [Quick Start](#quick-start)
 2. [`/web` Command — Browser Toggle & Profiles](#web-command--browser-toggle--profiles)
-3. [All 13 Tools](#all-13-tools)
+3. [All 12 Tools](#all-12-tools)
 4. [Stateless Fetching (web-fetch)](#stateless-fetching-web-fetch)
 5. [Navigation Guides (web-guide & web-learn)](#navigation-guides-web-guide--web-learn)
 6. [`/web status` — Detailed Runtime Status](#web-status--detailed-runtime-status)
@@ -81,9 +81,9 @@ which defaults to `true`).
 
 ---
 
-## All 13 Tools
+## All 12 Tools
 
-Pi-browser registers 13 tools. The first 10 require a **browser session**
+Pi-browser registers 12 tools. The first 9 require a **browser session**
 (created by `browser-navigate`). `web-fetch`, `web-guide`, and `web-learn` are stateless.
 
 **Auto-captured screenshots:** `browser-navigate` and `browser-snapshot` automatically
@@ -170,12 +170,7 @@ browser-press key="Enter"
 
 Useful keys: `Enter`, `Tab`, `Escape`, `ArrowDown`, `ArrowUp`, `/`.
 
-### 8. `browser-get-images` — List Page Images
-
-Extracts all `<img>` tags with their src, alt text, and dimensions (excludes
-data URIs). Useful for understanding visual layout without a full screenshot.
-
-### 9. `browser-console` — Read Console / Run JS
+### 8. `browser-console` — Read Console / Run JS
 
 Three modes:
 
@@ -185,7 +180,7 @@ Three modes:
 | `browser-console` (no params) | Returns captured console messages (log, warn, error, info) |
 | `browser-console clear=true` | Clears the captured console log |
 
-### 10. `browser-inspect` — Targeted Element Discovery
+### 9. `browser-inspect` — Targeted Element Discovery
 
 A lighter alternative to loading a full snapshot. Queries the page for specific
 elements or extracts text content.
@@ -359,6 +354,12 @@ The extension ships with a **Chromium/Playwright** backend as the default.
 No other backends are installed out of the box.
 
 ### Adding Firefox or Stealth Browsers
+
+> **Parity reference:** The shipped ``chromium-py`` backend (disabled by default)
+> validates the ``python-base`` shared library and serves as a neutral baseline
+> for debugging Python-based stealth backends. When building your own Python
+> plugin, keep ``chromium-py`` as a reference — run both backends through the
+> same navigation suite to detect behavioural drift.
 
 You can manually provision additional backends by:
 

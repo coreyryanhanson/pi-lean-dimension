@@ -1,8 +1,8 @@
 /**
  * Reddit dialog fixture — standalone TypeScript ChromiumPlugin tests.
  *
- * Exercises consent dialog interaction, stacked dialogs, async dialogs,
- * and occlusion rejection against a local test server serving the
+ * Exercises consent dialog interaction, stacked dialogs, and async dialogs
+ * against a local test server serving the
  * shared fixture HTML from reddit-fixture.ts.
  *
  * Includes a ×10 consistency loop that closes the consent dialog
@@ -180,20 +180,6 @@ describe("Reddit dialog — first pass", () => {
 		expect(result.success).toBe(true);
 
 		await plugin.cleanup(A_TASK);
-	});
-
-	it("feed link click is blocked by consent dialog occlusion", async () => {
-		await plugin.navigate(`${serverUrl}/reddit-dialog`, TASK_ID, NAV_TIMEOUT);
-		const snap = await plugin.snapshot(TASK_ID);
-		expect(snap.success).toBe(true);
-
-		// Try clicking a feed post link — should be behind the overlay
-		const info = findRef(snap.snapshot, "Post Title");
-		if (!info) return; // beyond cap
-
-		const result = await plugin.click(TASK_ID, info.ref);
-		expect(result.success).toBe(false);
-		expect(result.error).toBeTruthy();
 	});
 });
 

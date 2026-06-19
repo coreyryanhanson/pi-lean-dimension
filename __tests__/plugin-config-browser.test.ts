@@ -12,7 +12,10 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { loadBrowserConfig } from "../core/plugin-config";
+import {
+	loadBrowserConfig,
+	invalidateConfigCache,
+} from "../core/plugin-config";
 
 // ─── Mock fs to intercept settings.json reads ────────────────────
 
@@ -64,6 +67,7 @@ function mockNoSettings(): void {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	invalidateConfigCache();
 });
 
 // ─── Tests ───────────────────────────────────────────────────────

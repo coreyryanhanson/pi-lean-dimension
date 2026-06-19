@@ -2,8 +2,9 @@
  * Plugin Architecture v2 — Core Interface & Unified Result Types
  *
  * This module defines the contract that every interactive browser backend
- * must satisfy.  The 13 agent-facing operations map 1:1 to tool calls;
- * lifecycle hooks (init, cleanupAll) are called by the framework.
+ * must satisfy.  The 12 required operations map to the registered tools
+ * (screenshot is required internally for auto-capture). Lifecycle hooks
+ * (init, cleanupAll) are called by the framework.
  *
  * Plugins return **raw results**.  The router is responsible for
  * cross-cutting transformations (truncation, count fields, botDetected
@@ -50,6 +51,21 @@ export const DEFAULT_CAPABILITIES: PluginCapabilities = {
 // ─── Unified Result Types ─────────────────────────────────────────
 
 /**
+ * A JavaScript dialog event (alert, confirm, prompt, beforeunload) that was
+ * auto-dismissed by the browser plugin.  Returned as part of navigate,
+ * snapshot, and interaction results so the router can surface them to
+ * the agent without polluting the accessibility tree text.
+ */
+export interface DialogEvent {
+	/** Dialog type as reported by the browser */
+	type: string;
+	/** Dialog message text */
+	message: string;
+	/** How the dialog was handled (always "accepted" for auto-dismiss) */
+	handledAs: "accepted" | "dismissed";
+}
+
+/**
  * Base shape shared by all result types.
  * Operations return `{ success: false, error }` for expected failures.
  * They **may throw** for infrastructure failures (process crash, OOM).
@@ -70,9 +86,13 @@ export interface NavigateResult extends ResultBase {
 	elementCount: number;
 	/** Plugin-internal signal: page may be blocked by bot detection */
 	botDetected?: boolean;
+	/** Whether a dialog (role="dialog" or role="alertdialog") was detected in the parsed element cache */
+	dialogDetected?: boolean;
+	/** Auto-dismissed JavaScript dialogs (alert/confirm/prompt) since last navigate */
+	dialogEvents?: DialogEvent[];
 	/** The active profile mode for this session. */
 	profileMode?: "none" | "session" | "named";
-	/** Phase 2: Which profile was loaded for this session (if any) */
+	/** Which profile was loaded for this session (if any) */
 	profileName?: string;
 }
 
@@ -82,6 +102,8 @@ export interface SnapshotResult extends ResultBase {
 	snapshot: string;
 	/** Number of interactive elements found */
 	elementCount: number;
+	/** Auto-dismissed JavaScript dialogs (alert/confirm/prompt) since last snapshot */
+	dialogEvents?: DialogEvent[];
 }
 
 /** Result from interaction tools (click, type, scroll, goBack, press) */
@@ -94,25 +116,14 @@ export interface InteractionResult extends ResultBase {
 	snapshot?: string;
 	/** Number of interactive elements in the auto-snapshot */
 	elementCount?: number;
+	/** Auto-dismissed JavaScript dialogs since the interaction */
+	dialogEvents?: DialogEvent[];
 }
 
 /** Result from plugin.screenshot() */
 export interface ScreenshotResult extends ResultBase {
 	/** JPEG data URI of the screenshot */
 	dataUri: string;
-}
-
-/** Single image extracted from the page */
-export interface PageImage {
-	src: string;
-	alt: string;
-	width: number;
-	height: number;
-}
-
-/** Result from browser-get-images */
-export interface GetImagesResult extends ResultBase {
-	images: PageImage[];
 }
 
 /** Result from getConsoleMessages */
@@ -172,8 +183,9 @@ export interface StorageStateResult extends ResultBase {
 /**
  * The contract every interactive browser backend must implement.
  *
- * The 13 agent-facing operations map 1:1 to tool calls.
- * Lifecycle hooks are called by the framework, not the agent.
+ * The 12 required operations (plus getElementCache and cookie/storage
+ * methods) make up the full contract. Lifecycle hooks are called by
+ * the framework, not the agent.
  */
 export interface BrowserPlugin {
 	// ── Identity ───────────────────────────────────────────────
@@ -206,11 +218,11 @@ export interface BrowserPlugin {
 		timeoutMs: number,
 		options?: {
 			signal?: AbortSignal;
-			/** Phase 2: Playwright storage state for profile-based session restoration */
+			/** Playwright storage state for profile-based session restoration */
 			storageState?: unknown;
-			/** Phase 2: Profile name for shared-context resolution */
+			/** Profile name for shared-context resolution */
 			profileName?: string;
-			/** Phase 2: Profile mode for shared-context resolution */
+			/** Profile mode for shared-context resolution */
 			profileMode?: "none" | "session" | "named";
 		},
 	): Promise<NavigateResult>;
@@ -241,7 +253,7 @@ export interface BrowserPlugin {
 
 	/**
 	 * Get the full storage state (cookies + localStorage + IndexedDB).
-	 * Primarily used by Phase 2 storage-state persistence.
+	 * Primarily used by storage-state persistence.
 	 */
 	getStorageState(taskId: string): Promise<StorageStateResult>;
 
@@ -263,8 +275,6 @@ export interface BrowserPlugin {
 		taskId: string,
 		options?: { fullPage?: boolean },
 	): Promise<ScreenshotResult>;
-
-	getImages(taskId: string): Promise<GetImagesResult>;
 
 	// ── Console & eval ────────────────────────────────────────
 
@@ -289,29 +299,4 @@ export interface BrowserPlugin {
 	 * Clean up resources for a specific task (browser context, page, etc.).
 	 */
 	cleanup(taskId: string): Promise<void>;
-}
-
-// ─── Plugin Config (from settings.json) ──────────────────────────
-
-/** A single plugin entry from the user's settings.json */
-export interface PluginConfig {
-	/** Stable identifier used in strategy param, session tracking, errors */
-	name: string;
-	/** Directory name under backends/ containing the plugin code */
-	dir: string;
-	/** Whether this plugin is active (default: true) */
-	enabled: boolean;
-	/** Plugin-specific overrides passed to init() */
-	config: Record<string, unknown>;
-}
-
-// ─── Plugin type auto-detection ──────────────────────────────────
-
-export type PluginType = "node" | "python";
-
-/** Result of inspecting a plugin directory for type detection */
-export interface PluginDetection {
-	type: PluginType;
-	/** Absolute or relative path to the entry point */
-	entryPoint: string;
 }

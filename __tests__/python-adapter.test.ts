@@ -9,7 +9,7 @@
  *
  * Tests that DO require Python (run only when python3 is available):
  *   - Full JSON-RPC cycle via mock-python-bridge.py
- *   - All 13 BrowserPlugin operations
+ *   - All BrowserPlugin operations
  *   - Error handling (bridge errors, protocol violations, timeouts)
  *   - Process lifecycle (spawn, ping handshake, shutdown, crash recovery)
  *   - Stderr capture
@@ -334,6 +334,92 @@ describeIntegration("integration with mock Python bridge", () => {
 		expect(result.elementCount).toBe(2);
 	});
 
+	it("passes profileName and profileMode through to navigate", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-browser-profile-"));
+		const bridgePath = writeBridge(
+			{
+				"browser.navigate":
+					"params = _req.get('params', {})\n" +
+					"profile_name = params.get('profileName')\n" +
+					"profile_mode = params.get('profileMode')\n" +
+					"sys.stdout.write(json.dumps({\n" +
+					"'jsonrpc':'2.0',\n" +
+					"'id':_rid,\n" +
+					"'result':{\n" +
+					"    'success':True,\n" +
+					"    'url': params.get('url', ''),\n" +
+					"    'title': 'Profile-' + (profile_name or 'none'),\n" +
+					"    'snapshot': '- [button] X',\n" +
+					"    'elementCount': 1\n" +
+					"}\n" +
+					"}) + '\\n')",
+				"browser.cleanup":
+					"sys.stdout.write(json.dumps({\n" +
+					"'jsonrpc':'2.0',\n" +
+					"'id':_rid,\n" +
+					"'result':{'success':True}\n" +
+					"}) + '\\n')",
+				"browser.snapshot":
+					"sys.stdout.write(json.dumps({\n" +
+					"'jsonrpc':'2.0',\n" +
+					"'id':_rid,\n" +
+					"'result':{\n" +
+					"    'success':True,\n" +
+					"    'snapshot': '- [button] X',\n" +
+					"    'elementCount': 1\n" +
+					"}\n" +
+					"}) + '\\n')",
+			},
+			dir,
+		);
+
+		const adapter = new PythonPluginAdapter("profile-test", {
+			bridgeScript: bridgePath,
+			pythonPath: "python3",
+		});
+
+		try {
+			await adapter.init();
+
+			// Navigate with named profile — verify the adapter passes
+			// profileName and profileMode through to the bridge's RPC params.
+			const result = await adapter.navigate(
+				"https://example.com",
+				"profile-s1",
+				30_000,
+				{
+					profileName: "shopping",
+					profileMode: "named",
+				},
+			);
+			// The bridge echoes profileName in the title (see bridge script).
+			// Success confirms the params were passed through correctly.
+			expect(result.success).toBe(true);
+			expect(result.title).toBe("Profile-shopping");
+
+			// Verify cleanup does NOT pass profileName to the bridge —
+			// the cleanup RPC receives only taskId.
+			await expect(adapter.cleanup("profile-s1")).resolves.toBeUndefined();
+
+			// A second navigate without profile params should work too
+			// (title shows "Profile-none" indicating profileName was absent)
+			const result2 = await adapter.navigate(
+				"https://example.com",
+				"profile-s2",
+				30_000,
+			);
+			expect(result2.success).toBe(true);
+			expect(result2.title).toBe("Profile-none");
+		} finally {
+			await adapter.cleanupAll().catch(() => {});
+			try {
+				rmSync(dir, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
+		}
+	});
+
 	it("takes a snapshot", async () => {
 		await adapter.navigate("https://example.com", "t2", 30_000);
 		const result = await adapter.snapshot("t2");
@@ -392,20 +478,6 @@ describeIntegration("integration with mock Python bridge", () => {
 
 		expect(result.success).toBe(true);
 		expect(result.dataUri).toContain("data:image/jpeg;base64,");
-	});
-
-	it("gets images", async () => {
-		await adapter.navigate("https://example.com", "t9", 30_000);
-		const result = await adapter.getImages("t9");
-
-		expect(result.success).toBe(true);
-		expect(result.images).toHaveLength(1);
-		expect(result.images[0]).toMatchObject({
-			src: "https://example.com/img.png",
-			alt: "test",
-			width: 100,
-			height: 50,
-		});
 	});
 
 	it("gets console messages", async () => {
@@ -511,101 +583,6 @@ describe("session manager integration", () => {
 		} finally {
 			await adapter.cleanupAll().catch(() => {});
 		}
-	});
-});
-
-// ═════════════════════════════════════════════════════════════════════
-//  Heartbeat configuration
-// ═════════════════════════════════════════════════════════════════════
-
-describe("heartbeat config", () => {
-	it("uses default heartbeat interval", () => {
-		const path = tempBridgeScript();
-		try {
-			const adapter = new PythonPluginAdapter("test", {
-				bridgeScript: path,
-			});
-			const hbInterval = privateMethod<number>(adapter, "_heartbeatIntervalMs");
-			expect(hbInterval).toBe(30_000);
-			const maxMisses = privateMethod<number>(adapter, "_maxHeartbeatMisses");
-			expect(maxMisses).toBe(3);
-		} finally {
-			cleanTempBridge(path);
-		}
-	});
-
-	it("accepts custom heartbeat configuration", () => {
-		const path = tempBridgeScript();
-		try {
-			const adapter = new PythonPluginAdapter("test", {
-				bridgeScript: path,
-				heartbeatIntervalMs: 10_000,
-				heartbeatMissesBeforeRestart: 5,
-			});
-			const hbInterval = privateMethod<number>(adapter, "_heartbeatIntervalMs");
-			expect(hbInterval).toBe(10_000);
-			const maxMisses = privateMethod<number>(adapter, "_maxHeartbeatMisses");
-			expect(maxMisses).toBe(5);
-		} finally {
-			cleanTempBridge(path);
-		}
-	});
-
-	it("disables heartbeat when interval is 0", () => {
-		const path = tempBridgeScript();
-		try {
-			const adapter = new PythonPluginAdapter("test", {
-				bridgeScript: path,
-				heartbeatIntervalMs: 0,
-			});
-			const hbInterval = privateMethod<number>(adapter, "_heartbeatIntervalMs");
-			expect(hbInterval).toBe(0);
-			// Heartbeat timer should be null (not started)
-			const hbTimer = privateMethod<ReturnType<typeof setInterval> | null>(
-				adapter,
-				"_heartbeatTimer",
-			);
-			expect(hbTimer).toBeNull();
-		} finally {
-			cleanTempBridge(path);
-		}
-	});
-});
-
-// ═════════════════════════════════════════════════════════════════════
-//  _importErrorGuidance (private method)
-// ═════════════════════════════════════════════════════════════════════
-
-describe("_importErrorGuidance", () => {
-	it("returns empty string for empty stderr", () => {
-		const adapter = createAdapter();
-		const guidance = privateMethod<Function>(
-			adapter,
-			"_importErrorGuidance",
-		).call(adapter);
-		expect(guidance).toBe("");
-	});
-
-	it("returns pip hint for ModuleNotFoundError", () => {
-		const adapter = createAdapter();
-		(adapter as unknown as Record<string, string>)["_stderrAccumulated"] =
-			"Traceback: ModuleNotFoundError: No module named 'playwright'";
-		const guidance = privateMethod<Function>(
-			adapter,
-			"_importErrorGuidance",
-		).call(adapter);
-		expect(guidance).toContain("pip install playwright");
-	});
-
-	it("returns empty string for non-import errors", () => {
-		const adapter = createAdapter();
-		(adapter as unknown as Record<string, string>)["_stderrAccumulated"] =
-			"Generic Python error: division by zero";
-		const guidance = privateMethod<Function>(
-			adapter,
-			"_importErrorGuidance",
-		).call(adapter);
-		expect(guidance).toBe("");
 	});
 });
 

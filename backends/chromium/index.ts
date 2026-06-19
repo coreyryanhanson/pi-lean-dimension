@@ -22,7 +22,6 @@ import {
 import {
 	getDialogLog,
 	installDialogHandlers,
-	formatDialogLog,
 	getConsoleLog as getRawConsoleLog,
 	clearConsoleLog,
 } from "./browser-events.js";
@@ -31,33 +30,37 @@ import { checkPage } from "../../core/shared/bot-detection.js";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { saveStorageState } from "../../core/shared/storage-state.js";
-import type {
-	BrowserPlugin,
-	PluginCapabilities,
-	NavigateResult,
-	SnapshotResult,
-	InteractionResult,
-	ScreenshotResult,
-	GetImagesResult,
-	ConsoleMessagesResult,
-	EvaluateResult,
-	ResultBase,
-	Cookie,
-	CookieResult,
-	ClearCookiesOptions,
-	StorageStateResult,
+import {
+	DEFAULT_CAPABILITIES,
+	type BrowserPlugin,
+	type PluginCapabilities,
+	type DialogEvent,
+	type NavigateResult,
+	type SnapshotResult,
+	type InteractionResult,
+	type ScreenshotResult,
+	type ConsoleMessagesResult,
+	type EvaluateResult,
+	type ResultBase,
+	type Cookie,
+	type CookieResult,
+	type ClearCookiesOptions,
+	type StorageStateResult,
 } from "../../core/plugin-api.js";
 
 // ─── Capabilities ──────────────────────────────────────────────────
 
 const CHROMIUM_CAPABILITIES: PluginCapabilities = {
-	supportsFullPageScreenshot: true,
-	supportsConsoleCapture: true,
-	supportsJavaScriptEvaluate: true,
-	supportsBotDetection: true,
-	supportsDialogAutoDismissal: true,
-	supportsAbortSignal: true,
-	engine: "chromium",
+	...DEFAULT_CAPABILITIES,
+};
+
+// ─── Types ────────────────────────────────────────────────────────
+
+/** A per-task page entry: isolated BrowserContext + Page + optional profile name. */
+type PageEntry = {
+	context: BrowserContext;
+	page: Page;
+	profileName?: string;
 };
 
 // ─── ChromiumPlugin ───────────────────────────────────────────────
@@ -83,32 +86,15 @@ export class ChromiumPlugin implements BrowserPlugin {
 	 * Per-task context + page tracking.
 	 * Each task gets its own isolated BrowserContext created fresh per navigate.
 	 */
-	private _pages = new Map<
-		string,
-		{
-			context: BrowserContext;
-			page: Page;
-			/** Profile name if this page belongs to a named/session profile, undefined for ephemeral */
-			profileName?: string;
-		}
-	>();
+	private _pages = new Map<string, PageEntry>();
 
 	/** Per-task element cache (ref → AriaCachedNode) */
 	private _elementCache = new Map<string, Map<string, AriaCachedNode>>();
 
-	/** Timeout (ms) for verify-click occlusion fallback. Default: 1500. */
-	private _verifyClickTimeoutMs = 1500;
-
 	// ── Lifecycle ───────────────────────────────────────────────
 
-	async init(config?: Record<string, unknown>): Promise<void> {
-		// Accept verifyClickTimeoutMs from config for Experiment 2
-		if (config?.verifyClickTimeoutMs != null) {
-			const v = Number(config.verifyClickTimeoutMs);
-			if (Number.isFinite(v) && v > 0) {
-				this._verifyClickTimeoutMs = v;
-			}
-		}
+	async init(_config?: Record<string, unknown>): Promise<void> {
+		// No config needed — all behavior is hardcoded defaults.
 	}
 
 	async cleanupAll(): Promise<void> {
@@ -251,6 +237,31 @@ export class ChromiumPlugin implements BrowserPlugin {
 	}
 
 	/**
+	 * Returns the page for `taskId` or `null` if there is no active session.
+	 * Logs a "No active session" debug event when `op` is provided.
+	 */
+	private requirePage(taskId: string, op?: string): Page | null {
+		const page = this.getPage(taskId);
+		if (!page && op) {
+			this._log(op, { taskId, success: false, error: "No active session" });
+		}
+		return page ?? null;
+	}
+
+	/**
+	 * Returns the full page entry (context + page) for `taskId` or `null`.
+	 * Logs a "No active session" debug event when `op` is provided.
+	 * Used by cookie/storage methods that also need the BrowserContext.
+	 */
+	private requireEntry(taskId: string, op?: string): PageEntry | null {
+		const entry = this._pages.get(taskId);
+		if (!entry && op) {
+			this._log(op, { taskId, success: false, error: "No active session" });
+		}
+		return entry ?? null;
+	}
+
+	/**
 	 * Public interface — returns null when no cache exists (no session yet).
 	 * Does NOT auto-create an empty cache.
 	 */
@@ -275,7 +286,11 @@ export class ChromiumPlugin implements BrowserPlugin {
 	private async takeSnapshot(
 		taskId: string,
 		page: Page,
-	): Promise<{ snapshot: string; elementCount: number }> {
+	): Promise<{
+		snapshot: string;
+		elementCount: number;
+		dialogEvents: DialogEvent[];
+	}> {
 		try {
 			const snap = await page.ariaSnapshot();
 			const parsed = parseSnapshot(snap);
@@ -286,87 +301,26 @@ export class ChromiumPlugin implements BrowserPlugin {
 				this.getOrCreateCache(taskId).set(ref, node);
 			}
 
-			// Check for auto-dismissed dialogs
-			const dialogInfo = formatDialogLog(taskId);
-			const text = dialogInfo
-				? parsed.text + "\n\n--- Auto-dismissed dialogs ---\n" + dialogInfo
-				: parsed.text;
+			// Collect recent auto-dismissed dialog events (last 10)
+			const rawDialogs = getDialogLog(taskId);
+			const dialogEvents = rawDialogs.slice(-10).map((d) => ({
+				type: d.type,
+				message: d.message,
+				handledAs: d.handledAs,
+			}));
 
-			return { snapshot: text, elementCount: parsed.count };
+			return {
+				snapshot: parsed.text,
+				elementCount: parsed.count,
+				dialogEvents,
+			};
 		} catch {
-			return { snapshot: "(snapshot not available)", elementCount: 0 };
+			return {
+				snapshot: "(snapshot not available)",
+				elementCount: 0,
+				dialogEvents: [],
+			};
 		}
-	}
-
-	/**
-	 * Check if a locator is visually obscured by another element (modal, overlay).
-	 *
-	 * Uses `document.elementFromPoint()` at the locator's center to verify the
-	 * target is the top-most element at that coordinate. Returns the occlusion
-	 * error if obscured, or null if clear to proceed.
-	 */
-	private async checkOcclusion(
-		locator: import("playwright").Locator,
-		ref: string,
-	): Promise<{ success: false; error: string } | null> {
-		try {
-			// Scroll element into view with center alignment so the center
-			// point is within the viewport for elementFromPoint() checking.
-			// Then check occlusion in a single evaluate to avoid layout races.
-			const isObscured = await locator.evaluate((el: Element) => {
-				el.scrollIntoView({ block: "center", inline: "nearest" });
-				const rect = el.getBoundingClientRect();
-				if (rect.width === 0 || rect.height === 0) return true;
-				const x = rect.left + rect.width / 2;
-				const y = rect.top + rect.height / 2;
-				if (
-					y < 0 ||
-					y > (window.innerHeight || document.documentElement.clientHeight) ||
-					x < 0 ||
-					x > (window.innerWidth || document.documentElement.clientWidth)
-				) {
-					return true;
-				}
-				const topEl = document.elementFromPoint(x, y);
-				if (!topEl) return true;
-				// If topEl is our element or a descendant, we're clear
-				return !(topEl === el || el.contains(topEl));
-			});
-
-			if (isObscured) {
-				const occlusionResult = {
-					success: false as const,
-					error:
-						`Element ${ref} is obscured by another element (likely a modal/overlay). ` +
-						`Try pressing Escape (browser-press key="Escape") to dismiss the overlay, then retry.`,
-				};
-
-				this._log("occlusion", {
-					ref,
-					isObscured: true,
-					verifyClick: "skipped",
-					reason: "elementFromPoint",
-				});
-
-				return occlusionResult;
-			}
-
-			this._log("occlusion", {
-				ref,
-				isObscured: false,
-				verifyClick: "skipped",
-				reason: "elementFromPoint",
-			});
-		} catch {
-			// If the check itself fails, proceed with click (fail-safe)
-			this._log("occlusion", {
-				ref,
-				isObscured: false,
-				verifyClick: "skipped",
-				reason: "elementFromPoint",
-			});
-		}
-		return null;
 	}
 
 	/**
@@ -383,9 +337,13 @@ export class ChromiumPlugin implements BrowserPlugin {
 			const bodyText = await page.evaluate(
 				() => document.body?.innerText || "",
 			);
-			// checkPage handles both: title gets only challenge phrases,
-			// body also gets high-specificity CDN patterns via BODY_ONLY_SIGNALS.
-			return checkPage(title, bodyText).isBlocked;
+			// Also grab raw HTML to check for CAPTCHA widget embed codes.
+			const html = await page.evaluate(
+				() => document.documentElement?.innerHTML || "",
+			);
+			// checkPage handles all three: title (challenge phrases),
+			// body (challenge phrases + CDN patterns), and HTML (CAPTCHA embeds).
+			return checkPage(title, bodyText, html).isBlocked;
 		} catch {
 			return false;
 		}
@@ -478,23 +436,14 @@ export class ChromiumPlugin implements BrowserPlugin {
 			// so JS-injected challenge content is present when we check.
 			const botDetected = await this.checkBotDetection(page);
 
-			// Take accessibility snapshot
-			const snap = await page.ariaSnapshot();
-			const parsed = parseSnapshot(snap);
-
-			// Cache elements for this session
-			this.getOrCreateCache(taskId).clear();
-			for (const [ref, node] of parsed.elements) {
-				this.getOrCreateCache(taskId).set(ref, node);
-			}
-
 			const title = await page.title();
 
-			// Check for auto-dismissed dialogs
-			const dialogInfo = formatDialogLog(taskId);
-			const snapshotText = dialogInfo
-				? parsed.text + "\n\n--- Auto-dismissed dialogs ---\n" + dialogInfo
-				: parsed.text;
+			// Take accessibility snapshot + collect dialog events
+			const {
+				snapshot: snapshotText,
+				elementCount,
+				dialogEvents,
+			} = await this.takeSnapshot(taskId, page);
 
 			// Update session manager
 			sessionManager.updateSession(taskId, {
@@ -508,7 +457,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				plugin: "chromium",
 				success: true,
 				botDetected: botDetected ?? false,
-				elementCount: parsed.count,
+				elementCount,
 				time: Math.round(performance.now() - _start),
 			});
 
@@ -517,8 +466,9 @@ export class ChromiumPlugin implements BrowserPlugin {
 				url: page.url(),
 				title,
 				snapshot: snapshotText,
-				elementCount: parsed.count,
+				elementCount,
 				botDetected,
+				dialogEvents,
 			};
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : String(err);
@@ -568,16 +518,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	async snapshot(taskId: string): Promise<SnapshotResult> {
 		const _start = performance.now();
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId, "snapshot");
 		if (!page) {
-			this._log("snapshot", {
-				taskId,
-				success: false,
-				elementCount: 0,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
-
 			return {
 				success: false,
 				snapshot: "",
@@ -587,33 +529,28 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 
 		try {
-			const snap = await page.ariaSnapshot();
-			const parsed = parseSnapshot(snap);
+			const {
+				snapshot: snapText,
+				elementCount,
+				dialogEvents,
+			} = await this.takeSnapshot(taskId, page);
 
-			// Update cache
-			this.getOrCreateCache(taskId).clear();
-			for (const [ref, node] of parsed.elements) {
-				this.getOrCreateCache(taskId).set(ref, node);
-			}
-
-			// Count auto-dismissed dialog entries for the log
-			// The dialog info is NOT embedded in parsed.text in this path
-			// (unlike takeSnapshot/navigate which format it), so check via supervisor.
-			const dialogBlocks = getDialogLog(taskId).length;
+			const dialogBlocks = dialogEvents.length;
 
 			this._log("snapshot", {
 				taskId,
 				success: true,
-				elementCount: parsed.count,
+				elementCount,
 				dialogBlocks,
-				fingerprint: parsed.text.slice(0, 16),
+				fingerprint: snapText.slice(0, 16),
 				time: Math.round(performance.now() - _start),
 			});
 
 			return {
 				success: true,
-				snapshot: parsed.text,
-				elementCount: parsed.count,
+				snapshot: snapText,
+				elementCount,
+				dialogEvents,
 			};
 		} catch (err: unknown) {
 			this._log("snapshot", {
@@ -638,18 +575,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 	async click(taskId: string, ref: string): Promise<InteractionResult> {
 		const _start = performance.now();
 		const phases: Record<string, number> = {};
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId, "click");
 		if (!page) {
-			this._log("click", {
-				taskId,
-				ref,
-				role: "(none)",
-				name: "(none)",
-				occlusionCheck: "skipped",
-				result: "fail",
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -662,7 +589,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: "(none)",
 				name: "(none)",
-				occlusionCheck: "skipped",
 				result: "fail",
 				error: `Element ${ref} not found in accessibility tree`,
 				time: Math.round(performance.now() - _start),
@@ -680,7 +606,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: node.role,
 				name: node.name,
-				occlusionCheck: "skipped",
 				result: "fail",
 				error: `Could not build locator (role: ${node.role})`,
 				time: Math.round(performance.now() - _start),
@@ -692,40 +617,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 		phases.locate = Math.round(performance.now() - _start);
 
-		// Fast occlusion check — if elementFromPoint says blocked, verify with a
-		// short click attempt to eliminate false positives (Reddit's close button
-		// uses pointer-events: none child elements that confuse elementFromPoint).
-		const occlusionCheck = await this.checkOcclusion(locator, ref);
-		phases.occlusion = Math.round(performance.now() - _start);
-
-		let occlusionStatus = "verified";
-		if (occlusionCheck) {
-			// Element appears obscured — verify with a quick click attempt
-			try {
-				await locator.click({ timeout: this._verifyClickTimeoutMs });
-				// Click succeeded — occlusion was a false positive, continue below
-				occlusionStatus = "blocked_verify_ok";
-			} catch {
-				// Confirmed obscured — return the helpful error
-				this._log("click", {
-					taskId,
-					ref,
-					role: node.role,
-					name: node.name,
-					occlusionCheck: "blocked",
-					result: "fail",
-					error: `Occlusion blocked: ${occlusionCheck.error}`,
-					timings: phases,
-					time: Math.round(performance.now() - _start),
-				});
-				return occlusionCheck;
-			}
-		}
-
 		try {
-			if (!occlusionCheck) {
-				await locator.click({ timeout: 5000 });
-			}
+			await locator.click({ timeout: 5000 });
 			phases.click = Math.round(performance.now() - _start);
 
 			// Wait for potential navigation
@@ -748,7 +641,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: node.role,
 				name: node.name,
-				occlusionCheck: occlusionStatus,
 				result: "success",
 				timings: phases,
 				time: Math.round(performance.now() - _start),
@@ -760,6 +652,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				newTitle,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
+				dialogEvents: snapResult.dialogEvents,
 			};
 		} catch (err: unknown) {
 			this._log("click", {
@@ -767,7 +660,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: node.role,
 				name: node.name,
-				occlusionCheck: occlusionStatus,
 				result: "fail",
 				error: err instanceof Error ? err.message : String(err),
 				timings: phases,
@@ -787,18 +679,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 		text: string,
 	): Promise<InteractionResult> {
 		const _start = performance.now();
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId, "type");
 		if (!page) {
-			this._log("type", {
-				taskId,
-				ref,
-				role: "(none)",
-				name: "(none)",
-				occlusionCheck: "skipped",
-				result: "fail",
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -811,7 +693,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: "(none)",
 				name: "(none)",
-				occlusionCheck: "skipped",
 				result: "fail",
 				error: `Element ${ref} not found in accessibility tree`,
 				time: Math.round(performance.now() - _start),
@@ -829,7 +710,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: node.role,
 				name: node.name,
-				occlusionCheck: "skipped",
 				result: "fail",
 				error: `Could not build locator (role: ${node.role})`,
 				time: Math.round(performance.now() - _start),
@@ -840,33 +720,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 			};
 		}
 
-		// Fast occlusion check — verify with short click if flagged
-		const occlusionCheck = await this.checkOcclusion(locator, ref);
-
-		let occlusionStatus = "verified";
-		if (occlusionCheck) {
-			try {
-				await locator.click({ timeout: this._verifyClickTimeoutMs });
-				occlusionStatus = "blocked_verify_ok";
-			} catch {
-				this._log("type", {
-					taskId,
-					ref,
-					role: node.role,
-					name: node.name,
-					occlusionCheck: "blocked",
-					result: "fail",
-					error: `Occlusion blocked: ${occlusionCheck.error}`,
-					time: Math.round(performance.now() - _start),
-				});
-				return occlusionCheck;
-			}
-		}
-
 		try {
-			if (!occlusionCheck) {
-				await locator.click({ timeout: 5000 }); // Focus first
-			}
+			await locator.click({ timeout: 5000 }); // Focus first
 			await locator.fill(text);
 
 			// Auto-snapshot
@@ -877,7 +732,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: node.role,
 				name: node.name,
-				occlusionCheck: occlusionStatus,
 				result: "success",
 				elementCount: snapResult.elementCount,
 				time: Math.round(performance.now() - _start),
@@ -887,6 +741,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				success: true,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
+				dialogEvents: snapResult.dialogEvents,
 			};
 		} catch (err: unknown) {
 			this._log("type", {
@@ -894,7 +749,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 				ref,
 				role: node.role,
 				name: node.name,
-				occlusionCheck: occlusionStatus,
 				result: "fail",
 				error: err instanceof Error ? err.message : String(err),
 				time: Math.round(performance.now() - _start),
@@ -911,15 +765,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 		direction: "up" | "down",
 	): Promise<InteractionResult> {
 		const _start = performance.now();
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId, "scroll");
 		if (!page) {
-			this._log("scroll", {
-				taskId,
-				direction,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -944,6 +791,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				success: true,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
+				dialogEvents: snapResult.dialogEvents,
 			};
 		} catch (err: unknown) {
 			this._log("scroll", {
@@ -962,14 +810,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	async goBack(taskId: string): Promise<InteractionResult> {
 		const _start = performance.now();
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId, "goBack");
 		if (!page) {
-			this._log("goBack", {
-				taskId,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -999,6 +841,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				newTitle,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
+				dialogEvents: snapResult.dialogEvents,
 			};
 		} catch (err: unknown) {
 			this._log("goBack", {
@@ -1016,15 +859,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	async press(taskId: string, key: string): Promise<InteractionResult> {
 		const _start = performance.now();
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId, "press");
 		if (!page) {
-			this._log("press", {
-				taskId,
-				key,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -1046,6 +882,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				success: true,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
+				dialogEvents: snapResult.dialogEvents,
 			};
 		} catch (err: unknown) {
 			this._log("press", {
@@ -1068,7 +905,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 		taskId: string,
 		options?: { fullPage?: boolean },
 	): Promise<ScreenshotResult> {
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId);
 		if (!page) {
 			return { success: false, dataUri: "", error: "No active session" };
 		}
@@ -1092,38 +929,6 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 	}
 
-	async getImages(taskId: string): Promise<GetImagesResult> {
-		const page = this.getPage(taskId);
-		if (!page) {
-			return {
-				success: false,
-				images: [],
-				error: "No active session",
-			};
-		}
-
-		try {
-			const images = await page.evaluate(() => {
-				return Array.from(document.querySelectorAll("img"))
-					.map((img) => ({
-						src: img.src,
-						alt: img.alt || "",
-						width: img.naturalWidth || img.width || 0,
-						height: img.naturalHeight || img.height || 0,
-					}))
-					.filter((img) => !img.src.startsWith("data:"));
-			});
-
-			return { success: true, images };
-		} catch (err: unknown) {
-			return {
-				success: false,
-				images: [],
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
-	}
-
 	// ── Console & eval ─────────────────────────────────────────
 
 	async getConsoleMessages(taskId: string): Promise<ConsoleMessagesResult> {
@@ -1139,7 +944,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 	}
 
 	async evaluate(taskId: string, expression: string): Promise<EvaluateResult> {
-		const page = this.getPage(taskId);
+		const page = this.requirePage(taskId);
 		if (!page) {
 			return { success: false, error: "No active session" };
 		}
@@ -1159,14 +964,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	async getCookies(taskId: string, urls?: string[]): Promise<CookieResult> {
 		const _start = performance.now();
-		const entry = this._pages.get(taskId);
+		const entry = this.requireEntry(taskId, "getCookies");
 		if (!entry) {
-			this._log("getCookies", {
-				taskId,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, cookies: [], error: "No active session" };
 		}
 
@@ -1196,14 +995,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	async addCookies(taskId: string, cookies: Cookie[]): Promise<ResultBase> {
 		const _start = performance.now();
-		const entry = this._pages.get(taskId);
+		const entry = this.requireEntry(taskId, "addCookies");
 		if (!entry) {
-			this._log("addCookies", {
-				taskId,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -1235,14 +1028,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 		options?: ClearCookiesOptions,
 	): Promise<ResultBase> {
 		const _start = performance.now();
-		const entry = this._pages.get(taskId);
+		const entry = this.requireEntry(taskId, "clearCookies");
 		if (!entry) {
-			this._log("clearCookies", {
-				taskId,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return { success: false, error: "No active session" };
 		}
 
@@ -1274,14 +1061,8 @@ export class ChromiumPlugin implements BrowserPlugin {
 
 	async getStorageState(taskId: string): Promise<StorageStateResult> {
 		const _start = performance.now();
-		const entry = this._pages.get(taskId);
+		const entry = this.requireEntry(taskId, "getStorageState");
 		if (!entry) {
-			this._log("getStorageState", {
-				taskId,
-				success: false,
-				error: "No active session",
-				time: Math.round(performance.now() - _start),
-			});
 			return {
 				success: false,
 				cookies: [],

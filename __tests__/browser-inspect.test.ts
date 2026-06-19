@@ -22,7 +22,6 @@ import {
 	formatElementList,
 	formatRoleCountSummary,
 } from "../core/shared/dom-extractor.js";
-import type { BrowserPlugin } from "../core/plugin-api.js";
 
 // ─── Helpers ───────────────────────────────────────────────────────
 
@@ -166,74 +165,10 @@ function makeLargeExtractorResponse(paragraphCount: number): string {
 
 describe("runExtractor()", () => {
 	it("returns structured result from valid evaluate response", async () => {
-		const mockPlugin: BrowserPlugin = {
-			name: "test",
-			capabilities: {
-				supportsFullPageScreenshot: true,
-				supportsConsoleCapture: true,
-				supportsJavaScriptEvaluate: true,
-				supportsBotDetection: true,
-				supportsDialogAutoDismissal: true,
-				supportsAbortSignal: false,
-				engine: "chromium",
-			},
-			async evaluate() {
-				return { success: true, result: MOCK_EXTRACTOR_RESPONSE };
-			},
-			async cleanupAll() {},
-			async navigate() {
-				return {
-					success: true,
-					url: "",
-					title: "",
-					snapshot: "",
-					elementCount: 0,
-				};
-			},
-			async snapshot() {
-				return { success: true, snapshot: "", elementCount: 0 };
-			},
-			async click() {
-				return { success: true };
-			},
-			async type() {
-				return { success: true };
-			},
-			async scroll() {
-				return { success: true };
-			},
-			async goBack() {
-				return { success: true };
-			},
-			async press() {
-				return { success: true };
-			},
-			async screenshot() {
-				return { success: true, dataUri: "" };
-			},
-			async getImages() {
-				return { success: true, images: [] };
-			},
-			async getConsoleMessages() {
-				return { success: true, messages: [] };
-			},
-			async clearConsole() {},
-			async cleanup() {},
-			getElementCache() {
-				return null;
-			},
-			async getCookies() {
-				return { success: true, cookies: [] };
-			},
-			async addCookies() {
-				return { success: true };
-			},
-			async clearCookies() {
-				return { success: true };
-			},
-			async getStorageState() {
-				return { success: true, cookies: [], origins: [] };
-			},
+		const mockPlugin = new MockPlugin("test");
+		mockPlugin.evalResult = {
+			success: true,
+			result: MOCK_EXTRACTOR_RESPONSE,
 		};
 
 		const result = await runExtractor("test-task", mockPlugin);
@@ -248,74 +183,10 @@ describe("runExtractor()", () => {
 	});
 
 	it("returns null on evaluate failure", async () => {
-		const mockPlugin: BrowserPlugin = {
-			name: "test",
-			capabilities: {
-				supportsFullPageScreenshot: true,
-				supportsConsoleCapture: true,
-				supportsJavaScriptEvaluate: true,
-				supportsBotDetection: true,
-				supportsDialogAutoDismissal: true,
-				supportsAbortSignal: false,
-				engine: "chromium",
-			},
-			async evaluate() {
-				return { success: false, error: "evaluate failed" };
-			},
-			async cleanupAll() {},
-			async navigate() {
-				return {
-					success: true,
-					url: "",
-					title: "",
-					snapshot: "",
-					elementCount: 0,
-				};
-			},
-			async snapshot() {
-				return { success: true, snapshot: "", elementCount: 0 };
-			},
-			async click() {
-				return { success: true };
-			},
-			async type() {
-				return { success: true };
-			},
-			async scroll() {
-				return { success: true };
-			},
-			async goBack() {
-				return { success: true };
-			},
-			async press() {
-				return { success: true };
-			},
-			async screenshot() {
-				return { success: true, dataUri: "" };
-			},
-			async getImages() {
-				return { success: true, images: [] };
-			},
-			async getConsoleMessages() {
-				return { success: true, messages: [] };
-			},
-			async clearConsole() {},
-			async cleanup() {},
-			getElementCache() {
-				return null;
-			},
-			async getCookies() {
-				return { success: true, cookies: [] };
-			},
-			async addCookies() {
-				return { success: true };
-			},
-			async clearCookies() {
-				return { success: true };
-			},
-			async getStorageState() {
-				return { success: true, cookies: [], origins: [] };
-			},
+		const mockPlugin = new MockPlugin("test");
+		mockPlugin.evalResult = {
+			success: false,
+			error: "evaluate failed",
 		};
 
 		const result = await runExtractor("test-task", mockPlugin);
@@ -323,74 +194,10 @@ describe("runExtractor()", () => {
 	});
 
 	it("returns null on invalid JSON from evaluate", async () => {
-		const mockPlugin: BrowserPlugin = {
-			name: "test",
-			capabilities: {
-				supportsFullPageScreenshot: true,
-				supportsConsoleCapture: true,
-				supportsJavaScriptEvaluate: true,
-				supportsBotDetection: true,
-				supportsDialogAutoDismissal: true,
-				supportsAbortSignal: false,
-				engine: "chromium",
-			},
-			async evaluate() {
-				return { success: true, result: "not valid json {{{" };
-			},
-			async cleanupAll() {},
-			async navigate() {
-				return {
-					success: true,
-					url: "",
-					title: "",
-					snapshot: "",
-					elementCount: 0,
-				};
-			},
-			async snapshot() {
-				return { success: true, snapshot: "", elementCount: 0 };
-			},
-			async click() {
-				return { success: true };
-			},
-			async type() {
-				return { success: true };
-			},
-			async scroll() {
-				return { success: true };
-			},
-			async goBack() {
-				return { success: true };
-			},
-			async press() {
-				return { success: true };
-			},
-			async screenshot() {
-				return { success: true, dataUri: "" };
-			},
-			async getImages() {
-				return { success: true, images: [] };
-			},
-			async getConsoleMessages() {
-				return { success: true, messages: [] };
-			},
-			async clearConsole() {},
-			async cleanup() {},
-			getElementCache() {
-				return null;
-			},
-			async getCookies() {
-				return { success: true, cookies: [] };
-			},
-			async addCookies() {
-				return { success: true };
-			},
-			async clearCookies() {
-				return { success: true };
-			},
-			async getStorageState() {
-				return { success: true, cookies: [], origins: [] };
-			},
+		const mockPlugin = new MockPlugin("test");
+		mockPlugin.evalResult = {
+			success: true,
+			result: "not valid json {{{",
 		};
 
 		const result = await runExtractor("test-task", mockPlugin);
@@ -398,77 +205,10 @@ describe("runExtractor()", () => {
 	});
 
 	it("returns null when script returns error field", async () => {
-		const mockPlugin: BrowserPlugin = {
-			name: "test",
-			capabilities: {
-				supportsFullPageScreenshot: true,
-				supportsConsoleCapture: true,
-				supportsJavaScriptEvaluate: true,
-				supportsBotDetection: true,
-				supportsDialogAutoDismissal: true,
-				supportsAbortSignal: false,
-				engine: "chromium",
-			},
-			async evaluate() {
-				return {
-					success: true,
-					result: JSON.stringify({ error: "Something went wrong" }),
-				};
-			},
-			async cleanupAll() {},
-			async navigate() {
-				return {
-					success: true,
-					url: "",
-					title: "",
-					snapshot: "",
-					elementCount: 0,
-				};
-			},
-			async snapshot() {
-				return { success: true, snapshot: "", elementCount: 0 };
-			},
-			async click() {
-				return { success: true };
-			},
-			async type() {
-				return { success: true };
-			},
-			async scroll() {
-				return { success: true };
-			},
-			async goBack() {
-				return { success: true };
-			},
-			async press() {
-				return { success: true };
-			},
-			async screenshot() {
-				return { success: true, dataUri: "" };
-			},
-			async getImages() {
-				return { success: true, images: [] };
-			},
-			async getConsoleMessages() {
-				return { success: true, messages: [] };
-			},
-			async clearConsole() {},
-			async cleanup() {},
-			getElementCache() {
-				return null;
-			},
-			async getCookies() {
-				return { success: true, cookies: [] };
-			},
-			async addCookies() {
-				return { success: true };
-			},
-			async clearCookies() {
-				return { success: true };
-			},
-			async getStorageState() {
-				return { success: true, cookies: [], origins: [] };
-			},
+		const mockPlugin = new MockPlugin("test");
+		mockPlugin.evalResult = {
+			success: true,
+			result: JSON.stringify({ error: "Something went wrong" }),
 		};
 
 		const result = await runExtractor("test-task", mockPlugin);

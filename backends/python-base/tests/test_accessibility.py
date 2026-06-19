@@ -276,35 +276,6 @@ class TestParseSnapshotPropertyLines:
         assert "@e1" in result.text
 
 
-# ── max_elements limit ────────────────────────────────────────────
-
-
-class TestParseSnapshotMaxElements:
-    def test_limits_refs(self) -> None:
-        # 3 buttons but max_elements=2 — only 2 get @e refs,
-        # but count still reports total interactive elements found (3).
-        snap = "- button A\n- button B\n- button C"
-        result = parse_snapshot(snap, max_elements=2)
-        assert result.count == 3  # total interactive elements found
-        assert len(result.elements) == 2  # only 2 have refs
-        assert "e1" in result.elements
-        assert "e2" in result.elements
-        assert "e3" not in result.elements
-        # Third button should still appear in output but without @e ref
-        assert "button" in result.text
-        lines_with_e = [l for l in result.text.split("\n") if "@e" in l]
-        assert len(lines_with_e) == 2
-
-    def test_max_elements_zero(self) -> None:
-        snap = "- button A\n- button B"
-        result = parse_snapshot(snap, max_elements=0)
-        assert result.count == 2  # counted but no refs assigned
-        assert result.elements == {}
-        # Both buttons should appear in output without refs
-        assert "button" in result.text
-        assert "@e1" not in result.text
-
-
 # ── All interactive roles produce refs ────────────────────────────
 
 

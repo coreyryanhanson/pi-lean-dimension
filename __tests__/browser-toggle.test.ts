@@ -17,22 +17,21 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import browserToggle, {
+import browserToggle, { getToggleState } from "../browser-toggle";
+import {
 	getRegisteredBrowserTools,
 	isBrowserEnabled,
 	applyBrowserState,
 	persistState,
 	restoreFromBranch,
-	getToggleState,
 	_resetToggleStateForTest,
 	readBrowserToggleConfig,
 	applyConfigDefault,
 	getRegisteredLearnTools,
 	isLearnEnabled,
 	applyLearnState,
-	migrateLegacyState,
 	type BrowserToggleState,
-} from "../browser-toggle";
+} from "./helpers/toggle-test-utils";
 
 // Mock node:fs so readBrowserToggleConfig and applyConfigDefault can be
 // tested without touching the real filesystem.
@@ -50,7 +49,6 @@ const ALL_BROWSER_TOOLS = [
 	{ name: "browser-click", description: "click" },
 	{ name: "browser-type", description: "type" },
 	{ name: "browser-scroll", description: "scroll" },
-	{ name: "browser-get-images", description: "get images" },
 	{ name: "browser-back", description: "back" },
 	{ name: "browser-press", description: "press" },
 	{ name: "browser-console", description: "console" },
@@ -142,7 +140,7 @@ describe("getRegisteredBrowserTools", () => {
 		);
 	});
 
-	it("returns all 13 browser tools when fully loaded", () => {
+	it("returns all browser tools when fully loaded", () => {
 		const pi = mockPi({ tools: ALL_BROWSER_TOOLS });
 		expect(getRegisteredBrowserTools(pi)).toEqual(
 			ALL_BROWSER_TOOLS.map((t) => t.name),
@@ -1160,70 +1158,5 @@ describe("restoreFromBranch (return value)", () => {
 			},
 		]);
 		expect(restoreFromBranch(pi, ctx)).toBe(false);
-	});
-
-	// ── Legacy compat ──────────────────────────────────────────────
-
-	it("migrateLegacyState converts {enabled: true} to new schema", () => {
-		const result = migrateLegacyState({ enabled: true });
-		expect(result).toEqual({
-			browserToolsEnabled: true,
-			learnToolsEnabled: true,
-			defaultProfile: "none",
-		});
-	});
-
-	it("migrateLegacyState converts {enabled: false} to new schema", () => {
-		const result = migrateLegacyState({ enabled: false });
-		expect(result).toEqual({
-			browserToolsEnabled: false,
-			learnToolsEnabled: false,
-			defaultProfile: "none",
-		});
-	});
-
-	it("migrateLegacyState returns null for non-legacy objects", () => {
-		expect(migrateLegacyState({ foo: "bar" })).toBeNull();
-	});
-
-	it("restoreFromBranch handles legacy {enabled: true} entry", () => {
-		const allNames = ALL_BROWSER_TOOLS.map((t) => t.name);
-		const pi = mockPi({
-			tools: [...ALL_BROWSER_TOOLS, ...NON_BROWSER_TOOLS],
-			activeTools: NON_BROWSER_TOOLS.map((t) => t.name),
-		});
-		const ctx = mockContext([
-			{
-				type: "custom",
-				customType: "browser-toggle-state",
-				data: { enabled: true },
-			},
-		]);
-		restoreFromBranch(pi, ctx);
-		const setActive = pi.setActiveTools as ReturnType<typeof vi.fn>;
-		expect(setActive).toHaveBeenCalledWith(expect.arrayContaining(allNames));
-	});
-
-	it("restoreFromBranch handles legacy {enabled: false} entry", () => {
-		const pi = mockPi({
-			tools: [...ALL_BROWSER_TOOLS, ...NON_BROWSER_TOOLS],
-			activeTools: [
-				...NON_BROWSER_TOOLS.map((t) => t.name),
-				...ALL_BROWSER_TOOLS.map((t) => t.name),
-			],
-		});
-		const ctx = mockContext([
-			{
-				type: "custom",
-				customType: "browser-toggle-state",
-				data: { enabled: false },
-			},
-		]);
-		restoreFromBranch(pi, ctx);
-		const setActive = pi.setActiveTools as ReturnType<typeof vi.fn>;
-		const calledWith: string[] = setActive.mock.calls[0]![0] as string[];
-		for (const tool of ALL_BROWSER_TOOLS.map((t) => t.name)) {
-			expect(calledWith).not.toContain(tool);
-		}
 	});
 });

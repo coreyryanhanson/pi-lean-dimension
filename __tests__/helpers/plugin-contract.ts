@@ -150,28 +150,6 @@ const DUPLICATE_HTML = `<!DOCTYPE html>
   <p id="output">ready</p>
 </body></html>`;
 
-/** Page with a modal overlay — tests occlusion detection.
- *
- * A fixed-position overlay covers a background button.  The overlay itself
- * contains interactive elements (accept / close buttons).  Clicking the
- * background button should trigger the occlusion check and fail with a
- * clear error, while clicking the overlay's own buttons should succeed.
- */
-const MODAL_HTML = `<!DOCTYPE html>
-<html><head><title>Contract Test — Modal Overlay</title></head>
-<body>
-  <div id="overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9999; display: flex; align-items: center; justify-content: center;">
-    <div id="modal" style="background: white; padding: 20px; border-radius: 8px; text-align: center;">
-      <p>Cookie Preferences</p>
-      <button id="accept-btn" type="button">Accept all cookies</button>
-      <button id="close-btn" type="button" onclick="document.getElementById('overlay').style.display='none'">Close</button>
-    </div>
-  </div>
-  <h1>Underlying Content</h1>
-  <button id="hidden-btn" type="button">This button is obscured</button>
-  <p>Some content behind the modal.</p>
-</body></html>`;
-
 /** 404 page. */
 const NOT_FOUND_HTML = `<!DOCTYPE html>
 <html><head><title>Not Found</title></head>
@@ -215,7 +193,6 @@ function contractTestHandler(
 		"/page-a": PAGE_A_HTML,
 		"/page-b": PAGE_B_HTML,
 		"/duplicates": DUPLICATE_HTML,
-		"/modal": MODAL_HTML,
 		"/reddit-dialog": REDDIT_DIALOG_HTML,
 		"/reddit-stacked": REDDIT_STACKED_HTML,
 		"/reddit-async": REDDIT_ASYNC_HTML,
@@ -528,31 +505,6 @@ export function runContractTests(
 
 				expect(result).toBeDefined();
 				expect(typeof result.success).toBe("boolean");
-			});
-		});
-
-		// ─── GetImages ───────────────────────────────────────
-
-		describe("getImages()", () => {
-			it("returns a GetImagesResult with required fields", async () => {
-				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
-
-				const result = await plugin.getImages(TASK_ID);
-
-				expect(result).toBeDefined();
-				expect(typeof result.success).toBe("boolean");
-
-				if (result.success) {
-					expect(Array.isArray(result.images)).toBe(true);
-					for (const img of result.images) {
-						expect(typeof img.src).toBe("string");
-						expect(typeof img.alt).toBe("string");
-						expect(typeof img.width).toBe("number");
-						expect(typeof img.height).toBe("number");
-					}
-				} else {
-					expect(result.error).toBeTruthy();
-				}
 			});
 		});
 
@@ -892,50 +844,6 @@ export function runContractTests(
 					);
 				}
 			});
-
-			it("rejects clicks on elements obscured by a modal overlay", async () => {
-				await plugin.navigate(`${server.url}/modal`, TASK_ID, navigateTimeout);
-
-				const snap = await plugin.snapshot(TASK_ID);
-				expect(snap.success).toBe(true);
-
-				// Find the obscured button's @e ref in the snapshot text
-				const lines = snap.snapshot.split("\n");
-				const btnLine = lines.find((l: string) =>
-					l.includes("This button is obscured"),
-				);
-				expect(btnLine).toBeTruthy();
-				const refMatch = btnLine!.match(/@(e\d+)/);
-				expect(refMatch).toBeTruthy();
-				const ref = `@${refMatch![1]}`;
-
-				const result = await plugin.click(TASK_ID, ref);
-
-				expect(result.success).toBe(false);
-				expect(result.error).toMatch(/obscured/i);
-			});
-
-			it("click on overlay elements succeeds (not blocked by occlusion check)", async () => {
-				await plugin.navigate(`${server.url}/modal`, TASK_ID, navigateTimeout);
-
-				const snap = await plugin.snapshot(TASK_ID);
-				expect(snap.success).toBe(true);
-
-				// Find the "Accept all cookies" button in the overlay — this should
-				// NOT be occluded because it IS the foreground element.
-				const lines = snap.snapshot.split("\n");
-				const acceptLine = lines.find((l: string) =>
-					l.includes("Accept all cookies"),
-				);
-				expect(acceptLine).toBeTruthy();
-				const refMatch = acceptLine!.match(/@(e\d+)/);
-				expect(refMatch).toBeTruthy();
-				const ref = `@${refMatch![1]}`;
-
-				const result = await plugin.click(TASK_ID, ref);
-				// The overlay button should be clickable
-				expect(result.success).toBe(true);
-			});
 		});
 
 		// ─── Type ────────────────────────────────────────────
@@ -1037,23 +945,6 @@ export function runContractTests(
 				// Should have reasonable base64 length (at least a few KB)
 				const base64 = result.dataUri.split(",")[1]!;
 				expect(base64.length).toBeGreaterThan(100);
-			});
-		});
-
-		// ─── GetImages ───────────────────────────────────────
-
-		describe("getImages() — real extraction", () => {
-			it("extracts images from the page", async () => {
-				await plugin.navigate(`${server.url}/images`, TASK_ID, navigateTimeout);
-
-				const result = await plugin.getImages(TASK_ID);
-
-				expect(result.success).toBe(true);
-				expect(result.images.length).toBeGreaterThanOrEqual(2);
-
-				const srcs = result.images.map((img) => img.src);
-				expect(srcs.some((s) => s.includes("logo.png"))).toBe(true);
-				expect(srcs.some((s) => s.includes("photo.jpg"))).toBe(true);
 			});
 		});
 
@@ -1318,30 +1209,6 @@ export function runContractTests(
 				expect(result.success).toBe(true);
 
 				await plugin.cleanup(ASYNC_TASK);
-			});
-
-			it("feed link click blocked by dialog occlusion", async () => {
-				await plugin.navigate(
-					`${server.url}/reddit-dialog`,
-					TASK_ID,
-					navigateTimeout,
-				);
-
-				const snap = await plugin.snapshot(TASK_ID);
-				expect(snap.success).toBe(true);
-
-				// Find a feed post link — should be behind the dialog overlay
-				const info = findRef(snap.snapshot, "Post Title");
-				if (!info) {
-					// 100 posts + dialog may push feed beyond element cap; skip
-					return;
-				}
-
-				const result = await plugin.click(TASK_ID, info.ref);
-
-				// The click should be blocked by the consent dialog overlay
-				expect(result.success).toBe(false);
-				expect(result.error).toBeTruthy();
 			});
 		});
 	});

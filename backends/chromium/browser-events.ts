@@ -110,19 +110,3 @@ export function installDialogHandlers(taskId: string, page: Page): void {
 		});
 	});
 }
-
-/**
- * Format dialog log entries for display to the user.
- */
-export function formatDialogLog(taskId: string): string {
-	const log = getDialogLog(taskId);
-	if (log.length === 0) return "";
-
-	return log
-		.map((d) => {
-			const prefix =
-				d.type === "alert" ? "📢" : d.type === "confirm" ? "❓" : "💬";
-			return `${prefix} [${d.type}] ${d.message} (auto-${d.handledAs})`;
-		})
-		.join("\n");
-}

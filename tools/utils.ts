@@ -8,6 +8,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getToggleState } from "../browser-toggle.js";
 import { sessionManager } from "../core/shared/session-manager.js";
+import { taskId } from "../core/shared/task-id.js";
 
 // ─── Status bar ─────────────────────────────────────────────────
 
@@ -46,37 +47,6 @@ export function setLastCtx(ctx: typeof _lastCtx): void {
 	_lastCtx = ctx;
 }
 
-// ─── Task ID resolution ─────────────────────────────────────────
-
-const _sessionKeys = new Map<string, string>();
-let _sessionCounter = 0;
-
-/**
- * Get a stable taskId for the current tool call context.
- *
- * Maps pi session IDs to monotonic "browser-N" keys so that all
- * tool calls within the same pi conversation share the same browser
- * session.
- */
-export function taskId(ctx: {
-	toolCallId?: string;
-	sessionManager?: { getSessionId?: () => string };
-}): string {
-	const piSessionId = ctx?.sessionManager?.getSessionId?.();
-	if (piSessionId) {
-		if (!_sessionKeys.has(piSessionId)) {
-			_sessionKeys.set(piSessionId, `browser-${++_sessionCounter}`);
-		}
-		return _sessionKeys.get(piSessionId)!;
-	}
-	return "browser-default";
-}
-
-/** @internal — for cleanup in index.ts's session_shutdown handler */
-export function deleteSessionKey(piSessionId: string): void {
-	_sessionKeys.delete(piSessionId);
-}
-
 // ─── Profile line formatting ────────────────────────────────────
 
 /**
@@ -100,6 +70,76 @@ export function profileLine(result: {
 	}
 	// Named profile
 	return `Profile: ${result.profileName ?? "unnamed"} (shared)`;
+}
+
+/**
+ * Execute an interaction tool with standard boilerplate handling.
+ *
+ * Handles:
+ * - taskId resolution from context
+ * - Footer status update
+ * - Error formatting with consistent pattern
+ * - Snapshot and elementCount appending
+ *
+ * Each tool provides its router call and a formatSuccess callback that
+ * returns the success message and details object.
+ *
+ * @param ctx - Extension tool execution context
+ * @param actionName - Human-readable action name (e.g. "Click", "Type")
+ * @param action - Async function that performs the router call with a resolved taskId
+ * @param formatSuccess - Callback to produce the success message and details from the result
+ */
+export async function executeInteractionTool<
+	T extends {
+		success: boolean;
+		error?: string;
+		snapshot?: string;
+		elementCount?: number;
+	},
+>(
+	ctx: {
+		ui: { setStatus: (key: string, label: string) => void };
+		sessionManager?: { getSessionId?(): string };
+	},
+	actionName: string,
+	action: (tid: string) => Promise<T>,
+	formatSuccess: (result: T) => {
+		message: string;
+		details: Record<string, unknown>;
+	},
+): Promise<{
+	content: Array<{ type: "text"; text: string }>;
+	details: Record<string, unknown>;
+}> {
+	const tid = taskId(ctx);
+	const result = await action(tid);
+	updateFooterStatus(ctx);
+
+	if (!result.success) {
+		return {
+			content: [
+				{
+					type: "text",
+					text: `${actionName} failed: ${result.error ?? "unknown"}`,
+				},
+			],
+			details: { error: true },
+		};
+	}
+
+	const { message, details } = formatSuccess(result);
+	let content = message;
+	if (result.snapshot) {
+		content += `\n\n${result.snapshot}`;
+	}
+	if (result.elementCount !== undefined) {
+		content += `\n\nInteractive elements: ${result.elementCount}`;
+	}
+
+	return {
+		content: [{ type: "text", text: content }],
+		details,
+	};
 }
 
 export type { ExtensionAPI };

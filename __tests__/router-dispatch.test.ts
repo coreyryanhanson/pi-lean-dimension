@@ -418,26 +418,6 @@ describe("Router dispatch", () => {
 		});
 	});
 
-	// ─── getImages() ───────────────────────────────────────────
-
-	describe("getImages()", () => {
-		it("dispatches to plugin.getImages", async () => {
-			await router.navigate("https://example.com");
-			mock.calls.delete("navigate");
-
-			const result = await router.getImages("default");
-			expect(result.success).toBe(true);
-			expect(result.images).toHaveLength(1);
-			expect(result.images[0]!.src).toBe("https://example.com/img.png");
-		});
-
-		it("returns error without a session", async () => {
-			const result = await router.getImages("default");
-			expect(result.success).toBe(false);
-			expect(result.images).toEqual([]);
-		});
-	});
-
 	// ─── Console & eval ────────────────────────────────────────
 
 	describe("getConsoleMessages()", () => {
@@ -641,13 +621,6 @@ describe("session persistence across sequential calls", () => {
 		expect(result.success).toBe(true);
 	});
 
-	it("navigate then getImages succeeds", async () => {
-		await router.navigate("https://example.com", { taskId: "seq-test-8" });
-
-		const result = await router.getImages("seq-test-8");
-		expect(result.success).toBe(true);
-	});
-
 	it("navigate then getConsoleMessages succeeds", async () => {
 		await router.navigate("https://example.com", { taskId: "seq-test-9" });
 
@@ -660,55 +633,6 @@ describe("session persistence across sequential calls", () => {
 
 		const result = await router.clearConsole("seq-test-10");
 		expect(result.success).toBe(true);
-	});
-});
-
-// ─── Occlusion error propagation ────────────────────────────────
-
-describe("occlusion error propagation", () => {
-	let mock: MockPlugin;
-
-	beforeEach(() => {
-		pluginRegistry.clear();
-		mock = new MockPlugin("mock");
-		pluginRegistry.register(mock, makeConfig({ name: "mock", enabled: true }));
-	});
-
-	afterEach(async () => {
-		await sessionManager.removeAll();
-		pluginRegistry.clear();
-	});
-
-	it("passes through occlusion errors from click", async () => {
-		mock.interactResult = {
-			success: false,
-			error:
-				"Element @e1 is obscured by another element (likely a modal/overlay). " +
-				'Try pressing Escape (browser-press key="Escape") to dismiss the overlay, then retry.',
-		};
-
-		await router.navigate("https://example.com", { taskId: "occ-test-1" });
-		const result = await router.click("occ-test-1", "@e1");
-
-		expect(result.success).toBe(false);
-		expect(result.error).toMatch(/obscured/i);
-		expect(result.error).toMatch(/Escape/i);
-	});
-
-	it("passes through occlusion errors from type", async () => {
-		mock.interactResult = {
-			success: false,
-			error:
-				"Element @e1 is obscured by another element (likely a modal/overlay). " +
-				'Try pressing Escape (browser-press key="Escape") to dismiss the overlay, then retry.',
-		};
-
-		await router.navigate("https://example.com", { taskId: "occ-test-2" });
-		const result = await router.type("occ-test-2", "@e1", "hello");
-
-		expect(result.success).toBe(false);
-		expect(result.error).toMatch(/obscured/i);
-		expect(result.error).toMatch(/Escape/i);
 	});
 });
 
@@ -1063,23 +987,6 @@ describe("Router cookie dispatch", () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toMatch(/no active session/i);
 		});
-
-		it("handles plugin not available", async () => {
-			await router.navigate("https://example.com");
-			mock.calls.delete("navigate");
-
-			// Remove the plugin from registry
-			pluginRegistry.clear();
-			// Re-register with a different name so session has stale pluginName
-			const otherMock = new MockPlugin("other");
-			pluginRegistry.register(otherMock, makeConfig({ name: "other" }));
-
-			const result = await router.getCookies("default");
-
-			// Session still exists with "mock" pluginName, but only "other" is registered
-			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/not available/i);
-		});
 	});
 
 	// ─── addCookies() ──────────────────────────────────────────
@@ -1111,22 +1018,6 @@ describe("Router cookie dispatch", () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toMatch(/no active session/i);
-		});
-
-		it("handles plugin not available", async () => {
-			await router.navigate("https://example.com");
-			mock.calls.delete("navigate");
-
-			pluginRegistry.clear();
-			const otherMock = new MockPlugin("other");
-			pluginRegistry.register(otherMock, makeConfig({ name: "other" }));
-
-			const result = await router.addCookies("default", [
-				{ name: "test", value: "val" },
-			]);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/not available/i);
 		});
 	});
 
@@ -1172,20 +1063,6 @@ describe("Router cookie dispatch", () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toMatch(/no active session/i);
-		});
-
-		it("handles plugin not available", async () => {
-			await router.navigate("https://example.com");
-			mock.calls.delete("navigate");
-
-			pluginRegistry.clear();
-			const otherMock = new MockPlugin("other");
-			pluginRegistry.register(otherMock, makeConfig({ name: "other" }));
-
-			const result = await router.clearCookies("default");
-
-			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/not available/i);
 		});
 	});
 
