@@ -88,15 +88,13 @@ class ChromiumPyBridge(BrowserBridge):
 
     Session isolation model
     -----------------------
-    - *Ephemeral / session profiles*: each task gets its own
-      BrowserContext + Page (current default behaviour).
-    - *Named profiles* (Phase 5): tasks sharing the same named profile
-      reuse a single shared BrowserContext.  Each task gets its own
-      Page within that context.  Reference counting ensures the shared
-      context is closed when the last task's page closes.
+    Each task gets its own isolated BrowserContext + Page.
+    Named profiles are handled by the TypeScript side via
+    ``core/shared/storage-state.ts`` (disk persistence), which passes
+    ``storageState`` in the navigate request for session restoration.
 
     A single Playwright instance and Browser are shared across all
-    sessions, regardless of the isolation model.
+    sessions.
     """
 
     _pw: Any  # Playwright instance (lazy, shared)
@@ -130,8 +128,8 @@ class ChromiumPyBridge(BrowserBridge):
         return self._pw, self._browser
 
     def _maybe_stop_playwright(self) -> None:
-        """Stop the shared Playwright if no sessions or profile contexts remain."""
-        if not self.sessions and not self._profile_contexts and self._pw is not None:
+        """Stop the shared Playwright if no sessions remain."""
+        if not self.sessions and self._pw is not None:
             try:
                 if self._browser:
                     self._browser.close()
@@ -147,7 +145,7 @@ class ChromiumPyBridge(BrowserBridge):
     # ── Session lifecycle ──────────────────────────────────────────
 
     def create_browser_context(self, config: dict[str, Any]) -> Any:
-        """Create a standalone BrowserContext for shared named profiles.
+        """Create a new isolated BrowserContext for a task session.
 
         Applies the default viewport, user agent, and ``storageState``
         from config.  Starts Playwright tracing if ``BROWSER_TRACE_DIR``
@@ -240,24 +238,14 @@ class ChromiumPyBridge(BrowserBridge):
     def close_browser_session(self, task_id: str) -> None:
         """Close the BrowserContext (and Page) for the given task.
 
-        If the session's context is managed by a shared named profile
-        (tracked in ``_profile_contexts``), delegates to
-        ``remove_profile_session()`` instead of closing the context
-        directly — the context must stay alive for other tasks sharing
-        the same profile.
+        Each task gets its own isolated BrowserContext created by
+        ``create_browser_session()``, so this always closes the context
+        directly.  Named profiles are handled on the TypeScript side via
+        ``storage-state.ts`` (disk persistence).
         """
         session = self.sessions.get(task_id)
         if session is not None:
-            # Check if this session belongs to a shared profile context
             context: Any = session.get("context")
-            if context is not None:
-                for pname, pent in list(self._profile_contexts.items()):
-                    if pent.get("context") is context:
-                        # Shared profile context — don't close it directly.
-                        # remove_profile_session handles ref count, trace
-                        # stop (on last close), and _maybe_stop_playwright.
-                        self.remove_profile_session(task_id, pname)
-                        return
 
             try:
                 page: Any = session.get("page")
@@ -268,8 +256,17 @@ class ChromiumPyBridge(BrowserBridge):
 
             # Stop and save Playwright trace if BROWSER_TRACE_DIR is set.
             _trace_dir = os.environ.get("BROWSER_TRACE_DIR")
-            if _trace_dir:
-                self._stop_trace(task_id, context, _trace_dir)
+            if _trace_dir and context:
+                try:
+                    os.makedirs(_trace_dir, exist_ok=True)
+                    _trace_path = os.path.join(
+                        _trace_dir,
+                        f"trace-{task_id}-{int(time.time() * 1000)}.zip",
+                    )
+                    context.tracing.stop(path=_trace_path)
+                    _log("tracing", taskId=task_id, action="stop", dir=_trace_dir)
+                except Exception:
+                    pass
 
             try:
                 if context:
@@ -282,83 +279,6 @@ class ChromiumPyBridge(BrowserBridge):
         self.element_caches.pop(task_id, None)
 
         # Stop shared Playwright if no sessions remain
-        self._maybe_stop_playwright()
-
-    def ensure_profile_session(
-        self, task_id: str, profile_name: str, config: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Get or create a page in a shared profile context.
-
-        Overrides the base implementation to insert ``context`` into the
-        session dict (needed by ``do_get_cookies``, ``do_clear_cookies``,
-        etc. which access ``session["context"]``).
-        """
-        result = super().ensure_profile_session(task_id, profile_name, config)
-        # Ensure the session dict has a "context" key pointing to the
-        # shared BrowserContext (required by cookie/storage operations).
-        session = self.sessions.get(task_id)
-        if session is not None and session.get("context") is None:
-            pent = self._profile_contexts.get(profile_name)
-            if pent is not None:
-                session["context"] = pent["context"]
-        return result
-
-    def _stop_trace(
-        self, task_id: str, context: Any, trace_dir: str
-    ) -> None:
-        """Stop and save Playwright trace for a task's context.
-
-        Only stops tracing for shared contexts when the last page closes
-        (ref count reaches zero).  For isolated contexts, always stops.
-        """
-        try:
-            os.makedirs(trace_dir, exist_ok=True)
-            _trace_path = os.path.join(
-                trace_dir,
-                f"trace-{task_id}-{int(time.time() * 1000)}.zip",
-            )
-            context.tracing.stop(path=_trace_path)
-            _log("tracing", taskId=task_id, action="stop", dir=trace_dir)
-        except Exception:
-            pass  # Best-effort
-
-    def remove_profile_session(self, task_id: str, profile_name: str) -> None:
-        """Close a page in a shared profile context and decrement ref count.
-
-        Stops tracing only when the last page closes (ref count reaches
-        zero).  Then closes the shared BrowserContext."""
-        session = self.sessions.get(task_id)
-        profile_entry = self._profile_contexts.get(profile_name)
-
-        if session is not None:
-            page = session.get("page")
-            if page is not None:
-                try:
-                    if not page.is_closed():
-                        page.close()
-                except Exception:
-                    pass
-
-            context = session.get("context")
-            if context is not None and profile_entry is not None:
-                # Stop trace only on last page close
-                if profile_entry["ref_count"] <= 1:
-                    _trace_dir = os.environ.get("BROWSER_TRACE_DIR")
-                    if _trace_dir:
-                        self._stop_trace(task_id, context, _trace_dir)
-
-            self.sessions.pop(task_id, None)
-            self.element_caches.pop(task_id, None)
-
-        if profile_entry is not None:
-            profile_entry["ref_count"] -= 1
-            if profile_entry["ref_count"] <= 0:
-                try:
-                    profile_entry["context"].close()
-                except Exception:
-                    pass
-                self._profile_contexts.pop(profile_name, None)
-
         self._maybe_stop_playwright()
 
     # ── Internal helpers ───────────────────────────────────────────
@@ -464,11 +384,10 @@ class ChromiumPyBridge(BrowserBridge):
         Includes retry on transient network errors, DOM stabilisation
         wait, bot detection, and accessibility snapshot.
 
-        When ``profileMode == "named"`` and ``profileName`` is provided,
-        the session is created inside a shared BrowserContext for that
-        profile (other tasks using the same profile name will share the
-        same context / cookie jar).  Otherwise, each task gets its own
-        isolated context.
+        Named profiles are handled by the TypeScript side
+        (``python-adapter.ts`` pre-loads ``storageState`` before
+        navigate), so the Python bridge always creates isolated
+        sessions regardless of ``profileName``/``profileMode``.
 
         If ``storageState`` is provided, it is passed to the context
         creation so saved cookies and localStorage are restored.
@@ -478,12 +397,7 @@ class ChromiumPyBridge(BrowserBridge):
         if storageState is not None:
             config["storageState"] = storageState
 
-        if profileMode == "named" and profileName is not None:
-            # Named profile — use shared context (create or join)
-            session = self.ensure_profile_session(task_id, profileName, config)
-        else:
-            # Isolated context (session profile or ephemeral)
-            session = self.ensure_session(task_id, config)
+        session = self.ensure_session(task_id, config)
         page: Any = session["page"]
 
         # ── Navigate (with retry on transient errors) ───────────
@@ -589,66 +503,14 @@ class ChromiumPyBridge(BrowserBridge):
                 "error": last_error,
             }
 
-    def do_new_page(self, task_id: str, profile_name: str) -> dict[str, Any]:
-        """Create a new Page in an existing shared profile context.
-
-        Called when a second (or third, …) task joins a named profile
-        whose shared BrowserContext already exists.  Attaches console
-        capture and dialog handlers to the new page.
-        """
-        profile_entry = self._profile_contexts.get(profile_name)
-        if profile_entry is None:
-            return {
-                "success": False,
-                "error": f"No shared context for profile '{profile_name}'. "
-                         "Call browser.navigate with profileMode='named' first.",
-            }
-
-        context = profile_entry["context"]
-        try:
-            page = context.new_page()
-        except Exception as exc:
-            return {"success": False, "error": str(exc)}
-
-        session = self._setup_page_session(page)
-        session["context"] = context
-        self.sessions[task_id] = session
-        profile_entry["ref_count"] += 1
-
-        _log("newPage", taskId=task_id, profileName=profile_name,
-             refCount=profile_entry["ref_count"])
-        return {"success": True}
-
-    def do_close_page(self, task_id: str, profile_name: str) -> dict[str, Any]:
-        """Close one page in a shared profile context (decrement ref count)."""
-        profile_entry = self._profile_contexts.get(profile_name)
-        if profile_entry is None:
-            # Context already gone — just clean up session
-            self.close_browser_session(task_id)
-            return {"success": True, "refCount": 0}
-
-        self._do_close_page_in_context(task_id, profile_name, profile_entry)
-        return {"success": True, "refCount": max(profile_entry["ref_count"], 0)}
-
-    def _do_close_page_in_context(
-        self, task_id: str, profile_name: str, _profile_entry: dict[str, Any]
-    ) -> None:
-        """Internal: close one page and decrement ref count.
-
-        Delegates to ``remove_profile_session()`` which handles page close,
-        trace stop (on last page), context close, and playlist stop.
-        """
-        self.remove_profile_session(task_id, profile_name)
-
     def do_cleanup(self, task_id: str, profileName: Optional[str] = None) -> dict[str, Any]:
         """Clean up resources for a specific task.
 
-        When ``profileName`` is provided and references a shared profile
-        context, delegates to ``do_close_page()``.  Otherwise, closes the
-        isolated BrowserContext via ``close_browser_session()``.
+        Named profiles are handled by the TypeScript side
+        (``python-adapter.ts`` auto-saves storage state before calling
+        cleanup), so this always calls ``close_browser_session()``
+        regardless of ``profileName``.
         """
-        if profileName is not None:
-            return self.do_close_page(task_id, profileName)
         self.close_browser_session(task_id)
         return {"success": True}
 

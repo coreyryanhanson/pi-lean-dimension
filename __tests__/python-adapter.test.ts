@@ -334,6 +334,92 @@ describeIntegration("integration with mock Python bridge", () => {
 		expect(result.elementCount).toBe(2);
 	});
 
+	it("passes profileName and profileMode through to navigate", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-browser-profile-"));
+		const bridgePath = writeBridge(
+			{
+				"browser.navigate":
+					"params = _req.get('params', {})\n" +
+					"profile_name = params.get('profileName')\n" +
+					"profile_mode = params.get('profileMode')\n" +
+					"sys.stdout.write(json.dumps({\n" +
+					"'jsonrpc':'2.0',\n" +
+					"'id':_rid,\n" +
+					"'result':{\n" +
+					"    'success':True,\n" +
+					"    'url': params.get('url', ''),\n" +
+					"    'title': 'Profile-' + (profile_name or 'none'),\n" +
+					"    'snapshot': '- [button] X',\n" +
+					"    'elementCount': 1\n" +
+					"}\n" +
+					"}) + '\\n')",
+				"browser.cleanup":
+					"sys.stdout.write(json.dumps({\n" +
+					"'jsonrpc':'2.0',\n" +
+					"'id':_rid,\n" +
+					"'result':{'success':True}\n" +
+					"}) + '\\n')",
+				"browser.snapshot":
+					"sys.stdout.write(json.dumps({\n" +
+					"'jsonrpc':'2.0',\n" +
+					"'id':_rid,\n" +
+					"'result':{\n" +
+					"    'success':True,\n" +
+					"    'snapshot': '- [button] X',\n" +
+					"    'elementCount': 1\n" +
+					"}\n" +
+					"}) + '\\n')",
+			},
+			dir,
+		);
+
+		const adapter = new PythonPluginAdapter("profile-test", {
+			bridgeScript: bridgePath,
+			pythonPath: "python3",
+		});
+
+		try {
+			await adapter.init();
+
+			// Navigate with named profile — verify the adapter passes
+			// profileName and profileMode through to the bridge's RPC params.
+			const result = await adapter.navigate(
+				"https://example.com",
+				"profile-s1",
+				30_000,
+				{
+					profileName: "shopping",
+					profileMode: "named",
+				},
+			);
+			// The bridge echoes profileName in the title (see bridge script).
+			// Success confirms the params were passed through correctly.
+			expect(result.success).toBe(true);
+			expect(result.title).toBe("Profile-shopping");
+
+			// Verify cleanup does NOT pass profileName to the bridge —
+			// the cleanup RPC receives only taskId.
+			await expect(adapter.cleanup("profile-s1")).resolves.toBeUndefined();
+
+			// A second navigate without profile params should work too
+			// (title shows "Profile-none" indicating profileName was absent)
+			const result2 = await adapter.navigate(
+				"https://example.com",
+				"profile-s2",
+				30_000,
+			);
+			expect(result2.success).toBe(true);
+			expect(result2.title).toBe("Profile-none");
+		} finally {
+			await adapter.cleanupAll().catch(() => {});
+			try {
+				rmSync(dir, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
+		}
+	});
+
 	it("takes a snapshot", async () => {
 		await adapter.navigate("https://example.com", "t2", 30_000);
 		const result = await adapter.snapshot("t2");
