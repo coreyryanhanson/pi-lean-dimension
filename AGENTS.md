@@ -9,7 +9,7 @@ A pi extension that registers **12 tools + 1 command** for web browsing. Archite
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 645 tests across 18 files (all pass)
+npm test              # vitest run — 646 tests across 18 files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npm run test:watch    # vitest in watch mode
 ```
@@ -41,7 +41,7 @@ pi-browser/
 │                              # session-manager, settings-reader, snapshot-cache, storage-state, url-safety
 ├── guides/                   # User-authored guide files (gitignored)
 ├── tools/                    # Tool definitions — one file per tool (12 files) + index.ts + utils.ts
-└── __tests__/                # 19 test files + helpers/
+└── __tests__/                # 18 test files + helpers/
 ```
 
 ## Architecture
@@ -101,7 +101,7 @@ web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, brow
 `/web profile` (list/load profiles), `/web status` (backends + sessions + profiles),
 `/web` (show current state).
 
-Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`. Three-field schema: `{browserToolsEnabled, learnToolsEnabled, defaultProfile}`. Legacy `{enabled}` branches are auto-migrated.
+Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`. Three-field schema: `{browserToolsEnabled, learnToolsEnabled, defaultProfile}`.
 
 ### Profile & Cookie Management
 
@@ -131,15 +131,15 @@ Guide presence is three-tier: auto-inject (bot-detection), auto-hint (cookie-con
 
 ## Testing
 
-### Test files (19 files, 659 tests passing)
+### Test files (18 files, 646 tests passing)
 
 | File | Requires Chromium? |
 |------|--------------------|
 | All structural/unit tests (router-dispatch, browser-toggle, browser-toggle-profile, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state) | No |
-| reddit-dialog.test.ts | Yes (auto-skip) |
+| reddit-dialog.test.ts | Yes (errors if unavailable) |
 | chromium-py.test.ts | Yes (auto-skip) |
 
-Integration tests (`reddit-dialog`, `chromium-py`) skip automatically when Playwright Chromium is unavailable. `browser-toggle-profile` tests exercise the full profile lifecycle via mock API.
+Integration tests (`chromium-py`) skip automatically when Playwright Chromium is unavailable; `reddit-dialog` errors if Chromium is missing. `browser-toggle-profile` tests exercise the full profile lifecycle via mock API.
 
 ### Shared test utilities (`__tests__/helpers/`)
 
@@ -161,7 +161,7 @@ Integration tests (`reddit-dialog`, `chromium-py`) skip automatically when Playw
 - **Python shared-context machinery removed (B1)** — the `browser.newPage`/`browser.closePage` RPC routes, `_profile_contexts` ref-counting, and `ensure_profile_session`/`remove_profile_session` methods were removed from both the base `BrowserBridge` and `ChromiumPyBridge`. Named profiles now use disk persistence (load-on-navigate via `storageState`) matching the TS Chromium plugin. Both backends use `ensure_session(task_id, config)` for all sessions.
 - **Role-based locators only**: never XPath/CSS — always `getByRole()` via `buildLocator()` with positional `.nth()` for duplicates. The `INTERACTIVE_ROLES` set defines which roles get @e refs
 - **All URLs go through `url-safety.ts`** — blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.169.254), dangerous schemes (file:, ftp:, data:, javascript:, vbscript:), and heuristically detects secrets in URLs
-- **Screenshot**: JPEG 80% quality, viewport constrained to 1024px wide, returns data URI
+- **Screenshot**: JPEG 80% quality, viewport constrained to 1280px wide, returns data URI
 - **Accessibility tree parser is single-pass, no-cap**: both TypeScript (`core/shared/accessibility-tree.ts`) and Python (`backends/python-base/pi_browser_bridge/accessibility.py`) use an identical single-pass algorithm — every interactive element gets an @e ref, no dialog prioritization, no element cap. Full ARIA trees beyond truncation are cached to disk via `snapshot-cache.ts`.
 - **Bot detection has three tiers**: checked against page title (challenge phrases), body text (challenge phrases + CDN patterns), and raw HTML (CAPTCHA widget embed codes). Both the TypeScript (`core/shared/bot-detection.ts`) and Python (`chromium-py/bridge.py`) backends share the same HTML-level signal set.
 - **Compact truncation everywhere**: snapshots truncated at ~2500 chars (with `\nfingerprint:XXXXX`), fetch content at ~4000 chars with temp file spill to `/tmp/pi-browser/fetch-*.md`
