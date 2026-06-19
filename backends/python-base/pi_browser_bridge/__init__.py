@@ -12,6 +12,8 @@ Key components
 * :mod:`.transport` — JSON-RPC 2.0 transport over stdin/stdout.
 * :mod:`.accessibility` — Playwright accessibility snapshot parser,
   mirroring the TypeScript version.
+* :mod:`.bot_detection` — anti-automation / bot detection signal
+  matcher, mirroring the TypeScript version.
 
 Quick start
 -----------
@@ -40,6 +42,7 @@ from .accessibility import (
     INTERACTIVE_ROLES,
     INFORMATIONAL_ROLES,
 )
+from .bot_detection import check_bot_detection
 
 __all__ = [
     "BrowserBridge",
@@ -51,4 +54,5 @@ __all__ = [
     "build_locator_args",
     "INTERACTIVE_ROLES",
     "INFORMATIONAL_ROLES",
+    "check_bot_detection",
 ]
