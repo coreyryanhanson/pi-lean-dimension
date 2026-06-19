@@ -9,7 +9,7 @@ A pi extension that registers **12 tools + 1 command** for web browsing. Archite
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 646 tests across 18 files (all pass)
+npm test              # vitest run — 662 tests across 19 files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npm run test:watch    # vitest in watch mode
 ```
@@ -26,8 +26,8 @@ pi-browser/
 ├── browser-profile.ts        # /web profile subcommand (extracted from toggle)
 ├── browser-status.ts         # /web status subcommand (extracted from toggle)
 ├── backends/                 # Plugin implementations
-│   ├── chromium/index.ts     # Node/Playwright, reference ~1300 lines
-│   ├── chromium-py/bridge.py # Python/Playwright bridge — parity reference for stealth backends, disabled by default (~1150 lines)
+│   ├── chromium/index.ts     # Node/Playwright, reference ~1180 lines
+│   ├── chromium-py/bridge.py # Python/Playwright bridge — parity reference for stealth backends, disabled by default (~1170 lines)
 │   ├── python-adapter.ts     # JSON-RPC bridge for subprocess plugins (~1100 lines)
 │   └── python-base/          # Shared Python bridge library (accessibility.py, bridge.py, transport.py)
 ├── core/                     # Framework: shared across all plugins
@@ -37,11 +37,11 @@ pi-browser/
 │   ├── router.ts             # Dispatch, session lifecycle, truncation, cookie/profile dispatch
 │   ├── guides.ts             # Guide types, builtin guides, file loader, presence resolution
 │   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
-│   └── shared/               # paths, task-id, accessibility-tree, bot-detection, dom-extractor,
+│   └── shared/               # nav-settle, paths, task-id, accessibility-tree, bot-detection, dom-extractor,
 │                              # session-manager, settings-reader, snapshot-cache, storage-state, url-safety
 ├── guides/                   # User-authored guide files (gitignored)
 ├── tools/                    # Tool definitions — one file per tool (12 files) + index.ts + utils.ts
-└── __tests__/                # 18 test files + helpers/
+└── __tests__/                # 19 test files + helpers/
 ```
 
 ## Architecture
@@ -73,8 +73,8 @@ Plugin loading: reads `browser.plugins` from `~/.pi/agent/settings.json` (global
 
 **Active plugins (config-driven):**
 
-- **`chromium`** — Node/Playwright (~1300 lines), always enabled by default, reference implementation
-- **`chromium-py`** — Python/Playwright parity reference (~1150 lines bridge.py), disabled by default. Validates ``python-base`` against the TS reference; use as the baseline when building a new Python stealth backend.
+- **`chromium`** — Node/Playwright (~1180 lines), always enabled by default, reference implementation
+- **`chromium-py`** — Python/Playwright parity reference (~1170 lines bridge.py), disabled by default. Validates ``python-base`` against the TS reference; use as the baseline when building a new Python stealth backend.
 
 ### Router (`core/router.ts`)
 
@@ -131,11 +131,11 @@ Guide presence is three-tier: auto-inject (bot-detection), auto-hint (cookie-con
 
 ## Testing
 
-### Test files (18 files, 646 tests passing)
+### Test files (19 files, 662 tests passing)
 
 | File | Requires Chromium? |
 |------|--------------------|
-| All structural/unit tests (router-dispatch, browser-toggle, browser-toggle-profile, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state) | No |
+| All structural/unit tests (router-dispatch, browser-toggle, browser-toggle-profile, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle) | No |
 | reddit-dialog.test.ts | Yes (errors if unavailable) |
 | chromium-py.test.ts | Yes (auto-skip) |
 
@@ -171,6 +171,7 @@ Integration tests (`chromium-py`) skip automatically when Playwright Chromium is
 - **`dialogDetected` is resolved from element cache**: computed from the parsed `ElementCache` via `Array.some()` matching `role="dialog"` or `role="alertdialog"`. Not affected by snapshot truncation (unlike the old string-scan approach).
 - **Guide staleness**: no builtin site guides shipped — entirely user-authored via `guides/*.md`. Guides carry `updated` date paired with `currentDate` in output.
 - **Learn mode toggle**: `/web learn` enables `web-learn` tool; `/web on` removes it. Agent never calls `web-learn` unprompted. Default is off on fresh sessions.
+- **Navigation settle** (`core/shared/nav-settle.ts`): after click or press, detects page navigation via a `framenavigated` listener and waits for `load + networkidle` (capped, errors swallowed) before reading URL/title/snapshot. Replaces the old fixed `waitForTimeout(300)` pattern that caused URL/DOM mismatches. Framework-agnostic via a lightweight `NavigationSettlePage` interface for testability.
 - **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click). Checked in both ChromiumPlugin and the Python bridge.
 
 ## Debugging
