@@ -52,6 +52,14 @@ export interface ContractTestOptions {
 	 * Only used when realBrowser is true.
 	 */
 	navigateTimeout?: number;
+
+	/**
+	 * Set true when the backend supports `waitForNavigationSettle`.
+	 * Enables the slow-nav regression test which verifies that clicks
+	 * with delayed navigation produce consistent URL/snapshot results.
+	 * Default: false.
+	 */
+	navigationSettle?: boolean;
 }
 
 // ─── HTML Fixtures ────────────────────────────────────────────────
@@ -150,6 +158,26 @@ const DUPLICATE_HTML = `<!DOCTYPE html>
   <p id="output">ready</p>
 </body></html>`;
 
+/**
+ * Slow-nav page: clicking the link triggers navigation after 280ms via
+ * setTimeout + location.href.  This is long enough to exceed the initial
+ * detection window (150ms) but comfortably inside the late-arrival gate
+ * window (150ms detect + 200ms settle = 350ms), testing that
+ * waitForNavigationSettle catches late-arriving navigations.
+ */
+const SLOW_NAV_HTML = `<!DOCTYPE html>
+<html><head><title>Slow Nav Source</title></head>
+<body>
+  <h1>Slow Nav Source</h1>
+  <a href="/slow-nav-destination" onclick="event.preventDefault(); setTimeout(() => location.href='/slow-nav-destination', 280)">Go to Destination</a>
+</body></html>`;
+
+const SLOW_NAV_TARGET_HTML = `<!DOCTYPE html>
+<html><head><title>Slow Nav Destination</title></head>
+<body>
+  <h1>Slow Nav Destination</h1>
+</body></html>`;
+
 /** 404 page. */
 const NOT_FOUND_HTML = `<!DOCTYPE html>
 <html><head><title>Not Found</title></head>
@@ -193,6 +221,8 @@ function contractTestHandler(
 		"/page-a": PAGE_A_HTML,
 		"/page-b": PAGE_B_HTML,
 		"/duplicates": DUPLICATE_HTML,
+		"/slow-nav": SLOW_NAV_HTML,
+		"/slow-nav-destination": SLOW_NAV_TARGET_HTML,
 		"/reddit-dialog": REDDIT_DIALOG_HTML,
 		"/reddit-stacked": REDDIT_STACKED_HTML,
 		"/reddit-async": REDDIT_ASYNC_HTML,
@@ -234,7 +264,11 @@ export function runContractTests(
 	createPlugin: () => BrowserPlugin | Promise<BrowserPlugin>,
 	options: ContractTestOptions = {},
 ): void {
-	const { realBrowser = false, navigateTimeout = 15_000 } = options;
+	const {
+		realBrowser = false,
+		navigateTimeout = 15_000,
+		navigationSettle = false,
+	} = options;
 	const TASK_ID = "contract-test";
 
 	// ═══════════════════════════════════════════════════════════
@@ -845,6 +879,37 @@ export function runContractTests(
 				}
 			});
 		});
+
+		it.runIf(navigationSettle)(
+			"clicks a link with delayed navigation and returns consistent URL/snapshot",
+			async () => {
+				await plugin.navigate(
+					`${server.url}/slow-nav`,
+					TASK_ID,
+					navigateTimeout,
+				);
+
+				const snap = await plugin.snapshot(TASK_ID);
+				expect(snap.success).toBe(true);
+
+				// Find the "Go to Destination" link ref
+				const linkMatch = snap.snapshot.match(/@(e\d+).*?link.*?Destination/);
+				expect(linkMatch).toBeTruthy();
+				const ref = `@${linkMatch![1]!}`;
+
+				const result = await plugin.click(TASK_ID, ref);
+				expect(result.success).toBe(true);
+
+				// The navigation completes after 800ms; the settle helper
+				// must detect the late-arriving nav and wait for page readiness.
+				// URL and snapshot should be consistent.
+				expect(result.newUrl).toContain("/slow-nav-destination");
+				expect(result.newTitle).toBe("Slow Nav Destination");
+				if (result.snapshot) {
+					expect(result.snapshot).toContain("Slow Nav Destination");
+				}
+			},
+		);
 
 		// ─── Type ────────────────────────────────────────────
 

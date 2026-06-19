@@ -7,8 +7,8 @@
  *
  * The core insight: instead of a fixed sleep (e.g. `waitForTimeout(300)`)
  * that races against navigation commit, we listen for the actual
- * `framenavigated` event and wait for `waitForLoadState("load")` only
- * when navigation has actually started.
+ * `framenavigated` event and wait for page readiness (load + networkidle)
+ * only when navigation has actually started.
  *
  * This eliminates the URL / DOM mismatch that causes stale-@e-ref and
  * mismatched URL/content bugs.
@@ -38,8 +38,9 @@ export interface NavigationSettlePage {
 /** Options for `waitForNavigationSettle`. */
 export interface NavigationSettleOptions {
 	/**
-	 * Maximum time (ms) to wait for `waitForLoadState("load")` when a
-	 * navigation is detected. Default: 5000.
+	 * Maximum time (ms) to wait for page readiness (load + networkidle)
+	 * when a navigation is detected.  Shared budget for both waits.
+	 * Default: 5000.
 	 */
 	navTimeoutMs?: number;
 	/**
@@ -57,6 +58,38 @@ export interface NavigationSettleResult {
 	url: string;
 }
 
+// ─── Helpers ────────────────────────────────────────────────────────
+
+/**
+ * Wait for the page to be fully ready after a navigation.
+ *
+ * Calls `waitForLoadState("load")` for the document + sub-resources,
+ * then also waits for network idle so that SPA same-document route
+ * changes (pushState) settle before we snapshot.  Errors/timeouts
+ * are swallowed — the caller proceeds with whatever state it has.
+ */
+async function waitForPageReady(
+	page: NavigationSettlePage,
+	timeout: number,
+): Promise<void> {
+	// Cross-document or same-document navigation started.
+	// waitForLoadState("load") resolves after the document and its
+	// sub-resources load; for same-document pushState it resolves
+	// immediately since "load" already fired.
+	await page.waitForLoadState("load", { timeout }).catch(() => {
+		// Timeout or error — continue anyway. The caller gets the
+		// current URL and can decide how to proceed.
+	});
+
+	// For SPA route changes (pushState/replaceState), "load" is already
+	// satisfied and resolves instantly — the SPA may still be fetching
+	// data. A bounded networkidle wait catches the XHR/fetch burst
+	// without hanging on long-polling sites.
+	await page.waitForLoadState("networkidle", { timeout }).catch(() => {
+		// Timeout or error — continue regardless.
+	});
+}
+
 // ─── Public API ────────────────────────────────────────────────────
 
 /**
@@ -72,13 +105,16 @@ export interface NavigationSettleResult {
  *
  * **How it works:**
  * 1. Registers a `framenavigated` listener on the page *before* settling.
- * 2. Waits a brief window (~150 ms) for a navigation to *begin*.
+ * 2. Races a brief window (~150 ms) against the `framenavigated` event
+ *    so that instant navigations don't pay the full window.
  * 3. If the main frame navigated (cross-document or same-document via
- *    `pushState`), waits for `waitForLoadState("load")` (capped at
- *    `navTimeoutMs`).
+ *    `pushState`), calls `waitForPageReady` for load + bounded networkidle
+ *    (capped at `navTimeoutMs` each).
  * 4. Falls back to URL-change detection if the URL changed without a
  *    `framenavigated` event (defense-in-depth).
  * 5. Otherwise, waits `settleTimeoutMs` for client-side rerenders.
+ * 6. A late-arrival gate catches navigations that start during the settle
+ *    window (e.g. an async click handler with setTimeout).
  *
  * The returned URL is always read **after** settling, guaranteeing
  * consistency between the URL and the current DOM.
@@ -98,35 +134,37 @@ export async function waitForNavigationSettle(
 
 	let navigated = false;
 
+	// Deferred promise that resolves when framenavigated fires on the main
+	// frame.  We race this against the detection window so that instant
+	// navigations don't pay the full 150ms.
+	let navResolve: () => void = () => {};
+	const navStarted = new Promise<void>((resolve) => {
+		navResolve = resolve;
+	});
+
 	const onNav = (frame: unknown) => {
 		if (frame === page.mainFrame()) {
 			navigated = true;
+			navResolve();
 		}
 	};
 
 	page.on("framenavigated", onNav);
 
 	try {
-		// Brief window for a navigation to begin after the user interaction.
+		// Race the detection window against the framenavigated event.
 		// Most link clicks and Enter presses trigger navigation within one
-		// event-loop tick, but we give a comfortable margin.
-		await page.waitForTimeout(150);
+		// event-loop tick; the race means we don't waste time when nav
+		// starts immediately.
+		await Promise.race([page.waitForTimeout(150), navStarted]);
 
 		let waitedForLoad = false;
 		if (navigated) {
-			// Cross-document or same-document (pushState) navigation started.
-			// waitForLoadState resolves immediately if load already fired.
-			await page.waitForLoadState("load", { timeout: navTimeout }).catch(() => {
-				// Timeout or error — continue anyway; the page will be in a
-				// partially-loaded state, but we return the current URL so
-				// the caller can decide how to proceed.
-			});
+			await waitForPageReady(page, navTimeout);
 			waitedForLoad = true;
 		} else if (page.url() !== urlBefore) {
 			// URL changed without a framenavigated event (possible edge case).
-			await page.waitForLoadState("load", { timeout: navTimeout }).catch(() => {
-				// Same graceful handling as above.
-			});
+			await waitForPageReady(page, navTimeout);
 			waitedForLoad = true;
 		} else {
 			// No navigation detected yet — allow client-side rerenders /
@@ -136,12 +174,10 @@ export async function waitForNavigationSettle(
 
 		// Late-arrival gate: a navigation may have started during the settle
 		// timeout (e.g. an async click handler with a 200ms setTimeout).  If
-		// we didn't already call waitForLoadState but navigated has since
-		// become true (or the URL changed), wait for load now.
+		// we didn't already call waitForPageReady but navigated has since
+		// become true (or the URL changed), wait for readiness now.
 		if (!waitedForLoad && (navigated || page.url() !== urlBefore)) {
-			await page.waitForLoadState("load", { timeout: navTimeout }).catch(() => {
-				// Graceful handling as above.
-			});
+			await waitForPageReady(page, navTimeout);
 		}
 	} finally {
 		page.off("framenavigated", onNav);

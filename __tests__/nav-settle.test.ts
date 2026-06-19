@@ -78,8 +78,8 @@ describe("waitForNavigationSettle", () => {
 			navTimeoutMs: 5000,
 		});
 
-		// Yield 1: waitForTimeout(150) resolves → else branch →
-		// waitForTimeout(0)
+		// Yield 1: Promise.race resolves (timeout wins over navStarted) →
+		// else branch → waitForTimeout(0)
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 		// Note: we do NOT fire any nav event nor change the URL, so the
@@ -108,17 +108,20 @@ describe("waitForNavigationSettle", () => {
 			navTimeoutMs: 5000,
 		});
 
-		// Fire nav BEFORE the first await-yield — the event handler is
-		// already registered (page.on was called synchronously during
-		// waitForNavigationSettle's sync start).
+		// Fire nav AFTER the function has started (handler is registered
+		// synchronously during the call).  This resolves navStarted
+		// immediately so Promise.race picks it.
 		page.fireNav();
 
-		// Yield: waitForTimeout(150) resolves → navigated=true →
-		// waitForLoadState (resolves immediately) → return
+		// All async work (microtasks) finishes before this macrotask runs.
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-		expect(page.waitForLoadState).toHaveBeenCalledTimes(1);
-		expect(page.waitForLoadState).toHaveBeenCalledWith("load", {
+		// waitForPageReady calls waitForLoadState twice: load + networkidle
+		expect(page.waitForLoadState).toHaveBeenCalledTimes(2);
+		expect(page.waitForLoadState).toHaveBeenNthCalledWith(1, "load", {
+			timeout: 5000,
+		});
+		expect(page.waitForLoadState).toHaveBeenNthCalledWith(2, "networkidle", {
 			timeout: 5000,
 		});
 
@@ -142,7 +145,7 @@ describe("waitForNavigationSettle", () => {
 		page.fireNav();
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-		expect(page.waitForLoadState).toHaveBeenCalledTimes(1);
+		expect(page.waitForLoadState).toHaveBeenCalledTimes(2);
 
 		const result = await promise;
 
@@ -162,16 +165,16 @@ describe("waitForNavigationSettle", () => {
 			navTimeoutMs: 5000,
 		});
 
-		// Yield: waitForTimeout(150) resolves → navigated=false, URL
-		// differs → else-if branch → waitForLoadState → return
+		// Yield: Promise.race resolves (timeout wins) → navigated=false,
+		// URL differs → else-if branch → waitForPageReady (load + networkidle)
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-		expect(page.waitForLoadState).toHaveBeenCalledTimes(1);
+		expect(page.waitForLoadState).toHaveBeenCalledTimes(2);
 
 		const result = await promise;
 
 		// navigated=false because no event was observed, but we still
-		// waited for load state before returning.
+		// waited for page readiness before returning.
 		expect(result.navigated).toBe(false);
 		expect(result.url).toBe("https://example.com/page2");
 	});
@@ -186,7 +189,7 @@ describe("waitForNavigationSettle", () => {
 			navTimeoutMs: 5000,
 		});
 
-		// Yield 1: waitForTimeout(150) resolves → else branch →
+		// Yield 1: Promise.race resolves (timeout wins) → else branch →
 		// waitForTimeout(0)
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -210,13 +213,13 @@ describe("waitForNavigationSettle", () => {
 	it("detects navigation that starts after the initial wait window", async () => {
 		// The framenavigated event arrives after the 150ms check but
 		// before the settle timeout fires.  The late-arrival gate must
-		// catch this and call waitForLoadState.
+		// catch this and call waitForPageReady (load + networkidle).
 		const promise = waitForNavigationSettle(page, "https://example.com/", {
 			settleTimeoutMs: 100,
 			navTimeoutMs: 5000,
 		});
 
-		// Yield 1: waitForTimeout(150) resolves → else branch →
+		// Yield 1: Promise.race resolves (timeout wins) → else branch →
 		// waitForTimeout(100)
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -225,11 +228,16 @@ describe("waitForNavigationSettle", () => {
 		page.fireNav();
 
 		// Yield 2: waitForTimeout(100) resolves → else branch completes →
-		// late-arrival gate (navigated=true → waitForLoadState) → return
+		// late-arrival gate (navigated=true → waitForPageReady) → return
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-		expect(page.waitForLoadState).toHaveBeenCalledTimes(1);
-		expect(page.waitForLoadState).toHaveBeenCalledWith("load", {
+		// The late-arrival gate calls waitForPageReady which calls
+		// waitForLoadState twice: load + networkidle.
+		expect(page.waitForLoadState).toHaveBeenCalledTimes(2);
+		expect(page.waitForLoadState).toHaveBeenNthCalledWith(1, "load", {
+			timeout: 5000,
+		});
+		expect(page.waitForLoadState).toHaveBeenNthCalledWith(2, "networkidle", {
 			timeout: 5000,
 		});
 
@@ -252,7 +260,11 @@ describe("waitForNavigationSettle", () => {
 		page.fireNav();
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-		expect(page.waitForLoadState).toHaveBeenCalledWith("load", {
+		// Both load and networkidle get the custom timeout
+		expect(page.waitForLoadState).toHaveBeenNthCalledWith(1, "load", {
+			timeout: 3000,
+		});
+		expect(page.waitForLoadState).toHaveBeenNthCalledWith(2, "networkidle", {
 			timeout: 3000,
 		});
 
@@ -265,11 +277,12 @@ describe("waitForNavigationSettle", () => {
 			navTimeoutMs: 5000,
 		});
 
-		// Yield 1: waitForTimeout(150) resolves → else branch →
+		// Yield 1: Promise.race resolves (timeout wins) → else branch →
 		// waitForTimeout(100)
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-		// At this point, the second waitForTimeout was called with 100.
+		// At this point, waitForTimeout was called with 150 (race window)
+		// and 100 (custom settle).
 		expect(page.waitForTimeout).toHaveBeenNthCalledWith(1, 150);
 		expect(page.waitForTimeout).toHaveBeenNthCalledWith(2, 100);
 		expect(page.waitForTimeout).toHaveBeenCalledTimes(2);
@@ -285,7 +298,7 @@ describe("waitForNavigationSettle", () => {
 	it("uses defaults when options are omitted", async () => {
 		const promise = waitForNavigationSettle(page, page.url());
 
-		// Yield 1: waitForTimeout(150) resolves → else branch →
+		// Yield 1: Promise.race resolves (timeout wins) → else branch →
 		// waitForTimeout(400) (default settle)
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -317,10 +330,11 @@ describe("waitForNavigationSettle", () => {
 
 		page.fireNav();
 
-		// Should not throw — the .catch(() => {}) swallows the rejection.
+		// Should not throw — each .catch(() => {}) swallows the rejection.
+		// Both load and networkidle rejections are caught.
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-		expect(page.waitForLoadState).toHaveBeenCalledTimes(1);
+		expect(page.waitForLoadState).toHaveBeenCalledTimes(2);
 
 		const result = await promise;
 
@@ -365,5 +379,54 @@ describe("waitForNavigationSettle", () => {
 			"framenavigated",
 			expect.any(Function),
 		);
+	});
+
+	// ── Race optimization: navStarted resolves before timeout ──
+
+	it("resolves immediately when framenavigated fires before the detection window expires", async () => {
+		page.setUrl("https://example.com/page2");
+
+		const promise = waitForNavigationSettle(page, "https://example.com/", {
+			settleTimeoutMs: 0,
+			navTimeoutMs: 5000,
+		});
+
+		// Fire nav immediately — navStarted resolves synchronously,
+		// Promise.race picks it, and we proceed to waitForPageReady
+		// without waiting the full detection window.
+		page.fireNav();
+
+		// One yield is enough (race + waitForPageReady both complete
+		// in the microtask chain).
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+		// Both load and networkidle were waited for
+		expect(page.waitForLoadState).toHaveBeenCalledTimes(2);
+
+		const result = await promise;
+		expect(result.navigated).toBe(true);
+		expect(result.url).toBe("https://example.com/page2");
+	});
+
+	it("does not call waitForLoadState when framenavigated fires for a non-main frame", async () => {
+		const iframe = {};
+		const promise = waitForNavigationSettle(page, page.url(), {
+			settleTimeoutMs: 0,
+			navTimeoutMs: 5000,
+		});
+
+		// Yield 1: Promise.race resolves → else branch → waitForTimeout(0)
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+		// iframe nav resolves navStarted but navigated stays false
+		page.fireNav(iframe);
+
+		// Yield 2: settle done → late-arrival gate (navigated=false, URL same)
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+		expect(page.waitForLoadState).not.toHaveBeenCalled();
+
+		const result = await promise;
+		expect(result.navigated).toBe(false);
 	});
 });
