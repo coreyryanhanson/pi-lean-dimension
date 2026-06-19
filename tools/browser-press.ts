@@ -28,8 +28,19 @@ export const browserPressTool = defineTool({
 			"Press",
 			(tid) => router.press(tid, key),
 			(result) => ({
-				message: `Pressed "${key}"`,
-				details: { key, elementCount: result.elementCount },
+				message: [
+					`Pressed "${key}"`,
+					result.newUrl ? `URL: ${result.newUrl}` : "",
+					result.newTitle ? `Title: ${result.newTitle}` : "",
+				]
+					.filter(Boolean)
+					.join("\n"),
+				details: {
+					key,
+					newUrl: result.newUrl,
+					newTitle: result.newTitle,
+					elementCount: result.elementCount,
+				},
 			}),
 		);
 	},
@@ -46,6 +57,17 @@ export const browserPressTool = defineTool({
 		const d = result.details as Record<string, unknown> | undefined;
 		if (d?.error) return new Text(theme.fg("error", "Press failed"), 0, 0);
 		const ec = d?.elementCount as number | undefined;
+		const nu = d?.newUrl as string | undefined;
+		if (nu) {
+			return new Text(
+				theme.fg(
+					"success",
+					`✅ → ${nu}${ec !== undefined ? ` · ${ec} elements` : ""}`,
+				),
+				0,
+				0,
+			);
+		}
 		return new Text(
 			theme.fg(
 				"dim",

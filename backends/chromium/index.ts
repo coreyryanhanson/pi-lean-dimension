@@ -27,6 +27,7 @@ import {
 } from "./browser-events.js";
 import { sessionManager } from "../../core/shared/session-manager.js";
 import { checkPage } from "../../core/shared/bot-detection.js";
+import { waitForNavigationSettle } from "../../core/shared/nav-settle.js";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { saveStorageState } from "../../core/shared/storage-state.js";
@@ -618,11 +619,12 @@ export class ChromiumPlugin implements BrowserPlugin {
 		phases.locate = Math.round(performance.now() - _start);
 
 		try {
+			const urlBefore = page.url();
 			await locator.click({ timeout: 5000 });
 			phases.click = Math.round(performance.now() - _start);
 
-			// Wait for potential navigation
-			await page.waitForTimeout(300);
+			// Wait for potential navigation to settle (replaces fixed sleep)
+			const { navigated } = await waitForNavigationSettle(page, urlBefore);
 			phases.wait = Math.round(performance.now() - _start);
 
 			const newUrl = page.url();
@@ -642,6 +644,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				role: node.role,
 				name: node.name,
 				result: "success",
+				navigated,
 				timings: phases,
 				time: Math.round(performance.now() - _start),
 			});
@@ -865,8 +868,21 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 
 		try {
+			const urlBefore = page.url();
 			await page.keyboard.press(key);
-			await page.waitForTimeout(200);
+
+			// Wait for potential navigation to settle (replaces fixed sleep).
+			// Shorter nav timeout since Enter-on-link nav is typically fast.
+			const { navigated } = await waitForNavigationSettle(page, urlBefore, {
+				navTimeoutMs: 3000,
+			});
+
+			const newUrl = page.url();
+			const newTitle = await page.title();
+			sessionManager.updateSession(taskId, {
+				currentUrl: newUrl,
+				currentTitle: newTitle,
+			});
 
 			const snapResult = await this.takeSnapshot(taskId, page);
 
@@ -874,12 +890,15 @@ export class ChromiumPlugin implements BrowserPlugin {
 				taskId,
 				key,
 				success: true,
+				navigated,
 				elementCount: snapResult.elementCount,
 				time: Math.round(performance.now() - _start),
 			});
 
 			return {
 				success: true,
+				newUrl,
+				newTitle,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
 				dialogEvents: snapResult.dialogEvents,
