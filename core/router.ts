@@ -39,6 +39,7 @@ import {
 	type ExtractResult,
 } from "./shared/dom-extractor.js";
 import type {
+	DialogEvent,
 	NavigateResult,
 	SnapshotResult,
 	InteractionResult,
@@ -118,6 +119,22 @@ export function setOnProfileChange(
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Format dialog events for appending to snapshot output.
+ * Returns an empty string when there are no events.
+ */
+function formatDialogEvents(events: DialogEvent[]): string {
+	if (events.length === 0) return "";
+
+	const lines = events.map((d) => {
+		const prefix =
+			d.type === "alert" ? "📢" : d.type === "confirm" ? "❓" : "💬";
+		return `${prefix} [${d.type}] ${d.message} (auto-${d.handledAs})`;
+	});
+
+	return "\n\n--- Auto-dismissed dialogs ---\n" + lines.join("\n");
+}
 
 /**
  * Get or create an interactive session for the given task.
@@ -355,7 +372,8 @@ function compactInteractionResult(
 				truncated,
 				result.elementCount,
 			) +
-			`\nfingerprint:${newFingerprint}`;
+			`\nfingerprint:${newFingerprint}` +
+			formatDialogEvents(result.dialogEvents ?? []);
 
 		const session = sessionManager.getSession(taskId);
 		if (session) {
@@ -577,9 +595,10 @@ export async function navigate(
 			: null;
 		// ---
 
+		const dialogContent = formatDialogEvents(result.dialogEvents ?? []);
 		const snapshotContent = rawSnapshot
 			? botWarn
-				? rawSnapshot + `\nfingerprint:${fp}`
+				? rawSnapshot + `\nfingerprint:${fp}` + dialogContent
 				: compactSnapshot(rawSnapshot, result.elementCount) +
 					formatCacheNotice(
 						cacheResult,
@@ -587,7 +606,8 @@ export async function navigate(
 						isTruncated,
 						result.elementCount,
 					) +
-					`\nfingerprint:${fp}`
+					`\nfingerprint:${fp}` +
+					dialogContent
 			: "";
 
 		// Track cache population time for staleness detection
@@ -685,6 +705,7 @@ export async function snapshot(
 				formatCacheNotice(null, rawLength, wasTruncated, result.elementCount) +
 				`\nfingerprint:${fp}`;
 		}
+		result.snapshot += formatDialogEvents(result.dialogEvents ?? []);
 	}
 	return result;
 }

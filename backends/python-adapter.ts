@@ -33,6 +33,7 @@ import {
 	DEFAULT_CAPABILITIES,
 	type BrowserPlugin,
 	type PluginCapabilities,
+	type DialogEvent,
 	type NavigateResult,
 	type SnapshotResult,
 	type InteractionResult,
@@ -709,6 +710,9 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			};
 			if (result.botDetected) navResult.botDetected = true;
 			if (result.error !== undefined) navResult.error = result.error as string;
+			if (result.dialogEvents !== undefined) {
+				navResult.dialogEvents = result.dialogEvents as DialogEvent[];
+			}
 			return navResult;
 		} catch (err: unknown) {
 			return {
@@ -733,10 +737,17 @@ export class PythonPluginAdapter implements BrowserPlugin {
 					success: !!raw.success,
 					snapshot: (raw.snapshot as string) ?? "",
 					elementCount: (raw.elementCount as number) ?? 0,
+					dialogEvents: (raw.dialogEvents as DialogEvent[]) ?? [],
 					...(raw.error !== undefined ? { error: raw.error as string } : {}),
 				};
 			},
-			(error) => ({ success: false, snapshot: "", elementCount: 0, error }),
+			(error) => ({
+				success: false,
+				snapshot: "",
+				elementCount: 0,
+				error,
+				dialogEvents: [],
+			}),
 		);
 	}
 
@@ -1088,6 +1099,9 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		if (r.newTitle != null) result.newTitle = r.newTitle as string;
 		if (r.snapshot != null) result.snapshot = r.snapshot as string;
 		if (r.elementCount != null) result.elementCount = r.elementCount as number;
+		if (r.dialogEvents != null) {
+			result.dialogEvents = r.dialogEvents as DialogEvent[];
+		}
 		if (r.error != null) result.error = r.error as string;
 		return result;
 	}

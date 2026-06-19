@@ -51,6 +51,21 @@ export const DEFAULT_CAPABILITIES: PluginCapabilities = {
 // ─── Unified Result Types ─────────────────────────────────────────
 
 /**
+ * A JavaScript dialog event (alert, confirm, prompt, beforeunload) that was
+ * auto-dismissed by the browser plugin.  Returned as part of navigate,
+ * snapshot, and interaction results so the router can surface them to
+ * the agent without polluting the accessibility tree text.
+ */
+export interface DialogEvent {
+	/** Dialog type as reported by the browser */
+	type: string;
+	/** Dialog message text */
+	message: string;
+	/** How the dialog was handled (always "accepted" for auto-dismiss) */
+	handledAs: "accepted" | "dismissed";
+}
+
+/**
  * Base shape shared by all result types.
  * Operations return `{ success: false, error }` for expected failures.
  * They **may throw** for infrastructure failures (process crash, OOM).
@@ -73,6 +88,8 @@ export interface NavigateResult extends ResultBase {
 	botDetected?: boolean;
 	/** Whether a dialog (role="dialog" or role="alertdialog") was detected in the parsed element cache */
 	dialogDetected?: boolean;
+	/** Auto-dismissed JavaScript dialogs (alert/confirm/prompt) since last navigate */
+	dialogEvents?: DialogEvent[];
 	/** The active profile mode for this session. */
 	profileMode?: "none" | "session" | "named";
 	/** Which profile was loaded for this session (if any) */
@@ -85,6 +102,8 @@ export interface SnapshotResult extends ResultBase {
 	snapshot: string;
 	/** Number of interactive elements found */
 	elementCount: number;
+	/** Auto-dismissed JavaScript dialogs (alert/confirm/prompt) since last snapshot */
+	dialogEvents?: DialogEvent[];
 }
 
 /** Result from interaction tools (click, type, scroll, goBack, press) */
@@ -97,6 +116,8 @@ export interface InteractionResult extends ResultBase {
 	snapshot?: string;
 	/** Number of interactive elements in the auto-snapshot */
 	elementCount?: number;
+	/** Auto-dismissed JavaScript dialogs since the interaction */
+	dialogEvents?: DialogEvent[];
 }
 
 /** Result from plugin.screenshot() */

@@ -22,7 +22,6 @@ import {
 import {
 	getDialogLog,
 	installDialogHandlers,
-	formatDialogLog,
 	getConsoleLog as getRawConsoleLog,
 	clearConsoleLog,
 } from "./browser-events.js";
@@ -35,6 +34,7 @@ import {
 	DEFAULT_CAPABILITIES,
 	type BrowserPlugin,
 	type PluginCapabilities,
+	type DialogEvent,
 	type NavigateResult,
 	type SnapshotResult,
 	type InteractionResult,
@@ -286,7 +286,11 @@ export class ChromiumPlugin implements BrowserPlugin {
 	private async takeSnapshot(
 		taskId: string,
 		page: Page,
-	): Promise<{ snapshot: string; elementCount: number }> {
+	): Promise<{
+		snapshot: string;
+		elementCount: number;
+		dialogEvents: DialogEvent[];
+	}> {
 		try {
 			const snap = await page.ariaSnapshot();
 			const parsed = parseSnapshot(snap);
@@ -297,15 +301,25 @@ export class ChromiumPlugin implements BrowserPlugin {
 				this.getOrCreateCache(taskId).set(ref, node);
 			}
 
-			// Check for auto-dismissed dialogs
-			const dialogInfo = formatDialogLog(taskId);
-			const text = dialogInfo
-				? parsed.text + "\n\n--- Auto-dismissed dialogs ---\n" + dialogInfo
-				: parsed.text;
+			// Collect recent auto-dismissed dialog events (last 10)
+			const rawDialogs = getDialogLog(taskId);
+			const dialogEvents = rawDialogs.slice(-10).map((d) => ({
+				type: d.type,
+				message: d.message,
+				handledAs: d.handledAs,
+			}));
 
-			return { snapshot: text, elementCount: parsed.count };
+			return {
+				snapshot: parsed.text,
+				elementCount: parsed.count,
+				dialogEvents,
+			};
 		} catch {
-			return { snapshot: "(snapshot not available)", elementCount: 0 };
+			return {
+				snapshot: "(snapshot not available)",
+				elementCount: 0,
+				dialogEvents: [],
+			};
 		}
 	}
 
@@ -422,23 +436,14 @@ export class ChromiumPlugin implements BrowserPlugin {
 			// so JS-injected challenge content is present when we check.
 			const botDetected = await this.checkBotDetection(page);
 
-			// Take accessibility snapshot
-			const snap = await page.ariaSnapshot();
-			const parsed = parseSnapshot(snap);
-
-			// Cache elements for this session
-			this.getOrCreateCache(taskId).clear();
-			for (const [ref, node] of parsed.elements) {
-				this.getOrCreateCache(taskId).set(ref, node);
-			}
-
 			const title = await page.title();
 
-			// Check for auto-dismissed dialogs
-			const dialogInfo = formatDialogLog(taskId);
-			const snapshotText = dialogInfo
-				? parsed.text + "\n\n--- Auto-dismissed dialogs ---\n" + dialogInfo
-				: parsed.text;
+			// Take accessibility snapshot + collect dialog events
+			const {
+				snapshot: snapshotText,
+				elementCount,
+				dialogEvents,
+			} = await this.takeSnapshot(taskId, page);
 
 			// Update session manager
 			sessionManager.updateSession(taskId, {
@@ -452,7 +457,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				plugin: "chromium",
 				success: true,
 				botDetected: botDetected ?? false,
-				elementCount: parsed.count,
+				elementCount,
 				time: Math.round(performance.now() - _start),
 			});
 
@@ -461,8 +466,9 @@ export class ChromiumPlugin implements BrowserPlugin {
 				url: page.url(),
 				title,
 				snapshot: snapshotText,
-				elementCount: parsed.count,
+				elementCount,
 				botDetected,
+				dialogEvents,
 			};
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : String(err);
@@ -523,33 +529,28 @@ export class ChromiumPlugin implements BrowserPlugin {
 		}
 
 		try {
-			const snap = await page.ariaSnapshot();
-			const parsed = parseSnapshot(snap);
+			const {
+				snapshot: snapText,
+				elementCount,
+				dialogEvents,
+			} = await this.takeSnapshot(taskId, page);
 
-			// Update cache
-			this.getOrCreateCache(taskId).clear();
-			for (const [ref, node] of parsed.elements) {
-				this.getOrCreateCache(taskId).set(ref, node);
-			}
-
-			// Count auto-dismissed dialog entries for the log
-			// The dialog info is NOT embedded in parsed.text in this path
-			// (unlike takeSnapshot/navigate which format it), so check via supervisor.
-			const dialogBlocks = getDialogLog(taskId).length;
+			const dialogBlocks = dialogEvents.length;
 
 			this._log("snapshot", {
 				taskId,
 				success: true,
-				elementCount: parsed.count,
+				elementCount,
 				dialogBlocks,
-				fingerprint: parsed.text.slice(0, 16),
+				fingerprint: snapText.slice(0, 16),
 				time: Math.round(performance.now() - _start),
 			});
 
 			return {
 				success: true,
-				snapshot: parsed.text,
-				elementCount: parsed.count,
+				snapshot: snapText,
+				elementCount,
+				dialogEvents,
 			};
 		} catch (err: unknown) {
 			this._log("snapshot", {
@@ -651,6 +652,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				newTitle,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
+				dialogEvents: snapResult.dialogEvents,
 			};
 		} catch (err: unknown) {
 			this._log("click", {
@@ -739,6 +741,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				success: true,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
+				dialogEvents: snapResult.dialogEvents,
 			};
 		} catch (err: unknown) {
 			this._log("type", {
@@ -788,6 +791,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				success: true,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
+				dialogEvents: snapResult.dialogEvents,
 			};
 		} catch (err: unknown) {
 			this._log("scroll", {
@@ -837,6 +841,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				newTitle,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
+				dialogEvents: snapResult.dialogEvents,
 			};
 		} catch (err: unknown) {
 			this._log("goBack", {
@@ -877,6 +882,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 				success: true,
 				snapshot: snapResult.snapshot,
 				elementCount: snapResult.elementCount,
+				dialogEvents: snapResult.dialogEvents,
 			};
 		} catch (err: unknown) {
 			this._log("press", {

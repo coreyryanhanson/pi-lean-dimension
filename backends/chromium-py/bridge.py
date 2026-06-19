@@ -204,7 +204,7 @@ class ChromiumPyBridge(BrowserBridge):
             dialog_log.append({
                 "type": dialog.type,
                 "message": dialog.message[:200],
-                "dismissed": "accepted",
+                "handledAs": "accepted",
             }),
             dialog.accept(),
         ))
@@ -364,6 +364,20 @@ class ChromiumPyBridge(BrowserBridge):
         session = self.require_session(task_id)
         return session["page"]
 
+    def _get_dialog_events(self, task_id: str) -> list[dict[str, str]]:
+        """Get up to 10 most recent auto-dismissed dialog events for a task.
+
+        Returns a list of ``{type, message, handledAs}`` dicts.
+        """
+        session = self.get_session(task_id)
+        if not session:
+            return []
+        log: list[dict[str, str]] = session.get("dialog_log", [])
+        return [
+            {"type": e["type"], "message": e["message"], "handledAs": e["handledAs"]}
+            for e in log[-10:]
+        ]
+
     def _take_snapshot_and_cache(
         self, task_id: str, page: Any
     ) -> tuple[str, int, dict[str, dict[str, Any]]]:
@@ -379,21 +393,7 @@ class ChromiumPyBridge(BrowserBridge):
         parsed = parse_snapshot(snap_text)
         self.set_element_cache(task_id, parsed)
 
-        # Append auto-dismissed dialog info
-        result_text = parsed.text
-        session = self.get_session(task_id)
-        if session:
-            dialog_log: list[dict[str, str]] = session.get("dialog_log", [])
-            if dialog_log:
-                dialog_text = "\n".join(
-                    f"  [{d['dismissed']}] {d['type']}: {d['message']}"
-                    for d in dialog_log[-10:]  # last 10
-                )
-                result_text += (
-                    "\n\n--- Auto-dismissed dialogs ---\n" + dialog_text
-                )
-
-        return result_text, parsed.count, {
+        return parsed.text, parsed.count, {
             ref: {
                 "role": node.role,
                 "name": node.name,
@@ -567,6 +567,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "elementCount": element_count,
                 "elements": elements,
                 "botDetected": bot_detected,
+                "dialogEvents": self._get_dialog_events(task_id),
             }
         else:
             _log("navigate", url=url, plugin="chromium-py", success=False,
@@ -681,6 +682,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "snapshot": snap_text,
                 "elementCount": element_count,
                 "elements": elements,
+                "dialogEvents": self._get_dialog_events(task_id),
             }
         except Exception as exc:
             _log("snapshot", taskId=task_id, success=False, elementCount=0,
@@ -748,11 +750,13 @@ class ChromiumPyBridge(BrowserBridge):
                  result="success",
                  time=round((time.time() - _t_start) * 1000))
 
+            dialog_events = self._get_dialog_events(task_id)
             result: dict[str, Any] = {
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
                 "elements": elements,
+                "dialogEvents": dialog_events,
             }
             if new_url is not None:
                 result["newUrl"] = new_url
@@ -819,6 +823,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "snapshot": snap_text,
                 "elementCount": element_count,
                 "elements": elements,
+                "dialogEvents": self._get_dialog_events(task_id),
             }
 
         except Exception as exc:
@@ -866,6 +871,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "snapshot": snap_text,
                 "elementCount": element_count,
                 "elements": elements,
+                "dialogEvents": self._get_dialog_events(task_id),
             }
 
         except Exception as exc:
@@ -911,11 +917,13 @@ class ChromiumPyBridge(BrowserBridge):
                  elementCount=element_count,
                  time=round((time.time() - _t_start) * 1000))
 
+            dialog_events = self._get_dialog_events(task_id)
             result: dict[str, Any] = {
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
                 "elements": elements,
+                "dialogEvents": dialog_events,
             }
             if new_url is not None:
                 result["newUrl"] = new_url
@@ -963,6 +971,7 @@ class ChromiumPyBridge(BrowserBridge):
                 "snapshot": snap_text,
                 "elementCount": element_count,
                 "elements": elements,
+                "dialogEvents": self._get_dialog_events(task_id),
             }
 
         except Exception as exc:
