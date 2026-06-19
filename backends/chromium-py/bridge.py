@@ -192,11 +192,15 @@ class ChromiumPyBridge(BrowserBridge):
         Returns a session dict with ``page``, ``console_messages``, and
         ``dialog_log``.
         """
-        # ── Console capture ─────────────────────────────────────
+        # ── Console capture (ring buffer, capped at 500) ────────
         console_messages: list[dict[str, str]] = []
-        page.on("console", lambda msg: console_messages.append(
-            {"type": msg.type, "text": msg.text}
-        ))
+
+        def _capture_console(msg: Any) -> None:
+            console_messages.append({"type": msg.type, "text": msg.text})
+            if len(console_messages) > 500:
+                console_messages.pop(0)
+
+        page.on("console", _capture_console)
 
         # ── Dialog auto-dismissal ───────────────────────────────
         dialog_log: list[dict[str, str]] = []

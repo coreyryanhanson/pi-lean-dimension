@@ -155,7 +155,7 @@ Integration tests (`reddit-dialog`, `chromium-py`) skip automatically when Playw
 
 ## Known Constraints & Debt
 
-- **Console capture only on Chromium** — Python adapter's `BridgeBase` has capture but `chromium-py` bridge doesn't call it yet
+- **Console capture in `chromium-py`** — `chromium-py/bridge.py` installs a console handler with a 500-entry ring buffer. The base `BrowserBridge` does not install handlers; future Python plugins must override `_setup_page_session`.
 - **AbortSignal not supported on Python bridge** — `supportsAbortSignal: false`, router skips signal wiring
 - **Sessions are per taskId** — mapped to `browser-NNN` keys via `_sessionKeys`/`_sessionCounter` in `core/shared/task-id.ts`. Created on first navigate, cleaned up on `session_shutdown`
 - **Role-based locators only**: never XPath/CSS — always `getByRole()` via `buildLocator()` with positional `.nth()` for duplicates. The `INTERACTIVE_ROLES` set defines which roles get @e refs

@@ -206,3 +206,76 @@ class TestChromiumPyBridgeDispatch:
         )
         assert "error" in result
         assert "taskId" in result["error"]["message"]
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Test: Console capture ring-buffer cap
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class _MockConsolePage:
+    """Mock Playwright page that records ``page.on("console")`` handlers.
+
+    Lets us invoke captured handlers directly without a real browser.
+    """
+
+    def __init__(self) -> None:
+        self._handlers: dict[str, list] = {}
+
+    def on(self, event: str, handler) -> None:
+        self._handlers.setdefault(event, []).append(handler)
+
+    def fire_console(self, text: str) -> None:
+        """Simulate a console event by calling all 'console' handlers."""
+        for handler in self._handlers.get("console", []):
+            handler(_FakeConsoleMessage(text))
+
+
+class _FakeConsoleMessage:
+    """Duck-typed substitute for Playwright's ConsoleMessage."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    @property
+    def type(self) -> str:
+        return "log"
+
+    @property
+    def text(self) -> str:
+        return self._text
+
+
+class TestConsoleCap:
+    """Verify the 500-entry ring buffer on console capture."""
+
+    @pytest.fixture
+    def bridge(self):
+        return ChromiumPyBridge()
+
+    def test_console_capped_at_500(self, bridge):
+        """After 501 events, only the last 500 are retained."""
+        page = _MockConsolePage()
+        session = bridge._setup_page_session(page)
+        messages: list[dict[str, str]] = session["console_messages"]
+
+        # Fire 501 messages
+        for i in range(501):
+            page.fire_console(f"msg-{i}")
+
+        assert len(messages) == 500, f"Expected 500, got {len(messages)}"
+        assert messages[0]["text"] == "msg-1", "First entry should be msg-1 (msg-0 popped)"
+        assert messages[-1]["text"] == "msg-500", "Last entry should be msg-500"
+
+    def test_console_under_cap_retains_all(self, bridge):
+        """Fewer than 501 events are all retained."""
+        page = _MockConsolePage()
+        session = bridge._setup_page_session(page)
+        messages: list[dict[str, str]] = session["console_messages"]
+
+        for i in range(10):
+            page.fire_console(f"msg-{i}")
+
+        assert len(messages) == 10, f"Expected 10, got {len(messages)}"
+        assert messages[0]["text"] == "msg-0"
+        assert messages[-1]["text"] == "msg-9"
