@@ -83,6 +83,32 @@ def _log(event: str, **data: Any) -> None:
 # ═══════════════════════════════════════════════════════════════════════
 
 
+# ─── Navigation settle helpers ────────────────────────────────────
+
+
+def _wait_for_page_ready(page: Any, timeout_ms: int) -> None:
+    """Wait for page readiness after a navigation.
+
+    Mirrors the TypeScript ``waitForPageReady`` helper — each load
+    state check gets the full timeout budget, and timeouts are
+    silently swallowed so the caller always proceeds (matching TS
+    ``.catch(() => {{}})`` behavior).  Required to prevent long-polling
+    or streaming sites from failing the entire settle via networkidle.
+
+    Args:
+        page: Playwright Page.
+        timeout_ms: Timeout for each wait_for_load_state call.
+    """
+    try:
+        page.wait_for_load_state("load", timeout=timeout_ms)
+    except Exception:
+        pass
+    try:
+        page.wait_for_load_state("networkidle", timeout=timeout_ms)
+    except Exception:
+        pass
+
+
 class ChromiumPyBridge(BrowserBridge):
     """Concrete bridge that drives Chromium via Playwright Python.
 
@@ -569,6 +595,68 @@ class ChromiumPyBridge(BrowserBridge):
                 "error": str(exc),
             }
 
+    # ── Navigation settle helper ────────────────────────────────
+
+    @staticmethod
+    def _wait_for_navigation_settle(
+        page: Any,
+        url_before: str,
+        nav_timeout_ms: int = 5000,
+        settle_timeout_ms: int = 400,
+    ) -> tuple[bool, str]:
+        """Wait for navigation to settle after a user interaction.
+
+        Replaces fixed ``time.sleep()`` calls that race against navigation
+        commit.  Instead, listens for the ``framenavigated`` event and waits
+        for page readiness only when a navigation has actually started.
+
+        Args:
+            page: Playwright Page.
+            url_before: The page URL before the interaction.
+            nav_timeout_ms: Max time (ms) to wait for each page readiness
+                            check (load and networkidle each get the full
+                            budget). Default: 5000.
+            settle_timeout_ms: Short settle delay (ms) when no navigation
+                               occurs (default: 400).
+
+        Returns:
+            ``(navigated, url)`` — whether a main-frame navigation was
+            detected, and the page URL after settling.
+        """
+        navigated = False
+
+        def _on_nav(frame: Any) -> None:
+            nonlocal navigated
+            if frame == page.main_frame:
+                navigated = True
+
+        page.on("framenavigated", _on_nav)
+
+        try:
+            # Wait for a potential navigation to start (150 ms window)
+            page.wait_for_timeout(150)
+
+            waited_for_load = False
+            if navigated:
+                _wait_for_page_ready(page, nav_timeout_ms)
+                waited_for_load = True
+            elif page.url != url_before:
+                # URL changed without framenavigated event
+                _wait_for_page_ready(page, nav_timeout_ms)
+                waited_for_load = True
+            else:
+                # No navigation — settle for client-side rerenders
+                page.wait_for_timeout(settle_timeout_ms)
+
+            # Late-arrival gate: catch navigations that started during settle
+            if not waited_for_load and (navigated or page.url != url_before):
+                _wait_for_page_ready(page, nav_timeout_ms)
+
+        finally:
+            page.remove_listener("framenavigated", _on_nav)
+
+        return navigated, page.url
+
     # ── Interaction ─────────────────────────────────────────────────
 
     def do_click(self, task_id: str, ref: str) -> dict[str, Any]:
@@ -604,24 +692,20 @@ class ChromiumPyBridge(BrowserBridge):
             return {"success": False, "error": str(exc)}
 
         try:
+            url_before = page.url
             locator.click(timeout=5_000)
 
-            time.sleep(0.3)
+            navigated, cur_url = self._wait_for_navigation_settle(page, url_before)
 
-            new_url: Optional[str] = None
-            new_title: Optional[str] = None
-            try:
-                new_url = page.url
-                new_title = page.title()
-            except Exception:
-                pass
+            new_url = page.url
+            new_title = page.title()
 
             snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
 
             _log("click", taskId=task_id, ref=ref, role=_role, name=_name,
-                 result="success",
+                 result="success", navigated=navigated,
                  time=round((time.time() - _t_start) * 1000))
 
             dialog_events = self._get_dialog_events(task_id)
@@ -631,11 +715,9 @@ class ChromiumPyBridge(BrowserBridge):
                 "elementCount": element_count,
                 "elements": elements,
                 "dialogEvents": dialog_events,
+                "newUrl": new_url,
+                "newTitle": new_title,
             }
-            if new_url is not None:
-                result["newUrl"] = new_url
-            if new_title is not None:
-                result["newTitle"] = new_title
             return result
 
         except Exception as exc:
@@ -829,24 +911,34 @@ class ChromiumPyBridge(BrowserBridge):
             }
 
         try:
+            url_before = page.url
             page.keyboard.press(key)
-            time.sleep(0.2)
+
+            navigated, cur_url = self._wait_for_navigation_settle(
+                page, url_before, nav_timeout_ms=3000
+            )
+
+            new_url = page.url
+            new_title = page.title()
 
             snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
 
             _log("press", taskId=task_id, key=key, success=True,
-                 elementCount=element_count,
+                 navigated=navigated, elementCount=element_count,
                  time=round((time.time() - _t_start) * 1000))
 
-            return {
+            result: dict[str, Any] = {
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
                 "elements": elements,
                 "dialogEvents": self._get_dialog_events(task_id),
+                "newUrl": new_url,
+                "newTitle": new_title,
             }
+            return result
 
         except Exception as exc:
             _log("press", taskId=task_id, key=key, success=False,
