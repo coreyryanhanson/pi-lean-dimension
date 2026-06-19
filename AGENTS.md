@@ -27,7 +27,7 @@ pi-browser/
 ├── browser-status.ts         # /web status subcommand (extracted from toggle)
 ├── backends/                 # Plugin implementations
 │   ├── chromium/index.ts     # Node/Playwright, reference ~1300 lines
-│   ├── chromium-py/bridge.py # Python/Playwright bridge, disabled by default (~1420 lines)
+│   ├── chromium-py/bridge.py # Python/Playwright bridge — parity reference for stealth backends, disabled by default (~1150 lines)
 │   ├── python-adapter.ts     # JSON-RPC bridge for subprocess plugins (~1100 lines)
 │   └── python-base/          # Shared Python bridge library (accessibility.py, bridge.py, transport.py)
 ├── core/                     # Framework: shared across all plugins
@@ -74,7 +74,7 @@ Plugin loading: reads `browser.plugins` from `~/.pi/agent/settings.json` (global
 **Active plugins (config-driven):**
 
 - **`chromium`** — Node/Playwright (~1300 lines), always enabled by default, reference implementation
-- **`chromium-py`** — Python/Playwright (~1420 lines bridge.py), disabled by default
+- **`chromium-py`** — Python/Playwright parity reference (~1150 lines bridge.py), disabled by default. Validates ``python-base`` against the TS reference; use as the baseline when building a new Python stealth backend.
 
 ### Router (`core/router.ts`)
 

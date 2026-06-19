@@ -355,6 +355,12 @@ No other backends are installed out of the box.
 
 ### Adding Firefox or Stealth Browsers
 
+> **Parity reference:** The shipped ``chromium-py`` backend (disabled by default)
+> validates the ``python-base`` shared library and serves as a neutral baseline
+> for debugging Python-based stealth backends. When building your own Python
+> plugin, keep ``chromium-py`` as a reference — run both backends through the
+> same navigation suite to detect behavioural drift.
+
 You can manually provision additional backends by:
 
 1. **Creating a backend directory** under `backends/` — either:

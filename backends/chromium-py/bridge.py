@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 """
-Chromium-Py Bridge — Chrome automation via Playwright Python.
+Chromium-Py Bridge — Python-side parity reference for stealth backends.
 
 A concrete subclass of ``BrowserBridge`` that implements all 13 browser
-operations using Playwright Python's Chromium API.  This is the *validation
-backend* that proves the Python adapter infrastructure works end-to-end;
-it is intentionally NOT a production backend (registered as disabled
-by default).
+operations using Playwright Python's Chromium API.  This is the **parity
+reference** for future Python-based stealth backends (e.g. Camoufox,
+undetected-chromedriver):
+
+* Validates the ``python-base`` shared library works end-to-end.
+* Provides a neutral common source to debug against when a stealth
+  backend diverges from the TypeScript reference behaviour.
+* Registered as disabled by default — not intended for direct user use.
+
+When adding a new Python backend, keep ``chromium-py`` as your baseline:
+run both the new backend and ``chromium-py`` through the same suite of
+navigations and compare their output.
 
 Usage
 -----

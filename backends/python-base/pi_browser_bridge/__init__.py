@@ -15,6 +15,13 @@ Key components
 * :mod:`.bot_detection` — anti-automation / bot detection signal
   matcher, mirroring the TypeScript version.
 
+Reference implementation
+------------------------
+``backends/chromium-py/bridge.py`` is the shipped parity reference.
+It subclasses ``BrowserBridge`` using Playwright Python's Chromium API
+and validates this library end-to-end. When building a new Python plugin,
+keep ``chromium-py`` as your baseline for parity testing.
+
 Quick start
 -----------
 ::
