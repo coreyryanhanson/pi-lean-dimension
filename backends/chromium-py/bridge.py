@@ -695,7 +695,7 @@ class ChromiumPyBridge(BrowserBridge):
             url_before = page.url
             locator.click(timeout=5_000)
 
-            navigated, cur_url = self._wait_for_navigation_settle(page, url_before)
+            navigated, _ = self._wait_for_navigation_settle(page, url_before)
 
             new_url = page.url
             new_title = page.title()
@@ -914,7 +914,7 @@ class ChromiumPyBridge(BrowserBridge):
             url_before = page.url
             page.keyboard.press(key)
 
-            navigated, cur_url = self._wait_for_navigation_settle(
+            navigated, _ = self._wait_for_navigation_settle(
                 page, url_before, nav_timeout_ms=3000
             )
 

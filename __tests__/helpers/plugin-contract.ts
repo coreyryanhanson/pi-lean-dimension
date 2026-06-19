@@ -900,7 +900,7 @@ export function runContractTests(
 				const result = await plugin.click(TASK_ID, ref);
 				expect(result.success).toBe(true);
 
-				// The navigation completes after 800ms; the settle helper
+				// The navigation completes after 280ms; the settle helper
 				// must detect the late-arriving nav and wait for page readiness.
 				// URL and snapshot should be consistent.
 				expect(result.newUrl).toContain("/slow-nav-destination");
