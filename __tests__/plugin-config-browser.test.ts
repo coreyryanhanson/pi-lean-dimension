@@ -76,19 +76,19 @@ describe("loadBrowserConfig()", () => {
 	it("returns defaults when no settings.json exists", () => {
 		mockNoSettings();
 		const config = loadBrowserConfig();
-		expect(config.defaultProfile).toBe("none");
+		expect(config.defaultProfile).toBe("session");
 	});
 
 	it("returns defaults when browser section is missing", () => {
 		mockGlobalSettings({});
 		const config = loadBrowserConfig();
-		expect(config.defaultProfile).toBe("none");
+		expect(config.defaultProfile).toBe("session");
 	});
 
 	it("returns defaults when browser section has no config keys", () => {
 		mockGlobalSettings({ unrelated: true });
 		const config = loadBrowserConfig();
-		expect(config.defaultProfile).toBe("none");
+		expect(config.defaultProfile).toBe("session");
 	});
 
 	// ── defaultProfile ─────────────────────────────────────────
@@ -120,12 +120,12 @@ describe("loadBrowserConfig()", () => {
 
 		it("rejects empty string", () => {
 			mockGlobalSettings({ defaultProfile: "" });
-			expect(loadBrowserConfig().defaultProfile).toBe("none");
+			expect(loadBrowserConfig().defaultProfile).toBe("session");
 		});
 
 		it("rejects names with path traversal", () => {
 			mockGlobalSettings({ defaultProfile: "../../evil" });
-			expect(loadBrowserConfig().defaultProfile).toBe("none");
+			expect(loadBrowserConfig().defaultProfile).toBe("session");
 		});
 	});
 

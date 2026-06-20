@@ -12,9 +12,25 @@
  * All tests use a MockPlugin (no real browser).
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+	describe,
+	it,
+	expect,
+	beforeAll,
+	afterAll,
+	beforeEach,
+	afterEach,
+	vi,
+} from "vitest";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { pluginRegistry } from "../core/plugin-registry.js";
 import { sessionManager } from "../core/shared/session-manager.js";
+import {
+	saveStorageState,
+	deleteStorageState,
+	profileDir,
+} from "../core/shared/storage-state.js";
 import { MockPlugin, makeConfig } from "./helpers/mock-plugin.js";
 
 /**
@@ -510,5 +526,183 @@ describe("Router defaultProfile config routing", () => {
 
 		const session = sessionManager.getSession("default");
 		expect(session?.persistState).toBeFalsy();
+	});
+});
+
+// ─── Profile storage state load from disk ──────────────────────
+
+describe("profile storage state load from disk", () => {
+	const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+	const SAVED_PROFILE = `test-persistence-saved-${uid}`;
+	const FRESH_PROFILE = `test-persistence-fresh-${uid}`;
+	const CORRUPT_PROFILE = `test-persistence-corrupt-${uid}`;
+	const LASTNAV_PROFILE = `test-persistence-lastnav-${uid}`;
+
+	const TEST_STATE = {
+		cookies: [
+			{
+				name: "consent",
+				value: "accepted",
+				domain: ".example.com",
+				path: "/",
+				expires: Date.now() / 1000 + 3600,
+				httpOnly: false,
+				secure: false,
+				sameSite: "Lax" as const,
+			},
+		],
+		origins: [],
+	};
+
+	beforeAll(() => {
+		// Write known state for SAVED_PROFILE
+		saveStorageState(SAVED_PROFILE, TEST_STATE);
+		// Write known state for LASTNAV_PROFILE
+		saveStorageState(LASTNAV_PROFILE, TEST_STATE);
+		// Write corrupt JSON for CORRUPT_PROFILE
+		try {
+			const dir = profileDir(CORRUPT_PROFILE);
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(join(dir, "storage-state.json"), "not valid json");
+		} catch {
+			/* ok */
+		}
+	});
+
+	afterAll(() => {
+		deleteStorageState(SAVED_PROFILE);
+		deleteStorageState(FRESH_PROFILE);
+		deleteStorageState(CORRUPT_PROFILE);
+		deleteStorageState(LASTNAV_PROFILE);
+	});
+
+	let mock: MockPlugin;
+
+	beforeEach(() => {
+		pluginRegistry.clear();
+		mock = new MockPlugin("mock");
+		pluginRegistry.register(mock, makeConfig({ name: "mock" }));
+	});
+
+	afterEach(async () => {
+		await sessionManager.removeAll();
+		pluginRegistry.clear();
+	});
+
+	it("passes storageState when named profile has saved state on disk", async () => {
+		const result = await router.navigate("https://example.com", {
+			profile: SAVED_PROFILE,
+		});
+		expect(result.success).toBe(true);
+
+		const navCalls = mock.calls.get("navigate");
+		expect(navCalls).toHaveLength(1);
+		const [, , , options] = navCalls![0] as [
+			string,
+			string,
+			number,
+			Record<string, unknown>,
+		];
+		expect(options.storageState).toBeDefined();
+		const state = options.storageState as { cookies: Array<{ name: string }> };
+		expect(state.cookies).toHaveLength(1);
+		expect(state.cookies[0]!.name).toBe("consent");
+	});
+
+	it("does not pass storageState when named profile has no saved state (first use)", async () => {
+		const result = await router.navigate("https://example.com", {
+			profile: FRESH_PROFILE,
+		});
+		expect(result.success).toBe(true);
+
+		const navCalls = mock.calls.get("navigate");
+		expect(navCalls).toHaveLength(1);
+		const [, , , options] = navCalls![0] as [
+			string,
+			string,
+			number,
+			Record<string, unknown>,
+		];
+		expect(options.storageState).toBeUndefined();
+	});
+
+	it('does not pass storageState for profile="none"', async () => {
+		const result = await router.navigate("https://example.com", {
+			profile: "none",
+		});
+		expect(result.success).toBe(true);
+
+		const navCalls = mock.calls.get("navigate");
+		expect(navCalls).toHaveLength(1);
+		const [, , , options] = navCalls![0] as [
+			string,
+			string,
+			number,
+			Record<string, unknown>,
+		];
+		expect(options.storageState).toBeUndefined();
+	});
+
+	it("gracefully handles corrupt storage state file on disk", async () => {
+		const result = await router.navigate("https://example.com", {
+			profile: CORRUPT_PROFILE,
+		});
+		expect(result.success).toBe(true);
+
+		const navCalls = mock.calls.get("navigate");
+		expect(navCalls).toHaveLength(1);
+		const [, , , options] = navCalls![0] as [
+			string,
+			string,
+			number,
+			Record<string, unknown>,
+		];
+		expect(options.storageState).toBeUndefined();
+	});
+
+	it("passes storageState when restoring from lastNav with profileName", async () => {
+		// Set up lastNav with a named profile (simulating a prior navigation)
+		sessionManager.setLastNav(
+			"default",
+			"https://example.com",
+			"Mock",
+			"mock",
+			LASTNAV_PROFILE,
+		);
+
+		// Call snapshot → requireInteractiveSession should auto-create from lastNav
+		const result = await router.snapshot("default");
+		expect(result.success).toBe(true);
+
+		// Should have navigated with storageState from LASTNAV_PROFILE
+		const navCalls = mock.calls.get("navigate");
+		expect(navCalls).toHaveLength(1);
+		const [, , , options] = navCalls![0] as [
+			string,
+			string,
+			number,
+			Record<string, unknown>,
+		];
+		expect(options.storageState).toBeDefined();
+		const state = options.storageState as { cookies: Array<{ name: string }> };
+		expect(state.cookies).toHaveLength(1);
+		expect(state.cookies[0]!.name).toBe("consent");
+	});
+
+	it("does not pass storageState when lastNav has no profileName", async () => {
+		sessionManager.setLastNav("default", "https://example.com", "Mock", "mock");
+
+		const result = await router.snapshot("default");
+		expect(result.success).toBe(true);
+
+		const navCalls = mock.calls.get("navigate");
+		expect(navCalls).toHaveLength(1);
+		const [, , , options] = navCalls![0] as [
+			string,
+			string,
+			number,
+			Record<string, unknown>,
+		];
+		expect(options.storageState).toBeUndefined();
 	});
 });

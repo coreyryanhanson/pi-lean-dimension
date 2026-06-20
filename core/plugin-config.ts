@@ -87,7 +87,7 @@ function parseBrowserConfig(
 
 	// Defaults
 	const config: BrowserConfig = {
-		defaultProfile: "none",
+		defaultProfile: "session",
 	};
 
 	if (!raw) return config;

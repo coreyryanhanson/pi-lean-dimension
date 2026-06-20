@@ -670,6 +670,14 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				rpcParams.profileMode = options.profileMode ?? "named";
 			}
 
+			// ── Persist state before re-navigate (if session exists) ──
+			// If the task already has a page entry, this is a re-navigate.
+			// Save the current storage state to disk so it survives
+			// process restarts (crash, reload, resume).
+			if (this._pages.has(taskId)) {
+				await this._persistState(taskId).catch(() => {});
+			}
+
 			// Give the bridge slightly more time so navigation timeouts
 			// are reported by the bridge, not the transport layer.
 			const transportTimeout = timeoutMs + 10_000;
@@ -948,30 +956,8 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			return;
 		}
 
-		// Auto-save storage state if session is persistent
-		const session = sessionManager.getSession(taskId);
-		if (session?.persistState) {
-			try {
-				const raw = await this._rpcCall("browser.getStorageState", {
-					taskId,
-				});
-				const result = raw as Record<string, unknown>;
-				if (result.success) {
-					const name = session.profileName ?? "default";
-					saveStorageState(name, {
-						cookies: (result.cookies ?? []) as Record<string, unknown>[],
-						origins: (result.origins ?? []) as Record<string, unknown>[],
-					});
-				}
-			} catch (err) {
-				console.warn(
-					`[pi-browser] Failed to auto-save storage state for profile ` +
-						`'${session.profileName ?? "default"}' via Python bridge: ` +
-						`${err instanceof Error ? err.message : String(err)}. ` +
-						"Session state may be lost.",
-				);
-			}
-		}
+		// ── Auto-save storage state for persistent profiles ──────────
+		await this._persistState(taskId).catch(() => {});
 
 		// Clean up local state and tell the bridge to close the context
 		this._elementCaches.delete(taskId);
@@ -1002,6 +988,53 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	 */
 	getElementCache(taskId: string): Map<string, AriaCachedNode> | null {
 		return this._elementCaches.get(taskId) ?? null;
+	}
+
+	/**
+	 * Save the current session's storage state to disk for a persistent profile.
+	 *
+	 * Mirrors the Chromium plugin's `_persistState`: checks
+	 * `session?.persistState`, calls the bridge's `browser.getStorageState`
+	 * RPC, and persists via `saveStorageState()`.  Best-effort — failures
+	 * are logged to stderr and swallowed.
+	 *
+	 * Unlike the Chromium plugin, the Python bridge reuses BrowserContexts
+	 * across navigations (via `ensure_session`), so the returned state is
+	 * not immediately needed for a new context.  It is returned for API
+	 * consistency so callers can optionally use it as a fallback.
+	 *
+	 * @param taskId - The task/session ID.
+	 * @returns The raw storage state object (cookies + origins), or undefined
+	 *          if the session is non-persistent or the save failed.
+	 */
+	private async _persistState(
+		taskId: string,
+	): Promise<{ cookies: unknown[]; origins: unknown[] } | undefined> {
+		const session = sessionManager.getSession(taskId);
+		if (!session?.persistState) return undefined;
+
+		try {
+			const raw = await this._rpcCall("browser.getStorageState", { taskId });
+			const result = raw as Record<string, unknown>;
+			if (result.success) {
+				const name = session.profileName ?? "default";
+				const state = {
+					cookies: (result.cookies ?? []) as Record<string, unknown>[],
+					origins: (result.origins ?? []) as Record<string, unknown>[],
+				};
+				saveStorageState(name, state);
+				return state;
+			}
+			return undefined;
+		} catch (err) {
+			console.warn(
+				`[pi-browser] Failed to auto-save storage state for profile ` +
+					`'${session.profileName ?? "default"}' via Python bridge: ` +
+					`${err instanceof Error ? err.message : String(err)}. ` +
+					"Session state may be lost.",
+			);
+			return undefined;
+		}
 	}
 
 	/**

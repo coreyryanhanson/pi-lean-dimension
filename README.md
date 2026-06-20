@@ -300,8 +300,8 @@ localStorage) across calls, conversations, and even across different subagents.
 
 | Mode | `browser-navigate profile=` | Behavior |
 |------|-----------------------------|----------|
-| None | `"none"` (default) | Clean slate every time — no cookies, no state |
-| Session | `"session"` | Persists state for the current conversation; survives `/reload` and `/resume` |
+| None | `"none"` | Clean slate every time — no cookies, no state |
+| Session | `"session"` (default) | Persists state for the current conversation; survives `/reload` and `/resume` |
 | Named | `"shopping"`, `"work"`, etc. | Shared across conversations and subagents — like browser tabs sharing a profile |
 
 ### Managing Profiles with `/web profile`
@@ -459,7 +459,7 @@ a `profile` parameter:
 ```jsonc
 {
   "browser": {
-    "defaultProfile": "none"   // "none", "session", or a named profile string
+    "defaultProfile": "session"   // "none", "session", or a named profile string
   }
 }
 ```

@@ -11,6 +11,29 @@ export interface TestServer {
 	stop(): Promise<void>;
 }
 
+/** Shared HTML fixture for cookie persistence tests. */
+export const COOKIE_PERSISTENCE_HTML = `<!DOCTYPE html>
+<html><head><title>Cookie Persistence Test</title></head>
+<body>
+  <div id="consent-banner" role="dialog" aria-label="Data Protection Consent">
+    <h2>Data Protection Consent</h2>
+    <p>We use cookies to improve your experience.</p>
+    <button id="accept-btn"
+      onclick="document.cookie='consent=accepted;path=/;max-age=86400';
+               document.getElementById('consent-banner').style.display='none'">
+      Accept All
+    </button>
+  </div>
+  <h1>Page Content</h1>
+  <p>Cookie status: <span id="cookie-status">none</span></p>
+  <script>
+    if (document.cookie.includes('consent=accepted')) {
+      document.getElementById('consent-banner').style.display = 'none';
+      document.getElementById('cookie-status').textContent = 'accepted';
+    }
+  </script>
+</body></html>`;
+
 export async function startTestServer(
 	handler: (req: IncomingMessage, res: ServerResponse) => void,
 ): Promise<TestServer> {

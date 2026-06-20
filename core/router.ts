@@ -26,6 +26,7 @@ import {
 	type CacheResult,
 } from "./shared/snapshot-cache.js";
 import {
+	loadStorageState,
 	sanitizeProfileName,
 	sessionProfileName,
 } from "./shared/storage-state.js";
@@ -184,8 +185,24 @@ async function requireInteractiveSession(taskId: string): Promise<{
 		});
 	}
 
+	// ── Load saved storage state for the profile (if any) ────────────
+	let loadedStorageState: unknown;
+	if (lastNav.profileName) {
+		try {
+			const loaded = loadStorageState(lastNav.profileName);
+			if (loaded !== null) {
+				loadedStorageState = loaded;
+			}
+		} catch {
+			// Corrupt/unreadable file — proceed with fresh state
+		}
+	}
+
 	// Navigate — plugin loads its own storage state if needed
-	const navOptions: { signal?: AbortSignal } = {};
+	const navOptions: { signal?: AbortSignal; storageState?: unknown } = {};
+	if (loadedStorageState !== undefined) {
+		navOptions.storageState = loadedStorageState;
+	}
 	const navResult = await plugin.navigate(
 		lastNav.url,
 		taskId,
@@ -509,12 +526,29 @@ export async function navigate(
 		}
 	}
 
+	// ── Load saved storage state for the profile (if any) ────────────
+	let loadedStorageState: unknown;
+	if (resolvedProfileName !== undefined) {
+		try {
+			const loaded = loadStorageState(resolvedProfileName);
+			if (loaded !== null) {
+				loadedStorageState = loaded;
+			}
+		} catch {
+			// Corrupt/unreadable file — proceed with fresh state
+		}
+	}
+
 	const navOptions: {
 		signal?: AbortSignal;
+		storageState?: unknown;
 		profileName?: string;
 		profileMode?: "none" | "session" | "named";
 	} = {};
 	if (options.signal) navOptions.signal = options.signal;
+	if (loadedStorageState !== undefined) {
+		navOptions.storageState = loadedStorageState;
+	}
 	if (resolvedProfileName !== undefined) {
 		navOptions.profileName = resolvedProfileName;
 		navOptions.profileMode = profileMode;

@@ -176,6 +176,56 @@ def main() -> None:
                 },
             )
 
+        elif method == "browser.getStorageState":
+            write_response(
+                req_id,
+                result={
+                    "success": True,
+                    "cookies": [
+                        {
+                            "name": "consent",
+                            "value": "accepted",
+                            "domain": ".example.com",
+                            "path": "/",
+                            "expires": 9999999999,
+                            "httpOnly": False,
+                            "secure": False,
+                            "sameSite": "Lax",
+                        }
+                    ],
+                    "origins": [
+                        {
+                            "origin": "https://example.com",
+                            "localStorage": [
+                                {"name": "pref", "value": "dark_mode"}
+                            ],
+                        }
+                    ],
+                },
+            )
+
+        elif method == "browser.getCookies":
+            params = request.get("params", {})
+            urls = params.get("urls", [])
+            write_response(
+                req_id,
+                result={
+                    "success": True,
+                    "cookies": [
+                        {
+                            "name": "consent",
+                            "value": "accepted",
+                            "domain": ".example.com",
+                            "path": "/",
+                            "expires": 9999999999,
+                            "httpOnly": False,
+                            "secure": False,
+                            "sameSite": "Lax",
+                        }
+                    ],
+                },
+            )
+
         elif method == "browser.cleanup":
             write_response(req_id, result={"success": True})
 

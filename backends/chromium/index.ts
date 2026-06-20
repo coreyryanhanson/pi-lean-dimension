@@ -139,7 +139,12 @@ export class ChromiumPlugin implements BrowserPlugin {
 	}> {
 		// 1. Check if task already has a page/context — close it (fresh per navigate)
 		const existing = this._pages.get(taskId);
+		let savedState: { cookies: unknown[]; origins: unknown[] } | undefined;
 		if (existing) {
+			// ── Save storage state before closing (persistent profiles) ─
+			savedState = await this._persistState(taskId, existing.context).catch(
+				() => undefined,
+			);
 			try {
 				await existing.page.close();
 			} catch {
@@ -154,8 +159,15 @@ export class ChromiumPlugin implements BrowserPlugin {
 			this._elementCache.delete(taskId);
 		}
 
-		// 2. Create fresh context (storage state passed through from router)
-		const context = await this._newBrowserContext(options?.storageState);
+		// 2. Determine effective storage state:
+		//    - The router may pass pre-loaded state via options.storageState
+		//    - If not provided, use the state we just saved (in-memory, no disk read)
+		//    - This ensures a re-navigate immediately picks up cookies set during
+		//      the just-ended session without waiting for a future disk load.
+		const effectiveStorageState = options?.storageState ?? savedState;
+
+		// 3. Create fresh context
+		const context = await this._newBrowserContext(effectiveStorageState);
 		const page = await context.newPage();
 
 		const pageEntry: {
@@ -281,6 +293,43 @@ export class ChromiumPlugin implements BrowserPlugin {
 			this._elementCache.set(taskId, cache);
 		}
 		return cache;
+	}
+
+	/**
+	 * Save storage state to disk for persistent sessions, returning the
+	 * raw state so callers can use it immediately (avoiding a disk read
+	 * for the new context).
+	 *
+	 * Best-effort — failures are logged to stderr and swallowed.
+	 * Checked against `session?.persistState` so non-persistent sessions
+	 * never trigger disk I/O.
+	 *
+	 * @param taskId - The task/session ID.
+	 * @param context - The Playwright BrowserContext to snapshot.
+	 * @returns The raw storage state object (cookies + origins), or undefined
+	 *          if the session is non-persistent or the save failed.
+	 */
+	private async _persistState(
+		taskId: string,
+		context: BrowserContext,
+	): Promise<{ cookies: unknown[]; origins: unknown[] } | undefined> {
+		const session = sessionManager.getSession(taskId);
+		if (!session?.persistState) return undefined;
+
+		try {
+			const state = await context.storageState();
+			const name = session.profileName ?? "default";
+			saveStorageState(name, state);
+			return state;
+		} catch (err) {
+			console.warn(
+				`[pi-browser] Failed to auto-save storage state for profile ` +
+					`'${session.profileName ?? "default"}': ` +
+					`${err instanceof Error ? err.message : String(err)}. ` +
+					"Session state may be lost.",
+			);
+			return undefined;
+		}
 	}
 
 	/** Take an accessibility snapshot and update the element cache. */
@@ -1129,21 +1178,7 @@ export class ChromiumPlugin implements BrowserPlugin {
 		const { context, page } = entry;
 
 		// ── Auto-save storage state for persistent profiles ──────────
-		const session = sessionManager.getSession(taskId);
-		if (session?.persistState) {
-			try {
-				const state = await context.storageState();
-				const name = session.profileName ?? "default";
-				saveStorageState(name, state);
-			} catch (err) {
-				console.warn(
-					`[pi-browser] Failed to auto-save storage state for profile ` +
-						`'${session.profileName ?? "default"}': ` +
-						`${err instanceof Error ? err.message : String(err)}. ` +
-						"Session state may be lost.",
-				);
-			}
-		}
+		await this._persistState(taskId, context).catch(() => {});
 
 		// ── Tracing: stop before closing (if enabled) ────────────────
 		const traceDir = process.env.BROWSER_TRACE_DIR;

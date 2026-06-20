@@ -9,8 +9,9 @@ A pi extension that registers **12 tools + 1 command** for web browsing. Archite
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 662 tests across 19 files (all pass)
+npm test              # vitest run — 687 tests across 21 files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
+npx vitest run __tests__/cookie-persistence.test.ts  # Chromium persistence tests (auto-skips if no Chromium)
 npm run test:watch    # vitest in watch mode
 ```
 
@@ -41,7 +42,7 @@ pi-browser/
 │                              # session-manager, settings-reader, snapshot-cache, storage-state, url-safety
 ├── guides/                   # User-authored guide files (gitignored)
 ├── tools/                    # Tool definitions — one file per tool (12 files) + index.ts + utils.ts
-└── __tests__/                # 19 test files + helpers/
+└── __tests__/                # 21 test files + helpers/
 ```
 
 ## Architecture
@@ -88,7 +89,11 @@ All tool calls dispatch through the router. Key responsibilities:
 - **Auto-recovery**: crashed sessions are detected and re-navigated to the last URL
 - **Stale @e ref handling**: if a session was just auto-created, interaction tools return a fresh snapshot instead of performing the action
 - **Cookie dispatch**: `getCookies`, `addCookies`, `clearCookies` — delegates to plugin's cookie operations
-- **Profile-aware session creation**: when `lastNav.profileName` is set, loads storage state from disk before creating session
+- **Profile-aware session creation and persistence**:
+  - On `navigate()`, the router calls `loadStorageState(profileName)` when a named or session profile is active and passes the result as `options.storageState` to the plugin.
+  - On re-navigate (same taskId with persistent profile), both Chromium and Python plugins call `_persistState()` to save the current session's cookies/localStorage to disk **before** closing (Chromium) or reusing (Python) the old context.
+  - **In-memory fallback** (Chromium): `_persistState()` returns the raw state it just saved; `getOrCreateContext()` uses it as `options?.storageState ?? savedState`, so cookies survive the very next re-navigate even when no disk copy existed before.
+  - The router also loads storage state in `requireInteractiveSession()` when restoring from `lastNav.profileName`.
 
 ### Registered Tools (12 total)
 
@@ -105,11 +110,13 @@ Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-
 
 ### Profile & Cookie Management
 
-- **Storage state** is persisted to `~/.pi/agent/browser-state/<profile-name>.json` via `core/shared/storage-state.ts`
-- **Session profiles** (`profile="session"`) are scoped to one pi conversation, stored under `_session-<piSessionId>`
-- **Named profiles** (`profile="shopping"`, `profile="work"`) are shared across conversations and agents
-- **Conversation-scoped default profile** set via `/web profile set <name>`, survives `/reload`/`/resume`
-- **Cookie operations** (`getCookies`, `addCookies`, `clearCookies`) delegate to the browser plugin's Playwright `context.cookies()` / `context.clearCookies()`
+- **Storage state** is persisted to `~/.pi/agent/browser-state/<profile-name>/storage-state.json` via `core/shared/storage-state.ts`.
+- **Save-before-renavigate**: both Chromium and Python plugins call `_persistState()` before closing/reusing a context with a persistent profile. This ensures cookies set during a session (e.g. consent dialogs, login) survive `browser-navigate` re-calls, crash recovery, `/reload`, and `/resume`.
+- **Atomic writes + concurrency safety** (`storage-state.ts`): `saveStorageState()` writes to a temp file then renames atomically, preventing half-write races. Concurrent writers merge at the cookie level (`name+domain+path` key) and localStorage level (`origin+name` key), so two agents sharing a named profile don't clobber each other's data.
+- **Session profiles** (`profile="session"`) are scoped to one pi conversation, stored under `_session-<piSessionId>`. Default profile is now `"session"` (changed from `"none"`), so conversations persist state automatically.
+- **Named profiles** (`profile="shopping"`, `profile="work"`) are shared across conversations and agents.
+- **Conversation-scoped default profile** set via `/web profile set <name>`, survives `/reload`/`/resume`.
+- **Cookie operations** (`getCookies`, `addCookies`, `clearCookies`) delegate to the browser plugin's Playwright `context.cookies()` / `context.clearCookies()`.
 
 ### Guides (`core/guides.ts`)
 
@@ -131,15 +138,17 @@ Guide presence is three-tier: auto-inject (bot-detection), auto-hint (cookie-con
 
 ## Testing
 
-### Test files (19 files, 659 tests passing)
+### Test files (21 files, 687 tests passing)
 
 | File | Requires Chromium? |
 |------|--------------------|
 | All structural/unit tests (router-dispatch, browser-toggle, browser-toggle-profile, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle) | No |
 | reddit-dialog.test.ts | Yes (errors if unavailable) |
 | chromium-py.test.ts | Yes (auto-skip) |
+| cookie-persistence.test.ts | Yes (auto-skip) |
+| chromium-py-persistence.test.ts | Yes (auto-skip, also requires Python venv) |
 
-Integration tests (`chromium-py`) skip automatically when Playwright Chromium is unavailable; `reddit-dialog` errors if Chromium is missing. `browser-toggle-profile` tests exercise the full profile lifecycle via mock API.
+Live-browser tests (`chromium-py`, `cookie-persistence`, `chromium-py-persistence`) skip automatically when Playwright Chromium is unavailable. `reddit-dialog` errors if Chromium is missing. `browser-toggle-profile` tests exercise the full profile lifecycle via mock API.
 
 ### Shared test utilities (`__tests__/helpers/`)
 
@@ -147,7 +156,7 @@ Integration tests (`chromium-py`) skip automatically when Playwright Chromium is
 - `mock-plugin.ts` — MockPlugin for structural contract validation
 - `reddit-fixture.ts` — HTML fixtures for Reddit dialog scenarios (4 variants)
 - `test-server.ts` — `startTestServer()` returns a local HTTP server for integration tests
-- `mock-python-bridge.py` — Python bridge stub used by python-adapter tests
+- `mock-python-bridge.py` — Python bridge stub used by python-adapter tests (supports `browser.getStorageState` and `browser.getCookies` for persistence testing)
 
 ### Contract test harness
 
@@ -159,6 +168,8 @@ Integration tests (`chromium-py`) skip automatically when Playwright Chromium is
 - **AbortSignal not supported on Python bridge** — the router passes `signal` through unconditionally (no capability check). The Python adapter accepts and silently ignores the signal. `supportsAbortSignal` is advertised but unenforced.
 - **Sessions are per taskId** — mapped to `browser-NNN` keys via `_sessionKeys`/`_sessionCounter` in `core/shared/task-id.ts`. Created on first navigate, cleaned up on `session_shutdown`
 - **Python shared-context machinery removed (B1)** — the `browser.newPage`/`browser.closePage` RPC routes, `_profile_contexts` ref-counting, and `ensure_profile_session`/`remove_profile_session` methods were removed from both the base `BrowserBridge` and `ChromiumPyBridge`. Named profiles now use disk persistence (load-on-navigate via `storageState`) matching the TS Chromium plugin. Both backends use `ensure_session(task_id, config)` for all sessions.
+- **Python bridge reuses BrowserContexts across navigations** — `ensure_session()` returns the existing session on re-navigate (unlike the TS Chromium plugin which creates a fresh context per navigate). This means in-process cookies survive re-navigation without explicit save, but also means `storageState` from the router is ignored on re-navigate (the context already exists). The Python adapter's `_persistState()` saves current cookies to disk before the navigate RPC for cross-process persistence.
+- **`_persistState()` helper in both backends** — extracted from `cleanup()`, this method checks `session?.persistState`, snapshots the BrowserContext's storage state, persists it to disk, and returns the raw state for optional in-memory reuse (Chromium uses the return as fallback for the new context; Python returns it for API consistency). Called both from `cleanup()` and — on re-navigate — from `getOrCreateContext()` (Chromium) or `navigate()` (Python) before the old context is closed/reused.
 - **Role-based locators only**: never XPath/CSS — always `getByRole()` via `buildLocator()` with positional `.nth()` for duplicates. The `INTERACTIVE_ROLES` set defines which roles get @e refs
 - **All URLs go through `url-safety.ts`** — blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.169.254), dangerous schemes (file:, ftp:, data:, javascript:, vbscript:), and heuristically detects secrets in URLs
 - **Screenshot**: JPEG 80% quality, viewport constrained to 1280px wide, returns data URI

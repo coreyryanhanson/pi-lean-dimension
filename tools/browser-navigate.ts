@@ -50,8 +50,8 @@ export const browserNavigateTool = defineTool({
 				[Type.Literal("none"), Type.Literal("session"), Type.String()],
 				{
 					description:
-						"Profile mode: 'none' (clean slate, default), 'session' (persist for this " +
-						"conversation), or a named profile (e.g. 'shopping', 'work'). " +
+						"Profile mode: 'session' (default, persist for this conversation), " +
+						"'none' (clean slate), or a named profile (e.g. 'shopping', 'work'). " +
 						"Named profiles share cookies across subagents like browser tabs.",
 				},
 			),
@@ -123,7 +123,7 @@ export const browserNavigateTool = defineTool({
 			};
 		}
 
-		let contentText = result.snapshot;
+		const contentText = result.snapshot;
 
 		// Capture a screenshot to a temp file so the LLM can opt into visual
 		// inspection via `read` only when needed.
