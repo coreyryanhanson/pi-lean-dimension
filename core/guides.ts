@@ -446,7 +446,7 @@ export function resolveGuidePresence(
 			return {
 				type: "hint",
 				guideName: "bot-detection",
-				text: '⚠️ Bot detection triggered. Call web-guide guide="bot-detection" for strategies.',
+				text: '⏸ Bot detection triggered. Call web-guide guide="bot-detection" for strategies.',
 			};
 		}
 	}
@@ -458,7 +458,7 @@ export function resolveGuidePresence(
 			return {
 				type: "hint",
 				guideName: "cookie-consent",
-				text: '💡 A consent dialog appears to be present. Call web-guide guide="cookie-consent" for dismissal patterns.',
+				text: '⏸ A consent dialog appears to be present. Call web-guide guide="cookie-consent" for dismissal patterns before interacting.',
 			};
 		}
 	}
@@ -472,7 +472,7 @@ export function resolveGuidePresence(
 	}
 	const entry = getDomainMap()[hostname];
 	if (entry?.guide && getGuideContent()[entry.guide]) {
-		let text = `💡 A web guide is available for ${hostname}.\n   Call web-guide guide="${entry.guide}" for navigation tips.`;
+		let text = `⏸ A site guide is available for ${hostname}. Call web-guide guide="${entry.guide}" to review navigation tips before interacting with the page (if you haven't already reviewed it).`;
 		if (entry.strategy) {
 			text += `\n   This site often requires a stealth browser — try strategy="${entry.strategy}".`;
 		}

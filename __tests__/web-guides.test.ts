@@ -120,6 +120,7 @@ describe("resolveGuidePresence", () => {
 		expect(result!.type).toBe("hint");
 		expect(result!.text).toContain("_builtin-test-fixture");
 		expect(result!.text).toContain("_internal-test.example");
+		expect(result!.text).toContain("(if you haven't already reviewed it)");
 	});
 
 	// ── Bot detection ──────────────────────────────────────────────
