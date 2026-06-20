@@ -2,15 +2,13 @@
  * Tests for Web Navigation Guides (core/guides.ts)
  *
  * Covers types, resolveApplicableGuides, formatGuideFooter, formatGuideList,
- * parseGuideFile, and DOMAIN_MAP consistency.
+ * parseGuideFile, buildDomainMap, and guide structure.
  * All tests run without Chromium.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
 	type Guide,
-	type GuideTrigger,
-	type DomainEntry,
 	type ApplicableGuide,
 	resolveApplicableGuides,
 	parseGuideContent,
@@ -20,9 +18,9 @@ import {
 	sortApplicableGuides,
 	getGuideContent,
 	invalidateGuideContent,
+	_setGuideContentForTest,
 	buildDomainMap,
 	BUILTIN_GUIDES,
-	DOMAIN_MAP,
 } from "../core/guides.js";
 
 // ─── Types ──────────────────────────────────────────────────────
@@ -41,15 +39,17 @@ describe("types", () => {
 		expect(g.shortName).toBe("test");
 	});
 
-	it("GuideTrigger interface — only signal required, no presence", () => {
-		const t: GuideTrigger = { signal: "botDetected" };
-		expect(t.signal).toBe("botDetected");
-		expect((t as any).presence).toBeUndefined();
-	});
-
-	it("DomainEntry interface — guide is optional", () => {
-		const d: DomainEntry = {};
-		expect(d.guide).toBeUndefined();
+	it("triggerSignal field on Guide works correctly", () => {
+		const g: Guide = {
+			content: "test",
+			updated: "2026-01-01",
+			category: "pattern",
+			source: "builtin",
+			icon: "⚠",
+			shortName: "test",
+			triggerSignal: "botDetected",
+		};
+		expect(g.triggerSignal).toBe("botDetected");
 	});
 
 	it("ApplicableGuide interface — name, icon, shortName, reason, category required", () => {
@@ -67,7 +67,35 @@ describe("types", () => {
 
 // ─── resolveApplicableGuides ────────────────────────────────────
 
+function injectTestFixture(): void {
+	// Inject a test-only site guide with a domain mapping for domain resolution tests.
+	const base = getGuideContent();
+	if (!base["_builtin-test-fixture"]) {
+		_setGuideContentForTest({
+			...base,
+			"_builtin-test-fixture": {
+				category: "site",
+				source: "builtin",
+				updated: "2026-06-13",
+				icon: "📖",
+				shortName: "test fixture",
+				domains: ["_internal-test.example"],
+				content:
+					"Test-only builtin site guide for exercising domain resolution.",
+			},
+		});
+	}
+}
+
 describe("resolveApplicableGuides", () => {
+	beforeEach(() => {
+		injectTestFixture();
+	});
+
+	afterEach(() => {
+		invalidateGuideContent();
+	});
+
 	const hasDialog = true;
 	const noDialog = false;
 	const anyUrl = "https://example.com/page";
@@ -234,7 +262,7 @@ describe("formatGuideFooter", () => {
 	});
 
 	it("renders mixed patterns + sites with correct ordering", () => {
-		const guides: ApplicableGuide[] = [
+		const guides: ApplicableGuide[] = sortApplicableGuides([
 			{
 				name: "reddit",
 				icon: "📖",
@@ -256,7 +284,7 @@ describe("formatGuideFooter", () => {
 				reason: "challenge page detected",
 				category: "pattern",
 			},
-		];
+		]);
 		const result = formatGuideFooter(guides);
 		const lines = result.split("\n");
 
@@ -373,12 +401,12 @@ describe("formatGuideList", () => {
 		expect(text).toContain('web-guide guide="<name>"');
 	});
 
-	it("includes icon, shortName, and auto when signal (no presence)", () => {
+	it("includes icon, shortName, and trigger signal info (no presence)", () => {
 		const text = formatGuideList();
 		expect(text).toContain("⚠ bot detection");
-		expect(text).toContain("auto when botDetected");
+		expect(text).toContain("fires on botDetected");
 		expect(text).toContain("🍪 consent");
-		expect(text).toContain("auto when dialogDetected");
+		expect(text).toContain("fires on dialogDetected");
 		expect(text).not.toContain("auto-inject");
 		expect(text).not.toContain("auto-hint");
 	});
@@ -420,7 +448,7 @@ describe("parseGuideContent", () => {
 		expect(guide.shortName).toBe("My Guide");
 		expect(guide.content).toContain("## My Guide");
 		expect(guide.content).toContain("Some guidance text");
-		expect(guide.trigger).toBeUndefined();
+		expect(guide.triggerSignal).toBeUndefined();
 		expect(guide.domains).toBeUndefined();
 	});
 
@@ -433,9 +461,7 @@ describe("parseGuideContent", () => {
 		expect(guide.source).toBe("user");
 		expect(guide.updated).toBe("2026-06-02");
 		expect(guide.content).toContain("## Pattern Guide");
-		expect(guide.trigger).toBeDefined();
-		expect(guide.trigger!.signal).toBe("botDetected");
-		expect((guide.trigger as any).presence).toBeUndefined();
+		expect(guide.triggerSignal).toBe("botDetected");
 		expect(guide.domains).toBeUndefined();
 	});
 
@@ -554,24 +580,20 @@ describe("parseGuideFile", () => {
 	});
 });
 
-// ─── DOMAIN_MAP consistency ─────────────────────────────────────
-
-describe("DOMAIN_MAP consistency", () => {
-	it("all DOMAIN_MAP guide references exist in getGuideContent()", () => {
-		for (const [, entry] of Object.entries(DOMAIN_MAP)) {
-			if (entry.guide) {
-				expect(getGuideContent()[entry.guide]).toBeDefined();
-			}
-		}
-	});
-});
-
 // ─── Dynamic Domain Map ────────────────────────────────────────
 
 describe("buildDomainMap", () => {
-	it("includes the builtin DOMAIN_MAP fixture", () => {
+	beforeEach(() => {
+		injectTestFixture();
+	});
+
+	afterEach(() => {
+		invalidateGuideContent();
+	});
+
+	it("includes fixtures from guides with domains field", () => {
 		const map = buildDomainMap();
-		expect(map["_internal-test.example"]).toBeDefined();
+		expect(map["_internal-test.example"]).toBe("_builtin-test-fixture");
 	});
 
 	it("excludes pattern guides (no domains field)", () => {
@@ -579,7 +601,7 @@ describe("buildDomainMap", () => {
 		// Pattern guides should not appear as domain entries
 		for (const [name] of Object.entries(getGuideContent())) {
 			if (getGuideContent()[name]?.category === "pattern") {
-				expect(Object.values(map).some((e) => e.guide === name)).toBe(false);
+				expect(Object.values(map)).not.toContain(name);
 			}
 		}
 	});
@@ -640,7 +662,6 @@ describe("BUILTIN_GUIDES structure", () => {
 			"cookie-consent": { icon: "🍪", shortName: "consent" },
 			pagination: { icon: "📄", shortName: "pagination" },
 			search: { icon: "🔍", shortName: "search" },
-			"_builtin-test-fixture": { icon: "📖", shortName: "test fixture" },
 		};
 		for (const [name, expectedValues] of Object.entries(expected)) {
 			const guide = BUILTIN_GUIDES[name]!;
@@ -651,20 +672,10 @@ describe("BUILTIN_GUIDES structure", () => {
 
 	it("pattern guides with trigger have signal but no presence", () => {
 		const botGuide = BUILTIN_GUIDES["bot-detection"]!;
-		expect(botGuide.trigger).toBeDefined();
-		expect(botGuide.trigger!.signal).toBe("botDetected");
-		expect((botGuide.trigger as any).presence).toBeUndefined();
+		expect(botGuide.triggerSignal).toBe("botDetected");
 
 		const cookieGuide = BUILTIN_GUIDES["cookie-consent"]!;
-		expect(cookieGuide.trigger).toBeDefined();
-		expect(cookieGuide.trigger!.signal).toBe("dialogDetected");
-		expect((cookieGuide.trigger as any).presence).toBeUndefined();
-	});
-
-	it("site guide (_builtin-test-fixture) has no trigger", () => {
-		const guide = BUILTIN_GUIDES["_builtin-test-fixture"]!;
-		expect(guide.category).toBe("site");
-		expect(guide.trigger).toBeUndefined();
+		expect(cookieGuide.triggerSignal).toBe("dialogDetected");
 	});
 
 	it("pattern guides (pagination, search) have no trigger (on-demand)", () => {
@@ -672,7 +683,7 @@ describe("BUILTIN_GUIDES structure", () => {
 		for (const name of onDemandPatterns) {
 			const guide = BUILTIN_GUIDES[name]!;
 			expect(guide.category).toBe("pattern");
-			expect(guide.trigger).toBeUndefined();
+			expect(guide.triggerSignal).toBeUndefined();
 		}
 	});
 });
@@ -691,6 +702,6 @@ describe("getGuideContent merge", () => {
 
 	it("builtin guides maintain trigger in getGuideContent()", () => {
 		const botGuide = getGuideContent()["bot-detection"];
-		expect(botGuide?.trigger?.signal).toBe("botDetected");
+		expect(botGuide?.triggerSignal).toBe("botDetected");
 	});
 });

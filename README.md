@@ -121,7 +121,7 @@ Interactive elements: 3
 - Profile info when using profiles
 - Bot detection warning when applicable
 - Screenshot file path for visual inspection
-- Auto-injected navigation guides when relevant
+- Guide footer appended when relevant guides apply
 
 ### 2. `browser-snapshot` — Refresh the Accessibility Tree
 

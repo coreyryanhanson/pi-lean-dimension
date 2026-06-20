@@ -18,11 +18,6 @@ import { join } from "node:path";
 export type GuideCategory = "site" | "pattern";
 export type GuideSource = "builtin" | "user";
 
-export interface GuideTrigger {
-	/** Which navigate-result signal to check. */
-	signal: "botDetected" | "dialogDetected";
-}
-
 export interface Guide {
 	/** Markdown guidance text (≤800 chars recommended). */
 	content: string;
@@ -36,14 +31,8 @@ export interface Guide {
 	shortName: string;
 	/** Domain name(s) this site guide applies to. Pattern guides leave this empty. */
 	domains?: string[];
-	/** Pattern guides only; site guides use domains or DOMAIN_MAP. */
-	trigger?: GuideTrigger;
-}
-
-/** Domain mapping entry — maps a hostname to a guide. */
-export interface DomainEntry {
-	/** Guide name for lookup in GUIDE_CONTENT. */
-	guide?: string;
+	/** Pattern guides only: signal that triggers this guide (e.g. "botDetected", "dialogDetected"). */
+	triggerSignal?: "botDetected" | "dialogDetected";
 }
 
 /** An applicable guide for the current page, with presentation fields copied. */
@@ -73,14 +62,6 @@ export function sortApplicableGuides(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Domain Map
-// ═══════════════════════════════════════════════════════════════════
-
-export const DOMAIN_MAP: Record<string, DomainEntry> = {
-	"_internal-test.example": { guide: "_builtin-test-fixture" },
-};
-
-// ═══════════════════════════════════════════════════════════════════
 // Builtin Guides
 // ═══════════════════════════════════════════════════════════════════
 
@@ -91,7 +72,7 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 		updated: "2026-06-13",
 		icon: "⚠",
 		shortName: "bot detection",
-		trigger: { signal: "botDetected" },
+		triggerSignal: "botDetected",
 		content: [
 			"## Bot Detection Patterns",
 			"",
@@ -126,7 +107,7 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 		updated: "2026-06-12",
 		icon: "🍪",
 		shortName: "consent",
-		trigger: { signal: "dialogDetected" },
+		triggerSignal: "dialogDetected",
 		content: [
 			"## Cookie Consent Patterns",
 			"",
@@ -185,24 +166,6 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 			"- Pagination controls follow the patterns in the pagination guide",
 		].join("\n"),
 	},
-
-	"_builtin-test-fixture": {
-		category: "site",
-		source: "builtin",
-		updated: "2026-06-13",
-		icon: "📖",
-		shortName: "test fixture",
-		content: [
-			"## Builtin Test Fixture",
-			"",
-			"This is a test-only builtin site guide. It ships with the extension solely to",
-			"exercise the stateless guide resolution code path. No real website guidance",
-			"is provided here.",
-			"",
-			"To add your own site guides, place a `.md` file with YAML frontmatter in the",
-			"`guides/` directory — see the web-guide tool or AGENTS.md for details.",
-		].join("\n"),
-	},
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -242,11 +205,9 @@ export function parseGuideContent(
 	const icon = meta["icon"] ?? "📖";
 	const shortName = meta["shortName"] ?? name;
 
-	let trigger: GuideTrigger | undefined;
+	let triggerSignal: "botDetected" | "dialogDetected" | undefined;
 	if (meta["trigger.signal"]) {
-		trigger = {
-			signal: meta["trigger.signal"] as GuideTrigger["signal"],
-		};
+		triggerSignal = meta["trigger.signal"] as "botDetected" | "dialogDetected";
 	}
 
 	const rawDomains = meta["domains"];
@@ -267,7 +228,7 @@ export function parseGuideContent(
 			shortName,
 			content: content.trim(),
 			...(domains ? { domains } : {}),
-			...(trigger ? { trigger } : {}),
+			...(triggerSignal ? { triggerSignal } : {}),
 		},
 	];
 }
@@ -329,14 +290,23 @@ export function invalidateGuideContent(): void {
 	_guideContentCache = null;
 }
 
+/**
+ * Override the guide content cache for testing.
+ * Pass undefined/null to reset to default (same as invalidateGuideContent).
+ * @internal
+ */
+export function _setGuideContentForTest(content?: Record<string, Guide>): void {
+	_guideContentCache = content ?? null;
+}
+
 /** Format guide listing grouped by category, with icon/shortName and trigger info. */
 export function formatGuideList(): string {
 	const sites: string[] = [];
 	const patterns: string[] = [];
 
 	for (const [name, g] of Object.entries(getGuideContent())) {
-		const trigger = g.trigger
-			? ` — ${g.icon} ${g.shortName}, auto when ${g.trigger.signal}`
+		const trigger = g.triggerSignal
+			? ` — ${g.icon} ${g.shortName}, fires on ${g.triggerSignal}`
 			: "";
 		const entry = `  ${name} (${g.source}, updated ${g.updated})${trigger}`;
 		if (g.category === "site") {
@@ -363,6 +333,12 @@ export function formatGuideList(): string {
 // Stateless Guide Resolution
 // ═══════════════════════════════════════════════════════════════════
 
+/** Signal → reason string for pattern guide matching. */
+const SIGNAL_REASONS: Record<"botDetected" | "dialogDetected", string> = {
+	botDetected: "challenge page detected",
+	dialogDetected: "consent dialog detected",
+};
+
 /**
  * Resolve all applicable guides for a navigate result.
  *
@@ -378,35 +354,28 @@ export function resolveApplicableGuides(
 	const result: ApplicableGuide[] = [];
 	const content = getGuideContent();
 
-	// 1. Bot-detection trigger
-	if (botDetected) {
-		const guide = content["bot-detection"];
-		if (guide?.trigger?.signal === "botDetected") {
+	// 1. Pattern guides by trigger signal
+	for (const [name, guide] of Object.entries(content)) {
+		if (guide.triggerSignal === "botDetected" && botDetected) {
 			result.push({
-				name: "bot-detection",
+				name,
 				icon: guide.icon,
 				shortName: guide.shortName,
-				reason: "challenge page detected",
+				reason: SIGNAL_REASONS["botDetected"],
+				category: "pattern",
+			});
+		} else if (guide.triggerSignal === "dialogDetected" && dialogDetected) {
+			result.push({
+				name,
+				icon: guide.icon,
+				shortName: guide.shortName,
+				reason: SIGNAL_REASONS["dialogDetected"],
 				category: "pattern",
 			});
 		}
 	}
 
-	// 2. Dialog trigger
-	if (dialogDetected) {
-		const guide = content["cookie-consent"];
-		if (guide?.trigger?.signal === "dialogDetected") {
-			result.push({
-				name: "cookie-consent",
-				icon: guide.icon,
-				shortName: guide.shortName,
-				reason: "consent dialog detected",
-				category: "pattern",
-			});
-		}
-	}
-
-	// 3. Domain site guides
+	// 2. Domain site guides
 	let hostname: string;
 	try {
 		hostname = new URL(url).hostname;
@@ -415,12 +384,12 @@ export function resolveApplicableGuides(
 		return sortApplicableGuides(result);
 	}
 
-	const entry = buildDomainMap()[hostname];
-	if (entry?.guide) {
-		const guide = content[entry.guide];
+	const guideName = buildDomainMap()[hostname];
+	if (guideName) {
+		const guide = content[guideName];
 		if (guide) {
 			result.push({
-				name: entry.guide,
+				name: guideName,
 				icon: guide.icon,
 				shortName: guide.shortName,
 				reason: `site guide for ${hostname}`,
@@ -435,12 +404,11 @@ export function resolveApplicableGuides(
 /**
  * Format the guide footer appended to navigate output.
  *
- * Sorts guides internally (patterns before sites, alphabetical within each)
- * via sortApplicableGuides(). Returns "" when no guides are applicable.
+ * Input must be pre-sorted via sortApplicableGuides() (patterns before sites,
+ * alphabetical within each). Returns "" when no guides are applicable.
  */
 export function formatGuideFooter(guides: ApplicableGuide[]): string {
 	if (guides.length === 0) return "";
-	guides = sortApplicableGuides(guides);
 
 	const lines: string[] = [
 		"📖 Guides available for this page — call web-guide to review before interacting (once each per conversation):",
@@ -463,12 +431,12 @@ export function formatGuideFooter(guides: ApplicableGuide[]): string {
 // ═══════════════════════════════════════════════════════════════════
 
 /**
- * Build a domain map from DOMAIN_MAP (static base) + all guides returned
+ * Build a domain map (hostname → guide name) from all guides returned
  * by getGuideContent() that have a `domains` field.
  * Derives from the single source of truth (getGuideContent).
  */
-export function buildDomainMap(): Record<string, DomainEntry> {
-	const map: Record<string, DomainEntry> = { ...DOMAIN_MAP };
+export function buildDomainMap(): Record<string, string> {
+	const map: Record<string, string> = {};
 	for (const [name, guide] of Object.entries(getGuideContent())) {
 		if (
 			guide.category === "site" &&
@@ -476,7 +444,7 @@ export function buildDomainMap(): Record<string, DomainEntry> {
 			guide.domains.length > 0
 		) {
 			for (const domain of guide.domains) {
-				map[domain] = { guide: name };
+				map[domain] = name;
 			}
 		}
 	}

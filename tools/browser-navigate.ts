@@ -131,7 +131,7 @@ export const browserNavigateTool = defineTool({
 		// inspection via `read` only when needed.
 		const screenshotPath = await router.screenshotToTemp(tid);
 
-		// ---- Web Guide presence ----
+		// ---- Web Guide footer ----
 		const applicable = resolveApplicableGuides(
 			result.url,
 			result.dialogDetected ?? false,
