@@ -537,13 +537,12 @@ class ChromiumPyBridge(BrowserBridge):
                 "error": last_error,
             }
 
-    def do_cleanup(self, task_id: str, profileName: Optional[str] = None) -> dict[str, Any]:
+    def do_cleanup(self, task_id: str) -> dict[str, Any]:
         """Clean up resources for a specific task.
 
-        Named profiles are handled by the TypeScript side
+        Profile persistence is handled by the TypeScript side
         (``python-adapter.ts`` auto-saves storage state before calling
-        cleanup), so this always calls ``close_browser_session()``
-        regardless of ``profileName``.
+        cleanup), so this always calls ``close_browser_session()``.
         """
         self.close_browser_session(task_id)
         return {"success": True}

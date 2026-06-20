@@ -369,13 +369,12 @@ class BrowserBridge:
             f"{type(self).__name__} must implement do_get_storage_state()"
         )
 
-    def do_cleanup(self, task_id: str, profileName: Optional[str] = None) -> dict[str, Any]:
+    def do_cleanup(self, task_id: str) -> dict[str, Any]:
         """Clean up resources for a specific task.
 
-        Named profiles are handled by the TypeScript side
+        Profile persistence is handled by the TypeScript side
         (``python-adapter.ts`` auto-saves storage state before calling
-        cleanup), so this method always calls ``close_browser_session()``
-        regardless of ``profileName``.
+        cleanup), so this method always calls ``close_browser_session()``.
 
         Must return a dict with keys:
             success (bool)
@@ -503,8 +502,7 @@ class BrowserBridge:
 
             if method == "browser.cleanup":
                 task_id = self._require_param(params, "taskId", str, cmd_id)
-                profile_name = params.get("profileName")
-                result = self.do_cleanup(task_id, profileName=profile_name)
+                result = self.do_cleanup(task_id)
                 return make_success_response(cmd_id, result)
 
             # Unknown method
