@@ -7,9 +7,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { existsSync } from "node:fs";
 import * as router from "../core/router.js";
 import { pluginRegistry } from "../core/plugin-registry.js";
 import { sessionManager } from "../core/shared/session-manager.js";
+import { removeAllSnapshotFiles } from "../core/shared/snapshot-cache.js";
 import { MockPlugin, makeConfig } from "./helpers/mock-plugin.js";
 
 // ─── Setup ───────────────────────────────────────────────────────
@@ -26,6 +28,7 @@ describe("Router dispatch", () => {
 	afterEach(async () => {
 		await sessionManager.removeAll();
 		pluginRegistry.clear();
+		removeAllSnapshotFiles();
 	});
 
 	// ─── navigate() ────────────────────────────────────────────
@@ -702,41 +705,31 @@ describe("bot detection UX", () => {
 	});
 
 	describe("snapshot compaction", () => {
-		it("skips compactSnapshot when botDetected is true, but includes fingerprint", async () => {
-			// Create a long snapshot that would normally be compacted (>2800 chars)
+		it("compacts snapshot, includes cache notice and fingerprint", async () => {
+			// Create a long snapshot that would be compacted (>2800 chars)
 			const longSnapshot = "line\n".repeat(600); // ~3600 chars
 			mock.navResult = {
 				success: true,
-				url: "https://bot.example",
-				title: "Bot Page",
+				url: "https://example.com",
+				title: "Test Page",
 				snapshot: longSnapshot,
 				elementCount: 50,
-				botDetected: true,
 			};
 
-			const result = await router.navigate("https://bot.example");
+			const result = await router.navigate("https://example.com");
 			expect(result.success).toBe(true);
-			// Snapshot should be full version (not compacted), plus fingerprint
-			expect(result.snapshot).toContain(longSnapshot);
+			// Snapshot should be compacted, with cache notice + fingerprint
+			expect(result.snapshot).not.toContain(longSnapshot);
+			expect(result.snapshot).toContain("Full snapshot cached at");
 			expect(result.snapshot).toMatch(/fingerprint:/);
-			expect(result.botDetectionWarning).toBe(true);
-		});
 
-		it("still compacts snapshot when botDetected is false", async () => {
-			const longSnapshot = "line\n".repeat(600); // ~3600 chars
-			mock.navResult = {
-				success: true,
-				url: "https://normal.example",
-				title: "Normal Page",
-				snapshot: longSnapshot,
-				elementCount: 50,
-				botDetected: false,
-			};
-
-			const result = await router.navigate("https://normal.example");
-			expect(result.success).toBe(true);
-			// Snapshot should be compacted (longSnapshot is > 2800 chars)
-			expect(result.snapshot).not.toBe(longSnapshot);
+			// The cache file must actually exist on disk
+			const match = result.snapshot!.match(
+				/Full snapshot cached at (\/[^\s]+)/,
+			);
+			expect(match).not.toBeNull();
+			const cachePath = match![1]!;
+			expect(existsSync(cachePath)).toBe(true);
 		});
 	});
 

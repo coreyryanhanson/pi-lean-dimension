@@ -82,5 +82,6 @@ describeIfAvailable("Chromium-Py contract tests", () => {
 	runContractTests("chromium-py", createChromiumPyPlugin, {
 		realBrowser: true,
 		navigateTimeout: 30_000,
+		navigationSettle: true,
 	});
 });

@@ -27,7 +27,13 @@ import {
 	SESSIONS_DIR,
 } from "../core/shared/storage-state.js";
 
-import { existsSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import {
+	existsSync,
+	writeFileSync,
+	unlinkSync,
+	mkdirSync,
+	readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -224,7 +230,7 @@ describe("save / load round-trip", () => {
 		expect(loaded!.origins).toHaveLength(0);
 	});
 
-	it("overwrites previous state on re-save", () => {
+	it("merges non-overlapping cookies on re-save (not wholesale replace)", () => {
 		saveStorageState(testProfile, TEST_STATE);
 
 		const newState = {
@@ -245,8 +251,128 @@ describe("save / load round-trip", () => {
 		saveStorageState(testProfile, newState);
 
 		const loaded = loadStorageState(testProfile);
+		// Non-overlapping keys: both cookies survive under merge
+		expect(loaded!.cookies).toHaveLength(2);
+		expect(loaded!.cookies.map((c) => c.name).sort()).toEqual([
+			"new-token",
+			"session",
+		]);
+	});
+
+	it("same-key cookie is last-writer-wins on re-save", () => {
+		// Save with initial value
+		saveStorageState(testProfile, TEST_STATE);
+
+		// Re-save with SAME key (name+domain+path) but different value
+		const overwriteState = {
+			cookies: [
+				{
+					name: "session",
+					value: "overwritten",
+					domain: ".example.com",
+					path: "/",
+					expires: 9999999999,
+					httpOnly: true,
+					secure: true,
+					sameSite: "Lax" as const,
+				},
+			],
+			origins: [],
+		};
+		saveStorageState(testProfile, overwriteState);
+
+		const loaded = loadStorageState(testProfile);
+		// Same key: incoming wins, but still 1 cookie
 		expect(loaded!.cookies).toHaveLength(1);
-		expect(loaded!.cookies[0]!.name).toBe("new-token");
+		expect(loaded!.cookies[0]!.value).toBe("overwritten");
+	});
+
+	it("merge preserves non-overlapping localStorage by origin+name", () => {
+		const firstState = {
+			cookies: [],
+			origins: [
+				{
+					origin: "https://example.com",
+					localStorage: [{ name: "theme", value: "dark" }],
+				},
+			],
+		};
+		const secondState = {
+			cookies: [],
+			origins: [
+				{
+					origin: "https://example.com",
+					localStorage: [{ name: "token", value: "abc" }],
+				},
+			],
+		};
+		saveStorageState(testProfile, firstState);
+		saveStorageState(testProfile, secondState);
+
+		const loaded = loadStorageState(testProfile);
+		expect(loaded!.origins).toHaveLength(1);
+		expect(loaded!.origins[0]!.localStorage).toHaveLength(2);
+		const names = loaded!.origins[0]!.localStorage.map((e) => e.name).sort();
+		expect(names).toEqual(["theme", "token"]);
+	});
+
+	it("merge with multiple origins preserves non-overlapping ones", () => {
+		const firstState = {
+			cookies: [],
+			origins: [
+				{
+					origin: "https://a.com",
+					localStorage: [{ name: "a", value: "1" }],
+				},
+			],
+		};
+		const secondState = {
+			cookies: [],
+			origins: [
+				{
+					origin: "https://b.com",
+					localStorage: [{ name: "b", value: "2" }],
+				},
+			],
+		};
+		saveStorageState(testProfile, firstState);
+		saveStorageState(testProfile, secondState);
+
+		const loaded = loadStorageState(testProfile);
+		expect(loaded!.origins).toHaveLength(2);
+	});
+
+	it("merge with missing/corrupt disk file behaves as fresh write", () => {
+		// Fresh save with no prior file — should work as normal
+		const fresh = {
+			cookies: [
+				{
+					name: "fresh",
+					value: "ok",
+					domain: ".fresh.com",
+					path: "/",
+					expires: 9999999999,
+					httpOnly: false,
+					secure: false,
+					sameSite: "Lax" as const,
+				},
+			],
+			origins: [],
+		};
+		expect(saveStorageState(testProfile, fresh)).toBe(true);
+		const loaded = loadStorageState(testProfile);
+		expect(loaded!.cookies).toHaveLength(1);
+		expect(loaded!.cookies[0]!.name).toBe("fresh");
+	});
+
+	it("atomic write produces a valid file on disk", () => {
+		saveStorageState(testProfile, TEST_STATE);
+		const fp = profileFilePath(testProfile);
+		expect(existsSync(fp)).toBe(true);
+		// File should parse as valid JSON
+		const raw = JSON.parse(readFileSync(fp, "utf-8"));
+		expect(raw.cookies).toHaveLength(1);
+		expect(raw._piVersion).toBe(1);
 	});
 });
 

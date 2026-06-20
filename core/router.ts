@@ -26,6 +26,7 @@ import {
 	type CacheResult,
 } from "./shared/snapshot-cache.js";
 import {
+	loadStorageState,
 	sanitizeProfileName,
 	sessionProfileName,
 } from "./shared/storage-state.js";
@@ -184,8 +185,24 @@ async function requireInteractiveSession(taskId: string): Promise<{
 		});
 	}
 
+	// ── Load saved storage state for the profile (if any) ────────────
+	let loadedStorageState: unknown;
+	if (lastNav.profileName) {
+		try {
+			const loaded = loadStorageState(lastNav.profileName);
+			if (loaded !== null) {
+				loadedStorageState = loaded;
+			}
+		} catch {
+			// Corrupt/unreadable file — proceed with fresh state
+		}
+	}
+
 	// Navigate — plugin loads its own storage state if needed
-	const navOptions: { signal?: AbortSignal } = {};
+	const navOptions: { signal?: AbortSignal; storageState?: unknown } = {};
+	if (loadedStorageState !== undefined) {
+		navOptions.storageState = loadedStorageState;
+	}
 	const navResult = await plugin.navigate(
 		lastNav.url,
 		taskId,
@@ -315,12 +332,7 @@ async function refBasedInteractionOrSnapshot(
 			// Cache the auto-snapshot before compaction
 			const truncated = snap.snapshot.length > SNAPSHOT_TRUNCATE_THRESHOLD;
 			const fingerprint = snapshotFingerprint(snap.snapshot);
-			const cacheResult = cacheSnapshot(
-				taskId,
-				snap.snapshot,
-				fingerprint,
-				false /* botDetected — auto-recovery runs post-nav */,
-			);
+			const cacheResult = cacheSnapshot(taskId, snap.snapshot, fingerprint);
 
 			return {
 				success: true,
@@ -353,15 +365,9 @@ function compactInteractionResult(
 		const rawSnapshot = result.snapshot;
 		const newFingerprint = snapshotFingerprint(rawSnapshot);
 
-		// Cache (before compacting) — no bot detection here because interaction
-		// tools only run after navigation succeeded.
+		// Cache (before compacting)
 		const truncated = rawSnapshot.length > SNAPSHOT_TRUNCATE_THRESHOLD;
-		const cacheResult = cacheSnapshot(
-			taskId,
-			rawSnapshot,
-			newFingerprint,
-			false /* botDetected — interaction tools run post-nav */,
-		);
+		const cacheResult = cacheSnapshot(taskId, rawSnapshot, newFingerprint);
 
 		const compacted = compactSnapshot(rawSnapshot, result.elementCount);
 		result.snapshot =
@@ -520,12 +526,29 @@ export async function navigate(
 		}
 	}
 
+	// ── Load saved storage state for the profile (if any) ────────────
+	let loadedStorageState: unknown;
+	if (resolvedProfileName !== undefined) {
+		try {
+			const loaded = loadStorageState(resolvedProfileName);
+			if (loaded !== null) {
+				loadedStorageState = loaded;
+			}
+		} catch {
+			// Corrupt/unreadable file — proceed with fresh state
+		}
+	}
+
 	const navOptions: {
 		signal?: AbortSignal;
+		storageState?: unknown;
 		profileName?: string;
 		profileMode?: "none" | "session" | "named";
 	} = {};
 	if (options.signal) navOptions.signal = options.signal;
+	if (loadedStorageState !== undefined) {
+		navOptions.storageState = loadedStorageState;
+	}
 	if (resolvedProfileName !== undefined) {
 		navOptions.profileName = resolvedProfileName;
 		navOptions.profileMode = profileMode;
@@ -583,31 +606,27 @@ export async function navigate(
 			};
 		}
 
-		// Don't compact snapshot when bot-detected — the agent needs
-		// the full content to assess whether the page is a false positive.
 		const fp = session.currentSnapshotFingerprint!;
 
 		// --- Cache the raw snapshot before compaction ---
 		const rawSnapshot = result.snapshot;
 		const isTruncated = rawSnapshot.length > SNAPSHOT_TRUNCATE_THRESHOLD;
 		const cacheResult: CacheResult | null = rawSnapshot
-			? cacheSnapshot(taskId, rawSnapshot, fp, botWarn)
+			? cacheSnapshot(taskId, rawSnapshot, fp)
 			: null;
 		// ---
 
 		const dialogContent = formatDialogEvents(result.dialogEvents ?? []);
 		const snapshotContent = rawSnapshot
-			? botWarn
-				? rawSnapshot + `\nfingerprint:${fp}` + dialogContent
-				: compactSnapshot(rawSnapshot, result.elementCount) +
-					formatCacheNotice(
-						cacheResult,
-						rawSnapshot.length,
-						isTruncated,
-						result.elementCount,
-					) +
-					`\nfingerprint:${fp}` +
-					dialogContent
+			? compactSnapshot(rawSnapshot, result.elementCount) +
+				formatCacheNotice(
+					cacheResult,
+					rawSnapshot.length,
+					isTruncated,
+					result.elementCount,
+				) +
+				`\nfingerprint:${fp}` +
+				dialogContent
 			: "";
 
 		// Track cache population time for staleness detection

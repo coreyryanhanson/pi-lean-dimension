@@ -12,13 +12,15 @@ import {
 	mkdirSync,
 	readFileSync,
 	writeFileSync,
+	renameSync,
 	existsSync,
 	unlinkSync,
 	rmSync,
 	readdirSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
+import { randomBytes } from "node:crypto";
 
 // ─── Constants ────────────────────────────────────────────────────────
 
@@ -206,12 +208,157 @@ export function loadStorageState(
 	}
 }
 
+// ─── Private Helpers ──────────────────────────────────────────────────
+
+/** Temp file prefix for atomic writes. */
+const TEMP_FILE_PREFIX = ".storage-state.";
+const TEMP_FILE_SUFFIX = ".tmp";
+
+/** ReDoS-safe suffix char: hex digit. */
+function tmpSuffix(): string {
+	return randomBytes(6).toString("hex");
+}
+
+/**
+ * Read + parse the storage state file at a given path, or null if
+ * missing or invalid.  Unlike `loadStorageState`, this raw variant
+ * does NOT log version warnings — it's intended for the merge-read
+ * inside `saveStorageState`, where spurious warnings on every save
+ * would be noise.
+ */
+function loadStorageStateRaw(path: string): StorageStateFile | null {
+	if (!existsSync(path)) return null;
+	try {
+		const raw = readFileSync(path, "utf-8");
+		return JSON.parse(raw) as StorageStateFile;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Best-effort sweep of orphaned temp files in a profile directory.
+ * These can accumulate if a process crashes between write and rename.
+ * Failures are silently ignored.
+ */
+function sweepOrphanedTempFiles(dir: string): void {
+	try {
+		if (!existsSync(dir)) return;
+		const entries = readdirSync(dir);
+		for (const entry of entries) {
+			if (
+				entry.startsWith(TEMP_FILE_PREFIX) &&
+				entry.endsWith(TEMP_FILE_SUFFIX)
+			) {
+				try {
+					unlinkSync(join(dir, entry));
+				} catch {
+					/* best-effort */
+				}
+			}
+		}
+	} catch {
+		/* best-effort */
+	}
+}
+
+/**
+ * Write `serialized` to `path` atomically: write to a sibling temp file,
+ * then rename over the target.  On POSIX, rename is atomic on the same
+ * filesystem, so a concurrent reader sees either the old or the new file,
+ * never a partial write.
+ *
+ * The temp file lives in the same directory (guaranteed same filesystem)
+ * with a short random suffix to avoid collisions between concurrent
+ * writers.  Best-effort cleanup of the temp file on rename failure.
+ *
+ * File mode is 0600.  The directory is assumed to already exist
+ * (callers create it with mode 0700).
+ */
+function atomicWriteFileSync(path: string, serialized: string): void {
+	const dir = dirname(path);
+	const tmp = join(dir, `${TEMP_FILE_PREFIX}${tmpSuffix()}${TEMP_FILE_SUFFIX}`);
+	try {
+		writeFileSync(tmp, serialized, { mode: 0o600 });
+		renameSync(tmp, path);
+	} catch (err) {
+		try {
+			if (existsSync(tmp)) unlinkSync(tmp);
+		} catch {
+			/* best-effort */
+		}
+		throw err;
+	}
+}
+
+/** Composite key identifying a unique cookie slot by name+domain+path. */
+function cookieKey(c: { name: string; domain: string; path: string }): string {
+	return `${c.name}|${c.domain}|${c.path}`;
+}
+
+/**
+ * Merge two cookie arrays by `name+domain+path`, last-writer-wins.
+ * `incoming` (the just-captured in-memory state) overrides `existing`
+ * (the current on-disk state) on collision.
+ */
+function mergeCookies(
+	existing: StoredCookie[],
+	incoming: StoredCookie[],
+): StoredCookie[] {
+	const map = new Map<string, StoredCookie>();
+	for (const c of existing) map.set(cookieKey(c), c);
+	for (const c of incoming) map.set(cookieKey(c), c); // incoming wins
+	return [...map.values()];
+}
+
+/**
+ * Merge two origins arrays by `origin`, unioning localStorage by `name`
+ * (incoming wins on collision).  Origins only in `existing` are preserved;
+ * origins only in `incoming` are added.
+ */
+function mergeOrigins(
+	existing: StoredOrigin[],
+	incoming: StoredOrigin[],
+): StoredOrigin[] {
+	const byOrigin = new Map<string, StoredOrigin>();
+
+	// Seed with existing, normalising localStorage into a keyed map
+	for (const o of existing) {
+		byOrigin.set(o.origin, {
+			origin: o.origin,
+			localStorage: [...o.localStorage],
+		});
+	}
+	// Merge incoming over existing
+	for (const inc of incoming) {
+		const cur = byOrigin.get(inc.origin);
+		if (!cur) {
+			byOrigin.set(inc.origin, {
+				origin: inc.origin,
+				localStorage: [...inc.localStorage],
+			});
+			continue;
+		}
+		const lsMap = new Map<string, StoredLocalStorageEntry>();
+		for (const e of cur.localStorage) lsMap.set(e.name, e);
+		for (const e of inc.localStorage) lsMap.set(e.name, e); // incoming wins
+		cur.localStorage = [...lsMap.values()];
+	}
+	return [...byOrigin.values()];
+}
+
 /**
  * Save storage state for a named profile.
  *
- * Writes version headers, creates the profile directory with 0700
- * permissions if needed, and sets file mode 0600.
+ * Uses cookie-level merge (union by `name+domain+path`) and atomic
+ * writes (temp file + rename) to prevent two failure modes under
+ * concurrent use of a shared named profile:
  *
+ * 1. **Half-write race**: a concurrent reader never sees a partial file.
+ * 2. **Wholesale-replace clobber**: non-overlapping cookies set by
+ *    concurrent writers are preserved via merge, not erased.
+ *
+ * Creates the profile directory with 0700 permissions if needed.
  * Logs a warning if the state exceeds `maxSizeBytes` but saves anyway.
  *
  * @param profileName - The profile name.
@@ -232,12 +379,25 @@ export function saveStorageState(
 		// Create profile directory with restricted permissions
 		mkdirSync(dir, { recursive: true, mode: 0o700 });
 
-		// Build the file payload with version headers
+		// Best-effort sweep of orphaned temp files from prior crashes
+		sweepOrphanedTempFiles(dir);
+
+		// Read current on-disk state for merge (null = missing/corrupt)
+		const diskState = loadStorageStateRaw(path);
+
+		// Merge: union by cookie key (name+domain+path) and origin+name,
+		// incoming wins on collision, non-overlapping entries preserved
 		const payload: StorageStateFile = {
 			_piVersion: STORAGE_STATE_VERSION,
 			_savedAt: new Date().toISOString(),
-			cookies: state.cookies as StoredCookie[],
-			origins: state.origins as StoredOrigin[],
+			cookies: mergeCookies(
+				diskState?.cookies ?? [],
+				state.cookies as StoredCookie[],
+			),
+			origins: mergeOrigins(
+				diskState?.origins ?? [],
+				state.origins as StoredOrigin[],
+			),
 		};
 
 		const serialized = JSON.stringify(payload, null, 2);
@@ -253,8 +413,8 @@ export function saveStorageState(
 			);
 		}
 
-		// Write with restricted permissions
-		writeFileSync(path, serialized, { mode: 0o600 });
+		// Atomic write: temp file + rename (atomic on POSIX)
+		atomicWriteFileSync(path, serialized);
 
 		return true;
 	} catch (err) {

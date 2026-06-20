@@ -50,8 +50,8 @@ export const browserNavigateTool = defineTool({
 				[Type.Literal("none"), Type.Literal("session"), Type.String()],
 				{
 					description:
-						"Profile mode: 'none' (clean slate, default), 'session' (persist for this " +
-						"conversation), or a named profile (e.g. 'shopping', 'work'). " +
+						"Profile mode: 'session' (default, persist for this conversation), " +
+						"'none' (clean slate), or a named profile (e.g. 'shopping', 'work'). " +
 						"Named profiles share cookies across subagents like browser tabs.",
 				},
 			),
@@ -123,20 +123,7 @@ export const browserNavigateTool = defineTool({
 			};
 		}
 
-		// Safety net: prevent extreme context flooding (fires below the router's
-		// very-large-page strategy, which kicks in at 8000 chars; this is a
-		// secondary cap at 4000 chars for rare edge cases). The snapshot cache
-		// preserves the full original — use `read` on the cache file path to
-		// access all elements.
-		let contentText = result.snapshot;
-		if (result.elementCount !== undefined && contentText.length > 8000) {
-			let cut = contentText.lastIndexOf("\n", 4000);
-			if (cut < 2000) cut = 4000;
-			contentText =
-				contentText.slice(0, cut) +
-				`\n… ${contentText.length - cut} more chars (auto-truncated). ` +
-				`Read cached snapshot for full content.`;
-		}
+		const contentText = result.snapshot;
 
 		// Capture a screenshot to a temp file so the LLM can opt into visual
 		// inspection via `read` only when needed.

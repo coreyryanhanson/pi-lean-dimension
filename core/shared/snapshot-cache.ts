@@ -8,7 +8,6 @@
  * Design parallels capFetchContent() in fetch-backend.ts:
  * - Pure utility functions, no class or global state beyond a tracking Map
  * - Caches ONLY when truncation occurred (snapshot > 2800 chars)
- * - Never caches bot-detected snapshots
  * - Graceful I/O degradation (try-catch, no crash on disk errors)
  * - Max 2 files per task (oldest evicted)
  *
@@ -82,32 +81,23 @@ function buildCacheFilePath(
 /**
  * Cache a snapshot's full text to a temp file.
  *
- * Only caches when:
- * 1. The snapshot is longer than CACHE_TRUNCATE_THRESHOLD (truncation occurred)
- * 2. botDetected is falsy (misleading content)
- *
- * Gracefully degrades to a no-op on any filesystem error.
- * Evicts the oldest file per task when the count exceeds MAX_FILES_PER_TASK.
+ * Only caches when the snapshot is longer than CACHE_TRUNCATE_THRESHOLD
+ * (truncation occurred). Gracefully degrades to a no-op on any
+ * filesystem error. Evicts the oldest file per task when the count
+ * exceeds MAX_FILES_PER_TASK.
  *
  * @param taskId - The task ID (used for file naming and tracking)
  * @param snapshot - The full snapshot text to cache
  * @param fingerprint - A stable hash/fingerprint for the snapshot
- * @param botDetected - Whether the page triggered bot detection
  * @returns A CacheResult with path and fingerprint, or null if not cached
  */
 export function cacheSnapshot(
 	taskId: string,
 	snapshot: string,
 	fingerprint: string,
-	botDetected: boolean,
 ): CacheResult | null {
 	// Only cache when truncation occurred
 	if (snapshot.length <= SNAPSHOT_TRUNCATE_THRESHOLD) {
-		return null;
-	}
-
-	// Never cache bot-detected pages
-	if (botDetected) {
 		return null;
 	}
 

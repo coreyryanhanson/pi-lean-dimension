@@ -25,7 +25,12 @@ import {
 	PythonPluginAdapter,
 	PythonBridgeError,
 	type PythonBridgeConfig,
-} from "../backends/python-adapter";
+} from "../backends/python-adapter.js";
+import { sessionManager } from "../core/shared/session-manager.js";
+import {
+	loadStorageState,
+	deleteStorageState,
+} from "../core/shared/storage-state.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -796,6 +801,186 @@ describeStderr("stderr capture", () => {
 			} catch {
 				/* ignore */
 			}
+		}
+	});
+});
+
+// ═════════════════════════════════════════════════════════════════════
+//  Storage state persistence (via _persistState)
+// ═════════════════════════════════════════════════════════════════════
+
+const describePersistence = PYTHON_AVAILABLE ? describe : describe.skip;
+
+describePersistence("_persistState — storage state persistence", () => {
+	let adapter: PythonPluginAdapter;
+
+	beforeEach(async () => {
+		adapter = createAdapter();
+		await adapter.init();
+	});
+
+	afterEach(async () => {
+		await adapter.cleanupAll().catch(() => {});
+	});
+
+	it("re-navigate with persistent profile saves state to disk", async () => {
+		const testProfile = `persist-test-1-${Date.now()}`;
+
+		try {
+			// Set up a persistent session (as router would)
+			sessionManager.createSession("persist-t1", "chromium-py");
+			const session = sessionManager.getSession("persist-t1")!;
+			session.persistState = true;
+			session.profileName = testProfile;
+
+			// First navigate — establishes bridge session, _pages entry created
+			const r1 = await adapter.navigate(
+				"https://example.com/first",
+				"persist-t1",
+				30_000,
+			);
+			expect(r1.success).toBe(true);
+
+			// Nothing should be saved on first navigate (no prior context)
+			const afterFirst = loadStorageState(testProfile);
+			expect(afterFirst).toBeNull();
+
+			// Second navigate — triggers _persistState before RPC
+			const r2 = await adapter.navigate(
+				"https://example.com/second",
+				"persist-t1",
+				30_000,
+			);
+			expect(r2.success).toBe(true);
+
+			// Assert state was saved to disk via _persistState
+			const state = loadStorageState(testProfile);
+			expect(state).not.toBeNull();
+			expect(state!.cookies.length).toBeGreaterThan(0);
+
+			// The mock bridge returns a "consent" cookie — verify it's present
+			const consentCookie = state!.cookies.find(
+				(c: { name: string; value: string }) =>
+					c.name === "consent" && c.value === "accepted",
+			);
+			expect(consentCookie).toBeDefined();
+
+			// Origins should also be persisted
+			expect(state!.origins.length).toBeGreaterThan(0);
+			expect(state!.origins[0]!.origin).toBe("https://example.com");
+		} finally {
+			await adapter.cleanup("persist-t1").catch(() => {});
+			deleteStorageState(testProfile);
+			sessionManager.removeSession("persist-t1");
+		}
+	});
+
+	it("re-navigate with non-persistent session does NOT save state", async () => {
+		const testProfile = `persist-test-2-${Date.now()}`;
+
+		try {
+			// Create session WITHOUT persistState
+			sessionManager.createSession("persist-t2", "chromium-py");
+			// No persistState = true
+
+			// First navigate
+			const r1 = await adapter.navigate(
+				"https://example.com/first",
+				"persist-t2",
+				30_000,
+			);
+			expect(r1.success).toBe(true);
+
+			// Second navigate — _persistState should NOT trigger
+			const r2 = await adapter.navigate(
+				"https://example.com/second",
+				"persist-t2",
+				30_000,
+			);
+			expect(r2.success).toBe(true);
+
+			// No state should have been saved
+			const state = loadStorageState(testProfile);
+			expect(state).toBeNull();
+		} finally {
+			await adapter.cleanup("persist-t2").catch(() => {});
+			deleteStorageState(testProfile);
+			sessionManager.removeSession("persist-t2");
+		}
+	});
+
+	it("cleanup saves state for persistent sessions", async () => {
+		const testProfile = `persist-test-3-${Date.now()}`;
+
+		try {
+			// Set up persistent session
+			sessionManager.createSession("persist-t3", "chromium-py");
+			const session = sessionManager.getSession("persist-t3")!;
+			session.persistState = true;
+			session.profileName = testProfile;
+
+			// Navigate first
+			await adapter.navigate("https://example.com/first", "persist-t3", 30_000);
+
+			// Cleanup should call _persistState -> save to disk
+			await adapter.cleanup("persist-t3");
+
+			const state = loadStorageState(testProfile);
+			expect(state).not.toBeNull();
+			expect(state!.cookies.length).toBeGreaterThan(0);
+		} finally {
+			deleteStorageState(testProfile);
+			sessionManager.removeSession("persist-t3");
+		}
+	});
+
+	it("cleanup does NOT save state for non-persistent sessions", async () => {
+		const testProfile = `persist-test-4-${Date.now()}`;
+
+		try {
+			// Create session WITHOUT persistState
+			sessionManager.createSession("persist-t4", "chromium-py");
+
+			// Navigate first
+			await adapter.navigate("https://example.com/first", "persist-t4", 30_000);
+
+			// Cleanup should NOT save
+			await adapter.cleanup("persist-t4");
+
+			const state = loadStorageState(testProfile);
+			expect(state).toBeNull();
+		} finally {
+			deleteStorageState(testProfile);
+			sessionManager.removeSession("persist-t4");
+		}
+	});
+
+	it("first navigate does not call getStorageState", async () => {
+		const testProfile = `persist-test-5-${Date.now()}`;
+
+		try {
+			// Set up persistent session
+			sessionManager.createSession("persist-t5", "chromium-py");
+			const session = sessionManager.getSession("persist-t5")!;
+			session.persistState = true;
+			session.profileName = testProfile;
+
+			// First navigate — should NOT call _persistState since
+			// _pages doesn't have this taskId yet
+			const r = await adapter.navigate(
+				"https://example.com/first",
+				"persist-t5",
+				30_000,
+			);
+			expect(r.success).toBe(true);
+
+			// Nothing should be saved
+			const state = loadStorageState(testProfile);
+			expect(state).toBeNull();
+		} finally {
+			await adapter.cleanup("persist-t5").catch(() => {});
+			deleteStorageState(testProfile);
+			sessionManager.removeSession("persist-t5");
 		}
 	});
 });

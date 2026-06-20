@@ -34,6 +34,17 @@ beforeAll(async () => {
 			"/reddit-dialog": REDDIT_DIALOG_HTML,
 			"/reddit-stacked": REDDIT_STACKED_HTML,
 			"/reddit-async": REDDIT_ASYNC_HTML,
+			"/slow-nav": `<!DOCTYPE html>
+<html><head><title>Slow Nav Source</title></head>
+<body>
+  <h1>Slow Nav Source</h1>
+  <a href="/slow-nav-destination" onclick="event.preventDefault(); setTimeout(() => location.href='/slow-nav-destination', 280)">Go to Destination</a>
+</body></html>`,
+			"/slow-nav-destination": `<!DOCTYPE html>
+<html><head><title>Slow Nav Destination</title></head>
+<body>
+  <h1>Slow Nav Destination</h1>
+</body></html>`,
 		};
 		const html = pages[url.pathname];
 		if (html) {
@@ -242,4 +253,50 @@ describe("Reddit dialog — consistency × 10", () => {
 
 		expect(failures).toHaveLength(0);
 	}, 120_000);
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Navigation settle integration — real browser end-to-end
+// ═══════════════════════════════════════════════════════════════
+
+describe("Navigation settle — click with delayed nav", () => {
+	const TASK_ID = "nav-settle-integration";
+	let plugin: ChromiumPlugin;
+
+	beforeAll(async () => {
+		plugin = await createPlugin();
+	});
+
+	afterAll(async () => {
+		await plugin.cleanupAll().catch(() => {});
+	});
+
+	it("clicks a link with 280ms delayed navigation and returns consistent URL/snapshot", async () => {
+		const nav = await plugin.navigate(
+			`${serverUrl}/slow-nav`,
+			TASK_ID,
+			NAV_TIMEOUT,
+		);
+		expect(nav.success).toBe(true);
+
+		const snap = await plugin.snapshot(TASK_ID);
+		expect(snap.success).toBe(true);
+
+		// Find the "Go to Destination" link ref
+		const linkMatch = snap.snapshot.match(/@(e\d+).*?link.*?Destination/);
+		expect(linkMatch).toBeTruthy();
+		const ref = `@${linkMatch![1]!}`;
+
+		const result = await plugin.click(TASK_ID, ref);
+		expect(result.success).toBe(true);
+
+		// The navigation completes after 280ms; the settle helper must
+		// detect the late-arriving nav and wait for page readiness.
+		// URL and snapshot must be consistent — the entire point of the fix.
+		expect(result.newUrl).toContain("/slow-nav-destination");
+		expect(result.newTitle).toBe("Slow Nav Destination");
+		if (result.snapshot) {
+			expect(result.snapshot).toContain("Slow Nav Destination");
+		}
+	});
 });

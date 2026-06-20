@@ -52,7 +52,7 @@ describe("cacheSnapshot() — basic caching", () => {
 	it("caches a long snapshot (>2800 chars)", () => {
 		const snap = longSnapshot();
 		const fp = snapshotFingerprint(snap);
-		const result = cacheSnapshot("test-task", snap, fp, false);
+		const result = cacheSnapshot("test-task", snap, fp);
 
 		expect(result).not.toBeNull();
 		expect(result!.path).toMatch(/snapshot-test-task-/);
@@ -66,33 +66,20 @@ describe("cacheSnapshot() — basic caching", () => {
 	it("does not cache a short snapshot (<2800 chars)", () => {
 		const snap = shortSnapshot();
 		const fp = snapshotFingerprint(snap);
-		const result = cacheSnapshot("test-task", snap, fp, false);
-
-		expect(result).toBeNull();
-	});
-
-	it("does not cache when botDetected is true", () => {
-		const snap = longSnapshot();
-		const fp = snapshotFingerprint(snap);
-		const result = cacheSnapshot("test-task", snap, fp, true);
+		const result = cacheSnapshot("test-task", snap, fp);
 
 		expect(result).toBeNull();
 	});
 
 	it("gracefully handles empty snapshot (below threshold)", () => {
-		const result = cacheSnapshot("test-task", "", "empty", false);
+		const result = cacheSnapshot("test-task", "", "empty");
 		expect(result).toBeNull();
 	});
 
 	it("tolerates special characters in taskId", () => {
 		const snap = longSnapshot();
 		const fp = snapshotFingerprint(snap);
-		const result = cacheSnapshot(
-			"browser-1/special:chars@test",
-			snap,
-			fp,
-			false,
-		);
+		const result = cacheSnapshot("browser-1/special:chars@test", snap, fp);
 
 		expect(result).not.toBeNull();
 		expect(result!.path).toMatch(/snapshot-browser-1_special_chars_test-/);
@@ -105,8 +92,8 @@ describe("cacheSnapshot() — basic caching", () => {
 		const fp1 = snapshotFingerprint(snap1);
 		const fp2 = snapshotFingerprint(snap2);
 
-		const result1 = cacheSnapshot("task-unique", snap1, fp1, false);
-		const result2 = cacheSnapshot("task-unique", snap2, fp2, false);
+		const result1 = cacheSnapshot("task-unique", snap1, fp1);
+		const result2 = cacheSnapshot("task-unique", snap2, fp2);
 
 		expect(result1).not.toBeNull();
 		expect(result2).not.toBeNull();
@@ -132,9 +119,9 @@ describe("cacheSnapshot() — eviction", () => {
 		const fp = snapshotFingerprint(snap);
 
 		// Cache 3 snapshots for the same task
-		const result1 = cacheSnapshot("evict-task", snap, fp, false);
-		const result2 = cacheSnapshot("evict-task", snap, fp, false);
-		const result3 = cacheSnapshot("evict-task", snap, fp, false);
+		const result1 = cacheSnapshot("evict-task", snap, fp);
+		const result2 = cacheSnapshot("evict-task", snap, fp);
+		const result3 = cacheSnapshot("evict-task", snap, fp);
 
 		expect(result1).not.toBeNull();
 		expect(result2).not.toBeNull();
@@ -154,12 +141,12 @@ describe("cacheSnapshot() — eviction", () => {
 		const fp = snapshotFingerprint(snap);
 
 		// Cache 3 for task A, 2 for task B
-		const a1 = cacheSnapshot("task-A", snap, fp, false);
-		const a2 = cacheSnapshot("task-A", snap, fp, false);
-		const a3 = cacheSnapshot("task-A", snap, fp, false);
+		const a1 = cacheSnapshot("task-A", snap, fp);
+		const a2 = cacheSnapshot("task-A", snap, fp);
+		const a3 = cacheSnapshot("task-A", snap, fp);
 
-		const b1 = cacheSnapshot("task-B", snap, fp, false);
-		const b2 = cacheSnapshot("task-B", snap, fp, false);
+		const b1 = cacheSnapshot("task-B", snap, fp);
+		const b2 = cacheSnapshot("task-B", snap, fp);
 
 		// Task A: at most 2 files
 		let aCount = 0;
@@ -191,8 +178,8 @@ describe("removeSnapshotFiles()", () => {
 		const snap = longSnapshot();
 		const fp = snapshotFingerprint(snap);
 
-		const aResult = cacheSnapshot("task-A", snap, fp, false);
-		const bResult = cacheSnapshot("task-B", snap, fp, false);
+		const aResult = cacheSnapshot("task-A", snap, fp);
+		const bResult = cacheSnapshot("task-B", snap, fp);
 
 		expect(aResult).not.toBeNull();
 		expect(bResult).not.toBeNull();
@@ -210,7 +197,7 @@ describe("removeSnapshotFiles()", () => {
 	it("does not throw on already-removed files", () => {
 		const snap = longSnapshot();
 		const fp = snapshotFingerprint(snap);
-		const result = cacheSnapshot("task-rm-twice", snap, fp, false);
+		const result = cacheSnapshot("task-rm-twice", snap, fp);
 		expect(result).not.toBeNull();
 
 		removeSnapshotFiles("task-rm-twice");
@@ -234,8 +221,8 @@ describe("removeAllSnapshotFiles()", () => {
 		const snap = longSnapshot();
 		const fp = snapshotFingerprint(snap);
 
-		const r1 = cacheSnapshot("task-A", snap, fp, false);
-		const r2 = cacheSnapshot("task-B", snap, fp, false);
+		const r1 = cacheSnapshot("task-A", snap, fp);
+		const r2 = cacheSnapshot("task-B", snap, fp);
 
 		expect(r1).not.toBeNull();
 		expect(r2).not.toBeNull();
@@ -429,33 +416,6 @@ describe("Integration: router + cache (via MockPlugin)", () => {
 
 		expect(result.success).toBe(true);
 		expect(result.snapshot).not.toContain("Full snapshot cached at");
-	});
-
-	it("router.navigate() does NOT include cache notice when bot detected", async () => {
-		const { pluginRegistry } = await import("../core/plugin-registry.js");
-		const { MockPlugin, makeConfig } = await import("./helpers/mock-plugin.js");
-		pluginRegistry.clear();
-		const mock = new MockPlugin("mock");
-		mock.navResult = {
-			snapshot: longSnapshot(),
-			elementCount: 400,
-			botDetected: true,
-		};
-		pluginRegistry.register(mock, makeConfig({ name: "mock" }));
-
-		const { navigate } = await import("../core/router.js");
-		const result = await navigate("https://example.com", {
-			strategy: "mock",
-		});
-
-		// Bot detected pages should still succeed (don't have elementCount<5),
-		// but snapshot should not be compacted and no cache notice
-		expect(result.success).toBe(true);
-		expect(result.snapshot).not.toContain("Full snapshot cached at");
-		// Bot-detected pages pass the full snapshot through without compacting
-		expect(result.snapshot).toBe(
-			longSnapshot() + `\nfingerprint:${snapshotFingerprint(longSnapshot())}`,
-		);
 	});
 });
 
