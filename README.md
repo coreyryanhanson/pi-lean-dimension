@@ -476,20 +476,6 @@ Whether browser tools are enabled on fresh conversations:
 }
 ```
 
-### `browser.guides.autoInject`
-
-Controls whether bot-detection guidance is auto-injected into navigate output:
-
-```jsonc
-{
-  "browser": {
-    "guides": {
-      "autoInject": true
-    }
-  }
-}
-```
-
 ### `browser.maxStorageStateSize`
 
 Size threshold for profile state warnings (default: 10 MB):
@@ -537,7 +523,7 @@ Size threshold for profile state warnings (default: 10 MB):
 When a page triggers anti-automation:
 
 1. The agent sees a warning in the navigate output
-2. The **bot-detection guide** is auto-injected with strategies
+2. The **bot-detection guide** footer appears with strategies available via `web-guide`
 3. If very few elements are detected (<5), the navigation is treated as
    a hard failure — the agent won't try to interact with a challenge page
 4. Try `web-fetch` on the same URL — it sometimes succeeds where the

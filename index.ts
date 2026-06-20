@@ -15,7 +15,6 @@ import type { PythonBridgeConfig } from "./backends/python-adapter.js";
 import { sessionManager } from "./core/shared/session-manager.js";
 import { removeAllSnapshotFiles } from "./core/shared/snapshot-cache.js";
 import initBrowserToggle from "./browser-toggle.js";
-import { cleanupInjectedGuides } from "./core/guides.js";
 import { updateFooterStatus, getLastCtx, setLastCtx } from "./tools/utils.js";
 import { deleteSessionKey } from "./core/shared/task-id.js";
 
@@ -207,7 +206,6 @@ export default function (pi: ExtensionAPI) {
 		const piSessionId = (ctx as any)?.sessionManager?.getSessionId?.();
 		if (piSessionId) {
 			deleteSessionKey(piSessionId);
-			cleanupInjectedGuides(piSessionId);
 			// Per-conversation fetch cleanup — prevents cross-conversation eviction
 			const tid = sessionManager.getTaskIdForPiSessionId(piSessionId);
 			if (tid) cleanupFetchTempFiles(tid);

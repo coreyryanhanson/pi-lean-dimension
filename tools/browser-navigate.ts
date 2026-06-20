@@ -6,7 +6,11 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import * as router from "../core/router.js";
-import { resolveGuidePresence, getGuideContent } from "../core/guides.js";
+import {
+	resolveApplicableGuides,
+	formatGuideFooter,
+	getGuideContent,
+} from "../core/guides.js";
 import { getConversationDefaultProfile } from "../browser-toggle.js";
 import { sessionManager } from "../core/shared/session-manager.js";
 import { removeSnapshotFiles } from "../core/shared/snapshot-cache.js";
@@ -27,7 +31,7 @@ export const browserNavigateTool = defineTool({
 		"If snapshot or interaction returns 'No active session', the previous navigation was in a different context. Use browser-navigate first to establish a session.",
 		"After auto-launch, @e refs may have changed — a fresh accessibility tree is returned automatically. Use the new refs for interaction.",
 		"If the snapshot is truncated, use browser-inspect role=... name=... to find specific elements, or read the cached snapshot file. Avoid browser-snapshot full=true unless you need the entire tree.",
-		'If a ⏸ guide hint appears in a browser-navigate result, call web-guide guide="<name>" to review it before interacting with the page. If you have already reviewed that guide in this conversation, you can skip the call.',
+		"When a 📖 guide footer appears in a browser-navigate result, call web-guide for each listed guide before interacting with the page (once each per conversation — skip guides you've already reviewed).",
 	],
 	parameters: Type.Object({
 		url: Type.String({ description: "The URL to navigate to" }),
@@ -131,22 +135,11 @@ export const browserNavigateTool = defineTool({
 		const screenshotPath = await router.screenshotToTemp(tid);
 
 		// ---- Web Guide presence ----
-		const presence = resolveGuidePresence(
-			tid,
+		const applicable = resolveApplicableGuides(
 			result.url,
 			result.dialogDetected ?? false,
 			result.botDetectionWarning ?? false,
 		);
-
-		// Build guide hint for badge (site guides only)
-		const guideHint = (() => {
-			if (!presence) return undefined;
-			const guide = getGuideContent()[presence.guideName];
-			if (guide?.category === "site") {
-				return { name: presence.guideName, type: presence.type };
-			}
-			return undefined;
-		})();
 
 		const lines: string[] = [];
 
@@ -170,15 +163,10 @@ export const browserNavigateTool = defineTool({
 			contentText,
 		);
 
-		// Both hint and inject guides go at the END (after page content)
-		if (presence) {
-			lines.push("", presence.text);
-			if (presence.type === "inject") {
-				lines.push(
-					"",
-					`_Call web-guide guide="${presence.guideName}" to see this guide again._`,
-				);
-			}
+		// Append guide footer after page content (only when guides apply)
+		const guideFooter = formatGuideFooter(applicable);
+		if (guideFooter) {
+			lines.push("", guideFooter);
 		}
 
 		return {
@@ -191,7 +179,9 @@ export const browserNavigateTool = defineTool({
 				profileMode: result.profileMode,
 				profileName: result.profileName,
 				botDetectionWarning: result.botDetectionWarning,
-				...(guideHint ? { guideHint } : {}),
+				...(applicable.length > 0
+					? { guides: applicable.map((g) => g.name) }
+					: {}),
 			},
 		};
 	},
@@ -225,8 +215,6 @@ export const browserNavigateTool = defineTool({
 		const ec = d?.elementCount as number | undefined;
 		const pm = d?.profileMode as string | undefined;
 		const pn = d?.profileName as string | undefined;
-		const botWarn = d?.botDetectionWarning as boolean | undefined;
-
 		let text = theme.fg("accent", theme.bold(`🌐 ${title}`));
 		text += `\n${theme.fg("dim", url)}`;
 		text += `\n${theme.fg("muted", `via ${backend}`)}`;
@@ -237,13 +225,30 @@ export const browserNavigateTool = defineTool({
 		} else if (pm === "restored") {
 			text += ` ${theme.fg("accent", "↻ restored")}`;
 		}
-		if (botWarn) text += ` ${theme.fg("warning", "⚠ bot detection")}`;
 
-		const guideHint = d?.guideHint as
-			| { name: string; type: string }
-			| undefined;
-		if (guideHint) {
-			text += ` ${theme.fg("accent", `📖 guide avail: ${guideHint.name}`)}`;
+		// Guide badge line (dedicated line below via status)
+		const guideNames = d?.guides as string[] | undefined;
+		if (guideNames && guideNames.length > 0) {
+			const content = getGuideContent();
+			const chips: string[] = [];
+			const items = guideNames
+				.filter((name) => content[name] !== undefined)
+				.map((name) => ({ name, guide: content[name]! }))
+				.sort((a, b) => {
+					// Patterns before sites; alphabetical within each group
+					if (a.guide.category !== b.guide.category) {
+						return a.guide.category === "pattern" ? -1 : 1;
+					}
+					return a.guide.shortName.localeCompare(b.guide.shortName);
+				});
+			for (const { guide } of items) {
+				if (guide.category === "site") {
+					chips.push(`${guide.icon} guide avail: ${guide.shortName}`);
+				} else {
+					chips.push(`${guide.icon} ${guide.shortName}`);
+				}
+			}
+			text += `\n${theme.fg("muted", chips.join("  "))}`;
 		}
 
 		const content = (result.content?.[0] as any)?.text ?? "";
