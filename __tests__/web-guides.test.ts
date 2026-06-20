@@ -17,11 +17,10 @@ import {
 	parseGuideFile,
 	formatGuideList,
 	formatGuideFooter,
+	sortApplicableGuides,
 	getGuideContent,
 	invalidateGuideContent,
 	buildDomainMap,
-	getDomainMap,
-	invalidateDomainMap,
 	BUILTIN_GUIDES,
 	DOMAIN_MAP,
 } from "../core/guides.js";
@@ -48,10 +47,9 @@ describe("types", () => {
 		expect((t as any).presence).toBeUndefined();
 	});
 
-	it("DomainEntry interface — guide and strategy optional", () => {
+	it("DomainEntry interface — guide is optional", () => {
 		const d: DomainEntry = {};
 		expect(d.guide).toBeUndefined();
-		expect(d.strategy).toBeUndefined();
 	});
 
 	it("ApplicableGuide interface — name, icon, shortName, reason, category required", () => {
@@ -294,6 +292,76 @@ describe("formatGuideFooter", () => {
 	});
 });
 
+// ─── sortApplicableGuides ─────────────────────────────────────
+
+describe("sortApplicableGuides", () => {
+	it("sorts patterns before sites", () => {
+		const input: ApplicableGuide[] = [
+			{
+				name: "site-guide",
+				icon: "📖",
+				shortName: "site",
+				reason: "test",
+				category: "site",
+			},
+			{
+				name: "bot-detection",
+				icon: "⚠",
+				shortName: "bot detection",
+				reason: "test",
+				category: "pattern",
+			},
+		];
+		const sorted = sortApplicableGuides(input);
+		expect(sorted[0]!.category).toBe("pattern");
+		expect(sorted[1]!.category).toBe("site");
+	});
+
+	it("sorts alphabetically within same category", () => {
+		const input: ApplicableGuide[] = [
+			{
+				name: "z-guide",
+				icon: "📖",
+				shortName: "zebra",
+				reason: "test",
+				category: "pattern",
+			},
+			{
+				name: "a-guide",
+				icon: "⚠",
+				shortName: "alpha",
+				reason: "test",
+				category: "pattern",
+			},
+		];
+		const sorted = sortApplicableGuides(input);
+		expect(sorted[0]!.shortName).toBe("alpha");
+		expect(sorted[1]!.shortName).toBe("zebra");
+	});
+
+	it("does not mutate the input array", () => {
+		const input: ApplicableGuide[] = [
+			{
+				name: "b",
+				icon: "📖",
+				shortName: "b",
+				reason: "test",
+				category: "site",
+			},
+			{
+				name: "a",
+				icon: "📖",
+				shortName: "a",
+				reason: "test",
+				category: "pattern",
+			},
+		];
+		const originalNames = input.map((g) => g.name);
+		sortApplicableGuides(input);
+		expect(input.map((g) => g.name)).toEqual(originalNames);
+	});
+});
+
 // ─── formatGuideList ────────────────────────────────────────────
 
 describe("formatGuideList", () => {
@@ -521,34 +589,6 @@ describe("buildDomainMap", () => {
 		const map = buildDomainMap();
 		expect(map).toBeDefined();
 		expect(Object.keys(map).length).toBeGreaterThanOrEqual(1);
-	});
-});
-
-describe("getDomainMap / invalidateDomainMap", () => {
-	beforeEach(() => {
-		invalidateDomainMap();
-	});
-
-	afterEach(() => {
-		invalidateDomainMap();
-	});
-
-	it("first call builds cache", () => {
-		const map = getDomainMap();
-		expect(map["_internal-test.example"]).toBeDefined();
-	});
-
-	it("subsequent calls return same cached object", () => {
-		const first = getDomainMap();
-		const second = getDomainMap();
-		expect(first).toBe(second);
-	});
-
-	it("after invalidation, next call rescans", () => {
-		invalidateDomainMap();
-		const after = getDomainMap();
-		expect(after).toBeDefined();
-		expect(after["_internal-test.example"]).toBeDefined();
 	});
 });
 

@@ -6,11 +6,8 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import * as router from "../core/router.js";
-import {
-	resolveApplicableGuides,
-	formatGuideFooter,
-	getGuideContent,
-} from "../core/guides.js";
+import { resolveApplicableGuides, formatGuideFooter } from "../core/guides.js";
+import type { ApplicableGuide } from "../core/guides.js";
 import { getConversationDefaultProfile } from "../browser-toggle.js";
 import { sessionManager } from "../core/shared/session-manager.js";
 import { removeSnapshotFiles } from "../core/shared/snapshot-cache.js";
@@ -178,10 +175,7 @@ export const browserNavigateTool = defineTool({
 				elementCount: result.elementCount,
 				profileMode: result.profileMode,
 				profileName: result.profileName,
-				botDetectionWarning: result.botDetectionWarning,
-				...(applicable.length > 0
-					? { guides: applicable.map((g) => g.name) }
-					: {}),
+				...(applicable.length > 0 ? { guides: applicable } : {}),
 			},
 		};
 	},
@@ -227,25 +221,14 @@ export const browserNavigateTool = defineTool({
 		}
 
 		// Guide badge line (dedicated line below via status)
-		const guideNames = d?.guides as string[] | undefined;
-		if (guideNames && guideNames.length > 0) {
-			const content = getGuideContent();
+		const guides = d?.guides as ApplicableGuide[] | undefined;
+		if (guides && guides.length > 0) {
 			const chips: string[] = [];
-			const items = guideNames
-				.filter((name) => content[name] !== undefined)
-				.map((name) => ({ name, guide: content[name]! }))
-				.sort((a, b) => {
-					// Patterns before sites; alphabetical within each group
-					if (a.guide.category !== b.guide.category) {
-						return a.guide.category === "pattern" ? -1 : 1;
-					}
-					return a.guide.shortName.localeCompare(b.guide.shortName);
-				});
-			for (const { guide } of items) {
-				if (guide.category === "site") {
-					chips.push(`${guide.icon} guide avail: ${guide.shortName}`);
+			for (const g of guides) {
+				if (g.category === "site") {
+					chips.push(`${g.icon} guide avail: ${g.shortName}`);
 				} else {
-					chips.push(`${guide.icon} ${guide.shortName}`);
+					chips.push(`${g.icon} ${g.shortName}`);
 				}
 			}
 			text += `\n${theme.fg("muted", chips.join("  "))}`;

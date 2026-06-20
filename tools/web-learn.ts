@@ -7,11 +7,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-	GUIDES_DIR,
-	invalidateDomainMap,
-	invalidateGuideContent,
-} from "../core/guides.js";
+import { GUIDES_DIR, invalidateGuideContent } from "../core/guides.js";
 
 export const webLearnTool = defineTool({
 	name: "web-learn",
@@ -19,7 +15,7 @@ export const webLearnTool = defineTool({
 	description:
 		"Save or update a navigation guide for a site. " +
 		"Creates a new guide file for the given domain, or updates an existing one with new content and date. " +
-		"The guide becomes available immediately via web-guide and auto-hints on future navigations. " +
+		"The guide becomes available immediately via web-guide and appears in the guide footer on future navigations. " +
 		"Requires /web learn to be active.",
 	parameters: Type.Object({
 		domain: Type.String({
@@ -100,8 +96,7 @@ export const webLearnTool = defineTool({
 		const isUpdate = existsSync(filepath);
 		writeFileSync(filepath, fileContent, "utf-8");
 
-		// ── Invalidate caches ────────────────────────────────────
-		invalidateDomainMap();
+		// ── Invalidate cache ────────────────────────────────────
 		invalidateGuideContent();
 
 		const verb = isUpdate ? "Updated" : "Created";
@@ -113,7 +108,7 @@ export const webLearnTool = defineTool({
 						`📖 ${verb} guide at guides/${filename}\n` +
 						`  Domains: ${allDomains.join(", ")}\n` +
 						`  Call web-guide guide="${domain}" to view it.\n` +
-						`  Auto-hints will fire when navigating to ${allDomains[0]}.`,
+						`  A guide badge and footer will appear when navigating to ${allDomains[0]}.`,
 				},
 			],
 			details: {

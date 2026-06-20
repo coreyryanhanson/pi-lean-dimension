@@ -224,12 +224,12 @@ HTML to Markdown. It does **not** create a browser session.
 
 ### Built-in Pattern Guides
 
-Pi-browser ships with four built-in pattern guides that auto-hint when relevant:
+Pi-browser ships with four built-in pattern guides that appear in the guide footer when relevant:
 
 | Guide | Trigger | What It Covers |
 |-------|---------|----------------|
-| `bot-detection` | Auto-injected when bot blocking is detected | Cloudflare, challenge pages, what NOT to do |
-| `cookie-consent` | Hinted when a dialog is detected in the snapshot | Accept/Reject buttons, Escape key, verification |
+| `bot-detection` | When bot blocking is detected | Cloudflare, challenge pages, what NOT to do |
+| `cookie-consent` | When a dialog is detected in the snapshot | Accept/Reject buttons, Escape key, verification |
 | `pagination` | On-demand | Next buttons, infinite scroll, pages |
 | `search` | On-demand | Search boxes, comboboxes, result lists |
 
@@ -253,7 +253,7 @@ web-learn domain="reddit.com" content="…guidance text…"
 ```
 
 This creates a `.md` file with YAML frontmatter in the `guides/` directory.
-The guide becomes available immediately via `web-guide` and auto-hints on
+The guide becomes available immediately via `web-guide` and appears in the guide footer on
 future navigations to that domain.
 
 **Learn mode is off by default** — the agent never saves guides unprompted.
@@ -536,7 +536,7 @@ When creating navigation guides with `web-learn`:
 - Keep guidance **concise** (≤800 chars recommended)
 - Focus on: page structure, consent dialogs, known quirks, and useful
   selector patterns
-- Include domains for auto-hints on future navigations
+- Include domains so the guide appears in the footer on future navigations
 - No runtime enforcement on guide length, but brevity helps the LLM
 
 ### Security

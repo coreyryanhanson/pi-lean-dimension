@@ -40,12 +40,10 @@ export interface Guide {
 	trigger?: GuideTrigger;
 }
 
-/** Domain mapping entry — maps a hostname to a guide and optional backend strategy. */
+/** Domain mapping entry — maps a hostname to a guide. */
 export interface DomainEntry {
 	/** Guide name for lookup in GUIDE_CONTENT. */
 	guide?: string;
-	/** Suggested backend strategy hint for the LLM (e.g. "stealth" when a known site blocks automation). */
-	strategy?: string;
 }
 
 /** An applicable guide for the current page, with presentation fields copied. */
@@ -60,6 +58,18 @@ export interface ApplicableGuide {
 	reason: string;
 	/** Category from the underlying Guide. */
 	category: GuideCategory;
+}
+
+/**
+ * Sort applicable guides: patterns before sites, alphabetical within each category.
+ */
+export function sortApplicableGuides(
+	guides: ApplicableGuide[],
+): ApplicableGuide[] {
+	return [...guides].sort((a, b) => {
+		if (a.category !== b.category) return a.category === "pattern" ? -1 : 1;
+		return a.shortName.localeCompare(b.shortName);
+	});
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -402,60 +412,47 @@ export function resolveApplicableGuides(
 		hostname = new URL(url).hostname;
 	} catch {
 		// Invalid URL — pattern results still returned, domain lookup skipped
-		return result;
+		return sortApplicableGuides(result);
 	}
 
-	const entry = getDomainMap()[hostname];
+	const entry = buildDomainMap()[hostname];
 	if (entry?.guide) {
 		const guide = content[entry.guide];
 		if (guide) {
-			let reason = `site guide for ${hostname}`;
-			if (entry.strategy) {
-				reason += ` — this site may need strategy="${entry.strategy}"`;
-			}
 			result.push({
 				name: entry.guide,
 				icon: guide.icon,
 				shortName: guide.shortName,
-				reason,
+				reason: `site guide for ${hostname}`,
 				category: guide.category,
 			});
 		}
 	}
 
-	return result;
+	return sortApplicableGuides(result);
 }
 
 /**
  * Format the guide footer appended to navigate output.
  *
- * Ordering: patterns as a flat alphabetical list, then a "Site:"
- * subheader, then site guides alphabetically. Returns "" when no
- * guides are applicable, and the footer is omitted entirely.
+ * Sorts guides internally (patterns before sites, alphabetical within each)
+ * via sortApplicableGuides(). Returns "" when no guides are applicable.
  */
 export function formatGuideFooter(guides: ApplicableGuide[]): string {
 	if (guides.length === 0) return "";
-
-	const patterns = guides
-		.filter((g) => g.category === "pattern")
-		.sort((a, b) => a.shortName.localeCompare(b.shortName));
-	const sites = guides
-		.filter((g) => g.category === "site")
-		.sort((a, b) => a.shortName.localeCompare(b.shortName));
+	guides = sortApplicableGuides(guides);
 
 	const lines: string[] = [
 		"📖 Guides available for this page — call web-guide to review before interacting (once each per conversation):",
 	];
 
-	for (const g of patterns) {
-		lines.push(`  • ${g.icon} ${g.shortName} — ${g.reason}`);
-	}
-
-	if (sites.length > 0) {
-		lines.push("  Site:");
-		for (const g of sites) {
-			lines.push(`  • ${g.icon} ${g.shortName} — ${g.reason}`);
+	let addedSiteHeader = false;
+	for (const g of guides) {
+		if (g.category === "site" && !addedSiteHeader) {
+			lines.push("  Site:");
+			addedSiteHeader = true;
 		}
+		lines.push(`  • ${g.icon} ${g.shortName} — ${g.reason}`);
 	}
 
 	return lines.join("\n");
@@ -465,13 +462,10 @@ export function formatGuideFooter(guides: ApplicableGuide[]): string {
 // Dynamic Domain Map
 // ═══════════════════════════════════════════════════════════════════
 
-let _domainMapCache: Record<string, DomainEntry> | null = null;
-
 /**
  * Build a domain map from DOMAIN_MAP (static base) + all guides returned
  * by getGuideContent() that have a `domains` field.
- * Derives from the single source of truth (getGuideContent) rather than
- * calling loadUserGuides() independently — this keeps both caches consistent.
+ * Derives from the single source of truth (getGuideContent).
  */
 export function buildDomainMap(): Record<string, DomainEntry> {
 	const map: Record<string, DomainEntry> = { ...DOMAIN_MAP };
@@ -487,17 +481,4 @@ export function buildDomainMap(): Record<string, DomainEntry> {
 		}
 	}
 	return map;
-}
-
-/** Get the (cached) domain map; lazily built on first call. */
-export function getDomainMap(): Record<string, DomainEntry> {
-	if (!_domainMapCache) {
-		_domainMapCache = buildDomainMap();
-	}
-	return _domainMapCache;
-}
-
-/** Invalidate the domain map cache so the next getDomainMap() call rescans. */
-export function invalidateDomainMap(): void {
-	_domainMapCache = null;
 }

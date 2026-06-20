@@ -36,7 +36,7 @@ pi-browser/
 │   ├── plugin-registry.ts    # Registration, validation, strategy resolution
 │   ├── plugin-config.ts      # Pipeline config loading, validation, detection + types (PluginConfig, PluginType, PluginDetection)
 │   ├── router.ts             # Dispatch, session lifecycle, truncation, cookie/profile dispatch
-│   ├── guides.ts             # Guide types, builtin guides, file loader, presence resolution
+│   ├── guides.ts             # Guide types, builtin guides, file loader, applicable-guide resolution
 │   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
 │   └── shared/               # nav-settle, paths, task-id, accessibility-tree, bot-detection, dom-extractor,
 │                              # session-manager, settings-reader, snapshot-cache, storage-state, url-safety
@@ -122,7 +122,7 @@ Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-
 
 4 builtin pattern guides (`bot-detection`, `cookie-consent`, `pagination`, `search`) + 1 test-only site fixture (`_internal-test.example`). Domain map is built dynamically from `guides/*.md` files — any guide with YAML frontmatter `domains` field auto-registers. Caches invalidate on `web-learn` calls.
 
-Guide presence is three-tier: auto-inject (bot-detection), auto-hint (cookie-consent), on-demand (all others).
+Guides are surfaced via an applicable-guide footer and badge: pattern guides (bot-detection, cookie-consent) fire on signal, site guides fire on domain match. All matching guides are shown together with no priority suppression.
 
 ### Key Tools
 
