@@ -9,9 +9,10 @@ A pi extension that registers **12 tools + 1 command** for web browsing. Archite
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 693 tests across 21 files (all pass)
+npm test              # vitest run — 803 tests across 24 test files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npx vitest run __tests__/cookie-persistence.test.ts  # Chromium persistence tests (auto-skips if no Chromium)
+npx vitest run __tests__/firefox.test.ts  # Firefox contract tests (auto-skips if no Playwright Firefox)
 npm run test:watch    # vitest in watch mode
 ```
 
@@ -27,10 +28,13 @@ pi-browser/
 ├── browser-profile.ts        # /web profile subcommand (extracted from toggle)
 ├── browser-status.ts         # /web status subcommand (extracted from toggle)
 ├── backends/                 # Plugin implementations
-│   ├── chromium/index.ts     # Node/Playwright, reference ~1180 lines
-│   ├── chromium-py/bridge.py # Python/Playwright bridge — parity reference for stealth backends, disabled by default (~1170 lines)
-│   ├── python-adapter.ts     # JSON-RPC bridge for subprocess plugins (~1100 lines)
-│   └── python-base/          # Shared Python bridge library (accessibility.py, bridge.py, transport.py)
+│   ├── playwright-base/      # Shared PlaywrightPluginBase (Node base class)
+│   ├── chromium/index.ts     # Chromium Plugin (Node/Playwright) — thin subclass of PlaywrightPluginBase
+│   ├── firefox/index.ts      # Firefox Plugin (Node/Playwright) — thin subclass (NEW)
+│   ├── chromium-py/bridge.py # Chromium-Py Bridge (Python/Playwright) — thin subclass of PlaywrightBridge
+│   ├── firefox-py/bridge.py  # Firefox-Py Bridge (Python/Playwright) — thin subclass (NEW)
+│   ├── python-adapter.ts     # JSON-RPC bridge for subprocess plugins
+│   └── python-base/          # Shared Python bridge library (bridge.py, playwright_base.py, accessibility.py, bot_detection.py, transport.py)
 ├── core/                     # Framework: shared across all plugins
 │   ├── plugin-api.ts         # BrowserPlugin interface + result types (Cookie, StorageState, etc.)
 │   ├── plugin-registry.ts    # Registration, validation, strategy resolution
@@ -42,7 +46,7 @@ pi-browser/
 │                              # session-manager, settings-reader, snapshot-cache, storage-state, url-safety
 ├── guides/                   # User-authored guide files (gitignored)
 ├── tools/                    # Tool definitions — one file per tool (12 files) + index.ts + utils.ts
-└── __tests__/                # 21 test files + helpers/
+└── __tests__/                # 24 test files + helpers/
 ```
 
 ## Architecture
@@ -70,12 +74,14 @@ The 12 registered tools map to 12 tool-facing plugin methods. The cookie/storage
 
 Capabilities (`PluginCapabilities`) advertise quirks. The router checks them at dispatch time.
 
-Plugin loading: reads `browser.plugins` from `~/.pi/agent/settings.json` (global, merged with `.pi/settings.json` project-local). Each entry is `{name, dir, enabled, config}`. `dir` maps to `backends/<dir>/`; entry point is auto-detected (`index.ts` = Node plugin, `bridge.py` = Python plugin). Falls back to a default `ChromiumPlugin` instance if no plugins configure.
+Plugin loading: reads `browser.plugins` from `~/.pi/agent/settings.json` (global, merged with `.pi/settings.json` project-local). Each entry is `{name, dir, enabled, config}`. `dir` maps to `backends/<dir>/`; entry point is auto-detected (`index.ts` = Node plugin, `bridge.py` = Python plugin). Falls back to a default config: chromium + firefox enabled, chromium-py + firefox-py disabled.
 
 **Active plugins (config-driven):**
 
-- **`chromium`** — Node/Playwright (~1180 lines), always enabled by default, reference implementation
-- **`chromium-py`** — Python/Playwright parity reference (~1170 lines bridge.py), disabled by default. Validates ``python-base`` against the TS reference; use as the baseline when building a new Python stealth backend.
+- **`chromium`** — Node/Playwright (thin subclass of `PlaywrightPluginBase`), always enabled by default, reference implementation
+- **`firefox`** — Node/Playwright (thin subclass of `PlaywrightPluginBase`), enabled out-of-the-box, same contract as chromium (NEW)
+- **`chromium-py`** — Python/Playwright parity reference (thin subclass of `PlaywrightBridge`), disabled by default. Validates ``python-base`` against the TS reference; use as the baseline when building a new Python stealth backend.
+- **`firefox-py`** — Python/Playwright parity reference (thin subclass of `PlaywrightBridge`), disabled by default. Mirror of chromium-py for Firefox-based stealth work (NEW)
 
 ### Router (`core/router.ts`)
 
@@ -136,19 +142,28 @@ Guides are surfaced via an applicable-guide footer and badge: pattern guides (bo
 
 `web-fetch` uses plain `fetch()` + `node-html-parser` + `turndown`. Returns ~4000 chars inline, spills to temp file when larger.
 
+### Engine Parity Note
+
+Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees in the **same YAML format**, so the shared parser in `core/shared/accessibility-tree.ts` works identically for both. However, the two engines may report **different role sets and props** for the same DOM. The contract test suite uses threshold assertions (`elementCount > 0`) rather than exact equality, so this should pass without false positives. If any fixture shows a meaningful divergence, document it here rather than papering over it.
+
+**User-Agent drift (Python backends):** The Node Firefox backend dynamically probes the browser's UA at lazy init (probe-then-cache). The Python Firefox backend uses a hardcoded fallback UA string (`rv:135.0`). This string will drift as Firefox releases newer versions. If you use the Python Firefox backend for UA-sensitive sites, update the hardcoded UA string in `backends/firefox-py/bridge.py` to match the installed Firefox version.
+
 ## Testing
 
-### Test files (21 files, 693 tests passing)
+### Test files (24 files, 803+ tests passing)
 
-| File | Requires Chromium? |
+| File | Requires browser? |
 |------|--------------------|
 | All structural/unit tests (router-dispatch, browser-toggle, browser-toggle-profile, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle) | No |
-| reddit-dialog.test.ts | Yes (errors if unavailable) |
-| chromium-py.test.ts | Yes (auto-skip) |
-| cookie-persistence.test.ts | Yes (auto-skip) |
-| chromium-py-persistence.test.ts | Yes (auto-skip, also requires Python venv) |
+| reddit-dialog.test.ts | Chromium (errors if unavailable) |
+| cookie-persistence.test.ts | Chromium (auto-skip) |
+| chromium-py.test.ts | Chromium + Python venv (auto-skip) |
+| chromium-py-persistence.test.ts | Chromium + Python venv (auto-skip) |
+| firefox.test.ts (NEW) | Playwright Firefox (auto-skip) |
+| firefox-py.test.ts (NEW) | Playwright Firefox + Python venv (auto-skip) |
+| firefox-py-persistence.test.ts (NEW) | Playwright Firefox + Python venv (auto-skip) |
 
-Live-browser tests (`chromium-py`, `cookie-persistence`, `chromium-py-persistence`) skip automatically when Playwright Chromium is unavailable. `reddit-dialog` errors if Chromium is missing. `browser-toggle-profile` tests exercise the full profile lifecycle via mock API.
+Live-browser tests auto-skip when the required browser or Python venv is absent. `reddit-dialog` errors if Chromium is missing (it's a structural requirement for the Node Chromium backend). `browser-toggle-profile` tests exercise the full profile lifecycle via mock API.
 
 ### Shared test utilities (`__tests__/helpers/`)
 
@@ -160,7 +175,7 @@ Live-browser tests (`chromium-py`, `cookie-persistence`, `chromium-py-persistenc
 
 ### Contract test harness
 
-`runContractTests()` validates structural contracts (all operations exist, result shapes) without a browser, and behavioral tests (`realBrowser: true`) with a live Chromium.
+`runContractTests()` validates structural contracts (all operations exist, result shapes) without a browser, and behavioral tests (`realBrowser: true`) with a live browser (Chromium or Firefox depending on the plugin passed).
 
 ## Known Constraints & Debt
 

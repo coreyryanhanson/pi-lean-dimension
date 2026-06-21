@@ -20,7 +20,7 @@ export const webFetchTool = defineTool({
 		"Use web-fetch for quick, stateless page retrieval when you don't need JavaScript or interactive elements.",
 		"The tool returns page content as Markdown, truncated to ~4K chars inline.",
 		"If the result mentions a temp file with full content, use the read tool with offset/limit to access specific sections.",
-		"If the result indicates the page needs JavaScript, switch to browser-navigate with strategy='chromium'.",
+		"If the result indicates the page needs JavaScript, switch to browser-navigate (try strategy='chromium' or strategy='firefox').",
 		"If bot detection is triggered, the page may be blocked — try browser-navigate instead.",
 		"This tool does NOT create a browser session — it's a simple HTTP fetch.",
 	],

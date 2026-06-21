@@ -9,18 +9,22 @@ Key components
 --------------
 * :class:`BrowserBridge` — base class; subclass and override
   ``create_browser_session()`` and operation methods.
+* :class:`PlaywrightBridge` — Playwright-specific base extracted from
+  the Chromium reference; parameterizes engine, UA, and launch args.
 * :mod:`.transport` — JSON-RPC 2.0 transport over stdin/stdout.
 * :mod:`.accessibility` — Playwright accessibility snapshot parser,
   mirroring the TypeScript version.
 * :mod:`.bot_detection` — anti-automation / bot detection signal
   matcher, mirroring the TypeScript version.
 
-Reference implementation
-------------------------
-``backends/chromium-py/bridge.py`` is the shipped parity reference.
-It subclasses ``BrowserBridge`` using Playwright Python's Chromium API
-and validates this library end-to-end. When building a new Python plugin,
-keep ``chromium-py`` as your baseline for parity testing.
+Shipped bridges
+---------------
+* ``backends/chromium-py/bridge.py`` — ``ChromiumPyBridge``, a thin
+  subclass of :class:`PlaywrightBridge` driving Chromium.  Ships as the
+  parity reference for Python Chromium-based stealth backends.
+* ``backends/firefox-py/bridge.py`` — ``FirefoxPyBridge``, a thin
+  subclass driving Firefox.  Ships as the parity reference for Python
+  Firefox-based stealth backends.
 
 Quick start
 -----------
@@ -41,6 +45,7 @@ Quick start
 """
 
 from .bridge import BrowserBridge, SessionNotFoundError, InvalidParamsError
+from .playwright_base import PlaywrightBridge
 from .accessibility import (
     AriaCachedNode,
     AriaParseResult,
@@ -53,6 +58,7 @@ from .bot_detection import check_bot_detection
 
 __all__ = [
     "BrowserBridge",
+    "PlaywrightBridge",
     "SessionNotFoundError",
     "InvalidParamsError",
     "AriaCachedNode",

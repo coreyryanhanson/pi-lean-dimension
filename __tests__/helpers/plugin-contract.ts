@@ -963,13 +963,24 @@ export function runContractTests(
 
 		describe("goBack() — real navigation", () => {
 			it("navigates back to the previous page", async () => {
-				// Navigate to page A, then click link to page B
+				// Navigate to page A
 				await plugin.navigate(`${server.url}/page-a`, TASK_ID, navigateTimeout);
 
-				// Navigate to page B
-				await plugin.navigate(`${server.url}/page-b`, TASK_ID, navigateTimeout);
+				// Click a link to navigate to page B (creates browser history entry)
+				const snap = await plugin.snapshot(TASK_ID);
+				expect(snap.success).toBe(true);
 
-				// Go back
+				const linkMatch = snap.snapshot.match(
+					/@(e\d+)\b.*?link.*?Go to Page B/,
+				);
+				expect(linkMatch).toBeTruthy();
+				if (!linkMatch) return;
+
+				const ref = `@${linkMatch[1]}`;
+				const clickResult = await plugin.click(TASK_ID, ref);
+				expect(clickResult.success).toBe(true);
+
+				// Now go back
 				const result = await plugin.goBack(TASK_ID);
 
 				expect(result.success).toBe(true);

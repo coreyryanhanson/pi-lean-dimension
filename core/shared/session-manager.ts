@@ -158,6 +158,8 @@ class SessionManager {
 		switch (pluginName) {
 			case "chromium":
 				return "PW";
+			case "firefox":
+				return "FF";
 			default:
 				// Return up to 3 uppercase chars for custom plugins
 				return pluginName.slice(0, 3).toUpperCase();
