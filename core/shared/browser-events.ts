@@ -4,9 +4,8 @@
  * Automatically dismisses alert/confirm/prompt dialogs and logs them
  * for the user to see. Also handles page crash and unresponsive events.
  *
- * This module lives in the Chromium backend because it is coupled to
- * Playwright's Page type. If a future Playwright-based backend (e.g.
- * Firefox) needs the same logic, promote it to a shared location.
+ * Playwright-generic — lives in core/shared so all Playwright-based
+ * backends (chromium, firefox, etc.) share the same handler logic.
  */
 
 import type { Page } from "playwright";

@@ -111,11 +111,25 @@ describe("detectPluginType — production backends", () => {
 		expect(result.entryPoint).toContain("chromium/index.ts");
 	});
 
+	it("detects the firefox backend as a Node plugin", () => {
+		// This tests the actual backends/firefox/ directory
+		const result = detectPluginType("firefox", DEFAULT_BACKENDS_ROOT);
+		expect(result.type).toBe("node");
+		expect(result.entryPoint).toContain("firefox/index.ts");
+	});
+
 	it("detects the chromium-py backend as a Python plugin", () => {
 		// This tests the actual backends/chromium-py/ directory
 		const result = detectPluginType("chromium-py", DEFAULT_BACKENDS_ROOT);
 		expect(result.type).toBe("python");
 		expect(result.entryPoint).toContain("chromium-py/bridge.py");
+	});
+
+	it("detects the firefox-py backend as a Python plugin", () => {
+		// This tests the actual backends/firefox-py/ directory
+		const result = detectPluginType("firefox-py", DEFAULT_BACKENDS_ROOT);
+		expect(result.type).toBe("python");
+		expect(result.entryPoint).toContain("firefox-py/bridge.py");
 	});
 });
 

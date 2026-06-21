@@ -138,7 +138,7 @@ function parsePluginConfig(
 	// Extract plugins from the raw browser config section
 	const rawPlugins = raw?.["plugins"];
 
-	// Default fallback: single chromium plugin
+	// Default fallback: chromium + firefox enabled, python backends disabled
 	if (!Array.isArray(rawPlugins)) {
 		return {
 			plugins: [
@@ -146,6 +146,24 @@ function parsePluginConfig(
 					name: "chromium",
 					dir: "chromium",
 					enabled: true,
+					config: {},
+				},
+				{
+					name: "firefox",
+					dir: "firefox",
+					enabled: true,
+					config: {},
+				},
+				{
+					name: "chromium-py",
+					dir: "chromium-py",
+					enabled: false,
+					config: {},
+				},
+				{
+					name: "firefox-py",
+					dir: "firefox-py",
+					enabled: false,
 					config: {},
 				},
 			],
@@ -360,8 +378,8 @@ export const DEFAULT_BACKENDS_ROOT = join(__dirname, "..", "backends");
 /**
  * Load and validate the plugin configuration.
  *
- * If no `browser.plugins` config exists, returns a single Chromium
- * plugin config (default fallback — identical to today's behavior).
+ * If no `browser.plugins` config exists, returns the default fallback
+ * (chromium + firefox enabled, chromium-py + firefox-py disabled).
  */
 export function loadPluginConfig(
 	backendsRoot: string = DEFAULT_BACKENDS_ROOT,

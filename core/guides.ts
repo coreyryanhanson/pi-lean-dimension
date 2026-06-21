@@ -88,7 +88,7 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 			"- Don't assume the page is broken — use `read` on the auto-captured screenshot path shown in the navigate output",
 			"",
 			"### Backend Strategy",
-			"- The default `chromium` backend is detected by many anti-automation systems",
+			"- The default `chromium` / `firefox` backends are detected by many anti-automation systems",
 			'- A stealth browser backend may be available — try `browser-navigate` with `strategy="stealth"` if the default backend is blocked',
 			"- If no stealth backend is configured, this will fail with a clear error — no harm in trying",
 			"",

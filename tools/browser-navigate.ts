@@ -36,7 +36,7 @@ export const browserNavigateTool = defineTool({
 			Type.String({
 				description:
 					'Backend strategy: "auto" (default) uses the first available plugin; ' +
-					'specify a registered plugin name (e.g. "chromium", "chromium-py") to use that backend. ' +
+					'specify a registered plugin name (e.g. "chromium", "firefox", "chromium-py") to use that backend. ' +
 					"For stateless HTTP fetches, use web-fetch instead.",
 			}),
 		),
