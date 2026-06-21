@@ -6,7 +6,8 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import * as router from "../core/router.js";
-import { resolveGuidePresence } from "../core/guides.js";
+import { resolveApplicableGuides, formatGuideFooter } from "../core/guides.js";
+import type { ApplicableGuide } from "../core/guides.js";
 import { getConversationDefaultProfile } from "../browser-toggle.js";
 import { sessionManager } from "../core/shared/session-manager.js";
 import { removeSnapshotFiles } from "../core/shared/snapshot-cache.js";
@@ -27,6 +28,7 @@ export const browserNavigateTool = defineTool({
 		"If snapshot or interaction returns 'No active session', the previous navigation was in a different context. Use browser-navigate first to establish a session.",
 		"After auto-launch, @e refs may have changed — a fresh accessibility tree is returned automatically. Use the new refs for interaction.",
 		"If the snapshot is truncated, use browser-inspect role=... name=... to find specific elements, or read the cached snapshot file. Avoid browser-snapshot full=true unless you need the entire tree.",
+		"When a 📖 guide footer appears in a browser-navigate result, call web-guide for each listed guide before interacting with the page (once each per conversation — skip guides you've already reviewed).",
 	],
 	parameters: Type.Object({
 		url: Type.String({ description: "The URL to navigate to" }),
@@ -129,7 +131,16 @@ export const browserNavigateTool = defineTool({
 		// inspection via `read` only when needed.
 		const screenshotPath = await router.screenshotToTemp(tid);
 
-		const lines = [
+		// ---- Web Guide footer ----
+		const applicable = resolveApplicableGuides(
+			result.url,
+			result.dialogDetected ?? false,
+			result.botDetectionWarning ?? false,
+		);
+
+		const lines: string[] = [];
+
+		lines.push(
 			`Title: ${result.title || "(no title)"}`,
 			`URL: ${result.url}`,
 			`Backend: ${result.backendUsed}`,
@@ -139,34 +150,20 @@ export const browserNavigateTool = defineTool({
 			result.profileMode !== undefined ? profileLine(result) : "",
 			result.botDetectionWarning
 				? "⚠ BOT DETECTION WARNING: This page appears to be protected by " +
-					"anti-automation. The content below may be incomplete or show " +
-					"a challenge page instead of the actual content."
+						"anti-automation. The content below may be incomplete or show " +
+						"a challenge page instead of the actual content."
 				: "",
 			screenshotPath
 				? `📷 Screenshot: ${screenshotPath} (use the read tool for visual inspection)`
 				: "",
 			"",
 			contentText,
-		];
-
-		// ---- Web Guide presence ----
-		const presence = resolveGuidePresence(
-			tid,
-			result.url,
-			result.dialogDetected ?? false,
-			result.botDetectionWarning ?? false,
 		);
-		if (presence) {
-			if (presence.type === "inject") {
-				lines.push(
-					"",
-					presence.text,
-					"",
-					`_Call web-guide guide="${presence.guideName}" to see this guide again._`,
-				);
-			} else {
-				lines.push("", presence.text);
-			}
+
+		// Append guide footer after page content (only when guides apply)
+		const guideFooter = formatGuideFooter(applicable);
+		if (guideFooter) {
+			lines.push("", guideFooter);
 		}
 
 		return {
@@ -178,7 +175,7 @@ export const browserNavigateTool = defineTool({
 				elementCount: result.elementCount,
 				profileMode: result.profileMode,
 				profileName: result.profileName,
-				botDetectionWarning: result.botDetectionWarning,
+				...(applicable.length > 0 ? { guides: applicable } : {}),
 			},
 		};
 	},
@@ -212,8 +209,6 @@ export const browserNavigateTool = defineTool({
 		const ec = d?.elementCount as number | undefined;
 		const pm = d?.profileMode as string | undefined;
 		const pn = d?.profileName as string | undefined;
-		const botWarn = d?.botDetectionWarning as boolean | undefined;
-
 		let text = theme.fg("accent", theme.bold(`🌐 ${title}`));
 		text += `\n${theme.fg("dim", url)}`;
 		text += `\n${theme.fg("muted", `via ${backend}`)}`;
@@ -224,7 +219,20 @@ export const browserNavigateTool = defineTool({
 		} else if (pm === "restored") {
 			text += ` ${theme.fg("accent", "↻ restored")}`;
 		}
-		if (botWarn) text += ` ${theme.fg("warning", "⚠ bot detection")}`;
+
+		// Guide badge line (dedicated line below via status)
+		const guides = d?.guides as ApplicableGuide[] | undefined;
+		if (guides && guides.length > 0) {
+			const chips: string[] = [];
+			for (const g of guides) {
+				if (g.category === "site") {
+					chips.push(`${g.icon} guide avail: ${g.shortName}`);
+				} else {
+					chips.push(`${g.icon} ${g.shortName}`);
+				}
+			}
+			text += `\n${theme.fg("muted", chips.join("  "))}`;
+		}
 
 		const content = (result.content?.[0] as any)?.text ?? "";
 		if (expanded) {

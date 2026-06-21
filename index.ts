@@ -7,6 +7,7 @@ import {
 	loadPluginConfig,
 	detectPluginType,
 	DEFAULT_BACKENDS_ROOT,
+	invalidateConfigCache,
 } from "./core/plugin-config.js";
 import { ChromiumPlugin } from "./backends/chromium/index.js";
 import { PythonPluginAdapter } from "./backends/python-adapter.js";
@@ -15,9 +16,9 @@ import type { PythonBridgeConfig } from "./backends/python-adapter.js";
 import { sessionManager } from "./core/shared/session-manager.js";
 import { removeAllSnapshotFiles } from "./core/shared/snapshot-cache.js";
 import initBrowserToggle from "./browser-toggle.js";
-import { cleanupInjectedGuides } from "./core/guides.js";
 import { updateFooterStatus, getLastCtx, setLastCtx } from "./tools/utils.js";
-import { deleteSessionKey } from "./core/shared/task-id.js";
+import { deleteSessionKey, resetTaskIds } from "./core/shared/task-id.js";
+import { resetToggleModuleState } from "./browser-toggle.js";
 
 // ─── Tool definitions ────────────────────────────────────────────
 
@@ -40,6 +41,15 @@ import {
 // Extension entry point
 // ============================================================
 export default function (pi: ExtensionAPI) {
+	// --- Ensure idempotent re-invocation ----------------------------
+	// pi reuses the cached extension factory on /resume (same cwd),
+	// which re-invokes this function with the same module-level
+	// singletons. Reset them here so the second load is safe.
+	pluginRegistry.clear();
+	invalidateConfigCache();
+	resetTaskIds();
+	resetToggleModuleState();
+
 	// --- Plugin registration ----------------------------------------
 	const { plugins: pluginConfigs, errors: configErrors } = loadPluginConfig();
 
@@ -77,12 +87,19 @@ export default function (pi: ExtensionAPI) {
 	} else {
 		// Fallback: no valid configs → register default Chromium plugin
 		const plugin = new ChromiumPlugin();
-		pluginRegistry.register(plugin, {
-			name: "chromium",
-			dir: "chromium",
-			enabled: true,
-			config: {},
-		});
+		try {
+			pluginRegistry.register(plugin, {
+				name: "chromium",
+				dir: "chromium",
+				enabled: true,
+				config: {},
+			});
+		} catch (err) {
+			console.error(
+				"[pi-browser] Failed to register default Chromium plugin:",
+				err,
+			);
+		}
 		plugin.init({}).catch((err: unknown) => {
 			console.error(
 				"[pi-browser] Failed to init default Chromium plugin:",
@@ -141,7 +158,14 @@ export default function (pi: ExtensionAPI) {
 					bridgeConfig.transportTimeoutMs = userConfig.transportTimeoutMs;
 			}
 			const adapter = new PythonPluginAdapter(config.name, bridgeConfig);
-			pluginRegistry.register(adapter, config);
+			try {
+				pluginRegistry.register(adapter, config);
+			} catch (err) {
+				console.error(
+					`[pi-browser] Failed to register Python plugin '${config.name}':`,
+					err,
+				);
+			}
 			adapter.init(config.config).catch((err: unknown) => {
 				console.error(
 					`[pi-browser] Failed to init Python plugin '${config.name}':`,
@@ -207,7 +231,6 @@ export default function (pi: ExtensionAPI) {
 		const piSessionId = (ctx as any)?.sessionManager?.getSessionId?.();
 		if (piSessionId) {
 			deleteSessionKey(piSessionId);
-			cleanupInjectedGuides(piSessionId);
 			// Per-conversation fetch cleanup — prevents cross-conversation eviction
 			const tid = sessionManager.getTaskIdForPiSessionId(piSessionId);
 			if (tid) cleanupFetchTempFiles(tid);

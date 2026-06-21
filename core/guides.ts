@@ -1,18 +1,15 @@
 /**
  * Web Navigation Guides
  *
- * Three-tier auto-presence (auto-inject / auto-hint / on-demand) that
- * appends navigation guidance to browser-navigate output. Supports
- * builtin guides (shipped with the extension) and user-authored guides
- * (loaded from the guides/ directory).
+ * Stateless, applicable-only guide footer system. All guides are surfaced
+ * the same way — no inject/hint distinction, no per-task suppression state.
  *
- * Types, data, file loader, presence resolution, and cleanup are all
+ * Types, data, file loader, resolution, and footer formatting are all
  * in this single file.
  */
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { readMergedSettings } from "./shared/settings-reader.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -21,13 +18,6 @@ import { readMergedSettings } from "./shared/settings-reader.js";
 export type GuideCategory = "site" | "pattern";
 export type GuideSource = "builtin" | "user";
 
-export interface GuideTrigger {
-	/** Which navigate-result signal to check. */
-	signal: "botDetected" | "dialogDetected";
-	/** How to surface the guide when the signal fires. */
-	presence: "inject" | "hint";
-}
-
 export interface Guide {
 	/** Markdown guidance text (≤800 chars recommended). */
 	content: string;
@@ -35,36 +25,41 @@ export interface Guide {
 	updated: string;
 	category: GuideCategory;
 	source: GuideSource;
+	/** Emoji shown in badge + footer bullet (e.g. "⚠", "🍪", "📖"). */
+	icon: string;
+	/** Compact label shown in badge (e.g. "bot detection", "consent", "reddit"). */
+	shortName: string;
 	/** Domain name(s) this site guide applies to. Pattern guides leave this empty. */
 	domains?: string[];
-	/** Pattern guides only; site guides use domains or DOMAIN_MAP. */
-	trigger?: GuideTrigger;
+	/** Pattern guides only: signal that triggers this guide (e.g. "botDetected", "dialogDetected"). */
+	triggerSignal?: "botDetected" | "dialogDetected";
 }
 
-/** Domain mapping entry — maps a hostname to a guide and optional backend strategy. */
-export interface DomainEntry {
-	/** Guide name for lookup in GUIDE_CONTENT. */
-	guide?: string;
-	/** Suggested backend strategy hint for the LLM (e.g. "stealth" when a known site blocks automation). */
-	strategy?: string;
+/** An applicable guide for the current page, with presentation fields copied. */
+export interface ApplicableGuide {
+	/** Guide lookup key (e.g. "reddit", "bot-detection"). */
+	name: string;
+	/** Emoji from the underlying Guide. */
+	icon: string;
+	/** Compact label from the underlying Guide. */
+	shortName: string;
+	/** One-line reason this guide applies, shown in the footer bullet. */
+	reason: string;
+	/** Category from the underlying Guide. */
+	category: GuideCategory;
 }
 
-/** Result of guide presence resolution. */
-export type GuidePresenceType = "inject" | "hint";
-
-export interface GuidePresenceResult {
-	type: GuidePresenceType;
-	guideName: string;
-	text: string;
+/**
+ * Sort applicable guides: patterns before sites, alphabetical within each category.
+ */
+export function sortApplicableGuides(
+	guides: ApplicableGuide[],
+): ApplicableGuide[] {
+	return [...guides].sort((a, b) => {
+		if (a.category !== b.category) return a.category === "pattern" ? -1 : 1;
+		return a.shortName.localeCompare(b.shortName);
+	});
 }
-
-// ═══════════════════════════════════════════════════════════════════
-// Domain Map
-// ═══════════════════════════════════════════════════════════════════
-
-export const DOMAIN_MAP: Record<string, DomainEntry> = {
-	"_internal-test.example": { guide: "_builtin-test-fixture" },
-};
 
 // ═══════════════════════════════════════════════════════════════════
 // Builtin Guides
@@ -75,7 +70,9 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 		category: "pattern",
 		source: "builtin",
 		updated: "2026-06-13",
-		trigger: { signal: "botDetected", presence: "inject" },
+		icon: "⚠",
+		shortName: "bot detection",
+		triggerSignal: "botDetected",
 		content: [
 			"## Bot Detection Patterns",
 			"",
@@ -108,7 +105,9 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 		category: "pattern",
 		source: "builtin",
 		updated: "2026-06-12",
-		trigger: { signal: "dialogDetected", presence: "hint" },
+		icon: "🍪",
+		shortName: "consent",
+		triggerSignal: "dialogDetected",
 		content: [
 			"## Cookie Consent Patterns",
 			"",
@@ -129,6 +128,8 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 		category: "pattern",
 		source: "builtin",
 		updated: "2026-06-12",
+		icon: "📄",
+		shortName: "pagination",
 		content: [
 			"## Pagination Patterns",
 			"",
@@ -149,6 +150,8 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 		category: "pattern",
 		source: "builtin",
 		updated: "2026-06-12",
+		icon: "🔍",
+		shortName: "search",
 		content: [
 			"## Search Patterns",
 			"",
@@ -161,22 +164,6 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 			"- Use `browser-inspect text=true` to read search results with @e refs, rather than loading a full snapshot",
 			'- Results are often role="list" with role="listitem" per result',
 			"- Pagination controls follow the patterns in the pagination guide",
-		].join("\n"),
-	},
-
-	"_builtin-test-fixture": {
-		category: "site",
-		source: "builtin",
-		updated: "2026-06-13",
-		content: [
-			"## Builtin Test Fixture",
-			"",
-			"This is a test-only builtin site guide. It ships with the extension solely to",
-			"exercise the domain-hint auto-presence code path. No real website guidance",
-			"is provided here.",
-			"",
-			"To add your own site guides, place a `.md` file with YAML frontmatter in the",
-			"`guides/` directory — see the web-guide tool or AGENTS.md for details.",
 		].join("\n"),
 	},
 };
@@ -215,12 +202,12 @@ export function parseGuideContent(
 	const category = meta["category"] === "pattern" ? "pattern" : "site";
 	const updated = meta["updated"] ?? new Date().toISOString().slice(0, 10);
 
-	let trigger: GuideTrigger | undefined;
-	if (meta["trigger.signal"] && meta["trigger.presence"]) {
-		trigger = {
-			signal: meta["trigger.signal"] as GuideTrigger["signal"],
-			presence: meta["trigger.presence"] as GuideTrigger["presence"],
-		};
+	const icon = meta["icon"] ?? "📖";
+	const shortName = meta["shortName"] ?? name;
+
+	let triggerSignal: "botDetected" | "dialogDetected" | undefined;
+	if (meta["trigger.signal"]) {
+		triggerSignal = meta["trigger.signal"] as "botDetected" | "dialogDetected";
 	}
 
 	const rawDomains = meta["domains"];
@@ -237,9 +224,11 @@ export function parseGuideContent(
 			category,
 			source: "user" as GuideSource,
 			updated,
+			icon,
+			shortName,
 			content: content.trim(),
 			...(domains ? { domains } : {}),
-			...(trigger ? { trigger } : {}),
+			...(triggerSignal ? { triggerSignal } : {}),
 		},
 	];
 }
@@ -301,20 +290,29 @@ export function invalidateGuideContent(): void {
 	_guideContentCache = null;
 }
 
-/** Format guide listing grouped by category and source. */
+/**
+ * Override the guide content cache for testing.
+ * Pass undefined/null to reset to default (same as invalidateGuideContent).
+ * @internal
+ */
+export function _setGuideContentForTest(content?: Record<string, Guide>): void {
+	_guideContentCache = content ?? null;
+}
+
+/** Format guide listing grouped by category, with icon/shortName and trigger info. */
 export function formatGuideList(): string {
 	const sites: string[] = [];
 	const patterns: string[] = [];
 
 	for (const [name, g] of Object.entries(getGuideContent())) {
-		const entry = `  ${name} (${g.source}, updated ${g.updated})`;
+		const trigger = g.triggerSignal
+			? ` — ${g.icon} ${g.shortName}, fires on ${g.triggerSignal}`
+			: "";
+		const entry = `  ${name} (${g.source}, updated ${g.updated})${trigger}`;
 		if (g.category === "site") {
 			sites.push(entry);
 		} else {
-			const trigger = g.trigger
-				? ` — auto-${g.trigger.presence} when ${g.trigger.signal}`
-				: "";
-			patterns.push(entry + trigger);
+			patterns.push(entry);
 		}
 	}
 
@@ -332,26 +330,113 @@ export function formatGuideList(): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Guide Presence Resolution
+// Stateless Guide Resolution
 // ═══════════════════════════════════════════════════════════════════
 
-/** Per-task suppression of auto-injected guides (Map<taskId, Set<guideName>>). */
-const injectedGuides = new Map<string, Set<string>>();
+/** Signal → reason string for pattern guide matching. */
+const SIGNAL_REASONS: Record<"botDetected" | "dialogDetected", string> = {
+	botDetected: "challenge page detected",
+	dialogDetected: "consent dialog detected",
+};
+
+/**
+ * Resolve all applicable guides for a navigate result.
+ *
+ * Stateless — no per-task suppression. Returns all matching guides.
+ * Pattern triggers (bot-detection, cookie-consent) are evaluated first,
+ * followed by domain site-guide lookup.
+ */
+export function resolveApplicableGuides(
+	url: string,
+	dialogDetected: boolean,
+	botDetected: boolean,
+): ApplicableGuide[] {
+	const result: ApplicableGuide[] = [];
+	const content = getGuideContent();
+
+	// 1. Pattern guides by trigger signal
+	for (const [name, guide] of Object.entries(content)) {
+		if (guide.triggerSignal === "botDetected" && botDetected) {
+			result.push({
+				name,
+				icon: guide.icon,
+				shortName: guide.shortName,
+				reason: SIGNAL_REASONS["botDetected"],
+				category: "pattern",
+			});
+		} else if (guide.triggerSignal === "dialogDetected" && dialogDetected) {
+			result.push({
+				name,
+				icon: guide.icon,
+				shortName: guide.shortName,
+				reason: SIGNAL_REASONS["dialogDetected"],
+				category: "pattern",
+			});
+		}
+	}
+
+	// 2. Domain site guides
+	let hostname: string;
+	try {
+		hostname = new URL(url).hostname;
+	} catch {
+		// Invalid URL — pattern results still returned, domain lookup skipped
+		return sortApplicableGuides(result);
+	}
+
+	const guideName = buildDomainMap()[hostname];
+	if (guideName) {
+		const guide = content[guideName];
+		if (guide) {
+			result.push({
+				name: guideName,
+				icon: guide.icon,
+				shortName: guide.shortName,
+				reason: `site guide for ${hostname}`,
+				category: guide.category,
+			});
+		}
+	}
+
+	return sortApplicableGuides(result);
+}
+
+/**
+ * Format the guide footer appended to navigate output.
+ *
+ * Input must be pre-sorted via sortApplicableGuides() (patterns before sites,
+ * alphabetical within each). Returns "" when no guides are applicable.
+ */
+export function formatGuideFooter(guides: ApplicableGuide[]): string {
+	if (guides.length === 0) return "";
+
+	const lines: string[] = [
+		"📖 Guides available for this page — call web-guide to review before interacting (once each per conversation):",
+	];
+
+	let addedSiteHeader = false;
+	for (const g of guides) {
+		if (g.category === "site" && !addedSiteHeader) {
+			lines.push("  Site:");
+			addedSiteHeader = true;
+		}
+		lines.push(`  • ${g.icon} ${g.shortName} — ${g.reason}`);
+	}
+
+	return lines.join("\n");
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // Dynamic Domain Map
 // ═══════════════════════════════════════════════════════════════════
 
-let _domainMapCache: Record<string, DomainEntry> | null = null;
-
 /**
- * Build a domain map from DOMAIN_MAP (static base) + all guides returned
+ * Build a domain map (hostname → guide name) from all guides returned
  * by getGuideContent() that have a `domains` field.
- * Derives from the single source of truth (getGuideContent) rather than
- * calling loadUserGuides() independently — this keeps both caches consistent.
+ * Derives from the single source of truth (getGuideContent).
  */
-export function buildDomainMap(): Record<string, DomainEntry> {
-	const map: Record<string, DomainEntry> = { ...DOMAIN_MAP };
+export function buildDomainMap(): Record<string, string> {
+	const map: Record<string, string> = {};
 	for (const [name, guide] of Object.entries(getGuideContent())) {
 		if (
 			guide.category === "site" &&
@@ -359,130 +444,9 @@ export function buildDomainMap(): Record<string, DomainEntry> {
 			guide.domains.length > 0
 		) {
 			for (const domain of guide.domains) {
-				map[domain] = { guide: name };
+				map[domain] = name;
 			}
 		}
 	}
 	return map;
-}
-
-/** Get the (cached) domain map; lazily built on first call. */
-export function getDomainMap(): Record<string, DomainEntry> {
-	if (!_domainMapCache) {
-		_domainMapCache = buildDomainMap();
-	}
-	return _domainMapCache;
-}
-
-/** Invalidate the domain map cache so the next getDomainMap() call rescans. */
-export function invalidateDomainMap(): void {
-	_domainMapCache = null;
-}
-
-/**
- * Read the autoInject config from settings.json.
- * Uses the shared settings-reader module for canonical path resolution
- * and file reading — avoiding duplication of path/file logic.
- *
- * @param override - Optional override for testing. If provided, overrides file-based config.
- */
-export function readGuidesConfig(override?: { autoInject: boolean }): {
-	autoInject: boolean;
-} {
-	if (override !== undefined) return override;
-
-	// Read global + project settings (project overrides global)
-	const merged = readMergedSettings();
-	const browser = merged.browser as Record<string, unknown> | undefined;
-	if (
-		browser &&
-		typeof browser === "object" &&
-		!Array.isArray(browser) &&
-		(browser as any)?.guides?.autoInject === false
-	) {
-		return { autoInject: false };
-	}
-	return { autoInject: true };
-}
-
-/**
- * Resolve which guide presence to show, if any, based on the navigate result.
- *
- * Priority order:
- * 1. Bot-detection trigger (highest)
- * 2. Dialog presence trigger
- * 3. Domain-based hint
- *
- * @param configOverride - Optional config override for testing. Passed to `readGuidesConfig`.
- */
-export function resolveGuidePresence(
-	taskId: string,
-	url: string,
-	dialogDetected: boolean,
-	botDetected: boolean,
-	configOverride?: { autoInject: boolean },
-): GuidePresenceResult | undefined {
-	// Get or create per-task injection set
-	let taskInjected = injectedGuides.get(taskId);
-	if (!taskInjected) {
-		taskInjected = new Set<string>();
-		injectedGuides.set(taskId, taskInjected);
-	}
-
-	const autoInjectConfig = readGuidesConfig(configOverride).autoInject;
-
-	// 1. Bot-detection trigger — highest priority
-	if (botDetected) {
-		const guide = getGuideContent()["bot-detection"];
-		if (guide?.trigger?.signal === "botDetected") {
-			if (autoInjectConfig && !taskInjected.has("bot-detection")) {
-				taskInjected.add("bot-detection");
-				return {
-					type: "inject",
-					guideName: "bot-detection",
-					text: guide.content,
-				};
-			}
-			return {
-				type: "hint",
-				guideName: "bot-detection",
-				text: '⚠️ Bot detection triggered. Call web-guide guide="bot-detection" for strategies.',
-			};
-		}
-	}
-
-	// 2. Dialog trigger — check for consent dialogs via element cache
-	if (dialogDetected) {
-		const guide = getGuideContent()["cookie-consent"];
-		if (guide?.trigger?.signal === "dialogDetected") {
-			return {
-				type: "hint",
-				guideName: "cookie-consent",
-				text: '💡 A consent dialog appears to be present. Call web-guide guide="cookie-consent" for dismissal patterns.',
-			};
-		}
-	}
-
-	// 3. Domain-based hint — site guides via dynamic domain map
-	let hostname: string;
-	try {
-		hostname = new URL(url).hostname;
-	} catch {
-		return undefined;
-	}
-	const entry = getDomainMap()[hostname];
-	if (entry?.guide && getGuideContent()[entry.guide]) {
-		let text = `💡 A web guide is available for ${hostname}.\n   Call web-guide guide="${entry.guide}" for navigation tips.`;
-		if (entry.strategy) {
-			text += `\n   This site often requires a stealth browser — try strategy="${entry.strategy}".`;
-		}
-		return { type: "hint", guideName: entry.guide, text };
-	}
-
-	return undefined;
-}
-
-/** Clean up per-task injection tracking. */
-export function cleanupInjectedGuides(taskId: string): void {
-	injectedGuides.delete(taskId);
 }

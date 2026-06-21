@@ -172,9 +172,9 @@ class SessionManager {
 
 		if (active.length === 0) {
 			if (crashed.length > 0) {
-				return `💥 ${crashed.length} session${crashed.length > 1 ? "s" : ""} crashed`;
+				return `${crashed.length} crashed`;
 			}
-			return "🌐 idle";
+			return "idle";
 		}
 		if (active.length === 1) {
 			const s = active[0]!;
@@ -184,8 +184,8 @@ class SessionManager {
 				? ` [${profileDisplayName(s.profileName)}]`
 				: "";
 			let status = domain
-				? `▶ ${sym}: ${domain}${profileTag}`
-				: `▶ ${sym}${profileTag}`;
+				? `${sym}: ${domain}${profileTag}`
+				: `${sym}${profileTag}`;
 			if (crashed.length > 0) {
 				status += ` · ${crashed.length} crashed`;
 			}
@@ -203,7 +203,7 @@ class SessionManager {
 				: profileDisplayName(name),
 		);
 		const sym = this.pluginSymbol(active[0]!.pluginName);
-		let status = `🌐 ${active.length} active (${sym}): ${profileParts.join(", ")}`;
+		let status = `${active.length} active (${sym}): ${profileParts.join(", ")}`;
 		if (crashed.length > 0) {
 			status += ` · ${crashed.length} crashed`;
 		}

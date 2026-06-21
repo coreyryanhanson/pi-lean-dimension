@@ -9,7 +9,7 @@ A pi extension that registers **12 tools + 1 command** for web browsing. Archite
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 687 tests across 21 files (all pass)
+npm test              # vitest run — 693 tests across 21 files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npx vitest run __tests__/cookie-persistence.test.ts  # Chromium persistence tests (auto-skips if no Chromium)
 npm run test:watch    # vitest in watch mode
@@ -36,7 +36,7 @@ pi-browser/
 │   ├── plugin-registry.ts    # Registration, validation, strategy resolution
 │   ├── plugin-config.ts      # Pipeline config loading, validation, detection + types (PluginConfig, PluginType, PluginDetection)
 │   ├── router.ts             # Dispatch, session lifecycle, truncation, cookie/profile dispatch
-│   ├── guides.ts             # Guide types, builtin guides, file loader, presence resolution
+│   ├── guides.ts             # Guide types, builtin guides, file loader, applicable-guide resolution
 │   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
 │   └── shared/               # nav-settle, paths, task-id, accessibility-tree, bot-detection, dom-extractor,
 │                              # session-manager, settings-reader, snapshot-cache, storage-state, url-safety
@@ -120,9 +120,9 @@ Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-
 
 ### Guides (`core/guides.ts`)
 
-4 builtin pattern guides (`bot-detection`, `cookie-consent`, `pagination`, `search`) + 1 test-only site fixture (`_internal-test.example`). Domain map is built dynamically from `guides/*.md` files — any guide with YAML frontmatter `domains` field auto-registers. Caches invalidate on `web-learn` calls.
+4 builtin pattern guides (`bot-detection`, `cookie-consent`, `pagination`, `search`). Site guides are user-authored — place a `.md` file with YAML frontmatter in `guides/` — and auto-register via their `domains` field. Caches invalidate on `web-learn` calls.
 
-Guide presence is three-tier: auto-inject (bot-detection), auto-hint (cookie-consent), on-demand (all others).
+Guides are surfaced via an applicable-guide footer and badge: pattern guides (bot-detection, cookie-consent) fire on signal, site guides fire on domain match. All matching guides are shown together with no priority suppression.
 
 ### Key Tools
 
@@ -138,7 +138,7 @@ Guide presence is three-tier: auto-inject (bot-detection), auto-hint (cookie-con
 
 ## Testing
 
-### Test files (21 files, 687 tests passing)
+### Test files (21 files, 693 tests passing)
 
 | File | Requires Chromium? |
 |------|--------------------|
@@ -180,7 +180,7 @@ Live-browser tests (`chromium-py`, `cookie-persistence`, `chromium-py-persistenc
 - **`browser-inspect`** (`core/shared/dom-extractor.ts`): runs inline JS via `page.evaluate()`. Requires `getElementCache()` on the plugin. Text output truncated at ~2500 chars by default; pass `maxChars=0` for full. Keyword filtering via `query` parameter (case-insensitive substring on text, href, src).
 - **`parentRef` on `AriaCachedNode`**: enables `subtree=...` queries in `browser-inspect`. Set by depth-based parent stack in `parseSnapshot()`'s single pass. Dialogs become parent of interior elements.
 - **`dialogDetected` is resolved from element cache**: computed from the parsed `ElementCache` via `Array.some()` matching `role="dialog"` or `role="alertdialog"`. Not affected by snapshot truncation (unlike the old string-scan approach).
-- **Guide staleness**: no builtin site guides shipped — entirely user-authored via `guides/*.md`. Guides carry `updated` date paired with `currentDate` in output.
+- **Guide staleness**: no builtin site guides shipped — entirely user-authored via `guides/*.md`. Guides carry `updated` date and `currentDate` timestamp in output.
 - **Learn mode toggle**: `/web learn` enables `web-learn` tool; `/web on` removes it. Agent never calls `web-learn` unprompted. Default is off on fresh sessions.
 - **Navigation settle** (`core/shared/nav-settle.ts`): after click or press, detects page navigation via a `framenavigated` listener and waits for `load + networkidle` (capped, errors swallowed) before reading URL/title/snapshot. Replaces the old fixed `waitForTimeout(300)` pattern that caused URL/DOM mismatches. Framework-agnostic via a lightweight `NavigationSettlePage` interface for testability.
 - **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click). Checked in both ChromiumPlugin and the Python bridge.

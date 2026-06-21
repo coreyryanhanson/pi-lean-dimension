@@ -6,7 +6,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getToggleState } from "../browser-toggle.js";
+import { getToggleState, getLearnState } from "../browser-toggle.js";
 import { sessionManager } from "../core/shared/session-manager.js";
 import { taskId } from "../core/shared/task-id.js";
 
@@ -19,22 +19,31 @@ import { taskId } from "../core/shared/task-id.js";
  * session_shutdown.
  */
 let _lastCtx: {
-	ui: { setStatus: (key: string, label: string) => void };
+	ui: {
+		setStatus: (key: string, label: string) => void;
+		theme: { fg: (c: string, t: string) => string };
+	};
 } | null = null;
 
 /**
  * Update the TUI status bar with the current browser state.
  */
 export function updateFooterStatus(ctx: {
-	ui: { setStatus: (key: string, label: string) => void };
+	ui: {
+		setStatus: (key: string, label: string) => void;
+		theme: { fg: (c: string, t: string) => string };
+	};
 }): void {
 	_lastCtx = ctx;
 	const toggleState = getToggleState();
 	if (toggleState === false) {
 		ctx.ui.setStatus("browser", "○ web off");
-	} else {
-		ctx.ui.setStatus("browser", sessionManager.getStatus());
+		return;
 	}
+	const body = sessionManager.getStatus();
+	const learn = getLearnState();
+	const dot = ctx.ui.theme.fg(learn ? "success" : "accent", "●");
+	ctx.ui.setStatus("browser", `${dot} ${body}`);
 }
 
 /** @internal — used by index.ts's profile event listener */
@@ -98,7 +107,10 @@ export async function executeInteractionTool<
 	},
 >(
 	ctx: {
-		ui: { setStatus: (key: string, label: string) => void };
+		ui: {
+			setStatus: (key: string, label: string) => void;
+			theme: { fg: (c: string, t: string) => string };
+		};
 		sessionManager?: { getSessionId?(): string };
 	},
 	actionName: string,
