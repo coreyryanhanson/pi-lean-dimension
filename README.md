@@ -272,10 +272,10 @@ Shows everything about the browser runtime in one notification:
 ```text
 🌐 Browser tools: ✅ on  |  📖 Learn mode: ❌ off
 ────────────────────────────────────────
-Status: 🌐 idle
+Status: idle
 Plugins: chromium
 Active sessions: 1
-  🌐 [chromium] https://example.com — Example Domain [profile: session]
+  PW [chromium] https://example.com — Example Domain [profile: session]
 Profiles: 2 on disk
   📋 session  (2.1 KB) ← active
   shopping  (0.3 KB)
