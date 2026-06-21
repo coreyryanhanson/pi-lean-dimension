@@ -666,7 +666,11 @@ describe("command handler dispatch (via factory closure)", () => {
 		});
 		pi.registerCommand = vi.fn((_name, opts) => {
 			opts.handler("on", {
-				ui: { notify: vi.fn(), setStatus: vi.fn() },
+				ui: {
+					notify: vi.fn(),
+					setStatus: vi.fn(),
+					theme: { fg: vi.fn((_c: string, t: string) => t) },
+				},
 			} as any);
 		}) as any;
 		pi.setActiveTools = vi.fn();
@@ -687,7 +691,11 @@ describe("command handler dispatch (via factory closure)", () => {
 		pi.setActiveTools = vi.fn();
 		pi.registerCommand = vi.fn((_name, opts) => {
 			opts.handler("on", {
-				ui: { notify: vi.fn(), setStatus: vi.fn() },
+				ui: {
+					notify: vi.fn(),
+					setStatus: vi.fn(),
+					theme: { fg: vi.fn((_c: string, t: string) => t) },
+				},
 			} as any);
 		}) as any;
 
@@ -706,7 +714,11 @@ describe("command handler dispatch (via factory closure)", () => {
 		pi.setActiveTools = vi.fn();
 		pi.registerCommand = vi.fn((_name, opts) => {
 			opts.handler("off", {
-				ui: { notify: vi.fn(), setStatus: vi.fn() },
+				ui: {
+					notify: vi.fn(),
+					setStatus: vi.fn(),
+					theme: { fg: vi.fn((_c: string, t: string) => t) },
+				},
 			} as any);
 		}) as any;
 
@@ -723,7 +735,11 @@ describe("command handler dispatch (via factory closure)", () => {
 		pi.setActiveTools = vi.fn();
 		pi.registerCommand = vi.fn((_name, opts) => {
 			opts.handler("off", {
-				ui: { notify: vi.fn(), setStatus: vi.fn() },
+				ui: {
+					notify: vi.fn(),
+					setStatus: vi.fn(),
+					theme: { fg: vi.fn((_c: string, t: string) => t) },
+				},
 			} as any);
 		}) as any;
 
@@ -739,7 +755,11 @@ describe("command handler dispatch (via factory closure)", () => {
 		pi.setActiveTools = vi.fn();
 		pi.registerCommand = vi.fn((_name, opts) => {
 			opts.handler("learn", {
-				ui: { notify: vi.fn(), setStatus: vi.fn() },
+				ui: {
+					notify: vi.fn(),
+					setStatus: vi.fn(),
+					theme: { fg: vi.fn((_c: string, t: string) => t) },
+				},
 			} as any);
 		}) as any;
 
@@ -755,7 +775,11 @@ describe("command handler dispatch (via factory closure)", () => {
 		pi.setActiveTools = vi.fn();
 		pi.registerCommand = vi.fn((_name, opts) => {
 			opts.handler("xyz", {
-				ui: { notify: vi.fn(), setStatus: vi.fn() },
+				ui: {
+					notify: vi.fn(),
+					setStatus: vi.fn(),
+					theme: { fg: vi.fn((_c: string, t: string) => t) },
+				},
 			} as any);
 		}) as any;
 
@@ -767,7 +791,11 @@ describe("command handler dispatch (via factory closure)", () => {
 		const pi = mockPi({ tools: NON_BROWSER_TOOLS });
 		pi.registerCommand = vi.fn((_name, opts) => {
 			opts.handler("on", {
-				ui: { notify: vi.fn(), setStatus: vi.fn() },
+				ui: {
+					notify: vi.fn(),
+					setStatus: vi.fn(),
+					theme: { fg: vi.fn((_c: string, t: string) => t) },
+				},
 			} as any);
 		}) as any;
 		// Should not throw even though no browser tools exist
@@ -781,7 +809,13 @@ describe("command handler dispatch (via factory closure)", () => {
 		});
 		pi.setActiveTools = vi.fn();
 		pi.registerCommand = vi.fn((_name, opts) => {
-			opts.handler("", { ui: { notify: vi.fn(), setStatus: vi.fn() } } as any);
+			opts.handler("", {
+				ui: {
+					notify: vi.fn(),
+					setStatus: vi.fn(),
+					theme: { fg: vi.fn((_c: string, t: string) => t) },
+				},
+			} as any);
 		}) as any;
 
 		browserToggle(pi);

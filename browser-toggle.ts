@@ -60,6 +60,9 @@ interface BrowserToggleState {
 /** Last known toggle state — used by status bar */
 let _lastToggleState = true;
 
+/** Last known learn state — used by status bar for glyph coloring */
+let _lastLearnState = false;
+
 /** Conversation-scoped default profile. "none" means: read from config file. */
 let _conversationDefaultProfile: string | undefined;
 
@@ -190,9 +193,18 @@ export function getToggleState(): boolean {
 	return _lastToggleState;
 }
 
-/** @internal Reset the toggle tracker to its default (test helper). */
+/**
+ * Return the last known learn state (true = learn mode enabled).
+ * Used by the status bar to color the glyph differently.
+ */
+export function getLearnState(): boolean {
+	return _lastLearnState;
+}
+
+/** @internal Reset module-level state to defaults (test helper). */
 function _resetToggleStateForTest(): void {
 	_lastToggleState = true;
+	_lastLearnState = false;
 }
 
 /**
@@ -205,6 +217,7 @@ function _resetToggleStateForTest(): void {
  */
 export function resetToggleModuleState(): void {
 	_lastToggleState = true;
+	_lastLearnState = false;
 	_conversationDefaultProfile = undefined;
 }
 
@@ -263,6 +276,7 @@ function isLearnEnabled(pi: ExtensionAPI): boolean {
  * learn tools that are not currently registered.
  */
 function applyLearnState(pi: ExtensionAPI, enable: boolean): void {
+	_lastLearnState = enable;
 	const registered = new Set(getRegisteredLearnTools(pi));
 	if (registered.size === 0) return;
 	if (enable) {
@@ -369,7 +383,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 					learnToolsEnabled: false,
 					defaultProfile: _conversationDefaultProfile ?? "none",
 				});
-				ctx.ui.setStatus("browser", "🌐 idle");
+				ctx.ui.setStatus("browser", ctx.ui.theme.fg("accent", "●") + " idle");
 				ctx.ui.notify(
 					"🌐 Browser tools enabled. /web learn to make web-learn available.",
 					"info",
@@ -382,7 +396,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 					learnToolsEnabled: true,
 					defaultProfile: _conversationDefaultProfile ?? "none",
 				});
-				ctx.ui.setStatus("browser", "🌐 idle");
+				ctx.ui.setStatus("browser", ctx.ui.theme.fg("success", "●") + " idle");
 				ctx.ui.notify(
 					"📖 web-learn tool is now available. Agent will save/update guides when asked.",
 					"info",
