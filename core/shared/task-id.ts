@@ -62,3 +62,16 @@ export function taskId(ctx: {
 export function deleteSessionKey(piSessionId: string): void {
 	_sessionKeys.delete(piSessionId);
 }
+
+/**
+ * Reset all internal task-ID state.
+ *
+ * Clears the piSessionId-to-key mapping and resets the monotonic counter.
+ * Called at the start of the extension entry function to ensure safe
+ * re-invocation when pi reuses the cached module factory (e.g.
+ * during /resume to the same working directory).
+ */
+export function resetTaskIds(): void {
+	_sessionKeys.clear();
+	_sessionCounter = 0;
+}

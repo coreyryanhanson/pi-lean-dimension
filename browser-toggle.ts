@@ -195,6 +195,19 @@ function _resetToggleStateForTest(): void {
 	_lastToggleState = true;
 }
 
+/**
+ * Reset all module-level toggle state to defaults.
+ *
+ * Called at the start of the extension entry function to ensure safe
+ * re-invocation when pi reuses the cached module factory (e.g.
+ * during /resume to the same working directory).
+ * Resets both the toggle status and conversation-scoped profile.
+ */
+export function resetToggleModuleState(): void {
+	_lastToggleState = true;
+	_conversationDefaultProfile = undefined;
+}
+
 // ---- Config-file support -----------------------------------------
 
 /**
