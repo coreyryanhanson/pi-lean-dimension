@@ -41,6 +41,7 @@ class FirefoxPyBridge(PlaywrightBridge):
     _user_agent: str = (
         "Mozilla/5.0 (X11; Linux x86_64; rv:135.0) Gecko/20100101 Firefox/135.0"
     )
+    _capture_user_agent: bool = True
     _install_hint: str = (
         "Firefox browser not installed. "
         "Run: playwright install firefox (inside backends/python-base/.venv)"

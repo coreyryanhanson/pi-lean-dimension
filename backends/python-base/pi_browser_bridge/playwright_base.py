@@ -5,7 +5,8 @@ Extracts the Playwright-specific implementation from chromium-py/bridge.py
 into a parameterized base class.  Subclasses override:
 
 * ``_plugin_name`` — e.g. ``"chromium-py"``, ``"firefox-py"``
-* ``_user_agent`` — hardcoded fallback UA string
+* ``_user_agent`` — fallback UA string (when dynamic probe is disabled or fails)
+* ``_capture_user_agent`` — bool; if True the real UA is probed at lazy browser init
 * ``_install_hint`` — engine-specific install instruction
 * ``_launch_browser()`` — calls ``self._pw.chromium.launch()`` or ``self._pw.firefox.launch()``
 
@@ -72,7 +73,10 @@ class PlaywrightBridge(BrowserBridge):
 
     * ``_plugin_name`` — log identifier (e.g. ``"chromium-py"``,
       ``"firefox-py"``)
-    * ``_user_agent`` — default UA fallback string
+    * ``_user_agent`` — fallback UA string (used when dynamic probe
+      is disabled or fails)
+    * ``_capture_user_agent`` — bool; when True the real UA is
+      dynamically probed from an about:blank page at lazy browser init
     * ``_install_hint`` — shown when the browser executable is missing
     * ``_launch_browser()`` — factory for creating the Playwright
       Browser; called from ``_ensure_playwright()`` with the
@@ -88,8 +92,12 @@ class PlaywrightBridge(BrowserBridge):
     #: Plugin identifier for log output (e.g. "chromium-py", "firefox-py").
     _plugin_name: str = ""
 
-    #: Hardcoded fallback user-agent string.
+    #: Fallback user-agent string (used when ``_capture_user_agent`` is False or the dynamic probe fails).
     _user_agent: str = ""
+
+    #: When True, dynamically probes the real UA from an about:blank page at lazy browser init.
+    #: Set for engines (like Firefox) whose UA may change across Playwright versions.
+    _capture_user_agent: bool = False
 
     #: Engine-specific install hint (shown when browser executable missing).
     _install_hint: str = ""
@@ -103,6 +111,7 @@ class PlaywrightBridge(BrowserBridge):
         super().__init__()
         self._pw = None
         self._browser = None
+        self._cached_ua: str = ""
 
     # ── Subclass extension point ───────────────────────────────
 
@@ -119,6 +128,40 @@ class PlaywrightBridge(BrowserBridge):
                 the engine-specific ``_install_hint``.
         """
         raise NotImplementedError("Subclass must override _launch_browser")
+
+    # ── User-agent capture (probe-then-cache) ──────────────────────
+
+    @property
+    def effective_user_agent(self) -> str:
+        """Return the cached dynamic UA, or the hardcoded fallback.
+
+        When ``_capture_user_agent`` is True and the probe succeeded,
+        returns the UA captured from an about:blank page.  Otherwise
+        falls back to ``_user_agent``.
+        """
+        return self._cached_ua or self._user_agent
+
+    def _capture_ua(self) -> None:
+        """Dynamically probe the real user-agent from a throwaway about:blank page.
+
+        Called once at lazy browser init when ``_capture_user_agent`` is True.
+        Silently falls back to ``_user_agent`` on failure.
+        """
+        if self._cached_ua:
+            return
+        page = None
+        try:
+            page = self._browser.new_page()
+            self._cached_ua = page.evaluate("() => navigator.userAgent")
+            self._log("captureUA", success=True, ua=self._cached_ua)
+        except Exception:
+            self._log("captureUA", success=False, ua="(fallback)")
+        finally:
+            if page is not None:
+                try:
+                    page.close()
+                except Exception:
+                    pass
 
     # ── Debug logging ───────────────────────────────────────────
 
@@ -163,6 +206,9 @@ class PlaywrightBridge(BrowserBridge):
                 ):
                     raise RuntimeError(self._install_hint) from _exc
                 raise
+        # Probe UA at first launch (Firefox opt-in)
+        if self._capture_user_agent:
+            self._capture_ua()
         return self._pw, self._browser
 
     def _maybe_stop_playwright(self) -> None:
@@ -185,7 +231,7 @@ class PlaywrightBridge(BrowserBridge):
     def create_browser_context(self, config: dict[str, Any]) -> Any:
         """Create a new isolated BrowserContext for a task session.
 
-        Applies the default viewport, :attr:`_user_agent`, and
+        Applies the default viewport, :attr:`effective_user_agent`, and
         ``storageState`` from config.  Starts Playwright tracing if
         ``BROWSER_TRACE_DIR`` is set.
 
@@ -195,7 +241,7 @@ class PlaywrightBridge(BrowserBridge):
 
         context_kwargs: dict[str, Any] = {
             "viewport": {"width": 1280, "height": 720},
-            "user_agent": self._user_agent,
+            "user_agent": self.effective_user_agent,
         }
         storage_state = config.get("storageState")
         if storage_state is not None:

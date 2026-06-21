@@ -9,7 +9,7 @@ A pi extension that registers **12 tools + 1 command** for web browsing. Archite
 ## Developer Commands
 
 ```bash
-npm test              # vitest run — 695 tests across 22+ test files (all pass)
+npm test              # vitest run — 803 tests across 24 test files (all pass)
 npx vitest run __tests__/router-dispatch.test.ts  # single test file
 npx vitest run __tests__/cookie-persistence.test.ts  # Chromium persistence tests (auto-skips if no Chromium)
 npx vitest run __tests__/firefox.test.ts  # Firefox contract tests (auto-skips if no Playwright Firefox)
@@ -46,7 +46,7 @@ pi-browser/
 │                              # session-manager, settings-reader, snapshot-cache, storage-state, url-safety
 ├── guides/                   # User-authored guide files (gitignored)
 ├── tools/                    # Tool definitions — one file per tool (12 files) + index.ts + utils.ts
-└── __tests__/                # 21 test files + helpers/
+└── __tests__/                # 24 test files + helpers/
 ```
 
 ## Architecture
@@ -146,9 +146,11 @@ Guides are surfaced via an applicable-guide footer and badge: pattern guides (bo
 
 Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees in the **same YAML format**, so the shared parser in `core/shared/accessibility-tree.ts` works identically for both. However, the two engines may report **different role sets and props** for the same DOM. The contract test suite uses threshold assertions (`elementCount > 0`) rather than exact equality, so this should pass without false positives. If any fixture shows a meaningful divergence, document it here rather than papering over it.
 
+**User-Agent drift (Python backends):** The Node Firefox backend dynamically probes the browser's UA at lazy init (probe-then-cache). The Python Firefox backend uses a hardcoded fallback UA string (`rv:135.0`). This string will drift as Firefox releases newer versions. If you use the Python Firefox backend for UA-sensitive sites, update the hardcoded UA string in `backends/firefox-py/bridge.py` to match the installed Firefox version.
+
 ## Testing
 
-### Test files (22+ files, 695+ tests passing)
+### Test files (24 files, 803+ tests passing)
 
 | File | Requires browser? |
 |------|--------------------|

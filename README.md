@@ -17,7 +17,7 @@
 6. [`/web status` — Detailed Runtime Status](#web-status--detailed-runtime-status)
 7. [Profiles — Persistent Sessions](#profiles--persistent-sessions)
 8. [Cookie Management](#cookie-management)
-9. [Backend Architecture & Future Expansion](#backend-architecture--future-expansion)
+9. [Backend Architecture](#backend-architecture)
 10. [Configuration (settings.json)](#configuration-settingsjson)
 11. [Tips & Best Practices](#tips--best-practices)
 
@@ -28,7 +28,7 @@
 Once pi-browser is loaded (it loads automatically when installed), you'll see a
 notification like:
 
-> 🌐 Browser extension loaded (plugins: chromium)
+> 🌐 Browser extension loaded (plugins: chromium, firefox)
 
 The browser tools are **enabled by default**. You can:
 
@@ -110,7 +110,7 @@ Interactive elements: 3
 **Parameters:**
 
 - `url` — the target URL
-- `strategy` (optional) — `"auto"` (default) or a plugin name like `"chromium"`
+- `strategy` (optional) — `"auto"` (default) or a plugin name like `"chromium"` or `"firefox"`
 - `timeout` (optional) — seconds, default 30, max 120
 - `profile` (optional) — `"none"`, `"session"`, or a named profile (see
   [Profiles](#profiles--persistent-sessions))
@@ -341,33 +341,68 @@ The `/web cookies` command lets you inspect and clear session cookies:
 
 ---
 
-## Backend Architecture & Future Expansion
+## Backend Architecture
 
 Pi-browser uses a **plugin-based architecture**. The core framework is
 backend-agnostic — plugins implement a standard `BrowserPlugin` interface,
 and the router dispatches tool calls to the right plugin based on a
 `strategy` parameter.
 
-### Current Default: Chromium
+### Four Shipped Backends
 
-The extension ships with a **Chromium/Playwright** backend as the default.
-No other backends are installed out of the box.
+The extension ships with **four browser backends** out of the box:
 
-### Adding Firefox or Stealth Browsers
+| Backend | Engine | Type | Default |
+|---------|--------|------|---------|
+| `chromium` | Chromium | Node/Playwright | **Enabled** (auto strategy) |
+| `firefox` | Firefox | Node/Playwright | **Enabled** |
+| `chromium-py` | Chromium | Python/Playwright | Disabled |
+| `firefox-py` | Firefox | Python/Playwright | Disabled |
 
-> **Parity reference:** The shipped ``chromium-py`` backend (disabled by default)
-> validates the ``python-base`` shared library and serves as a neutral baseline
-> for debugging Python-based stealth backends. When building your own Python
-> plugin, keep ``chromium-py`` as a reference — run both backends through the
-> same navigation suite to detect behavioural drift.
+> **Install Firefox:** `npx playwright install firefox` to use the Node
+> `firefox` backend. For the Python parity backends, install Playwright
+> inside `backends/python-base/.venv`.
 
-You can manually provision additional backends by:
+### Plugin Capabilities
+
+All four shipped backends share the same capability set (they all use
+Playwright under the hood). The router adapts based on each plugin's
+capability advertisement:
+
+| Capability | Chromium / Firefox (Node) | `-py` backends (Python) |
+|------------|--------------------------|------------------------|
+| Full-page screenshots | ✅ | ✅ |
+| Console message capture | ✅ | ✅ |
+| JavaScript evaluation | ✅ | ✅ |
+| Bot detection | ✅ | ✅ |
+| Dialog auto-dismissal | ✅ | ✅ |
+| AbortSignal support | ✅ | Advertised, silently ignored |
+
+> The `-py` Python backends are disabled by default. They ship as parity
+> references for developers building custom Python-based stealth plugins.
+> When building your own Python plugin, keep `chromium-py` as a reference.
+
+### How Plugin Selection Works
+
+- The **order** of plugins in the config array determines priority — the
+  first enabled plugin is the "auto" default (typically Chromium).
+- The **AI agent explicitly selects** which backend to use via the
+  `strategy` parameter in `browser-navigate`:
+  - `strategy="auto"` → uses the first enabled plugin (typically Chromium)
+  - `strategy="firefox"` → uses the Firefox Node backend
+  - `strategy="chromium-py"` → uses the Python Chromium backend
+- **No automatic fallbacks** and **no mid-session transitions** — if a
+  plugin fails, the agent decides what to do next.
+- The extension auto-detects whether a plugin is Node-based (`index.ts`)
+  or Python-based (`bridge.py`) by inspecting the directory.
+
+### Adding Custom Stealth Browsers
+
+You can manually add additional backends by:
 
 1. **Creating a backend directory** under `backends/` — either:
-   - A **Node.js plugin** (using Playwright or Playwright-compatible packages)
-     with an `index.ts` entry point
-   - A **Python plugin** (using Python Playwright or a stealth browser SDK)
-     with a `bridge.py` entry point
+   - A **Node.js plugin** with an `index.ts` entry point
+   - A **Python plugin** with a `bridge.py` entry point
 
 2. **Registering the plugin** in your `settings.json` under `browser.plugins`:
 
@@ -376,12 +411,12 @@ You can manually provision additional backends by:
      "browser": {
        "plugins": [
          { "name": "chromium", "dir": "chromium", "enabled": true, "config": {} },
+         { "name": "firefox", "dir": "firefox", "enabled": true, "config": {} },
          { "name": "camoufox", "dir": "camoufox", "enabled": false, "config": {
              "pythonPath": "/path/to/venv/bin/python",
              "binaryPath": "/path/to/stealth-browser"
            }
-         },
-         { "name": "firefox", "dir": "firefox", "enabled": false, "config": {} }
+         }
        ]
      }
    }
@@ -389,37 +424,6 @@ You can manually provision additional backends by:
 
 3. **Enabling or disabling** plugins without modifying source code (the
    `enabled` field).
-
-### How Plugin Selection Works
-
-- The **position of each plugin in the array defines its stealth level** —
-  plugins earlier in the array are tried first by default
-- The **AI agent explicitly selects** which backend to use via the
-  `strategy` parameter in `browser-navigate`:
-  - `strategy="auto"` → uses the first enabled plugin (typically Chromium)
-  - `strategy="camoufox"` → uses a specific named plugin
-- **No automatic fallbacks** and **no mid-session transitions** — if a
-  plugin fails, the agent decides what to do next
-- The extension auto-detects whether a plugin is Node-based (`index.ts`)
-  or Python-based (`bridge.py`) by inspecting the directory
-
-### Plugin Capabilities
-
-Each backend advertises its capabilities, and the router adapts behavior
-accordingly:
-
-| Capability | Chromium | Python/Firefox (future) |
-|------------|----------|------------------------|
-| Full-page screenshots | ✅ | Varies by plugin |
-| Console message capture | ✅ | Varies by plugin |
-| JavaScript evaluation | ✅ | Varies by plugin |
-| Bot detection | ✅ | Varies by plugin |
-| Dialog auto-dismissal | ✅ | Varies by plugin |
-| AbortSignal support | ✅ | May not support |
-
-> This means a Firefox or stealth backend **does not need to implement
-> every feature** — the router will gracefully degrade when a capability
-> is missing.
 
 ---
 
