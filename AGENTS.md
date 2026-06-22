@@ -30,9 +30,9 @@ pi-browser/
 ├── backends/                 # Plugin implementations
 │   ├── playwright-base/      # Shared PlaywrightPluginBase (Node base class)
 │   ├── chromium/index.ts     # Chromium Plugin (Node/Playwright) — thin subclass of PlaywrightPluginBase
-│   ├── firefox/index.ts      # Firefox Plugin (Node/Playwright) — thin subclass (NEW)
+│   ├── firefox/index.ts      # Firefox Plugin (Node/Playwright) — thin subclass of PlaywrightPluginBase
 │   ├── chromium-py/bridge.py # Chromium-Py Bridge (Python/Playwright) — thin subclass of PlaywrightBridge
-│   ├── firefox-py/bridge.py  # Firefox-Py Bridge (Python/Playwright) — thin subclass (NEW)
+│   ├── firefox-py/bridge.py  # Firefox-Py Bridge (Python/Playwright) — thin subclass of PlaywrightBridge
 │   ├── python-adapter.ts     # JSON-RPC bridge for subprocess plugins
 │   └── python-base/          # Shared Python bridge library (bridge.py, playwright_base.py, accessibility.py, bot_detection.py, transport.py)
 ├── core/                     # Framework: shared across all plugins
@@ -78,10 +78,10 @@ Plugin loading: reads `browser.plugins` from `~/.pi/agent/settings.json` (global
 
 **Active plugins (config-driven):**
 
-- **`chromium`** — Node/Playwright (thin subclass of `PlaywrightPluginBase`), always enabled by default, reference implementation
-- **`firefox`** — Node/Playwright (thin subclass of `PlaywrightPluginBase`), enabled out-of-the-box, same contract as chromium (NEW)
-- **`chromium-py`** — Python/Playwright parity reference (thin subclass of `PlaywrightBridge`), disabled by default. Validates ``python-base`` against the TS reference; use as the baseline when building a new Python stealth backend.
-- **`firefox-py`** — Python/Playwright parity reference (thin subclass of `PlaywrightBridge`), disabled by default. Mirror of chromium-py for Firefox-based stealth work (NEW)
+- **`chromium`** — Node/Playwright (thin subclass of `PlaywrightPluginBase`), always enabled by default. Reference Node backend.
+- **`firefox`** — Node/Playwright (thin subclass of `PlaywrightPluginBase`), always enabled by default. Reference Node backend, same contract as chromium.
+- **`chromium-py`** — Python/Playwright (thin subclass of `PlaywrightBridge`), disabled by default. Python parity reference for Chromium-based scenarios. All shared logic lives in ``python-base``.
+- **`firefox-py`** — Python/Playwright (thin subclass of `PlaywrightBridge`), disabled by default. Python parity reference for Firefox-based scenarios. All shared logic lives in ``python-base``.
 
 ### Router (`core/router.ts`)
 
@@ -159,9 +159,9 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 | cookie-persistence.test.ts | Chromium (auto-skip) |
 | chromium-py.test.ts | Chromium + Python venv (auto-skip) |
 | chromium-py-persistence.test.ts | Chromium + Python venv (auto-skip) |
-| firefox.test.ts (NEW) | Playwright Firefox (auto-skip) |
-| firefox-py.test.ts (NEW) | Playwright Firefox + Python venv (auto-skip) |
-| firefox-py-persistence.test.ts (NEW) | Playwright Firefox + Python venv (auto-skip) |
+| firefox.test.ts | Playwright Firefox (auto-skip) |
+| firefox-py.test.ts | Playwright Firefox + Python venv (auto-skip) |
+| firefox-py-persistence.test.ts | Playwright Firefox + Python venv (auto-skip) |
 
 Live-browser tests auto-skip when the required browser or Python venv is absent. `reddit-dialog` errors if Chromium is missing (it's a structural requirement for the Node Chromium backend). `browser-toggle-profile` tests exercise the full profile lifecycle via mock API.
 
@@ -179,7 +179,7 @@ Live-browser tests auto-skip when the required browser or Python venv is absent.
 
 ## Known Constraints & Debt
 
-- **Console capture in `chromium-py`** — `chromium-py/bridge.py` installs a console handler with a 500-entry ring buffer. The base `BrowserBridge` does not install handlers; future Python plugins must override `_setup_page_session`.
+- **Console capture in Python backends** — Both ``chromium-py`` and ``firefox-py`` inherit console capture (500-entry ring buffer) and dialog auto-dismissal from ``PlaywrightBridge._setup_page_session()`` in ``python-base``. The base ``BrowserBridge`` does not install handlers; future Python plugins must override ``_setup_page_session``.
 - **AbortSignal not supported on Python bridge** — the router passes `signal` through unconditionally (no capability check). The Python adapter accepts and silently ignores the signal. `supportsAbortSignal` is advertised but unenforced.
 - **Sessions are per taskId** — mapped to `browser-NNN` keys via `_sessionKeys`/`_sessionCounter` in `core/shared/task-id.ts`. Created on first navigate, cleaned up on `session_shutdown`
 - **Python shared-context machinery removed (B1)** — the `browser.newPage`/`browser.closePage` RPC routes, `_profile_contexts` ref-counting, and `ensure_profile_session`/`remove_profile_session` methods were removed from both the base `BrowserBridge` and `ChromiumPyBridge`. Named profiles now use disk persistence (load-on-navigate via `storageState`) matching the TS Chromium plugin. Both backends use `ensure_session(task_id, config)` for all sessions.
@@ -189,7 +189,7 @@ Live-browser tests auto-skip when the required browser or Python venv is absent.
 - **All URLs go through `url-safety.ts`** — blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.169.254), dangerous schemes (file:, ftp:, data:, javascript:, vbscript:), and heuristically detects secrets in URLs
 - **Screenshot**: JPEG 80% quality, viewport constrained to 1280px wide, returns data URI
 - **Accessibility tree parser is single-pass, no-cap**: both TypeScript (`core/shared/accessibility-tree.ts`) and Python (`backends/python-base/pi_browser_bridge/accessibility.py`) use an identical single-pass algorithm — every interactive element gets an @e ref, no dialog prioritization, no element cap. Full ARIA trees beyond truncation are cached to disk via `snapshot-cache.ts`.
-- **Bot detection has three tiers**: checked against page title (challenge phrases), body text (challenge phrases + CDN patterns), and raw HTML (CAPTCHA widget embed codes). Both the TypeScript (`core/shared/bot-detection.ts`) and Python (`chromium-py/bridge.py`) backends share the same HTML-level signal set.
+- **Bot detection has three tiers**: checked against page title (challenge phrases), body text (challenge phrases + CDN patterns), and raw HTML (CAPTCHA widget embed codes). Both the TypeScript (`core/shared/bot-detection.ts`) and Python (`python-base/pi_browser_bridge/bot_detection.py`) backends share the same HTML-level signal set.
 - **Compact truncation everywhere**: snapshots truncated at ~2500 chars (with `\nfingerprint:XXXXX`), fetch content at ~4000 chars with temp file spill to `/tmp/pi-browser/fetch-*.md`
 - **Snapshot Disk Cache** (`core/shared/snapshot-cache.ts`): when truncated, full tree written to `/tmp/pi-browser/snapshot-*.txt`. Last 2 files per task. Cached regardless of bot-detection status — the full inline content still passes through on bot pages for human judgment, with the cache file available as a recovery file for the agent. I/O failures degrade gracefully to inline-only.
 - **`browser-inspect`** (`core/shared/dom-extractor.ts`): runs inline JS via `page.evaluate()`. Requires `getElementCache()` on the plugin. Text output truncated at ~2500 chars by default; pass `maxChars=0` for full. Keyword filtering via `query` parameter (case-insensitive substring on text, href, src).
