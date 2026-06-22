@@ -17,7 +17,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import browserToggle, { getToggleState } from "../browser-toggle";
+import browserToggle, { getToggleState } from "../browser-toggle.js";
 import {
 	getRegisteredBrowserTools,
 	isBrowserEnabled,
@@ -28,10 +28,11 @@ import {
 	readBrowserToggleConfig,
 	applyConfigDefault,
 	getRegisteredLearnTools,
+	getRegisteredSiblingTools,
 	isLearnEnabled,
 	applyLearnState,
 	type BrowserToggleState,
-} from "./helpers/toggle-test-utils";
+} from "./helpers/toggle-test-utils.js";
 
 // Mock node:fs so readBrowserToggleConfig and applyConfigDefault can be
 // tested without touching the real filesystem.
@@ -374,7 +375,7 @@ describe("applyBrowserState(false) — disable", () => {
 //  persistState
 // ==================================================================
 describe("persistState", () => {
-	it("calls appendEntry with customType 'browser-toggle-state'", () => {
+	it("calls appendEntry with customType 'web-toggle-state'", () => {
 		const pi = mockPi();
 		persistState(pi, {
 			browserToolsEnabled: true,
@@ -382,7 +383,7 @@ describe("persistState", () => {
 			defaultProfile: "none",
 		});
 		expect(pi.appendEntry).toHaveBeenCalledWith(
-			"browser-toggle-state",
+			"web-toggle-state",
 			expect.any(Object),
 		);
 	});
@@ -394,7 +395,7 @@ describe("persistState", () => {
 			learnToolsEnabled: false,
 			defaultProfile: "none",
 		});
-		expect(pi.appendEntry).toHaveBeenCalledWith("browser-toggle-state", {
+		expect(pi.appendEntry).toHaveBeenCalledWith("web-toggle-state", {
 			browserToolsEnabled: true,
 			learnToolsEnabled: false,
 			defaultProfile: "none",
@@ -408,7 +409,7 @@ describe("persistState", () => {
 			learnToolsEnabled: false,
 			defaultProfile: "none",
 		});
-		expect(pi.appendEntry).toHaveBeenCalledWith("browser-toggle-state", {
+		expect(pi.appendEntry).toHaveBeenCalledWith("web-toggle-state", {
 			browserToolsEnabled: false,
 			learnToolsEnabled: false,
 			defaultProfile: "none",
@@ -422,7 +423,7 @@ describe("persistState", () => {
 			learnToolsEnabled: true,
 			defaultProfile: "none",
 		});
-		expect(pi.appendEntry).toHaveBeenCalledWith("browser-toggle-state", {
+		expect(pi.appendEntry).toHaveBeenCalledWith("web-toggle-state", {
 			browserToolsEnabled: true,
 			learnToolsEnabled: true,
 			defaultProfile: "none",
@@ -522,7 +523,7 @@ describe("restoreFromBranch", () => {
 		const ctx = mockContext([
 			{
 				type: "custom",
-				customType: "browser-toggle-state",
+				customType: "web-toggle-state",
 				data: {
 					browserToolsEnabled: true,
 					learnToolsEnabled: false,
@@ -546,7 +547,7 @@ describe("restoreFromBranch", () => {
 		const ctx = mockContext([
 			{
 				type: "custom",
-				customType: "browser-toggle-state",
+				customType: "web-toggle-state",
 				data: {
 					browserToolsEnabled: false,
 					learnToolsEnabled: false,
@@ -571,17 +572,17 @@ describe("restoreFromBranch", () => {
 		const ctx = mockContext([
 			{
 				type: "custom",
-				customType: "browser-toggle-state",
+				customType: "web-toggle-state",
 				data: { browserToolsEnabled: true, learnToolsEnabled: false },
 			},
 			{
 				type: "custom",
-				customType: "browser-toggle-state",
+				customType: "web-toggle-state",
 				data: { browserToolsEnabled: false, learnToolsEnabled: false },
 			},
 			{
 				type: "custom",
-				customType: "browser-toggle-state",
+				customType: "web-toggle-state",
 				data: { browserToolsEnabled: true, learnToolsEnabled: true },
 			},
 		]);
@@ -595,7 +596,7 @@ describe("restoreFromBranch", () => {
 		const ctx = mockContext([
 			{
 				type: "custom",
-				customType: "browser-toggle-state",
+				customType: "web-toggle-state",
 				data: { enabled: false },
 			},
 		]);
@@ -612,7 +613,7 @@ describe("restoreFromBranch", () => {
 		const ctx = mockContext([
 			{
 				type: "custom",
-				customType: "browser-toggle-state",
+				customType: "web-toggle-state",
 				data: {
 					browserToolsEnabled: false,
 					learnToolsEnabled: false,
@@ -923,6 +924,45 @@ describe("applyLearnState", () => {
 });
 
 // ==================================================================
+//  getRegisteredSiblingTools
+// ==================================================================
+describe("getRegisteredSiblingTools", () => {
+	it("returns empty array when SIBLING_TOOL_NAMES is empty (v0.1 default)", () => {
+		const tools = [
+			...ALL_BROWSER_TOOLS,
+			{ name: "web-search", description: "SearXNG search" },
+		];
+		const pi = mockPi({ tools });
+		// In v0.1, SIBLING_TOOL_NAMES is empty — returns [].
+		// Sprint 4 adds "web-search" to SIBLING_TOOL_NAMES and this assertion
+		// changes to: expect(getRegisteredSiblingTools(pi)).toEqual(["web-search"]);
+		expect(getRegisteredSiblingTools(pi)).toEqual([]);
+	});
+
+	it("uses exact-name Set.has() membership — no regex false positives", () => {
+		// A tool named "web-search-news" should NOT match the "web-search" entry,
+		// confirming exact-name membership rather than a prefix regex.
+		const tools = [
+			...ALL_BROWSER_TOOLS,
+			{ name: "web-search-news", description: "news" },
+			{ name: "web-search-images", description: "images" },
+		];
+		const pi = mockPi({ tools });
+		expect(getRegisteredSiblingTools(pi)).toEqual([]);
+	});
+
+	it("is case-sensitive (tool names are always lowercase)", () => {
+		const tools = [
+			...ALL_BROWSER_TOOLS,
+			{ name: "Web-Search" },
+			{ name: "web-search" },
+		];
+		const pi = mockPi({ tools });
+		expect(getRegisteredSiblingTools(pi)).toEqual([]);
+	});
+});
+
+// ==================================================================
 //  applyConfigDefault — learn state
 // ==================================================================
 describe("applyConfigDefault (learn state)", () => {
@@ -965,7 +1005,7 @@ describe("applyConfigDefault (learn state)", () => {
 		applyConfigDefault(pi);
 
 		expect(pi.appendEntry).toHaveBeenCalledWith(
-			"browser-toggle-state",
+			"web-toggle-state",
 			expect.objectContaining({ learnToolsEnabled: false }),
 		);
 	});
@@ -1126,7 +1166,7 @@ describe("applyConfigDefault", () => {
 		applyConfigDefault(pi);
 
 		expect(pi.appendEntry).toHaveBeenCalledWith(
-			"browser-toggle-state",
+			"web-toggle-state",
 			expect.objectContaining({
 				browserToolsEnabled: true,
 				learnToolsEnabled: false,
@@ -1159,7 +1199,7 @@ describe("restoreFromBranch (return value)", () => {
 		const ctx = mockContext([
 			{
 				type: "custom",
-				customType: "browser-toggle-state",
+				customType: "web-toggle-state",
 				data: {
 					browserToolsEnabled: true,
 					learnToolsEnabled: false,
@@ -1187,7 +1227,7 @@ describe("restoreFromBranch (return value)", () => {
 		const ctx = mockContext([
 			{
 				type: "custom",
-				customType: "browser-toggle-state",
+				customType: "web-toggle-state",
 				data: { browserToolsEnabled: false, learnToolsEnabled: false },
 			},
 		]);

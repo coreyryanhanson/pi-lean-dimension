@@ -49,6 +49,15 @@ const BROWSER_TOOL_NAMES = new Set([
 /** Names of learn tools (web-learn) that require /web learn to be active. */
 const LEARN_TOOL_NAMES = new Set(["web-learn"]);
 
+/**
+ * Names of sibling-package tools (e.g. web-search from pi-lean-seer) that
+ * are toggled alongside browser tools by /web on|off|learn.
+ * Populated at seer integration (Sprint 4) with "web-search".
+ * Exact-name `Set.has()` membership — NO regex (avoids false positives
+ * on third-party web-* tools).
+ */
+const SIBLING_TOOL_NAMES = new Set<string>([]);
+
 /** Persisted state shape — two independent booleans plus conversation-scoped default profile. */
 interface BrowserToggleState {
 	browserToolsEnabled: boolean;
@@ -108,16 +117,21 @@ function isBrowserEnabled(pi: ExtensionAPI): boolean {
  * @param enable   true = add browser tools to the active set, false = remove them
  */
 function applyBrowserState(pi: ExtensionAPI, enable: boolean): void {
-	const registered = new Set(getRegisteredBrowserTools(pi));
+	// Combine browser tools + sibling tools into one toggle set.
+	// (/web on enables both; /web off disables both.)
+	const registered = new Set([
+		...getRegisteredBrowserTools(pi),
+		...getRegisteredSiblingTools(pi),
+	]);
 	if (registered.size === 0) return;
 	_lastToggleState = enable;
 
 	if (enable) {
-		// Merge browser tools back into whatever is currently active
+		// Merge browser+sibling tools back into whatever is currently active
 		const current = pi.getActiveTools();
 		pi.setActiveTools([...new Set([...current, ...registered])]);
 	} else {
-		// Keep everything that is NOT a browser tool
+		// Keep everything that is NOT a browser+sibling tool
 		const all = pi.getAllTools().map((t) => t.name);
 		pi.setActiveTools(all.filter((name) => !registered.has(name)));
 	}
@@ -128,7 +142,7 @@ function applyBrowserState(pi: ExtensionAPI, enable: boolean): void {
  * restoration across /reload, /resume, /fork, and /tree navigation.
  */
 function persistState(pi: ExtensionAPI, state: BrowserToggleState): void {
-	pi.appendEntry<BrowserToggleState>("browser-toggle-state", state);
+	pi.appendEntry<BrowserToggleState>("web-toggle-state", state);
 }
 
 // ---- Branch-aware restoration ----------------------------------
@@ -140,10 +154,7 @@ function restoreFromBranch(pi: ExtensionAPI, ctx: ExtensionContext): boolean {
 	let savedState: BrowserToggleState | undefined;
 
 	for (const entry of ctx.sessionManager.getBranch()) {
-		if (
-			entry.type === "custom" &&
-			entry.customType === "browser-toggle-state"
-		) {
+		if (entry.type === "custom" && entry.customType === "web-toggle-state") {
 			const data = entry.data as Record<string, unknown>;
 			if (data && typeof data.browserToolsEnabled === "boolean") {
 				savedState = data as unknown as BrowserToggleState;
@@ -260,6 +271,17 @@ function getRegisteredLearnTools(pi: ExtensionAPI): string[] {
 }
 
 /**
+ * Return the subset of SIBLING_TOOL_NAMES that are actually registered.
+ * Used by applyBrowserState to include sibling tools in toggle operations.
+ */
+function getRegisteredSiblingTools(pi: ExtensionAPI): string[] {
+	return pi
+		.getAllTools()
+		.map((t) => t.name)
+		.filter((n) => SIBLING_TOOL_NAMES.has(n));
+}
+
+/**
  * Check whether learn tools are currently active.
  * Returns true when no learn tools exist (vacuously enabled).
  */
@@ -303,6 +325,7 @@ export {
 	readBrowserToggleConfig,
 	applyConfigDefault,
 	getRegisteredLearnTools,
+	getRegisteredSiblingTools,
 	isLearnEnabled,
 	applyLearnState,
 	_resetToggleStateForTest,

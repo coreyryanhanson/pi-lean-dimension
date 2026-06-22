@@ -65,6 +65,7 @@ pi-lean-portal/                          (monorepo root)
     │   │   ├── fetch-backend.ts         Stateless HTTP → Markdown
     │   │   └── shared/                  nav-settle, paths, task-id, accessibility-tree, etc.
     │   ├── guides/                      User-authored guide files (gitignored)
+    │   ├── verify-ship-manifest.ts        Ship-manifest test helper (production .ts coverage checker)
     │   ├── tools/                       Tool definitions — one file per tool (12 files) + index.ts + utils.ts
     │   ├── __tests__/                   24 test files + helpers/
     │   ├── AGENTS.md                    (copy — for in-package dev agents)
@@ -166,7 +167,9 @@ web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, brow
 `/web profile` (list/load profiles), `/web status` (backends + sessions + profiles),
 `/web` (show current state).
 
-Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`. Three-field schema: `{browserToolsEnabled, learnToolsEnabled, defaultProfile}`.
+Toggle state is persisted via `pi.appendEntry("web-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`. Three-field schema: `{browserToolsEnabled, learnToolsEnabled, defaultProfile}`.
+
+The toggle also manages a `SIBLING_TOOL_NAMES` set (empty for v0.1, populated with `"web-search"` at seer integration). `/web on|off` operates on the union of `BROWSER_TOOL_NAMES ∪ SIBLING_TOOL_NAMES`. Discovery uses **exact-name `Set.has()` membership** — no regex, no false positives on third-party `web-*` tools.
 
 ### Profile & Cookie Management
 
@@ -204,7 +207,7 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 
 ## Testing
 
-### Test files (24 files, 803+ tests passing)
+### Test files (25 files, 808+ tests passing)
 
 | File | Requires browser? |
 |------|--------------------|

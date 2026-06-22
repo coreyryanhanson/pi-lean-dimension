@@ -145,6 +145,8 @@ vite.config.ts.timestamp-*
 # Python pycache
 __pycache__
 
+# Python virtual environments
+.venv/
 
 # Egg info
 **/*.egg-info

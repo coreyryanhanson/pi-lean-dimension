@@ -30,6 +30,7 @@
 		"core/",
 		"tools/",
 		"guides/",
+		"verify-ship-manifest.ts",
 		".npmrc",
 		"README.md",
 		"ship-manifest.test.ts"

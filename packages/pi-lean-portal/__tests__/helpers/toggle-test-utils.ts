@@ -22,6 +22,7 @@ export {
 	readBrowserToggleConfig,
 	applyConfigDefault,
 	getRegisteredLearnTools,
+	getRegisteredSiblingTools,
 	isLearnEnabled,
 	applyLearnState,
 	_resetToggleStateForTest,
