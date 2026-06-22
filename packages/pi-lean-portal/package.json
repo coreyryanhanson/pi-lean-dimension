@@ -9,7 +9,7 @@
 		"playwright",
 		"web"
 	],
-	"license": "MIT",
+	"license": "AGPL-3.0-only",
 	"author": "",
 	"type": "module",
 	"repository": {
@@ -32,7 +32,6 @@
 		"guides/",
 		".npmrc",
 		"README.md",
-		"LICENSE",
 		"ship-manifest.test.ts"
 	],
 	"pi": {

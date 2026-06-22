@@ -8,14 +8,13 @@
 		"web",
 		"suite"
 	],
-	"license": "MIT",
+	"license": "AGPL-3.0-only",
 	"type": "module",
 	"publishConfig": {
 		"access": "public"
 	},
 	"files": [
-		"README.md",
-		"LICENSE"
+		"README.md"
 	],
 	"pi": {
 		"extensions": [

@@ -9,14 +9,13 @@
 		"search",
 		"web"
 	],
-	"license": "MIT",
+	"license": "AGPL-3.0-only",
 	"type": "module",
 	"publishConfig": {
 		"access": "public"
 	},
 	"files": [
 		"README.md",
-		"LICENSE",
 		"ship-manifest.test.ts"
 	],
 	"scripts": {
