@@ -7,10 +7,10 @@
 An npm-workspaces monorepo containing three Pi extension packages:
 
 - **`pi-lean-portal`** — Interactive web browsing (owns `/web` command). **12 tools + 1 command.**
-- **`pi-lean-seer`** — SearXNG search tool (`web-search`), wired into portal's `/web` toggle.
+- **`pi-lean-seer`** — SearXNG search tool (`web-search`), wired into portal's `/web` toggle. **1 tool + 1 command** (`/searxng-status`).
 - **`pi-lean-nexus`** — Umbrella meta-package that bundles portal + seer.
 
-The portal package registers **12 tools + 1 command** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool. See `packages/pi-lean-portal/index.ts` for entrypoint.
+The portal package registers **12 tools + 1 command** for web browsing. With seer installed, the suite totals **13 tools + 2 commands**. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool. See `packages/pi-lean-portal/index.ts` for entrypoint.
 
 ## Developer Commands
 
@@ -71,7 +71,14 @@ pi-lean-portal/                          (monorepo root)
     │   ├── AGENTS.md                    (copy — for in-package dev agents)
     │   └── README.md                    (portal-specific docs)
     ├── pi-lean-seer/                    ← SearXNG search leaf
-    │   └── package.json                 (name: pi-lean-seer, skeleton for v0.1)
+    │   ├── package.json                 (name: pi-lean-seer, published)
+    │   ├── index.ts                     Entry: tool registration, health probe, /searxng-status command
+    │   ├── web-search-tool.ts           defineTool for web-search with execute + TUI rendering
+    │   ├── seer-config.ts               Settings reader for searxng.url
+    │   ├── verify-ship-manifest.ts      Ship-manifest test helper
+    │   ├── ship-manifest.test.ts        Manifest coverage test
+    │   ├── __tests__/                   2 test files (config reader + tool structure)
+    │   └── README.md                    Package docs
     └── pi-lean-nexus/                   ← Umbrella meta-package
         └── package.json                 (name: pi-lean-nexus, skeleton for v0.1)
 ```
@@ -99,12 +106,6 @@ pi-lean-portal/                          (monorepo root)
 ├── guides/                   # User-authored guide files (gitignored)
 ├── tools/                    # Tool definitions — one file per tool (12 files) + index.ts + utils.ts
 └── **tests**/                # 24 test files + helpers/
-
-```
-
-## Architecture
-
-### Plugin system
 
 All interactive backends implement `BrowserPlugin` (`core/plugin-api.ts`). The interface has 19 methods (18 required + 1 optional):
 
@@ -156,20 +157,43 @@ All tool calls dispatch through the router. Key responsibilities:
   - **In-memory fallback** (Chromium): `_persistState()` returns the raw state it just saved; `getOrCreateContext()` uses it as `options?.storageState ?? savedState`, so cookies survive the very next re-navigate even when no disk copy existed before.
   - The router also loads storage state in `requireInteractiveSession()` when restoring from `lastNav.profileName`.
 
-### Registered Tools (12 total)
+### Registered Tools (13 total with seer)
 
-web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
+**Portal (12):** web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
+
+**Seer (1):** web-search
 
 ### Registered Commands
 
-`/web on|off|learn|cookies|profile|status` — `/web on` (browsing only), `/web off` (all disabled),
+**Portal:** `/web on|off|learn|cookies|profile|status` — `/web on` (browsing only), `/web off` (all disabled),
 `/web learn` (browsing + guide-saving via web-learn), `/web cookies list|clear` (inspect/clear session cookies),
 `/web profile` (list/load profiles), `/web status` (backends + sessions + profiles),
 `/web` (show current state).
 
+**Seer:** `/searxng-status` — test the full SearXNG search pipeline and update the status bar glyph.
+
 Toggle state is persisted via `pi.appendEntry("web-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`. Three-field schema: `{browserToolsEnabled, learnToolsEnabled, defaultProfile}`.
 
-The toggle also manages a `SIBLING_TOOL_NAMES` set (empty for v0.1, populated with `"web-search"` at seer integration). `/web on|off` operates on the union of `BROWSER_TOOL_NAMES ∪ SIBLING_TOOL_NAMES`. Discovery uses **exact-name `Set.has()` membership** — no regex, no false positives on third-party `web-*` tools.
+The toggle also manages a `SIBLING_TOOL_NAMES` set populated with `"web-search"` at Sprint 4. `/web on|off` operates on the union of `BROWSER_TOOL_NAMES ∪ SIBLING_TOOL_NAMES`. Discovery uses **exact-name `Set.has()` membership** — no regex, no false positives on third-party `web-*` tools.
+
+### Status Bar (glyph slots)
+
+Portal manages two status bar slots:
+
+**`browser`** — shows the browser tool toggle state:
+
+- `● idle` (accent/blue) — browser tools enabled
+- `● idle` (success/green) — learn mode enabled
+- `○ web off` — browser tools disabled
+
+**`search`** — shows the search tool toggle + SearXNG health (seer-owned):
+
+- `● searxng` (accent/blue) — healthy and reachable
+- `● searxng` (warning/yellow) — server up but pipeline degraded
+- `● searxng` (error/red) — unreachable
+- `○ searxng` — search tools off (portal sets this on `/web off`)
+
+The `search` slot is only shown when `pi-lean-seer` is installed. Seer probes SearXNG reachability on `session_start` and `/searxng-status` and sets the glyph color. Portal writes the `○` off state when `/web off` is called.
 
 ### Profile & Cookie Management
 
@@ -196,6 +220,7 @@ Guides are surfaced via an applicable-guide footer and badge: pattern guides (bo
 | `browser-inspect` | Element queries + text extraction with @e ref annotations | Stateful session | Fast (sync cache) |
 | `web-guide` | Get navigation guidance for a site or pattern | Stateless | Instant |
 | `web-learn` | Save or update navigation guidance for a site | Stateless | Instant |
+| `web-search` (seer) | Web search via SearXNG | Stateless | Medium |
 
 `web-fetch` uses plain `fetch()` + `node-html-parser` + `turndown`. Returns ~4000 chars inline, spills to temp file when larger.
 
@@ -207,11 +232,16 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 
 ## Testing
 
-### Test files (25 files, 808+ tests passing)
+### Test files (27 files, 649+ structural tests passing + live-browser tests)
+
+**Portal structural tests (18 files, 630 tests):** router-dispatch, browser-toggle, browser-toggle-profile, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, ship-manifest
+
+**Seer tests (2 files, 17 tests):** web-search (config reader + tool structure), ship-manifest
 
 | File | Requires browser? |
 |------|--------------------|
-| All structural/unit tests (router-dispatch, browser-toggle, browser-toggle-profile, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle) | No |
+| All portal structural tests (listed above) | No |
+| Seer tests (web-search, ship-manifest) | No |
 | reddit-dialog.test.ts | Chromium (errors if unavailable) |
 | cookie-persistence.test.ts | Chromium (auto-skip) |
 | chromium-py.test.ts | Chromium + Python venv (auto-skip) |

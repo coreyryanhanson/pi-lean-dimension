@@ -927,16 +927,13 @@ describe("applyLearnState", () => {
 //  getRegisteredSiblingTools
 // ==================================================================
 describe("getRegisteredSiblingTools", () => {
-	it("returns empty array when SIBLING_TOOL_NAMES is empty (v0.1 default)", () => {
+	it("returns web-search when it's in the tool list (Sprint 4)", () => {
 		const tools = [
 			...ALL_BROWSER_TOOLS,
 			{ name: "web-search", description: "SearXNG search" },
 		];
 		const pi = mockPi({ tools });
-		// In v0.1, SIBLING_TOOL_NAMES is empty — returns [].
-		// Sprint 4 adds "web-search" to SIBLING_TOOL_NAMES and this assertion
-		// changes to: expect(getRegisteredSiblingTools(pi)).toEqual(["web-search"]);
-		expect(getRegisteredSiblingTools(pi)).toEqual([]);
+		expect(getRegisteredSiblingTools(pi)).toEqual(["web-search"]);
 	});
 
 	it("uses exact-name Set.has() membership — no regex false positives", () => {
@@ -951,14 +948,14 @@ describe("getRegisteredSiblingTools", () => {
 		expect(getRegisteredSiblingTools(pi)).toEqual([]);
 	});
 
-	it("is case-sensitive (tool names are always lowercase)", () => {
+	it("is case-sensitive — only exact lower-case matches", () => {
 		const tools = [
 			...ALL_BROWSER_TOOLS,
 			{ name: "Web-Search" },
 			{ name: "web-search" },
 		];
 		const pi = mockPi({ tools });
-		expect(getRegisteredSiblingTools(pi)).toEqual([]);
+		expect(getRegisteredSiblingTools(pi)).toEqual(["web-search"]);
 	});
 });
 

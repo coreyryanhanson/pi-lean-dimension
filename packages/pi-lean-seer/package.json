@@ -15,14 +15,25 @@
 		"access": "public"
 	},
 	"files": [
-		"README.md",
-		"ship-manifest.test.ts"
+		"index.ts",
+		"web-search-tool.ts",
+		"seer-config.ts",
+		"verify-ship-manifest.ts",
+		"ship-manifest.test.ts",
+		"README.md"
 	],
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	},
 	"scripts": {
 		"test": "vitest run"
 	},
 	"peerDependencies": {
+		"@earendil-works/pi-ai": "*",
 		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*",
 		"pi-lean-portal": "*",
 		"typebox": "*"
 	},

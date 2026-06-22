@@ -50,13 +50,15 @@ const BROWSER_TOOL_NAMES = new Set([
 const LEARN_TOOL_NAMES = new Set(["web-learn"]);
 
 /**
- * Names of sibling-package tools (e.g. web-search from pi-lean-seer) that
- * are toggled alongside browser tools by /web on|off|learn.
- * Populated at seer integration (Sprint 4) with "web-search".
+ * Names of sibling-package tools that are toggled alongside browser tools
+ * by /web on|off|learn.
+ *
+ * - "web-search": SearXNG search from pi-lean-seer (Sprint 4).
+ *
  * Exact-name `Set.has()` membership — NO regex (avoids false positives
  * on third-party web-* tools).
  */
-const SIBLING_TOOL_NAMES = new Set<string>([]);
+const SIBLING_TOOL_NAMES = new Set<string>(["web-search"]);
 
 /** Persisted state shape — two independent booleans plus conversation-scoped default profile. */
 interface BrowserToggleState {
@@ -407,6 +409,16 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 					defaultProfile: _conversationDefaultProfile ?? "none",
 				});
 				ctx.ui.setStatus("browser", ctx.ui.theme.fg("accent", "●") + " idle");
+
+				// Clear any stale search off-glyph — sibling tools are now enabled.
+				const hasSiblingTools = getRegisteredSiblingTools(pi).length > 0;
+				if (hasSiblingTools) {
+					ctx.ui.setStatus(
+						"search",
+						ctx.ui.theme.fg("accent", "●") + " searxng",
+					);
+				}
+
 				ctx.ui.notify(
 					"🌐 Browser tools enabled. /web learn to make web-learn available.",
 					"info",
@@ -420,6 +432,16 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 					defaultProfile: _conversationDefaultProfile ?? "none",
 				});
 				ctx.ui.setStatus("browser", ctx.ui.theme.fg("success", "●") + " idle");
+
+				// Clear any stale search off-glyph — sibling tools are now enabled.
+				const hasSiblingTools = getRegisteredSiblingTools(pi).length > 0;
+				if (hasSiblingTools) {
+					ctx.ui.setStatus(
+						"search",
+						ctx.ui.theme.fg("accent", "●") + " searxng",
+					);
+				}
+
 				ctx.ui.notify(
 					"📖 web-learn tool is now available. Agent will save/update guides when asked.",
 					"info",
@@ -433,6 +455,15 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 					defaultProfile: _conversationDefaultProfile ?? "none",
 				});
 				ctx.ui.setStatus("browser", "○ web off");
+
+				// Set the search tool status to off if sibling apps are present.
+				// Seer owns the colored glyph for on states; portal only writes
+				// the off state when tools are explicitly disabled.
+				const hasSiblingTools = getRegisteredSiblingTools(pi).length > 0;
+				if (hasSiblingTools) {
+					ctx.ui.setStatus("search", "○ searxng");
+				}
+
 				ctx.ui.notify(
 					"🌐 Browser tools disabled. /web on to re-enable.",
 					"info",
@@ -479,6 +510,15 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 		if (!restored) {
 			// No persisted state in this branch → apply config file default
 			applyConfigDefault(pi);
+		}
+
+		// After state restoration, ensure the search slot reflects the actual
+		// toggle state.  Without this, a race between portal's session_start
+		// (async — restores/applies state) and seer's session_start (probes
+		// health) can leave the search glyph showing blue when tools are off.
+		const hasSiblingTools = getRegisteredSiblingTools(pi).length > 0;
+		if (hasSiblingTools && !isBrowserEnabled(pi)) {
+			ctx.ui.setStatus("search", "○ searxng");
 		}
 	});
 
