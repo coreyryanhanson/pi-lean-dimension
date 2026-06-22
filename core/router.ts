@@ -858,6 +858,22 @@ export async function screenshotToTemp(
 	}
 }
 
+/**
+ * Capture a screenshot and return a formatted output line for tool results,
+ * or an empty string on failure (non-critical).
+ *
+ * The formatted line tells the LLM the screenshot is only current as of this
+ * call and goes stale after any interaction tool (click/type/scroll/press/back).
+ */
+export async function captureScreenshotLine(tid: string): Promise<string> {
+	const path = await screenshotToTemp(tid);
+	if (!path) return "";
+	return (
+		`📷 Screenshot (current as of this call): ${path}` +
+		`\n  → Stale after any subsequent click/type/scroll/press/back. Call browser-snapshot to refresh.`
+	);
+}
+
 // ─── Console & eval ─────────────────────────────────────────────────
 
 export async function getConsoleMessages(

@@ -127,9 +127,7 @@ export const browserNavigateTool = defineTool({
 
 		const contentText = result.snapshot;
 
-		// Capture a screenshot to a temp file so the LLM can opt into visual
-		// inspection via `read` only when needed.
-		const screenshotPath = await router.screenshotToTemp(tid);
+		const screenshotLine = await router.captureScreenshotLine(tid);
 
 		// ---- Web Guide footer ----
 		const applicable = resolveApplicableGuides(
@@ -153,9 +151,7 @@ export const browserNavigateTool = defineTool({
 						"anti-automation. The content below may be incomplete or show " +
 						"a challenge page instead of the actual content."
 				: "",
-			screenshotPath
-				? `📷 Screenshot: ${screenshotPath} (use the read tool for visual inspection)`
-				: "",
+			screenshotLine,
 			"",
 			contentText,
 		);

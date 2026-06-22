@@ -44,16 +44,9 @@ export const browserSnapshotTool = defineTool({
 			};
 		}
 
-		// Capture a screenshot to a temp file so the LLM can opt into visual
-		// inspection via `read` only when needed.
-		const screenshotPath = await router.screenshotToTemp(tid);
+		const screenshotLine = await router.captureScreenshotLine(tid);
 
-		const parts = [
-			screenshotPath
-				? `📷 Screenshot: ${screenshotPath} (use the read tool for visual inspection)`
-				: "",
-			result.snapshot || "(empty page)",
-		];
+		const parts = [screenshotLine, result.snapshot || "(empty page)"];
 
 		return {
 			content: [{ type: "text", text: parts.filter(Boolean).join("\n\n") }],
