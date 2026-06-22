@@ -53,7 +53,7 @@ export class FirefoxPlugin extends PlaywrightPluginBase {
 	}
 
 	protected get installHint(): string {
-		return "Firefox browser not installed. Run: npx playwright install firefox";
+		return "Browser not installed. Run: npx playwright install chromium firefox";
 	}
 }
 

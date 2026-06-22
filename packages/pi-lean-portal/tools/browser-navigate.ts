@@ -110,6 +110,16 @@ export const browserNavigateTool = defineTool({
 		updateFooterStatus(ctx);
 
 		if (!result.success) {
+			// If the browser executable is not installed, notify the user with install instructions.
+			const isInstallError =
+				result.error && result.error.toLowerCase().includes("not installed");
+			if (isInstallError) {
+				ctx?.ui?.notify(
+					"Browser not installed. Run: npx playwright install chromium firefox",
+					"warning",
+				);
+			}
+
 			return {
 				content: [
 					{
