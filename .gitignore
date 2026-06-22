@@ -150,4 +150,4 @@ __pycache__
 **/*.egg-info
 
 # User-authored web navigation guides (YAML frontmatter + markdown)
-guides/*.md
+**/guides/*.md

@@ -1,0 +1,34 @@
+{
+	"name": "pi-lean-nexus",
+	"version": "0.1.0",
+	"description": "Pi extension. The full pi web-tools suite — interactive browsing (pi-lean-portal) and SearXNG search (pi-lean-seer), unified under /web.",
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"web",
+		"suite"
+	],
+	"license": "MIT",
+	"type": "module",
+	"publishConfig": {
+		"access": "public"
+	},
+	"files": [
+		"README.md",
+		"LICENSE"
+	],
+	"pi": {
+		"extensions": [
+			"./node_modules/pi-lean-portal/index.ts",
+			"./node_modules/pi-lean-seer/index.ts"
+		]
+	},
+	"dependencies": {
+		"pi-lean-portal": "^0.1.0",
+		"pi-lean-seer": "^0.1.0"
+	},
+	"bundledDependencies": [
+		"pi-lean-portal",
+		"pi-lean-seer"
+	]
+}

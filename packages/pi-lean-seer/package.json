@@ -1,0 +1,35 @@
+{
+	"name": "pi-lean-seer",
+	"version": "0.1.0",
+	"description": "Pi extension. SearXNG search tool for Pi. Pairs with pi-lean-portal's /web toggle (soft peer — search-only installs are valid).",
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"searxng",
+		"search",
+		"web"
+	],
+	"license": "MIT",
+	"type": "module",
+	"publishConfig": {
+		"access": "public"
+	},
+	"files": [
+		"README.md",
+		"LICENSE",
+		"ship-manifest.test.ts"
+	],
+	"scripts": {
+		"test": "vitest run"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"pi-lean-portal": "*",
+		"typebox": "*"
+	},
+	"peerDependenciesMeta": {
+		"pi-lean-portal": {
+			"optional": true
+		}
+	}
+}
