@@ -9,11 +9,25 @@
  * @module paths
  */
 
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 /** Base temp directory for all pi-lean-portal ephemeral files. */
 export const BROWSER_TEMP_DIR = `${tmpdir()}/pi-lean-portal`;
+
+/**
+ * Portal-owned data root under ~/.pi/agent/, namespaced by package name.
+ * Houses user-authored guides, browser profiles, and any other runtime
+ * user data that must survive package upgrades.
+ * Siblings: sessions/ (pi-core owned — DO NOT move under this).
+ */
+export const PORTAL_DATA_DIR = join(
+	homedir(),
+	".pi",
+	"agent",
+	"pi-lean-portal",
+);
 
 /**
  * Sanitize a taskId (or any string) for use in filenames.

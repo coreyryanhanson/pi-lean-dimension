@@ -170,7 +170,9 @@ describe("sanitizeProfileName()", () => {
 describe("profileDir() / profileFilePath()", () => {
 	it("returns expected path for valid name", () => {
 		const dir = profileDir("test-profile");
-		expect(dir).toContain(".pi/agent/browser-state/test-profile");
+		expect(dir).toContain(
+			".pi/agent/pi-lean-portal/browser-state/test-profile",
+		);
 	});
 
 	it("rejects invalid names", () => {
@@ -184,7 +186,9 @@ describe("profileDir() / profileFilePath()", () => {
 
 	it("returns expected path for session profile", () => {
 		const dir = profileDir("_session-abc123");
-		expect(dir).toContain(".pi/agent/browser-state/_session-abc123");
+		expect(dir).toContain(
+			".pi/agent/pi-lean-portal/browser-state/_session-abc123",
+		);
 	});
 });
 

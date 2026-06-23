@@ -65,7 +65,6 @@ pi-lean-dimension/                       (monorepo root)
     │   │   ├── guides.ts                Guide types, builtin guides, file loader
     │   │   ├── fetch-backend.ts         Stateless HTTP → Markdown
     │   │   └── shared/                  nav-settle, paths, task-id, accessibility-tree, etc.
-    │   ├── guides/                      User-authored guide files (gitignored)
     │   ├── verify-ship-manifest.ts        Ship-manifest test helper (production .ts coverage checker)
     │   ├── tools/                       Tool definitions — one file per tool (12 files) + index.ts + utils.ts
     │   ├── __tests__/                   25 test files + helpers/
@@ -107,7 +106,6 @@ pi-lean-dimension/                       (monorepo root)
 │   ├── fetch-backend.ts      # Stateless HTTP → Markdown (web-fetch only)
 │   └── shared/               # nav-settle, paths, task-id, accessibility-tree, bot-detection, dom-extractor,
 │                              # session-manager, settings-reader, snapshot-cache, storage-state, url-safety
-├── guides/                   # User-authored guide files (gitignored)
 ├── tools/                    # Tool definitions — one file per tool (12 files) + index.ts + utils.ts
 └── **tests**/                  # 27 test files + helpers/
 
@@ -201,7 +199,7 @@ The `search` slot is only shown when `pi-lean-search` is installed. Search probe
 
 ### Profile & Cookie Management
 
-- **Storage state** is persisted to `~/.pi/agent/browser-state/<profile-name>/storage-state.json` via `core/shared/storage-state.ts`.
+- **Storage state** is persisted to `~/.pi/agent/pi-lean-portal/browser-state/<profile-name>/storage-state.json` via `core/shared/storage-state.ts`.
 - **Save-before-renavigate**: both Chromium and Python plugins call `_persistState()` before closing/reusing a context with a persistent profile. This ensures cookies set during a session (e.g. consent dialogs, login) survive `browser-navigate` re-calls, crash recovery, `/reload`, and `/resume`.
 - **Atomic writes + concurrency safety** (`storage-state.ts`): `saveStorageState()` writes to a temp file then renames atomically, preventing half-write races. Concurrent writers merge at the cookie level (`name+domain+path` key) and localStorage level (`origin+name` key), so two agents sharing a named profile don't clobber each other's data.
 - **Session profiles** (`profile="session"`) are scoped to one pi conversation, stored under `_session-<piSessionId>`. Default profile is now `"session"` (changed from `"none"`), so conversations persist state automatically.
@@ -211,7 +209,7 @@ The `search` slot is only shown when `pi-lean-search` is installed. Search probe
 
 ### Guides (`core/guides.ts`)
 
-4 builtin pattern guides (`bot-detection`, `cookie-consent`, `pagination`, `search`). Site guides are user-authored — place a `.md` file with YAML frontmatter in `guides/` — and auto-register via their `domains` field. Caches invalidate on `web-learn` calls.
+4 builtin pattern guides (`bot-detection`, `cookie-consent`, `pagination`, `search`). Site guides are user-authored — place a `.md` file with YAML frontmatter in `~/.pi/agent/pi-lean-portal/web-guides/` — and auto-register via their `domains` field. Caches invalidate on `web-learn` calls.
 
 Guides are surfaced via an applicable-guide footer and badge: pattern guides (bot-detection, cookie-consent) fire on signal, site guides fire on domain match. All matching guides are shown together with no priority suppression.
 
@@ -289,7 +287,7 @@ Live-browser tests auto-skip when the required browser or Python venv is absent.
 - **`browser-inspect`** (`core/shared/dom-extractor.ts`): runs inline JS via `page.evaluate()`. Requires `getElementCache()` on the plugin. Text output truncated at ~2500 chars by default; pass `maxChars=0` for full. Keyword filtering via `query` parameter (case-insensitive substring on text, href, src).
 - **`parentRef` on `AriaCachedNode`**: enables `subtree=...` queries in `browser-inspect`. Set by depth-based parent stack in `parseSnapshot()`'s single pass. Dialogs become parent of interior elements.
 - **`dialogDetected` is resolved from element cache**: computed from the parsed `ElementCache` via `Array.some()` matching `role="dialog"` or `role="alertdialog"`. Not affected by snapshot truncation (unlike the old string-scan approach).
-- **Guide staleness**: no builtin site guides shipped — entirely user-authored via `guides/*.md`. Guides carry `updated` date and `currentDate` timestamp in output.
+- **Guide staleness**: no builtin site guides shipped — entirely user-authored via `~/.pi/agent/pi-lean-portal/web-guides/*.md`. Guides carry `updated` date and `currentDate` timestamp in output.
 - **Learn mode toggle**: `/web learn` enables `web-learn` tool; `/web on` removes it. Agent never calls `web-learn` unprompted. Default is off on fresh sessions.
 - **Navigation settle** (`core/shared/nav-settle.ts`): after click or press, detects page navigation via a `framenavigated` listener and waits for `load + networkidle` (capped, errors swallowed) before reading URL/title/snapshot. Replaces the old fixed `waitForTimeout(300)` pattern that caused URL/DOM mismatches. Framework-agnostic via a lightweight `NavigationSettlePage` interface for testability.
 - **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click). Checked in both ChromiumPlugin and the Python bridge.

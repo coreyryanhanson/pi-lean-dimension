@@ -8,8 +8,9 @@
  * in this single file.
  */
 
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { PORTAL_DATA_DIR } from "./shared/paths.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -172,8 +173,17 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 // File Loader (user-authored guides)
 // ═══════════════════════════════════════════════════════════════════
 
-/** Directory for user-authored guide files, resolved relative to this file (core/ → ../guides/). */
-export const GUIDES_DIR = join(__dirname, "..", "guides");
+/**
+ * Directory for user-authored web navigation guides.
+ * Lives under the portal-owned subtree so it survives package upgrades
+ * and is user-writable. No shipped site guides exist in the package —
+ * all curated patterns are in BUILTIN_GUIDES (code).
+ *
+ * Users who git-track this directory for version control should be aware:
+ * only top-level .md files with valid YAML frontmatter are loaded;
+ * directories (.git/, subfolders) and non-markdown files are safely skipped.
+ */
+export const USER_GUIDES_DIR = join(PORTAL_DATA_DIR, "web-guides");
 
 /**
  * Parse a raw guide file content string with YAML frontmatter.
@@ -246,22 +256,27 @@ export function parseGuideFile(
 	}
 }
 
-/** Load user-authored guides from guides/ directory. */
+/** Load user-authored guides from web-guides/ directory. */
 export function loadUserGuides(): Record<string, Guide> {
 	const result: Record<string, Guide> = {};
 	try {
-		if (!existsSync(GUIDES_DIR)) return result;
-		const entries = readdirSync(GUIDES_DIR);
+		if (!existsSync(USER_GUIDES_DIR)) return result;
+		const entries = readdirSync(USER_GUIDES_DIR);
 		for (const filename of entries) {
+			// Only top-level .md files. Directories (.git/, subfolders) and
+			// non-markdown files are skipped — safe for users who git-track
+			// this directory for version control.
 			if (!filename.endsWith(".md")) continue;
-			const parsed = parseGuideFile(join(GUIDES_DIR, filename), filename);
+			const filepath = join(USER_GUIDES_DIR, filename);
+			if (!statSync(filepath).isFile()) continue;
+			const parsed = parseGuideFile(filepath, filename);
 			if (parsed) {
 				const [name, guide] = parsed;
 				result[name] = guide;
 			}
 		}
 	} catch {
-		// guides/ dir may not exist or be unreadable — degrade gracefully
+		// web-guides/ dir may not exist or be unreadable — degrade gracefully
 	}
 	return result;
 }
@@ -324,7 +339,7 @@ export function formatGuideList(): string {
 		"Pattern guides:",
 		...patterns.sort(),
 		"",
-		'Source: "builtin" = shipped with extension, "user" = loaded from guides/ directory.',
+		'Source: "builtin" = shipped with extension, "user" = loaded from ~/.pi/agent/pi-lean-portal/web-guides/.',
 		'Call web-guide guide="<name>" for guidance.',
 	].join("\n");
 }

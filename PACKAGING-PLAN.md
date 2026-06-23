@@ -212,7 +212,7 @@ pi.appendEntry("web-toggle-state", {
 > minimize the `browser-toggle.ts` diff, that's fine — only the key name
 > matters for persistence. Pick one when you implement step 3 of §7.
 
-`~/.pi/agent/browser-state/` storage path and the `browser.plugins` settings
+`~/.pi/agent/pi-lean-portal/browser-state/` storage path and the `browser.plugins` settings
 key both stay as-is (portal still owns them; they're not user-facing command
 names).
 
@@ -737,7 +737,7 @@ from the umbrella package's `package.json` and from the browser child's
   adding an empty `SIBLING_TOOL_NAMES` set (populated at step 5) and renaming
   one persisted key (no legacy reader needed). The existing exact-name `Set.has()`
   toggle mechanism stays — no regex swap.
-+ **Storage paths preserved** — `~/.pi/agent/browser-state/` path and
++ **Storage paths preserved** — `~/.pi/agent/pi-lean-portal/browser-state/` path and
   `browser.plugins` settings key stay as-is; only the toggle-state session key
   is renamed.
 

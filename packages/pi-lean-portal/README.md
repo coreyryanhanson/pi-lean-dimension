@@ -336,7 +336,7 @@ All profile management happens through the `/web profile` command:
 | `/web profile prune --confirm` | Remove stale session profiles for ended conversations |
 
 > **How it works:** Profile state is stored at
-> `~/.pi/agent/browser-state/<profile-name>/storage-state.json`.
+> `~/.pi/agent/pi-lean-portal/browser-state/<profile-name>/storage-state.json`.
 > Session-scoped profiles use names like `_session-<piSessionId>` and are
 > auto-cleaned when the pi conversation ends.
 

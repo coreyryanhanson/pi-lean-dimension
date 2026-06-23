@@ -54,18 +54,30 @@ export function handleStatusSubcommand(
 	}
 
 	// Profiles section
+	// Session profiles (auto-generated `_session-*`) are ephemeral and
+	// not user-named — they clutter the dashboard, so they are collapsed
+	// into a single summary line. Named profiles get full rows. Use
+	// `/web profile list` to inspect individual session profiles.
 	const profiles = listProfiles();
-	if (profiles.length > 0) {
-		const activeProfile = active.find((s) => s.profileName)?.profileName;
-		const lines = [`\nProfiles: ${profiles.length} on disk`];
-		for (const p of profiles) {
+	const named = profiles.filter((p) => !isSessionProfile(p.name));
+	const session = profiles.filter((p) => isSessionProfile(p.name));
+	const activeProfile = active.find((s) => s.profileName)?.profileName;
+
+	if (named.length > 0) {
+		const lines = [`\nProfiles: ${named.length} on disk (named)`];
+		for (const p of named) {
 			const current = p.name === activeProfile ? " ← active" : "";
-			const label = isSessionProfile(p.name) ? "📋 session" : p.name;
-			lines.push(`  ${label}  (${p.stateSize})${current}`);
+			lines.push(`  ${p.name}  (${p.stateSize})${current}`);
 		}
 		msg += lines.join("\n");
-	} else {
+	} else if (session.length === 0) {
 		msg += `\nProfiles: none`;
+	}
+
+	if (session.length > 0) {
+		const activeSession = session.some((p) => p.name === activeProfile);
+		const tag = activeSession ? " (active)" : "";
+		msg += `\nSession profiles: ${session.length}${tag} (manage with /web profile)`;
 	}
 
 	ctx.ui.notify(msg, "info");

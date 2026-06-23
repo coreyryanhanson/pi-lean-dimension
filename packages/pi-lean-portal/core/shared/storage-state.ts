@@ -2,7 +2,8 @@
  * Storage State Persistence — profile-based save/restore for cookies,
  * localStorage, and IndexedDB.
  *
- * Profiles are stored at ~/.pi/agent/browser-state/<profile>/storage-state.json
+ * Profiles are stored at
+ * ~/.pi/agent/pi-lean-portal/browser-state/<profile>/storage-state.json
  * with version headers for forward compatibility.
  *
  * @module
@@ -21,11 +22,12 @@ import {
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
+import { PORTAL_DATA_DIR } from "./paths.js";
 
 // ─── Constants ────────────────────────────────────────────────────────
 
 /** Root directory for all browser profiles. */
-export const PROFILE_DIR = join(homedir(), ".pi", "agent", "browser-state");
+export const PROFILE_DIR = join(PORTAL_DATA_DIR, "browser-state");
 
 /** Current storage state version. Increment on breaking format changes. */
 const STORAGE_STATE_VERSION = 1;

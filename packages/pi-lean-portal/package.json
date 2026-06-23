@@ -33,7 +33,6 @@
 		"!backends/python-base/tests/",
 		"core/",
 		"tools/",
-		"guides/",
 		"verify-ship-manifest.ts",
 		".npmrc",
 		"README.md",

@@ -7,7 +7,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { GUIDES_DIR, invalidateGuideContent } from "../core/guides.js";
+import { USER_GUIDES_DIR, invalidateGuideContent } from "../core/guides.js";
 
 export const webLearnTool = defineTool({
 	name: "web-learn",
@@ -66,9 +66,9 @@ export const webLearnTool = defineTool({
 		}
 
 		// ── File path ─────────────────────────────────────────────
-		mkdirSync(GUIDES_DIR, { recursive: true });
+		mkdirSync(USER_GUIDES_DIR, { recursive: true });
 		const filename = `${domain}.md`;
-		const filepath = join(GUIDES_DIR, filename);
+		const filepath = join(USER_GUIDES_DIR, filename);
 
 		// ── Build frontmatter ─────────────────────────────────────
 		const today = new Date().toISOString().slice(0, 10);
@@ -105,7 +105,7 @@ export const webLearnTool = defineTool({
 				{
 					type: "text",
 					text:
-						`📖 ${verb} guide at guides/${filename}\n` +
+						`📖 ${verb} guide at ~/.pi/agent/pi-lean-portal/web-guides/${filename}\n` +
 						`  Domains: ${allDomains.join(", ")}\n` +
 						`  Call web-guide guide="${domain}" to view it.\n` +
 						`  A guide badge and footer will appear when navigating to ${allDomains[0]}.`,
