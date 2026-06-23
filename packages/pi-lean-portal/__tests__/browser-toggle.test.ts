@@ -788,7 +788,7 @@ describe("command handler dispatch (via factory closure)", () => {
 		expect(pi.setActiveTools).not.toHaveBeenCalled();
 	});
 
-	it("handles missing pi-browser — does not throw", () => {
+	it("handles missing pi-lean-portal — does not throw", () => {
 		const pi = mockPi({ tools: NON_BROWSER_TOOLS });
 		pi.registerCommand = vi.fn((_name, opts) => {
 			opts.handler("on", {

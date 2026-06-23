@@ -1,4 +1,4 @@
-# AGENTS.md — pi-lean-portal (Monorepo)
+# AGENTS.md — pi-lean-dimension (Monorepo)
 
 > Compact instruction file for an agent working on this repository.
 
@@ -15,7 +15,8 @@ The portal package registers **12 tools + 1 command** for web browsing. Architec
 ## Developer Commands
 
 ```bash
-npm test                                           # vitest run — runs all workspace tests
+npm test                                           # vitest run — runs all workspace tests (may hang if browser binaries missing)
+npm run test:ci                                     # vitest run — structural tests only, excludes browser-dependent tests that may hang
 npx vitest run packages/pi-lean-portal/__tests__/router-dispatch.test.ts  # single test file
 npx vitest run packages/pi-lean-portal/__tests__/cookie-persistence.test.ts  # Chromium persistence
 npx vitest run packages/pi-lean-portal/__tests__/firefox.test.ts  # Firefox contract tests
@@ -27,7 +28,7 @@ There is no build step (`noEmit: true` in tsconfig). The extension is loaded dir
 ## Directory Layout
 
 ```
-pi-lean-portal/                          (monorepo root)
+pi-lean-dimension/                       (monorepo root)
 ├── package.json                         (name: pi-lean-portal-workspace, private: true, workspaces: ["packages/*"])
 ├── tsconfig.base.json
 ├── vitest.config.ts
@@ -204,7 +205,7 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 
 ## Testing
 
-### Test files (24 files, 803+ tests passing)
+### Test files (29 files across monorepo, 625+ structural tests passing + live-browser tests)
 
 | File | Requires browser? |
 |------|--------------------|
@@ -244,8 +245,8 @@ Live-browser tests auto-skip when the required browser or Python venv is absent.
 - **Screenshot**: JPEG 80% quality, viewport constrained to 1280px wide, returns data URI
 - **Accessibility tree parser is single-pass, no-cap**: both TypeScript (`core/shared/accessibility-tree.ts`) and Python (`backends/python-base/pi_browser_bridge/accessibility.py`) use an identical single-pass algorithm — every interactive element gets an @e ref, no dialog prioritization, no element cap. Full ARIA trees beyond truncation are cached to disk via `snapshot-cache.ts`.
 - **Bot detection has three tiers**: checked against page title (challenge phrases), body text (challenge phrases + CDN patterns), and raw HTML (CAPTCHA widget embed codes). Both the TypeScript (`core/shared/bot-detection.ts`) and Python (`python-base/pi_browser_bridge/bot_detection.py`) backends share the same HTML-level signal set.
-- **Compact truncation everywhere**: snapshots truncated at ~2500 chars (with `\nfingerprint:XXXXX`), fetch content at ~4000 chars with temp file spill to `/tmp/pi-browser/fetch-*.md`
-- **Snapshot Disk Cache** (`core/shared/snapshot-cache.ts`): when truncated, full tree written to `/tmp/pi-browser/snapshot-*.txt`. Last 2 files per task. Cached regardless of bot-detection status — the full inline content still passes through on bot pages for human judgment, with the cache file available as a recovery file for the agent. I/O failures degrade gracefully to inline-only.
+- **Compact truncation everywhere**: snapshots truncated at ~2500 chars (with `\nfingerprint:XXXXX`), fetch content at ~4000 chars with temp file spill to `/tmp/pi-lean-portal/fetch-*.md`
+- **Snapshot Disk Cache** (`core/shared/snapshot-cache.ts`): when truncated, full tree written to `/tmp/pi-lean-portal/snapshot-*.txt`. Last 2 files per task. Cached regardless of bot-detection status — the full inline content still passes through on bot pages for human judgment, with the cache file available as a recovery file for the agent. I/O failures degrade gracefully to inline-only.
 - **`browser-inspect`** (`core/shared/dom-extractor.ts`): runs inline JS via `page.evaluate()`. Requires `getElementCache()` on the plugin. Text output truncated at ~2500 chars by default; pass `maxChars=0` for full. Keyword filtering via `query` parameter (case-insensitive substring on text, href, src).
 - **`parentRef` on `AriaCachedNode`**: enables `subtree=...` queries in `browser-inspect`. Set by depth-based parent stack in `parseSnapshot()`'s single pass. Dialogs become parent of interior elements.
 - **`dialogDetected` is resolved from element cache**: computed from the parsed `ElementCache` via `Array.some()` matching `role="dialog"` or `role="alertdialog"`. Not affected by snapshot truncation (unlike the old string-scan approach).

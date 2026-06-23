@@ -12,8 +12,8 @@
 import { tmpdir } from "node:os";
 import { mkdirSync } from "node:fs";
 
-/** Base temp directory for all pi-browser ephemeral files. */
-export const BROWSER_TEMP_DIR = `${tmpdir()}/pi-browser`;
+/** Base temp directory for all pi-lean-portal ephemeral files. */
+export const BROWSER_TEMP_DIR = `${tmpdir()}/pi-lean-portal`;
 
 /**
  * Sanitize a taskId (or any string) for use in filenames.

@@ -206,7 +206,7 @@ export async function runExtractor(
 
 		// Check for script-level error
 		if (parsed.error) {
-			console.warn("[pi-browser] DOM extractor script error:", parsed.error);
+			console.warn("[pi-lean-portal] DOM extractor script error:", parsed.error);
 			return null;
 		}
 

@@ -476,7 +476,7 @@ export async function navigate(
 		} else {
 			// Can't resolve session profile without piSessionId — fall back with warning
 			console.warn(
-				"[pi-browser] profile='session' requested but piSessionId unavailable. " +
+				"[pi-lean-portal] profile='session' requested but piSessionId unavailable. " +
 					"Falling back to profile='none'.",
 			);
 			profileMode = "none";

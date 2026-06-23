@@ -404,7 +404,7 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			return state;
 		} catch (err) {
 			console.warn(
-				`[pi-browser] Failed to auto-save storage state for profile ` +
+				`[pi-lean-portal] Failed to auto-save storage state for profile ` +
 					`'${session.profileName ?? "default"}': ` +
 					`${err instanceof Error ? err.message : String(err)}. ` +
 					"Session state may be lost.",

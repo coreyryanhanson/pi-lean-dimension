@@ -117,7 +117,7 @@ function parseBrowserConfig(
 
 	// Log validation errors (non-fatal, but surfaced in return)
 	for (const err of errors) {
-		console.warn(`[pi-browser] Config warning: ${err}`);
+		console.warn(`[pi-lean-portal] Config warning: ${err}`);
 	}
 
 	return config;

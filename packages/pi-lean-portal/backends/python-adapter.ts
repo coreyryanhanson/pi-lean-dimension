@@ -242,7 +242,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		const pythonOk = this._checkPythonExists();
 		if (!pythonOk) {
 			console.warn(
-				`[pi-browser] PythonPluginAdapter('${this.name}'): ` +
+				`[pi-lean-portal] PythonPluginAdapter('${this.name}'): ` +
 					`Python interpreter '${this._pythonPath}' not found in PATH. ` +
 					`Will retry on first use.`,
 			);
@@ -615,7 +615,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			// Invalid JSON on the wire — this is a protocol violation.
 			// Log and skip; if it's critical the transport timeout will fire.
 			console.error(
-				`[pi-browser] PythonPluginAdapter('${this.name}'): Invalid JSON from bridge: ${line.slice(0, 200)}`,
+				`[pi-lean-portal] PythonPluginAdapter('${this.name}'): Invalid JSON from bridge: ${line.slice(0, 200)}`,
 			);
 			return;
 		}
@@ -863,7 +863,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		} catch (err: unknown) {
 			// clearConsole is best-effort; swallow the error
 			console.error(
-				`[pi-browser] PythonPluginAdapter('${this.name}'): clearConsole failed:`,
+				`[pi-lean-portal] PythonPluginAdapter('${this.name}'): clearConsole failed:`,
 				err,
 			);
 		}
@@ -967,7 +967,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			await this._rpcCall("browser.cleanup", { taskId });
 		} catch (err: unknown) {
 			console.error(
-				`[pi-browser] PythonPluginAdapter('${this.name}'): cleanup failed for task '${taskId}':`,
+				`[pi-lean-portal] PythonPluginAdapter('${this.name}'): cleanup failed for task '${taskId}':`,
 				err,
 			);
 		}
@@ -1028,7 +1028,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			return undefined;
 		} catch (err) {
 			console.warn(
-				`[pi-browser] Failed to auto-save storage state for profile ` +
+				`[pi-lean-portal] Failed to auto-save storage state for profile ` +
 					`'${session.profileName ?? "default"}' via Python bridge: ` +
 					`${err instanceof Error ? err.message : String(err)}. ` +
 					"Session state may be lost.",

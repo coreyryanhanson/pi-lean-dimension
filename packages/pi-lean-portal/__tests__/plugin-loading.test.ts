@@ -21,7 +21,7 @@ import type { PluginConfig } from "../core/plugin-config";
 function createTestBackendsRoot(
 	structure: Record<string, Record<string, string>>,
 ): string {
-	const root = mkdtempSync(join(tmpdir(), "pi-browser-test-"));
+	const root = mkdtempSync(join(tmpdir(), "pi-lean-portal-test-"));
 	for (const [dir, files] of Object.entries(structure)) {
 		const dirPath = join(root, dir);
 		mkdirSync(dirPath, { recursive: true });

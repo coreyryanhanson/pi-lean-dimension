@@ -1,5 +1,5 @@
 /**
- * Shared helpers for the pi-browser tool definitions.
+ * Shared helpers for the pi-lean-portal tool definitions.
  *
  * Extracted from index.ts to avoid duplication across ~14 tool files.
  * Includes taskId resolution, status bar updates, and profile line formatting.

@@ -190,7 +190,7 @@ export function loadStorageState(
 			parsed._piVersion > STORAGE_STATE_VERSION
 		) {
 			console.warn(
-				`[pi-browser] Storage state for profile '${profileName}' ` +
+				`[pi-lean-portal] Storage state for profile '${profileName}' ` +
 					`has version ${parsed._piVersion}, but this extension ` +
 					`understands version ${STORAGE_STATE_VERSION}. ` +
 					"New fields may be ignored.",
@@ -200,7 +200,7 @@ export function loadStorageState(
 		return parsed;
 	} catch (err) {
 		console.warn(
-			`[pi-browser] Failed to load storage state for profile ` +
+			`[pi-lean-portal] Failed to load storage state for profile ` +
 				`'${profileName}': ${err instanceof Error ? err.message : String(err)}. ` +
 				"Starting with fresh state.",
 		);
@@ -407,7 +407,7 @@ export function saveStorageState(
 		if (byteSize > maxSizeBytes) {
 			const mb = (byteSize / (1024 * 1024)).toFixed(1);
 			console.warn(
-				`[pi-browser] Storage state for profile '${profileName}' ` +
+				`[pi-lean-portal] Storage state for profile '${profileName}' ` +
 					`is ${mb} MB — large states may impact startup/save latency. ` +
 					`Set browser.maxStorageStateSize to adjust the threshold.`,
 			);
@@ -419,7 +419,7 @@ export function saveStorageState(
 		return true;
 	} catch (err) {
 		console.warn(
-			`[pi-browser] Failed to save storage state for profile ` +
+			`[pi-lean-portal] Failed to save storage state for profile ` +
 				`'${profileName}': ${err instanceof Error ? err.message : String(err)}. ` +
 				"Session state will be lost.",
 		);
@@ -452,7 +452,7 @@ export function deleteStorageState(profileName: string): void {
 		}
 	} catch (err) {
 		console.warn(
-			`[pi-browser] Failed to delete storage state for profile ` +
+			`[pi-lean-portal] Failed to delete storage state for profile ` +
 				`'${profileName}': ${err instanceof Error ? err.message : String(err)}.`,
 		);
 	}

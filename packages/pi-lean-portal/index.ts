@@ -55,7 +55,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Log config errors
 	for (const err of configErrors) {
-		console.warn(`[pi-browser] Plugin config error: ${err}`);
+		console.warn(`[pi-lean-portal] Plugin config error: ${err}`);
 	}
 
 	// ── First pass: collect and validate all configs ──────────────
@@ -71,7 +71,7 @@ export default function (pi: ExtensionAPI) {
 			detection = detectPluginType(config.dir, DEFAULT_BACKENDS_ROOT);
 		} catch (err) {
 			console.error(
-				`[pi-browser] Plugin '${config.name}' (dir: '${config.dir}'): ${err instanceof Error ? err.message : String(err)}`,
+				`[pi-lean-portal] Plugin '${config.name}' (dir: '${config.dir}'): ${err instanceof Error ? err.message : String(err)}`,
 			);
 			continue;
 		}
@@ -96,13 +96,13 @@ export default function (pi: ExtensionAPI) {
 			});
 		} catch (err) {
 			console.error(
-				"[pi-browser] Failed to register default Chromium plugin:",
+				"[pi-lean-portal] Failed to register default Chromium plugin:",
 				err,
 			);
 		}
 		plugin.init({}).catch((err: unknown) => {
 			console.error(
-				"[pi-browser] Failed to init default Chromium plugin:",
+				"[pi-lean-portal] Failed to init default Chromium plugin:",
 				err,
 			);
 		});
@@ -130,13 +130,13 @@ export default function (pi: ExtensionAPI) {
 					pluginRegistry.register(plugin, config);
 					plugin.init?.(config.config).catch((err: unknown) => {
 						console.error(
-							`[pi-browser] Failed to init plugin '${config.name}':`,
+							`[pi-lean-portal] Failed to init plugin '${config.name}':`,
 							err,
 						);
 					});
 				} catch (err: unknown) {
 					console.error(
-						`[pi-browser] Failed to load Node plugin '${config.name}' (dir: '${config.dir}'): ${err instanceof Error ? err.message : String(err)}`,
+						`[pi-lean-portal] Failed to load Node plugin '${config.name}' (dir: '${config.dir}'): ${err instanceof Error ? err.message : String(err)}`,
 					);
 				}
 			})();
@@ -162,13 +162,13 @@ export default function (pi: ExtensionAPI) {
 				pluginRegistry.register(adapter, config);
 			} catch (err) {
 				console.error(
-					`[pi-browser] Failed to register Python plugin '${config.name}':`,
+					`[pi-lean-portal] Failed to register Python plugin '${config.name}':`,
 					err,
 				);
 			}
 			adapter.init(config.config).catch((err: unknown) => {
 				console.error(
-					`[pi-browser] Failed to init Python plugin '${config.name}':`,
+					`[pi-lean-portal] Failed to init Python plugin '${config.name}':`,
 					err,
 				);
 			});
@@ -176,7 +176,7 @@ export default function (pi: ExtensionAPI) {
 			// Exhaustiveness guard — PluginType is currently "node" | "python"
 			const _exhaustive: never = detection.type;
 			console.warn(
-				`[pi-browser] Plugin '${config.name}' has unknown type '${_exhaustive as string}'.`,
+				`[pi-lean-portal] Plugin '${config.name}' has unknown type '${_exhaustive as string}'.`,
 			);
 		}
 	}

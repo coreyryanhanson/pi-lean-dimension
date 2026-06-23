@@ -46,7 +46,7 @@ const PYTHON_AVAILABLE = (() => {
 
 /** Create a temporary bridge script for constructor tests. */
 function tempBridgeScript(): string {
-	const dir = mkdtempSync(join(tmpdir(), "pi-browser-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "pi-lean-portal-test-"));
 	const path = join(dir, "bridge.py");
 	writeFileSync(path, 'print("mock")');
 	return path;
@@ -84,7 +84,7 @@ function privateMethod<T>(adapter: PythonPluginAdapter, name: string): T {
  */
 function writeBridge(handlers: Record<string, string>, dir?: string): string {
 	if (!dir) {
-		dir = mkdtempSync(join(tmpdir(), "pi-browser-bridge-"));
+		dir = mkdtempSync(join(tmpdir(), "pi-lean-portal-bridge-"));
 	}
 	const path = join(dir, "bridge.py");
 
@@ -340,7 +340,7 @@ describeIntegration("integration with mock Python bridge", () => {
 	});
 
 	it("passes profileName and profileMode through to navigate", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "pi-browser-profile-"));
+		const dir = mkdtempSync(join(tmpdir(), "pi-lean-portal-profile-"));
 		const bridgePath = writeBridge(
 			{
 				"browser.navigate":
@@ -685,7 +685,7 @@ const describeStderr = PYTHON_AVAILABLE ? describe : describe.skip;
 
 describeStderr("stderr capture", () => {
 	it("captures stderr output from the bridge", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "pi-browser-stderr-"));
+		const dir = mkdtempSync(join(tmpdir(), "pi-lean-portal-stderr-"));
 		const bridgePath = writeBridge(
 			{
 				"browser.navigate":
@@ -738,7 +738,7 @@ describeStderr("stderr capture", () => {
 	});
 
 	it("auto-restarts bridge after external SIGKILL", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "pi-browser-crash-"));
+		const dir = mkdtempSync(join(tmpdir(), "pi-lean-portal-crash-"));
 		const bridgePath = writeBridge(
 			{
 				"browser.navigate":

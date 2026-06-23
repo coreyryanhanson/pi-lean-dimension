@@ -249,7 +249,7 @@ describe("removeAllSnapshotFiles()", () => {
 describe("formatCacheNotice()", () => {
 	it("returns cache notice when cache result exists and snapshot was truncated", () => {
 		const cacheResult: CacheResult = {
-			path: "/tmp/pi-browser/snapshot-test-abc123-0.txt",
+			path: "/tmp/pi-lean-portal/snapshot-test-abc123-0.txt",
 			fingerprint: "abc123",
 		};
 		const notice = formatCacheNotice(cacheResult, 5000, true);
@@ -267,7 +267,7 @@ describe("formatCacheNotice()", () => {
 
 	it("returns empty string when snapshot was not truncated", () => {
 		const cacheResult: CacheResult = {
-			path: "/tmp/pi-browser/snapshot-test-abc123-0.txt",
+			path: "/tmp/pi-lean-portal/snapshot-test-abc123-0.txt",
 			fingerprint: "abc123",
 		};
 		const notice = formatCacheNotice(cacheResult, 100, false);
@@ -277,7 +277,7 @@ describe("formatCacheNotice()", () => {
 	it("returns empty string when snapshot is short even if truncated flag is true", () => {
 		// This guards against the internal check in formatCacheNotice
 		const cacheResult: CacheResult = {
-			path: "/tmp/pi-browser/snapshot-test-abc123-0.txt",
+			path: "/tmp/pi-lean-portal/snapshot-test-abc123-0.txt",
 			fingerprint: "abc123",
 		};
 		const notice = formatCacheNotice(cacheResult, 2000, true);
@@ -291,16 +291,16 @@ describe("formatCacheNotice()", () => {
 
 	it("includes the absolute file path in the notice", () => {
 		const cacheResult: CacheResult = {
-			path: "/tmp/pi-browser/snapshot-test-abc123-0.txt",
+			path: "/tmp/pi-lean-portal/snapshot-test-abc123-0.txt",
 			fingerprint: "abc123",
 		};
 		const notice = formatCacheNotice(cacheResult, 5000, true);
-		expect(notice).toMatch(/\/tmp\/pi-browser\/snapshot-/);
+		expect(notice).toMatch(/\/tmp\/pi-lean-portal\/snapshot-/);
 	});
 
 	it("includes element count in cache notice when provided", () => {
 		const cacheResult: CacheResult = {
-			path: "/tmp/pi-browser/snapshot-test-abc123-0.txt",
+			path: "/tmp/pi-lean-portal/snapshot-test-abc123-0.txt",
 			fingerprint: "abc123",
 		};
 		const notice = formatCacheNotice(cacheResult, 5000, true, 42);
@@ -310,7 +310,7 @@ describe("formatCacheNotice()", () => {
 
 	it("omits element count line when count is zero in cache notice", () => {
 		const cacheResult: CacheResult = {
-			path: "/tmp/pi-browser/snapshot-test-abc123-0.txt",
+			path: "/tmp/pi-lean-portal/snapshot-test-abc123-0.txt",
 			fingerprint: "abc123",
 		};
 		const notice = formatCacheNotice(cacheResult, 5000, true, 0);

@@ -89,7 +89,7 @@ is deterministic by construction.
 ### 2.1 Package topology (npm workspaces monorepo)
 
 ```
-pi-lean-portal/                      (repo root — named after the main feature, the browser)
+pi-lean-dimension/                   (repo root — named after the umbrella suite concept)
 ├── package.json                      (name: "pi-lean-portal-workspace", private: true; workspaces: ["packages/*"], lockstep versioning)
 ├── tsconfig.base.json
 ├── vitest.config.ts
@@ -102,14 +102,14 @@ pi-lean-portal/                      (repo root — named after the main feature
     └── pi-lean-dimension/                ← umbrella meta-package = "install everything"
 ```
 
-> **Naming.** The repo dir + GitHub repo are named `pi-lean-portal` (the main
-> feature, the browser — most discoverable name). The root `package.json` is
+> **Naming.** The GitHub repo is named `pi-lean-dimension` (the umbrella suite
+> concept — most discoverable for the full project). The root `package.json` is
 > named `pi-lean-portal-workspace` with `"private": true` to avoid an npm
 > duplicate-name collision with the `pi-lean-portal` workspace child (rpiv
 > follows the same pattern: root `rpiv-mono` ≠ children `@juicesharp/rpiv-*`).
-> The umbrella package keeps the name `pi-lean-dimension` at
-> `packages/pi-lean-dimension/` — its name describes its role (bundle), not the
-> repo. All names **unscoped** (`pi-lean-portal`, `pi-lean-search`,
+> The recommended install is `pi-lean-portal`, the individual browser package
+> (works out of the box after `npx playwright install chromium firefox`).
+> All names **unscoped** (`pi-lean-portal`, `pi-lean-search`,
 > `pi-lean-dimension`); they're unique enough to resist squatting.
 
 | Package | Type | Ships `/web`? | Heavy deps? | Role |
@@ -692,7 +692,7 @@ from the umbrella package's `package.json` and from the browser child's
 | 5 | Tests in `files` | **Ship `ship-manifest.test.ts` only**; all other tests dev-only |
 | 6 | Status-bar glyph slot (browser group) | **Keep `"browser"`** for the browser group (internal key, zero v0.1 churn). A separate `"search"` slot for the search group is added at search integration (decision 11) so the browser slot isn't overloaded. |
 | 7 | `/web-setup` (Mode C) | **v0.2** — v0.1 ships Mode A + Mode B + Mode B-search only |
-| 8 | Repo name | **`pi-lean-portal`** (repo dir + GitHub repo named after the main feature, the browser — most discoverable). Root `package.json` named `pi-lean-portal-workspace` (`private: true`) to avoid npm duplicate-name collision with the browser workspace child. Umbrella package stays `pi-lean-dimension` at `packages/pi-lean-dimension/`. Resolves reviewer NOTE-1. |
+| 8 | Repo name | **`pi-lean-dimension`** (GitHub repo named after the umbrella suite concept). Root `package.json` named `pi-lean-portal-workspace` (`private: true`) to avoid npm duplicate-name collision with the browser workspace child. Recommended install is `pi-lean-portal` (the individual browser package, works out of the box). Resolves reviewer NOTE-1. |
 | 9 | `pi-lean-search` → portal peer dep | **Soft peer** (`peerDependencies` + `peerDependenciesMeta.optional: true`; search-only installs valid) |
 | 10 | Search tool name | **`web-search`** — matches agent-training conventions so models reach for it instinctively. Portal lists `"web-search"` in its `SIBLING_TOOL_NAMES` set (§2.3) so `/web on/off` toggles it via exact-name `Set.has()` membership. **No regex, no prefix contract** — avoids false positives from third-party `web-*` tools and aligns with the Pi docs' guidance against inferring ownership from command names. Namespace boundary: portal owns the 12 `browser-*`/`web-*` tool names it already lists; search owns `web-search` (portal must not define a tool by that name). Drift is caught at review (portal's tests reference `web-search` by exact name) under lockstep versioning (decision 4). Resolves reviewer NOTE-5 (the unenforced `search-` prefix contract is gone) and the regex false-positive concern raised in review. |
 | 11 | Search status slot | **Separate `search` glyph slot** for the search group, owned by portal's `browser-toggle.ts` (which already groups tools by name prefix when toggling). The `browser` slot reflects only browser tools; `search` reflects only search tools — `/web on` with browser off + search on shows `browser: ● off` / `search: ● on`, not an overloaded browser slot. Implemented at search integration (step 5), not v0.1. Resolves reviewer NOTE-4. |

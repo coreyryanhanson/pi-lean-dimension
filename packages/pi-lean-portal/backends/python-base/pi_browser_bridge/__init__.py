@@ -1,5 +1,5 @@
 """
-pi_browser_bridge — Shared Python bridge library for pi-browser.
+pi_browser_bridge — Shared Python bridge library for pi-lean-portal.
 
 Provides the infrastructure needed to build Python browser automation
 backends that communicate with the TypeScript ``PythonPluginAdapter``

@@ -5,7 +5,7 @@ import type {
 // fs functions used by profile/cookies handlers are in their respective modules
 
 /**
- * Browser Toggle — integrated into pi-browser extension.
+ * Browser Toggle — integrated into pi-lean-portal extension.
  *
  * Provides /web on, /web off, /web learn, and /web status commands to enable / disable
  * browser automation tools (browsing tools) and learn tools (web-learn) in the system prompt.
@@ -31,7 +31,7 @@ import { readMergedSettings } from "./core/shared/settings-reader.js";
 /** Default toggle config key */
 const CONFIG_KEY = "browserToggle";
 
-/** Names of every browser browsing tool registered by pi-browser's index.ts (excludes learn tools). */
+/** Names of every browser browsing tool registered by pi-lean-portal's index.ts (excludes learn tools). */
 const BROWSER_TOOL_NAMES = new Set([
 	"web-fetch",
 	"browser-navigate",
@@ -90,9 +90,8 @@ export function getConversationDefaultProfile(): string | undefined {
 
 /**
  * Return the subset of BROWSER_TOOL_NAMES that are actually registered.
- * This safely handles the case where pi-browser is not installed.
- * (With the toggle integrated into pi-browser, this is always non-empty
- *  when pi-browser is loaded, but the helper remains for robustness.)
+ * (With the toggle integrated into pi-lean-portal, this is always non-empty
+ *  when pi-lean-portal is loaded, but the helper remains for robustness.)
  */
 function getRegisteredBrowserTools(pi: ExtensionAPI): string[] {
 	return pi
@@ -196,7 +195,7 @@ function applyConfigDefault(pi: ExtensionAPI): void {
 
 // ---- Unit-test exports -----------------------------------------
 // Helper functions are exported for testing while the default export
-// wires the toggle into pi-browser's runtime.
+// wires the toggle into pi-lean-portal's runtime.
 
 /**
  * Return the last known toggle state (true = enabled, false = disabled).
@@ -379,7 +378,7 @@ function getCurrentState(
 
 /**
  * Register the /web command and session-restoration hooks.
- * Called from pi-browser's index.ts entry point.
+ * Called from pi-lean-portal's index.ts entry point.
  */
 export default function initBrowserToggle(pi: ExtensionAPI) {
 	// ── Commands ──────────────────────────────────────────────
@@ -394,7 +393,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 
 			if (!hasBrowserTools) {
 				ctx.ui.notify(
-					"🌐 pi-browser extension not detected. Nothing to toggle.",
+					"🌐 pi-lean-portal extension not detected. Nothing to toggle.",
 					"warning",
 				);
 				return;

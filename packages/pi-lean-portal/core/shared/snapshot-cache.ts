@@ -2,7 +2,7 @@
  * Snapshot Disk Cache — Phase 1 of the browser-intelligence plan.
  *
  * When compactSnapshot() truncates a page's accessibility tree, the full
- * tree is written to /tmp/pi-browser/snapshot-*.txt so the agent can read
+ * tree is written to /tmp/pi-lean-portal/snapshot-*.txt so the agent can read
  * elements past the truncation boundary with the read tool.
  *
  * Design parallels capFetchContent() in fetch-backend.ts:

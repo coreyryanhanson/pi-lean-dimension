@@ -1,9 +1,14 @@
-# pi-browser User Guide
+# pi-lean-portal User Guide
 
-> **pi-browser** is a plugin-based web browsing extension for the pi coding
+> **pi-lean-portal** is a plugin-based web browsing extension for the Pi coding
 > agent. It gives the AI agent the ability to fetch web pages, interact with
 > dynamic sites, inspect page structure, take screenshots, run JavaScript,
-> and save/recall navigation guides — all through a set of tools and commands.
+> and save/recall navigation guides — all through a set of tools and the `/web`
+> command.
+>
+> Part of the [pi-lean-dimension](https://github.com/coreyryanhanson/pi-lean-dimension)
+> web-tools suite. For SearXNG search support, install
+> [`pi-lean-search`](https://www.npmjs.com/package/pi-lean-search).
 
 ---
 
@@ -25,8 +30,12 @@
 
 ## Quick Start
 
-Once pi-browser is loaded (it loads automatically when installed), you'll see a
-notification like:
+```bash
+pi install npm:pi-lean-portal
+npx playwright install chromium firefox
+```
+
+Once loaded, you'll see a notification like:
 
 > 🌐 Browser extension loaded (plugins: chromium, firefox)
 
@@ -40,21 +49,25 @@ The browser tools are **enabled by default**. You can:
 
 > **Tip:** If you only need Markdown content from a static page, `web-fetch`
 > is faster and lighter than launching a full browser session.
+>
+> **Playwright browser binaries are not downloaded during `npm install`.**
+> Run `npx playwright install chromium firefox` separately. On first
+> `browser-navigate` without them, you'll be prompted with the exact command.
 
 ---
 
 ## `/web` Command — Browser Toggle & Profiles
 
-The `/web` command controls whether browser tools are visible to the AI agent,
+The `/web` command controls whether web tools are visible to the AI agent,
 toggles guide-saving mode, and manages browser profiles.
 
 ### Three-State Toggle
 
 | Command | Effect |
 |---------|--------|
-| `/web on` | **Browsing only** — all interactive browser tools + `web-fetch` are available. `web-learn` is hidden. |
+| `/web on` | **Browsing only** — all interactive browser tools + `web-fetch` are available. `web-learn` is hidden. If `pi-lean-search` is also installed, `web-search` is enabled too. |
 | `/web learn` | **Browsing + guide-saving** — same as `on`, plus the `web-learn` tool is available so the AI can save/update navigation guides on request. |
-| `/web off` | **All browser tools hidden** — saves ~1500–2000 tokens per turn by removing tool schemas from the prompt. `web-fetch` is also hidden. |
+| `/web off` | **All web tools hidden** — saves ~1500–2000 tokens per turn by removing tool schemas from the prompt. `web-fetch` and `web-search` are also hidden. |
 
 ### Check Current State
 
@@ -83,11 +96,11 @@ which defaults to `true`).
 
 ## All 12 Tools
 
-Pi-browser registers 12 tools. The first 9 require a **browser session**
+`pi-lean-portal` registers 12 tools. The first 9 require a **browser session**
 (created by `browser-navigate`). `web-fetch`, `web-guide`, and `web-learn` are stateless.
 
 **Auto-captured screenshots:** `browser-navigate` and `browser-snapshot` automatically
-capture a screenshot to a temp file (`/tmp/pi-browser/screenshot-<taskId>.jpg`).
+capture a screenshot to a temp file (`/tmp/pi-lean-portal/screenshot-<taskId>.jpg`).
 Use the `read` tool to visually inspect the page when the accessibility tree isn't enough.
 No viewport resizing occurs — screenshots are captured at the native 1280px width.
 
@@ -215,7 +228,7 @@ HTML to Markdown. It does **not** create a browser session.
 **Output handling:**
 
 - Content is truncated to ~4000 characters inline
-- Larger content is spilled to a temp file in `/tmp/pi-browser/` — the agent can `read` the file with offset/limit for specific sections. This cache ensures that the agent can access the full page content even when it exceeds the LLM's immediate context window.
+- Larger content is spilled to a temp file in `/tmp/pi-lean-portal/` — the agent can `read` the file with offset/limit for specific sections. This cache ensures that the agent can access the full page content even when it exceeds the LLM's immediate context window.
 - Bot detection and JS-only shells are detected heuristically
 
 ---
@@ -224,7 +237,7 @@ HTML to Markdown. It does **not** create a browser session.
 
 ### Built-in Pattern Guides
 
-Pi-browser ships with four built-in pattern guides that appear in the guide footer when relevant:
+`pi-lean-portal` ships with four built-in pattern guides that appear in the guide footer when relevant:
 
 | Guide | Trigger | What It Covers |
 |-------|---------|----------------|
@@ -289,6 +302,9 @@ Covers:
 - **Active sessions** — current URL, title, profile name per session
 - **Profiles on disk** — state size and which one is currently active
 
+When `pi-lean-search` is also installed, the status bar shows two independent
+glyphs: `● idle` (browser state) and `● searxng` (search health/state).
+
 ---
 
 ## Profiles — Persistent Sessions
@@ -343,7 +359,7 @@ The `/web cookies` command lets you inspect and clear session cookies:
 
 ## Backend Architecture
 
-Pi-browser uses a **plugin-based architecture**. The core framework is
+`pi-lean-portal` uses a **plugin-based architecture**. The core framework is
 backend-agnostic — plugins implement a standard `BrowserPlugin` interface,
 and the router dispatches tool calls to the right plugin based on a
 `strategy` parameter.
@@ -517,7 +533,7 @@ Size threshold for profile state warnings (default: 10 MB):
 
 - Snapshots are automatically compacted to ~2500 characters
 - Very large pages (>8000 chars) preserve the top ~2000 chars
-- The **full tree is cached to disk** at `/tmp/pi-browser/snapshot-*.txt` —
+- The **full tree is cached to disk** at `/tmp/pi-lean-portal/snapshot-*.txt` —
   you can use `read` on the cache file with offset/limit
 - `browser-inspect text=true query="keyword"` finds specific content without
   loading the full tree
@@ -556,6 +572,9 @@ When creating navigation guides with `web-learn`:
 
 ---
 
-> pi-browser is maintained as part of the [pi coding agent](https://pi.ai)
-> ecosystem. For questions, issues, or feature requests, check the
+> `pi-lean-portal` is part of the
+> [pi-lean-dimension](https://github.com/coreyryanhanson/pi-lean-dimension)
+> web-tools suite. For questions, issues, or feature requests, check the
 > project's documentation or open an issue.
+>
+> License: AGPL-3.0-only

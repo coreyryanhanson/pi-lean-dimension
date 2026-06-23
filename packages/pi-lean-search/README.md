@@ -1,6 +1,6 @@
 # pi-lean-search
 
-> SearXNG search tool for Pi. Part of the [pi-lean-portal](https://github.com/pi-lean-portal) web-tools suite.
+> SearXNG search tool for Pi. Part of the [pi-lean-dimension](https://github.com/coreyryanhanson/pi-lean-dimension) web-tools suite.
 
 ## Quick start
 
