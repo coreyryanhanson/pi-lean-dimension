@@ -13,9 +13,19 @@
 	"publishConfig": {
 		"access": "public"
 	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/pi-lean-portal/pi-lean-portal.git",
+		"directory": "packages/pi-lean-nexus"
+	},
 	"files": [
+		"verify-ship-manifest.ts",
+		"ship-manifest.test.ts",
 		"README.md"
 	],
+	"scripts": {
+		"test": "vitest run"
+	},
 	"pi": {
 		"extensions": [
 			"./node_modules/pi-lean-portal/index.ts",

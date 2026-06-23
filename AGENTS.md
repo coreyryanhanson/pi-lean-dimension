@@ -67,7 +67,7 @@ pi-lean-portal/                          (monorepo root)
     │   ├── guides/                      User-authored guide files (gitignored)
     │   ├── verify-ship-manifest.ts        Ship-manifest test helper (production .ts coverage checker)
     │   ├── tools/                       Tool definitions — one file per tool (12 files) + index.ts + utils.ts
-    │   ├── __tests__/                   24 test files + helpers/
+    │   ├── __tests__/                   25 test files + helpers/
     │   ├── AGENTS.md                    (copy — for in-package dev agents)
     │   └── README.md                    (portal-specific docs)
     ├── pi-lean-seer/                    ← SearXNG search leaf
@@ -77,10 +77,13 @@ pi-lean-portal/                          (monorepo root)
     │   ├── seer-config.ts               Settings reader for searxng.url
     │   ├── verify-ship-manifest.ts      Ship-manifest test helper
     │   ├── ship-manifest.test.ts        Manifest coverage test
-    │   ├── __tests__/                   2 test files (config reader + tool structure)
+    │   ├── __tests__/                   2 test files + helpers/
     │   └── README.md                    Package docs
     └── pi-lean-nexus/                   ← Umbrella meta-package
-        └── package.json                 (name: pi-lean-nexus, skeleton for v0.1)
+        ├── package.json                 (name: pi-lean-nexus, v0.1.0, bundledDependencies)
+        ├── verify-ship-manifest.ts      Ship-manifest test helper
+        ├── ship-manifest.test.ts        Manifest coverage test
+        └── README.md                    Package docs
 ```
 
 ## Architecture
@@ -105,7 +108,7 @@ pi-lean-portal/                          (monorepo root)
 │                              # session-manager, settings-reader, snapshot-cache, storage-state, url-safety
 ├── guides/                   # User-authored guide files (gitignored)
 ├── tools/                    # Tool definitions — one file per tool (12 files) + index.ts + utils.ts
-└── **tests**/                # 24 test files + helpers/
+└── **tests**/                  # 27 test files + helpers/
 
 All interactive backends implement `BrowserPlugin` (`core/plugin-api.ts`). The interface has 19 methods (18 required + 1 optional):
 
@@ -232,16 +235,19 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 
 ## Testing
 
-### Test files (27 files, 649+ structural tests passing + live-browser tests)
+### Test files (29 files, 829+ structural tests passing + live-browser tests)
 
-**Portal structural tests (18 files, 630 tests):** router-dispatch, browser-toggle, browser-toggle-profile, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, ship-manifest
+**Portal structural tests (19 files, 630+ tests):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, ship-manifest
 
-**Seer tests (2 files, 17 tests):** web-search (config reader + tool structure), ship-manifest
+**Seer tests (2 files, 17+ tests):** web-search (config reader + tool structure), ship-manifest
+
+**Nexus tests (1 file, 2 tests):** ship-manifest
 
 | File | Requires browser? |
 |------|--------------------|
 | All portal structural tests (listed above) | No |
 | Seer tests (web-search, ship-manifest) | No |
+| Nexus tests (ship-manifest) | No |
 | reddit-dialog.test.ts | Chromium (errors if unavailable) |
 | cookie-persistence.test.ts | Chromium (auto-skip) |
 | chromium-py.test.ts | Chromium + Python venv (auto-skip) |
