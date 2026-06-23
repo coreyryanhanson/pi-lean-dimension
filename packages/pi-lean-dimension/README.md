@@ -1,17 +1,17 @@
-# pi-lean-nexus
+# pi-lean-dimension
 
 The full web-tools suite for Pi — interactive web browsing and SearXNG search,
 unified under `/web`.
 
 **This is an umbrella meta-package.** It bundles
 [`pi-lean-portal`](https://www.npmjs.com/package/pi-lean-portal) (browser) and
-[`pi-lean-seer`](https://www.npmjs.com/package/pi-lean-seer) (SearXNG search)
+[`pi-lean-search`](https://www.npmjs.com/package/pi-lean-search) (SearXNG search)
 into a single `pi install` command.
 
 ## Install
 
 ```bash
-pi install npm:pi-lean-nexus
+pi install npm:pi-lean-dimension
 ```
 
 ### Prerequisites

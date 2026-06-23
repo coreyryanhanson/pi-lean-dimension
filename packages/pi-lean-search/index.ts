@@ -1,5 +1,5 @@
 /**
- * pi-lean-seer — SearXNG search extension for Pi.
+ * pi-lean-search — SearXNG search extension for Pi.
  *
  * Registers the `web-search` tool and a `/searxng-status` diagnostic command.
  * Manages the `search` status bar slot with health-colored glyphs.
@@ -10,7 +10,7 @@
  *   ● searxng  (error/red)    — unreachable
  *
  * Portal owns the `search` slot's "off" state: when `/web off` is called,
- * portal writes `○ searxng` (open circle). Seer overrides with the
+ * portal writes `○ searxng` (open circle). Search overrides with the
  * health-colored glyph on session_start.
  */
 
@@ -18,7 +18,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { readSearxngUrl } from "./seer-config.js";
+import { readSearxngUrl } from "./search-config.js";
 import { webSearchTool } from "./web-search-tool.js";
 
 // ─── Module-level state ───────────────────────────────────────────
@@ -196,7 +196,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		// Check if web-search tools are currently active (portal
-		// restores toggle state before seer's session_start fires).
+		// restores toggle state before search's session_start fires).
 		const activeTools = pi.getActiveTools();
 		if (!activeTools.includes("web-search")) {
 			// Tools are off — don't override portal's ○ searxng

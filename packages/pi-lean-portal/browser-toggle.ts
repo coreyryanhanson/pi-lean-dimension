@@ -53,7 +53,7 @@ const LEARN_TOOL_NAMES = new Set(["web-learn"]);
  * Names of sibling-package tools that are toggled alongside browser tools
  * by /web on|off|learn.
  *
- * - "web-search": SearXNG search from pi-lean-seer (Sprint 4).
+ * - "web-search": SearXNG search from pi-lean-search (Sprint 4).
  *
  * Exact-name `Set.has()` membership — NO regex (avoids false positives
  * on third-party web-* tools).
@@ -457,7 +457,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				ctx.ui.setStatus("browser", "○ web off");
 
 				// Set the search tool status to off if sibling apps are present.
-				// Seer owns the colored glyph for on states; portal only writes
+				// Search owns the colored glyph for on states; portal only writes
 				// the off state when tools are explicitly disabled.
 				const hasSiblingTools = getRegisteredSiblingTools(pi).length > 0;
 				if (hasSiblingTools) {
@@ -514,7 +514,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 
 		// After state restoration, ensure the search slot reflects the actual
 		// toggle state.  Without this, a race between portal's session_start
-		// (async — restores/applies state) and seer's session_start (probes
+		// (async — restores/applies state) and search's session_start (probes
 		// health) can leave the search glyph showing blue when tools are off.
 		const hasSiblingTools = getRegisteredSiblingTools(pi).length > 0;
 		if (hasSiblingTools && !isBrowserEnabled(pi)) {

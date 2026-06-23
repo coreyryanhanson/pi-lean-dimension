@@ -1,5 +1,5 @@
 /**
- * Config reader for pi-lean-seer.
+ * Config reader for pi-lean-search.
  *
  * Reads `searxng.url` from Pi's merged settings.json files
  * (global ~/.pi/agent/settings.json + project-local .pi/settings.json).

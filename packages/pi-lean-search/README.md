@@ -1,4 +1,4 @@
-# pi-lean-seer
+# pi-lean-search
 
 > SearXNG search tool for Pi. Part of the [pi-lean-portal](https://github.com/pi-lean-portal) web-tools suite.
 
@@ -6,13 +6,13 @@
 
 ```bash
 pi install npm:pi-lean-portal   # recommended: browser + /web toggle
-pi install npm:pi-lean-seer     # adds web-search to /web on|off
+pi install npm:pi-lean-search   # adds web-search to /web on|off
 ```
 
 Or get the full suite in one command:
 
 ```bash
-pi install npm:pi-lean-nexus    # portal + seer, requires SearXNG server
+pi install npm:pi-lean-dimension # portal + search, requires SearXNG server
 ```
 
 ## Usage
@@ -51,5 +51,5 @@ message pointing you toward setup instructions. It never throws or breaks the ag
 ## Tests
 
 ```bash
-npx vitest run packages/pi-lean-seer/
+npx vitest run packages/pi-lean-search/
 ```

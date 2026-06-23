@@ -1,5 +1,5 @@
 {
-	"name": "pi-lean-seer",
+	"name": "pi-lean-search",
 	"version": "0.1.0",
 	"description": "Pi extension. SearXNG search tool for Pi. Pairs with pi-lean-portal's /web toggle (soft peer — search-only installs are valid).",
 	"keywords": [
@@ -17,7 +17,7 @@
 	"files": [
 		"index.ts",
 		"web-search-tool.ts",
-		"seer-config.ts",
+		"search-config.ts",
 		"verify-ship-manifest.ts",
 		"ship-manifest.test.ts",
 		"README.md"

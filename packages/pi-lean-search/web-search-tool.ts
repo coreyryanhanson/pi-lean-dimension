@@ -1,5 +1,5 @@
 /**
- * web-search tool definition for pi-lean-seer.
+ * web-search tool definition for pi-lean-search.
  *
  * Searches the web via a SearXNG instance. Degrades gracefully when
  * no SearXNG URL is configured — returns a setup message on first call.
@@ -16,7 +16,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type, StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { readSearxngUrl } from "./seer-config.js";
+import { readSearxngUrl } from "./search-config.js";
 
 // ─── Interfaces ───────────────────────────────────────────────────
 
@@ -161,7 +161,7 @@ export const webSearchTool = defineTool({
 							"or `.pi/settings.json` to your SearXNG instance URL. " +
 							"For example:\n" +
 							'  ```json\n  { "searxng": { "url": "http://localhost:8888" } }\n  ```\n' +
-							"See the pi-lean-seer README for self-host vs public instance options.",
+							"See the pi-lean-search README for self-host vs public instance options.",
 					},
 				],
 				details: { error: true, unconfigured: true },

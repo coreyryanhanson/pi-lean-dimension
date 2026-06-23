@@ -7,8 +7,8 @@
 An npm-workspaces monorepo containing three Pi extension packages:
 
 - **`pi-lean-portal`** — Interactive web browsing (owns `/web` command). **12 tools + 1 command.**
-- **`pi-lean-seer`** — SearXNG search tool (`web-search`), wired into portal's `/web` toggle.
-- **`pi-lean-nexus`** — Umbrella meta-package that bundles portal + seer.
+- **`pi-lean-search`** — SearXNG search tool (`web-search`), wired into portal's `/web` toggle.
+- **`pi-lean-dimension`** — Umbrella meta-package that bundles portal + search.
 
 The portal package registers **12 tools + 1 command** for web browsing. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool. See `packages/pi-lean-portal/index.ts` for entrypoint.
 
@@ -69,10 +69,10 @@ pi-lean-portal/                          (monorepo root)
     │   ├── __tests__/                   24 test files + helpers/
     │   ├── AGENTS.md                    (copy — for in-package dev agents)
     │   └── README.md                    (portal-specific docs)
-    ├── pi-lean-seer/                    ← SearXNG search leaf
-    │   └── package.json                 (name: pi-lean-seer, skeleton for v0.1)
-    └── pi-lean-nexus/                   ← Umbrella meta-package
-        └── package.json                 (name: pi-lean-nexus, skeleton for v0.1)
+    ├── pi-lean-search/                  ← SearXNG search leaf
+    │   └── package.json                 (name: pi-lean-search, skeleton for v0.1)
+    └── pi-lean-dimension/               ← Umbrella meta-package
+        └── package.json                 (name: pi-lean-dimension, skeleton for v0.1)
 ```
 
 ## Architecture
@@ -166,7 +166,7 @@ web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, brow
 `/web profile` (list/load profiles), `/web status` (backends + sessions + profiles),
 `/web` (show current state).
 
-Toggle state is persisted via `pi.appendEntry("browser-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`. Three-field schema: `{browserToolsEnabled, learnToolsEnabled, defaultProfile}`.
+Toggle state is persisted via `pi.appendEntry("web-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`. Three-field schema: `{browserToolsEnabled, learnToolsEnabled, defaultProfile}`.
 
 ### Profile & Cookie Management
 

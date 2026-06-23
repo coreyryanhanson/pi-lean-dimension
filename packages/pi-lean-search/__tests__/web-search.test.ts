@@ -1,12 +1,12 @@
 /**
- * Tests for pi-lean-seer — config reader and tool definition structure.
+ * Tests for pi-lean-search — config reader and tool definition structure.
  *
  * Full integration tests for web-search require a running SearXNG
  * instance and are not included here.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readSearxngUrl } from "../seer-config.js";
+import { readSearxngUrl } from "../search-config.js";
 import { webSearchTool } from "../web-search-tool.js";
 
 // ─── Config reader (mocked fs) ──────────────────────────────────
