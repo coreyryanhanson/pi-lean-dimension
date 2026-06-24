@@ -15,6 +15,8 @@ import { fileURLToPath } from "node:url";
 
 const SKIP_DIRS = new Set(["node_modules", "docs", "__tests__"]);
 const SKIP_FILES = new Set(["test-fixtures.ts"]);
+/** Entries that won't exist on disk at rest but are valid (generated at pack time, e.g. by prepack). */
+const SKIP_STALE = new Set(["LICENSE"]);
 
 export interface ShipManifestResult {
 	/** Entries declared in `package.json` `files`. */
@@ -76,7 +78,9 @@ export function verifyShipManifest(
 	// have no on-disk counterpart.
 	const stale = declared.filter(
 		(entry) =>
-			!entry.startsWith("!") && !existsSync(resolve(packageDir, entry)),
+			!entry.startsWith("!") &&
+			!SKIP_STALE.has(entry) &&
+			!existsSync(resolve(packageDir, entry)),
 	);
 
 	return { declared, onDisk, missing, stale };

@@ -26,6 +26,7 @@
 		"browser-profile.ts",
 		"browser-cookies.ts",
 		"browser-status.ts",
+		"LICENSE",
 		"backends/",
 		"!backends/python-base/.venv/",
 		"!backends/python-base/**/__pycache__/",
@@ -44,6 +45,7 @@
 		]
 	},
 	"scripts": {
+		"prepack": "cp ../../LICENSE ./LICENSE",
 		"test": "vitest run"
 	},
 	"dependencies": {

@@ -15,6 +15,8 @@ import { fileURLToPath } from "node:url";
 
 const SKIP_DIRS = new Set(["node_modules", "docs", "__tests__"]);
 const SKIP_FILES = new Set(["test-fixtures.ts"]);
+/** Entries that won't exist on disk at rest but are valid (generated at pack time, e.g. by prepack). */
+const SKIP_STALE = new Set(["LICENSE"]);
 
 export interface ShipManifestResult {
 	declared: readonly string[];
@@ -35,6 +37,10 @@ export function verifyShipManifest(
 	const exactFiles = new Set<string>();
 	const dirPrefixes: string[] = [];
 	for (const entry of declared) {
+		// Negation patterns (`!foo/`) are npm `files`-array syntax for excluding
+		// sub-paths within an included directory. They have no on-disk counterpart;
+		// skip them for existence checks and staleness detection.
+		if (entry.startsWith("!")) continue;
 		if (entry.endsWith("/")) dirPrefixes.push(entry);
 		else if (isDirOnDisk(packageDir, entry)) dirPrefixes.push(`${entry}/`);
 		else exactFiles.add(entry);
@@ -43,7 +49,10 @@ export function verifyShipManifest(
 	const onDisk = walkProductionTs(packageDir, packageDir);
 	const missing = onDisk.filter((f) => !isCovered(f, exactFiles, dirPrefixes));
 	const stale = declared.filter(
-		(entry) => !existsSync(resolve(packageDir, entry)),
+		(entry) =>
+			!entry.startsWith("!") &&
+			!SKIP_STALE.has(entry) &&
+			!existsSync(resolve(packageDir, entry)),
 	);
 
 	return { declared, onDisk, missing, stale };
