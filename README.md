@@ -14,9 +14,15 @@ pi install npm:pi-lean-portal
 npx playwright install chromium firefox
 ```
 
-That's it. The AI agent now has 12 browser tools and the `/web` command. It can
-navigate, click, type, scroll, screenshot, inspect elements, read console
-messages, fetch static pages, and recall navigation guides.
+That's it — the tools are registered and start enabled by default. Control
+them with `/web on|off|learn` (`on` = browser tools, `learn` = browser tools
+plus guide-saving via `web-learn`, `off` = everything off). The state persists
+per session. To set a different default for **new** sessions, add this to your
+Pi settings (`~/.pi/agent/settings.json` or `.pi/settings.json`):
+
+```json
+{ "browserToggle": { "defaultEnabled": false } }
+```
 
 ---
 
@@ -87,7 +93,7 @@ has nothing to toggle. Configure `searxng.url` in settings per Mode B above.
 | Tool | Package | Purpose |
 |---|---|---|
 | `browser-navigate` | portal | Navigate to a URL, get an accessibility tree with `@e` element refs |
-| `browser-snapshot` | portal | Refresh the current page snapshot |
+| `browser-snapshot` | portal | Re-extract the current page's accessibility tree (`@e` refs) and capture a screenshot to a temp file |
 | `browser-click` | portal | Click an element by `@e` ref |
 | `browser-type` | portal | Type text into an input by `@e` ref |
 | `browser-scroll` | portal | Scroll the page |
@@ -124,9 +130,6 @@ cd pi-lean-dimension
 npm install
 npm test                    # vitest run — all workspace tests
 ```
-
-See [`AGENTS.md`](./AGENTS.md) for the full developer guide, architecture
-documentation, test layout, and debugging tips.
 
 ## License
 

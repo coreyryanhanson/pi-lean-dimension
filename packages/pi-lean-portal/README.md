@@ -395,8 +395,10 @@ capability advertisement:
 | AbortSignal support | ✅ | Advertised, silently ignored |
 
 > The `-py` Python backends are disabled by default. They ship as parity
-> references for developers building custom Python-based stealth plugins.
-> When building your own Python plugin, keep `chromium-py` as a reference.
+> references for the Python bridge contract and as templates for users
+> authoring their own Python-based backends (see the custom backends
+> section below). Keep `chromium-py` as a reference when reading the
+> bridge code.
 
 ### How Plugin Selection Works
 
@@ -412,34 +414,57 @@ capability advertisement:
 - The extension auto-detects whether a plugin is Node-based (`index.ts`)
   or Python-based (`bridge.py`) by inspecting the directory.
 
-### Adding Custom Stealth Browsers
+### Stealth & Custom Browser Backends (Planned)
 
-You can manually add additional backends by:
+This package ships four backends — `chromium`, `firefox`, `chromium-py`,
+and `firefox-py` — all built on Playwright. Additional browser support
+(including stealth engines like **Camoufox**) is intentionally **left
+to users** to author and drop in, rather than being bundled with the
+package.
 
-1. **Creating a backend directory** under `backends/` — either:
-   - A **Node.js plugin** with an `index.ts` entry point
-   - A **Python plugin** with a `bridge.py` entry point
+Most of the building blocks are already in place: the `BrowserPlugin`
+interface, the Python bridge base class (`PlaywrightBridge`), and
+config-driven plugin loading that auto-detects `index.ts` (Node) or
+`bridge.py` (Python) entry points. Two pieces of infrastructure are still
+needed before user-authored stealth backends are practical:
 
-2. **Registering the plugin** in your `settings.json` under `browser.plugins`:
+1. **A quirks system** — so a backend can declare things like a custom
+   context factory (e.g. Camoufox's `NewContext` for fingerprint
+   injection), an eval-script prefix, or a fingerprint-managed viewport,
+   instead of being clobbered by the base class's hardcoded defaults.
+2. **A config channel** from the TypeScript adapter to the Python bridge
+   subprocess — so launch options like `headless`, target OS, proxy, and
+   binary path can reach the bridge.
 
-   ```jsonc
-   {
-     "browser": {
-       "plugins": [
-         { "name": "chromium", "dir": "chromium", "enabled": true, "config": {} },
-         { "name": "firefox", "dir": "firefox", "enabled": true, "config": {} },
-         { "name": "camoufox", "dir": "camoufox", "enabled": false, "config": {
-             "pythonPath": "/path/to/venv/bin/python",
-             "binaryPath": "/path/to/stealth-browser"
-           }
-         }
-       ]
-     }
-   }
-   ```
+Once those land, the plan is for users to author additional backends the
+same way they author site guides today — by dropping files into a
+user-owned directory (e.g. `~/.pi/agent/pi-lean-portal/backends/`,
+analogous to the `web-guides/` directory) and registering them in
+`browser.plugins`. The shipped backends live inside the package's own
+`backends/` directory; that directory should not be edited after install
+(modifications would be lost on the next package update), which is exactly
+why a separate user-owned directory is the supported path for custom and
+stealth backends.
 
-3. **Enabling or disabling** plugins without modifying source code (the
-   `enabled` field).
+The shape a custom backend's config entry will take looks like:
+
+```jsonc
+{
+  "browser": {
+    "plugins": [
+      { "name": "chromium", "dir": "chromium", "enabled": true, "config": {} },
+      { "name": "firefox", "dir": "firefox", "enabled": true, "config": {} },
+      { "name": "camoufox-py", "dir": "camoufox-py", "enabled": false, "config": {
+          "pythonPath": "/path/to/camoufox-py/.venv/bin/python"
+        }
+      }
+    ]
+  }
+}
+```
+
+This support will arrive in a future update. Until then, the four shipped
+backends can be toggled via the `enabled` field below.
 
 ---
 
@@ -468,8 +493,11 @@ Controls which browser backends are loaded. Entries are processed in order
 }
 ```
 
-Each entry requires only a unique name, a backend directory path, and optional
-configuration overrides (like Python or binary paths for stealth plugins).
+Each entry requires only a unique name, a backend directory path, and an
+optional `config` object passed to the plugin's `init()`. For the Python
+backends, `config` carries options like `pythonPath` (the shape shown for
+`camoufox-py` above is representative of how a user-authored Python
+backend will be configured).
 
 ### `browser.defaultProfile`
 
