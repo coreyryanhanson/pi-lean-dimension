@@ -1,0 +1,42 @@
+{
+	"name": "pi-lean-dimension",
+	"version": "0.1.0",
+	"description": "Pi extension. The full pi web-tools suite — interactive browsing (pi-lean-portal) and SearXNG search (pi-lean-search), unified under /web.",
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"web",
+		"suite"
+	],
+	"license": "AGPL-3.0-only",
+	"type": "module",
+	"publishConfig": {
+		"access": "public"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/coreyryanhanson/pi-lean-dimension.git",
+		"directory": "packages/pi-lean-dimension"
+	},
+	"files": [
+		"LICENSE",
+		"README.md"
+	],
+	"scripts": {
+		"test": "vitest run"
+	},
+	"pi": {
+		"extensions": [
+			"./node_modules/pi-lean-portal/index.ts",
+			"./node_modules/pi-lean-search/index.ts"
+		]
+	},
+	"dependencies": {
+		"pi-lean-portal": "^0.1.0",
+		"pi-lean-search": "^0.1.0"
+	},
+	"bundledDependencies": [
+		"pi-lean-portal",
+		"pi-lean-search"
+	]
+}

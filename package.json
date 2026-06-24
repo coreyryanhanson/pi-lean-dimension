@@ -1,24 +1,38 @@
 {
-  "name": "pi-browser",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Web browsing plugin for pi — HTTP fetch, Playwright Chromium, plugin-based backends",
-  "dependencies": {
-    "node-html-parser": "^6.1.0",
-    "playwright": "^1.60.0",
-    "turndown": "^7.2.0"
-  },
-  "scripts": {
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "devDependencies": {
-    "@earendil-works/pi-ai": "^0.78.1",
-    "@earendil-works/pi-coding-agent": "^0.78.1",
-    "@earendil-works/pi-tui": "^0.78.1",
-    "@types/node": "^25.9.1",
-    "@types/turndown": "^5.0.6",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
-  }
+	"name": "pi-lean-portal-workspace",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"workspaces": [
+		"packages/*"
+	],
+	"scripts": {
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"version:patch": "npm version patch -ws --no-git-tag-version && node scripts/sync-versions.js && shx rm -rf node_modules packages/*/node_modules package-lock.json && npm install",
+		"version:minor": "npm version minor -ws --no-git-tag-version && node scripts/sync-versions.js && shx rm -rf node_modules packages/*/node_modules package-lock.json && npm install",
+		"version:major": "npm version major -ws --no-git-tag-version && node scripts/sync-versions.js && shx rm -rf node_modules packages/*/node_modules package-lock.json && npm install",
+		"prepublishOnly": "npm run test:ci",
+		"publish": "npm run prepublishOnly && npm publish -w packages/pi-lean-portal -w packages/pi-lean-search --access public && node scripts/publish-dimension.mjs",
+		"publish:dry": "npm run prepublishOnly && npm publish -w packages/pi-lean-portal -w packages/pi-lean-search --access public --dry-run && node scripts/publish-dimension.mjs --dry-run",
+		"test:ci": "vitest run --exclude='**/chromium*.test.ts' --exclude='**/firefox*.test.ts' --exclude='**/reddit*.test.ts'",
+		"release:patch": "node scripts/release.mjs patch",
+		"release:minor": "node scripts/release.mjs minor",
+		"release:major": "node scripts/release.mjs major"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-ai": "^0.78.1",
+		"@earendil-works/pi-coding-agent": "^0.78.1",
+		"@earendil-works/pi-tui": "^0.78.1",
+		"@types/node": "^25.9.1",
+		"@types/turndown": "^5.0.6",
+		"shx": "^0.4.0",
+		"typescript": "^6.0.3",
+		"typebox": "^1.1.34",
+		"vitest": "^4.1.8"
+	},
+	"engines": {
+		"node": ">=22.0.0",
+		"npm": ">=11.0.0"
+	}
 }

@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pi-browser-bridge"
+version = "0.1.0"
+description = "Shared Python bridge library for pi-lean-portal browser automation plugins"
+requires-python = ">=3.10"
+dependencies = ["playwright>=1.50"]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+pythonpath = ["pi_browser_bridge"]
