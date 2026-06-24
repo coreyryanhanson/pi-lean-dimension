@@ -1,0 +1,52 @@
+{
+	"name": "pi-lean-search",
+	"version": "0.1.0",
+	"description": "Pi extension. SearXNG search tool for Pi. Pairs with pi-lean-portal's /web toggle (soft peer — search-only installs are valid).",
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"searxng",
+		"search",
+		"web"
+	],
+	"license": "AGPL-3.0-only",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/coreyryanhanson/pi-lean-dimension.git",
+		"directory": "packages/pi-lean-search"
+	},
+	"type": "module",
+	"publishConfig": {
+		"access": "public"
+	},
+	"files": [
+		"index.ts",
+		"LICENSE",
+		"web-search-tool.ts",
+		"search-config.ts",
+		"verify-ship-manifest.ts",
+		"ship-manifest.test.ts",
+		"README.md"
+	],
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	},
+	"scripts": {
+		"prepack": "cp ../../LICENSE ./LICENSE",
+		"test": "vitest run"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*",
+		"pi-lean-portal": "*",
+		"typebox": "*"
+	},
+	"peerDependenciesMeta": {
+		"pi-lean-portal": {
+			"optional": true
+		}
+	}
+}
