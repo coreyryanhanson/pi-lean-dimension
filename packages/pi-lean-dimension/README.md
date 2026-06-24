@@ -36,7 +36,7 @@ self-documents its setup on first call if SearXNG isn't configured.
 | Tool | Purpose |
 |---|---|
 | `browser-navigate` | Navigate to a URL, get an accessibility tree with `@e` element refs |
-| `browser-snapshot` | Refresh the current page snapshot |
+| `browser-snapshot` | Re-extract the current page's accessibility tree (`@e` refs) and capture a screenshot to a temp file |
 | `browser-click` | Click an element by `@e` ref |
 | `browser-type` | Type text into an input by `@e` ref |
 | `browser-scroll` | Scroll the page |

@@ -87,7 +87,7 @@ has nothing to toggle. Configure `searxng.url` in settings per Mode B above.
 | Tool | Package | Purpose |
 |---|---|---|
 | `browser-navigate` | portal | Navigate to a URL, get an accessibility tree with `@e` element refs |
-| `browser-snapshot` | portal | Refresh the current page snapshot |
+| `browser-snapshot` | portal | Re-extract the current page's accessibility tree (`@e` refs) and capture a screenshot to a temp file |
 | `browser-click` | portal | Click an element by `@e` ref |
 | `browser-type` | portal | Type text into an input by `@e` ref |
 | `browser-scroll` | portal | Scroll the page |
