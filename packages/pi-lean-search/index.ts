@@ -129,7 +129,7 @@ function displayUrl(url: string): string {
  *   - Degraded:  warning (yellow/gold) — server up but pipeline broken
  *   - Unhealthy: error (red) — unreachable or unconfigured
  *
- * Portal writes `○ searxng` on /web off; seer overrides here on
+ * Portal writes `○ searxng` on /web off; search overrides here on
  * session_start or /searxng-status.
  */
 function setSearchStatus(

@@ -32,6 +32,7 @@
 		"!backends/python-base/**/__pycache__/",
 		"!backends/python-base/**/*.pyc",
 		"!backends/python-base/tests/",
+		"!backends/python-base/**/*.egg-info/",
 		"core/",
 		"tools/",
 		"verify-ship-manifest.ts",

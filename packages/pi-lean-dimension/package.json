@@ -19,8 +19,6 @@
 		"directory": "packages/pi-lean-dimension"
 	},
 	"files": [
-		"verify-ship-manifest.ts",
-		"ship-manifest.test.ts",
 		"LICENSE",
 		"README.md"
 	],
