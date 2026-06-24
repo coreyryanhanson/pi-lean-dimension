@@ -418,9 +418,9 @@ capability advertisement:
 
 This package ships four backends — `chromium`, `firefox`, `chromium-py`,
 and `firefox-py` — all built on Playwright. Additional browser support
-(including stealth engines like **Camoufox** and **invisible_playwright**)
-is intentionally **left to users** to author and drop in, rather than being
-bundled with the package.
+(including stealth engines like **Camoufox**) is intentionally **left
+to users** to author and drop in, rather than being bundled with the
+package.
 
 Most of the building blocks are already in place: the `BrowserPlugin`
 interface, the Python bridge base class (`PlaywrightBridge`), and
