@@ -125,9 +125,6 @@ npm install
 npm test                    # vitest run — all workspace tests
 ```
 
-See [`AGENTS.md`](./AGENTS.md) for the full developer guide, architecture
-documentation, test layout, and debugging tips.
-
 ## License
 
 AGPL-3.0-only
