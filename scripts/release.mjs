@@ -15,7 +15,7 @@
  * 3. Bump version via npm run version:xxx (lockstep across all packages)
  * 4. Promote each package CHANGELOG: [Unreleased] -> [version] - date
  * 5. Commit and tag
- * 6. Publish to npm (npm publish -ws --access public)
+ * 6. Publish to npm (portal + search via workspace; dimension via isolated pack)
  * 7. Reinstate [Unreleased] section in each CHANGELOG
  * 8. Commit the [Unreleased] reinstatement
  * 9. Push main + tag
@@ -216,8 +216,18 @@ run(`git commit -m "Release v${version}"`);
 run(`git tag v${version}`);
 console.log();
 
-console.log("Publishing to npm...");
-run("npm run publish");
+console.log("Publishing to npm...\n");
+
+console.log("  Publishing portal + search (targeted workspaces)...");
+run(
+	"npm publish -w packages/pi-lean-portal -w packages/pi-lean-search --access public",
+);
+console.log();
+
+console.log(
+	"  Publishing dimension (isolated pack for bundledDependencies)...",
+);
+run("node scripts/publish-dimension.mjs");
 console.log();
 
 console.log("Reinstating [Unreleased] sections for next cycle...");
