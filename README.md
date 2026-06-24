@@ -27,7 +27,6 @@ messages, fetch static pages, and recall navigation guides.
 | **A — Browser** (recommended) | `pi install npm:pi-lean-portal` | 12 browser tools + `/web` command | `npx playwright install chromium firefox` |
 | **B — Full suite** | `pi install npm:pi-lean-dimension` | 13 tools (browser + search) + `/web` | Playwright browsers + SearXNG server |
 | **B-search — Search only** | `pi install npm:pi-lean-search` | `web-search` tool only | SearXNG server |
-| **C — Auto-setup** | `/web-setup` command | Interactive install of missing siblings | Planned for **v0.2** |
 
 ### Mode A — Browser (recommended)
 
@@ -70,12 +69,6 @@ pi install npm:pi-lean-search
 
 SearXNG search without the browser. No `/web` command — a single tiny tool
 has nothing to toggle. Configure `searxng.url` in settings per Mode B above.
-
-### Mode C — Auto-setup (v0.2)
-
-A planned `/web-setup` command that detects which web-tools packages are
-missing and interactively installs them. Tracks at
-[issue](https://github.com/coreyryanhanson/pi-lean-dimension/issues).
 
 ---
 
