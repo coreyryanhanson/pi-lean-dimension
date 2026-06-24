@@ -7,23 +7,22 @@
  *   node scripts/release.mjs <x.y.z>
  *
  * Before running:
- *   Draft [Unreleased] entries for every affected package's CHANGELOG.md.
+ *   Draft [Unreleased] entries in CHANGELOG.md.
  *
  * Steps:
  * 1. Check for uncommitted changes
- * 2. Warn if every [Unreleased] section is empty
+ * 2. Warn if [Unreleased] section is empty
  * 3. Bump version via npm run version:xxx (lockstep across all packages)
- * 4. Promote each package CHANGELOG: [Unreleased] -> [version] - date
+ * 4. Promote root CHANGELOG: [Unreleased] -> [version] - date
  * 5. Commit and tag
  * 6. Publish to npm (portal + search via workspace; dimension via isolated pack)
- * 7. Reinstate [Unreleased] section in each CHANGELOG
+ * 7. Reinstate [Unreleased] section in CHANGELOG
  * 8. Commit the [Unreleased] reinstatement
  * 9. Push main + tag
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const RELEASE_TARGET = process.argv[2];
 const BUMP_TYPES = new Set(["major", "minor", "patch"]);
@@ -114,46 +113,31 @@ function bumpOrSetVersion(target) {
 	return getVersion();
 }
 
-function getChangelogs() {
-	const packagesDir = "packages";
-	const packages = readdirSync(packagesDir);
-	return packages
-		.map((pkg) => join(packagesDir, pkg, "CHANGELOG.md"))
-		.filter((path) => existsSync(path));
-}
+const ROOT_CHANGELOG = "CHANGELOG.md";
 
 function updateChangelogsForRelease(version) {
 	const date = new Date().toISOString().split("T")[0];
-	const changelogs = getChangelogs();
+	const content = readFileSync(ROOT_CHANGELOG, "utf-8");
 
-	for (const changelog of changelogs) {
-		const content = readFileSync(changelog, "utf-8");
-
-		if (!content.includes("## [Unreleased]")) {
-			console.log(`  Skipping ${changelog}: no [Unreleased] section`);
-			continue;
-		}
-
-		const updated = content.replace(
-			"## [Unreleased]",
-			`## [${version}] - ${date}`,
-		);
-		writeFileSync(changelog, updated);
-		console.log(`  Updated ${changelog}`);
+	if (!content.includes("## [Unreleased]")) {
+		console.log(`  Skipping ${ROOT_CHANGELOG}: no [Unreleased] section`);
+		return;
 	}
+
+	const updated = content.replace(
+		"## [Unreleased]",
+		`## [${version}] - ${date}`,
+	);
+	writeFileSync(ROOT_CHANGELOG, updated);
+	console.log(`  Updated ${ROOT_CHANGELOG}`);
 }
 
 // Insert "## [Unreleased]" above the first "## [" heading
 function addUnreleasedSection() {
-	const changelogs = getChangelogs();
-	const unreleasedSection = "## [Unreleased]\n\n";
-
-	for (const changelog of changelogs) {
-		const content = readFileSync(changelog, "utf-8");
-		const updated = content.replace(/^(## \[)/m, `${unreleasedSection}$1`);
-		writeFileSync(changelog, updated);
-		console.log(`  Added [Unreleased] to ${changelog}`);
-	}
+	const content = readFileSync(ROOT_CHANGELOG, "utf-8");
+	const updated = content.replace(/^(## \[)/m, "## [Unreleased]\n\n$1");
+	writeFileSync(ROOT_CHANGELOG, updated);
+	console.log(`  Added [Unreleased] to ${ROOT_CHANGELOG}`);
 }
 
 function getUnreleasedBody(changelogPath) {
@@ -167,11 +151,8 @@ function getUnreleasedBody(changelogPath) {
 }
 
 function hasUnreleasedEntries() {
-	const changelogs = getChangelogs();
-	for (const changelog of changelogs) {
-		const body = getUnreleasedBody(changelog);
-		if (body && /^- /m.test(body)) return true;
-	}
+	const body = getUnreleasedBody(ROOT_CHANGELOG);
+	if (body && /^- /m.test(body)) return true;
 	return false;
 }
 
@@ -189,14 +170,14 @@ if (status?.trim()) {
 }
 console.log("  Working directory clean\n");
 
-console.log("Checking [Unreleased] sections...");
+console.log("Checking [Unreleased] section...");
 if (!hasUnreleasedEntries()) {
-	console.log("  Warning: every package's [Unreleased] section is empty.");
+	console.log("  Warning: the [Unreleased] section is empty.");
 	console.log(
 		"  Proceeding — this is valid for a no-user-visible-change lockstep bump.\n",
 	);
 } else {
-	console.log("  At least one package has [Unreleased] entries\n");
+	console.log("  The [Unreleased] section has entries\n");
 }
 
 console.log("Running test suite...");
@@ -206,7 +187,7 @@ console.log();
 const version = bumpOrSetVersion(RELEASE_TARGET);
 console.log(`  New version: ${version}\n`);
 
-console.log("Promoting CHANGELOG.md [Unreleased] sections...");
+console.log("Promoting [Unreleased] to release version...");
 updateChangelogsForRelease(version);
 console.log();
 
@@ -230,7 +211,7 @@ console.log(
 run("node scripts/publish-dimension.mjs");
 console.log();
 
-console.log("Reinstating [Unreleased] sections for next cycle...");
+console.log("Reinstating [Unreleased] section for next cycle...");
 addUnreleasedSection();
 console.log();
 
