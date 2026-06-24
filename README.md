@@ -14,9 +14,15 @@ pi install npm:pi-lean-portal
 npx playwright install chromium firefox
 ```
 
-That's it. The AI agent now has 12 browser tools and the `/web` command. It can
-navigate, click, type, scroll, screenshot, inspect elements, read console
-messages, fetch static pages, and recall navigation guides.
+That's it — the tools are registered and start enabled by default. Control
+them with `/web on|off|learn` (`on` = browser tools, `learn` = browser tools
+plus guide-saving via `web-learn`, `off` = everything off). The state persists
+per session. To set a different default for **new** sessions, add this to your
+Pi settings (`~/.pi/agent/settings.json` or `.pi/settings.json`):
+
+```json
+{ "browserToggle": { "defaultEnabled": false } }
+```
 
 ---
 
