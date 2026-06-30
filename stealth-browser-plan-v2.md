@@ -419,13 +419,15 @@ Files (all inside the published package, already covered by
    `_startProcess()` send a `browser.init` RPC with
    `{ config: this._pluginInitConfig }` before resolving. Reject on
    error response with a clear "bridge too old" message.
-4. `index.ts` — in the python branch, forward the **entire** user
-   `config.config` (not just the four `PythonBridgeConfig` fields) to
-   `adapter.init(config.config)`, so `launch` etc. reach the bridge via
-   `browser.init`. Keep the existing `pythonPath` / `pythonArgs` /
+4. `index.ts` — **no change needed; verify only.** The python branch
+   already calls `adapter.init(config.config)` with the **entire** user
+   config object (`index.ts:169`), so `launch` etc. already reach the
+   adapter and (after Phase 0 step 3) the bridge via `browser.init`.
+   Keep the existing `pythonPath` / `pythonArgs` /
    `capabilities` / `transportTimeoutMs` extraction into
    `bridgeConfig` — those are consumed TS-side; the rest is forwarded
-   Python-side.
+   Python-side. The only `index.ts` touch in this whole replan is the
+   multi-root `detectPluginType` call in Phase 0b.
 5. Tests:
    - `__tests__/python-adapter.test.ts` — assert `browser.init` is sent
      exactly once after `ping`, before any other RPC; assert error
@@ -629,11 +631,14 @@ copy-paste starting point — but that's docs, not a registered backend.
    `_ensure_playwright()`** to: build `InvisiblePlaywright(**launch_kwargs)`
    from `self.plugin_config.get("launch", {})` (headless, seed, humanize,
    locale, timezone, proxy, binaryPath, prepRecaptcha, geoIpMmdb,
-   webrtcPublicIp), call `__enter__()` **once**, store the returned
-   context manager as `self._stealth_ctx` (held for the bridge's
-   lifetime), then assign `self._pw = self._stealth_ctx._pw` and
-   `self._browser = self._stealth_ctx._browser`, and return
-   `(self._pw, self._browser)`. **Do NOT call the base
+   webrtcPublicIp): **instantiate** `InvisiblePlaywright(**launch_kwargs)`
+   and store the **instance** (the context manager itself) as
+   `self._stealth_ctx` (held for the bridge's lifetime); then call
+   `self._stealth_ctx.__enter__()` **once**, which returns a `Browser` —
+   assign that to `self._browser`. Read `self._pw` from
+   `self._stealth_ctx._pw` (the `InvisiblePlaywright` instance owns the
+   Playwright handle; the `Browser` it returns does not expose `_pw`).
+   Return `(self._pw, self._browser)`. **Do NOT call the base
    `_ensure_playwright()`** (super) — it would start a second
    Playwright. Override `_maybe_stop_playwright()` to call
    `self._stealth_ctx.__exit__(None, None, None)` instead of
@@ -656,14 +661,18 @@ copy-paste starting point — but that's docs, not a registered backend.
    `locale`, `timezone`, `extra_prefs`, `binary_path`, `prep_recaptcha`.
 4. **~100 MB patched Firefox binary + geoip mmdb, fetched separately.**
    `python -m invisible_playwright fetch` downloads the patched Firefox
-   (firefox-12 / FF 150.0.1). The geoip mmdb is auto-downloaded on every
-   launch via a HEAD request to GitHub releases (cheap, no API token,
-   no rate limit) — but on an offline/restricted network this fails.
-   Mitigation: `STEALTHFOX_GEOIP_MMDB` env var to pin a local mmdb, or
-   set an explicit `timezone=` to skip egress-IP resolution entirely.
-   `firefox-8` is a known-broken binary version (`BROKEN_VERSIONS`
-   refuses it with a clear error) — not an issue if users run the
-   default `firefox-12` from `fetch`; document.
+   (currently `firefox-13` / FF 150.0.1 — **verify at install time** by
+   checking `invisible_playwright/constants.py`'s `BINARY_VERSION`, as
+   the binary tag bumps between releases). The geoip mmdb is checked on
+   every launch via a HEAD request to GitHub releases (cheap, no API
+   token, no rate limit) and **downloaded only when the latest release
+   tag differs from the cached copy** — so an offline/restricted
+   network fails only the *first* launch after a tag bump, not every
+   launch. Mitigation regardless: `STEALTHFOX_GEOIP_MMDB` env var to pin
+   a local mmdb, or set an explicit `timezone=` to skip egress-IP
+   resolution entirely. `firefox-8` is a known-broken binary version
+   (`BROKEN_VERSIONS` refuses it with a clear error) — not an issue if
+   users run the default from `fetch`; document.
 5. **System dependency: `xvfb` on Linux for `headless=True`.**
    invisible_playwright's `headless=True` keeps Firefox in **headed**
    mode (real rendering pipeline → coherent fingerprint) and hides the
