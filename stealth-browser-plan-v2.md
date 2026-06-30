@@ -27,7 +27,7 @@ the package, with checked-in venvs" model. Under npm packaging:
 
 - **Neither stealth backend ships in the npm tarball.** They become
   **user-installed plugins** that live outside the package, sibling to
-  `web-guides/`, under `~/.pi/agent/pi-lean-portal/stealth-backends/<name>-py/`.
+  `web-guides/`, under `~/.pi/agent/pi-lean-portal/user-backends/<name>-py/`.
 - **The plugin loader must become multi-root.** `DEFAULT_BACKENDS_ROOT`
   (inside the package) is no longer the only place `detectPluginType`
   looks; a second user backends root under `PORTAL_DATA_DIR` must be
@@ -129,7 +129,7 @@ I read the current code. Findings, with file/line evidence:
 5. **`PORTAL_DATA_DIR` already exists** (`core/shared/paths.ts`):
    `~/.pi/agent/pi-lean-portal/`. `USER_GUIDES_DIR` is
    `join(PORTAL_DATA_DIR, "web-guides")` (`core/guides.ts`). A sibling
-   `stealth-backends/` directory is the natural home for user-installed
+   `user-backends/` directory is the natural home for user-installed
    stealth plugins and matches the established convention (user-writable,
    survives package upgrades, owned by the portal subtree).
 
@@ -184,7 +184,7 @@ export function detectPluginType(dir, backendsRoot): PluginDetection {
 ```
 
 It joins `dir` under a single `backendsRoot`. For a user backend at
-`~/.pi/agent/pi-lean-portal/stealth-backends/camoufox-py/bridge.py`, the
+`~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/bridge.py`, the
 `dir` value `"camoufox-py"` joined with the package root would look for
 `node_modules/pi-lean-portal/backends/camoufox-py/bridge.py` — not found
 → `detectPluginType` throws → `parsePluginConfig` records a validation
@@ -211,7 +211,7 @@ This works today only because `backends/python-base/.venv` has
 adapter's `spawn()` call sets `env: { ...process.env,
 PYTHONUNBUFFERED: "1" }` — **no `PYTHONPATH` injection**. So a user
 stealth `bridge.py` running in its own venv (at
-`~/.pi/agent/pi-lean-portal/stealth-backends/camoufox-py/.venv/`) can
+`~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv/`) can
 only import `pi_browser_bridge` if the user separately installs the
 shared library into that venv — and `pi-browser-bridge` is **not on
 PyPI**; it lives inside the npm tarball at
@@ -247,7 +247,7 @@ The plan's Decision §6 specifies
 `settings.json` set to those relative paths. Post-packaging, those
 directories don't exist in the tarball and can't be created inside
 `node_modules/`. The venvs must move under
-`~/.pi/agent/pi-lean-portal/stealth-backends/<name>-py/.venv/`, and
+`~/.pi/agent/pi-lean-portal/user-backends/<name>-py/.venv/`, and
 `pythonPath` must be an **absolute path** (the adapter passes it
 straight to `spawn()`; a relative path would resolve against the
 extension's cwd, not the user-data tree).
@@ -272,7 +272,7 @@ for stealth fingerprint stability — keep documenting it.
 ~/.pi/agent/pi-lean-portal/
 ├── web-guides/              ← existing (core/guides.ts USER_GUIDES_DIR)
 ├── browser-state/           ← existing (storage-state.ts PROFILE_DIR)
-└── stealth-backends/        ← NEW (this plan)
+└── user-backends/          ← NEW (this plan)
     ├── camoufox-py/
     │   ├── bridge.py        ← user drops the subclass here
     │   ├── README.md        ← optional
@@ -286,15 +286,14 @@ for stealth fingerprint stability — keep documenting it.
 A new exported constant in `core/shared/paths.ts`:
 
 ```ts
-export const USER_BACKENDS_DIR = join(PORTAL_DATA_DIR, "stealth-backends");
+export const USER_BACKENDS_DIR = join(PORTAL_DATA_DIR, "user-backends");
 ```
 
-(Mirrors `USER_GUIDES_DIR` in `core/guides.ts`. Naming: "stealth-backends"
-is user-facing and discoverable; internally it's just the user backends
-root — any future non-stealth user Python backend could live there too.
-Consider naming it `user-backends/` for generality. **Recommendation:
-`user-backends/`** — don't bake "stealth" into the directory name; the
-mechanism is generic. The plan below uses `user-backends/`.)
+(Mirrors `USER_GUIDES_DIR` in `core/guides.ts`. **Naming DECISIONED:
+`user-backends/`** — the mechanism is generic; any future non-stealth
+user Python backend can live there too, and baking "stealth" into the
+directory name would be needlessly specific. This is now applied
+consistently across the TL;DR, this constant, and all path examples.)
 
 ### `settings.json` shape
 
@@ -356,7 +355,7 @@ work regardless of which root matched.
   backward compat, but add a new
   `detectPluginTypeMultiRoot(dir, roots: string[])` that tries each root
   in order. Or change `detectPluginType` to accept `roots: string[]`
-  and update the two call sites. **Recommend: change the signature to
+  and update the two call sites. **DECISIONED: change the signature to
   accept `readonly roots: string[]`** and update
   `parsePluginConfig` + `index.ts` to pass `[DEFAULT_BACKENDS_ROOT,
   USER_BACKENDS_DIR]`. Keep an absolute-path short-circuit at the top.
@@ -520,8 +519,8 @@ for Phase 1/2 to be installable by end users at all.
 Files (in-package):
 
 1. `core/shared/paths.ts` — add `USER_BACKENDS_DIR = join(PORTAL_DATA_DIR,
-   "user-backends")`. (Pick `user-backends/` over `stealth-backends/`
-   for generality — the mechanism is not stealth-specific.)
+   "user-backends")`. (`user-backends/` over `stealth-backends/` —
+   DECISIONED: the mechanism is not stealth-specific.)
 2. `core/plugin-config.ts` —
    - Change `detectPluginType(dir, backendsRoot: string)` →
      `detectPluginType(dir, roots: readonly string[])`. Add an
@@ -874,17 +873,14 @@ shows spoofed fingerprint.
 2. **`STEALTH.md`** (original Phase 3 item): when to pick which backend.
 3. **`/web status`** (`browser-status.ts`): the existing
    `pluginRegistry.availableAll()` already lists user stealth plugins
-   once registered — no change needed for the plugin list. **New
-   work:** add a per-stealth-backend binary-fetched check (cheap `stat`
-   of `~/.cache/camoufox/...` / `~/.cache/invisible-playwright/...`).
-   Since stealth backends are now user-side and the package can't know
-   their cache paths generically, expose this via an optional
-   `statusProbe` callback the user bridge can register, or simply
-   document that `/web status` shows the plugin as registered and let
-   the bridge's `_install_hint` surface on first navigate. **Recommend:
-   defer the binary check** — keep `/web status` as-is for now; the
-   fail-fast `_install_hint` on navigate is the primary UX. File a
-   follow-up note.
+   once registered — no change needed for the plugin list. **Binary-fetched
+   check DECISIONED: defer.** Keep `/web status` as-is for now; the
+   bridge's `_install_hint` surfaces on first navigate as the primary UX
+   for a missing fetched binary. The optional `statusProbe` callback idea
+   (per-backend `stat` of `~/.cache/camoufox/...` /
+   `~/.cache/invisible-playwright/...`) is **deferred to a follow-up** —
+   it adds plumbing + per-backend cache-path knowledge for marginal UX
+   gain over the fail-fast install hint. File a follow-up note.
 4. **`ship-manifest.test.ts`:** the existing test walks production `.ts`
    in the package and asserts `files` covers them. **No change needed**
    unless we add new production `.ts` to the package — Phase 0/0b add
@@ -903,11 +899,11 @@ shows spoofed fingerprint.
    `main_world_eval`, invisible-py lifecycle ownership, `xvfb` dep, and
    the **user-side install burden** (venv + binary fetch + `settings.json`
    entry). Update the Test files table with the new auto-skip tests.
-6. **`packages/pi-lean-portal/package.json` `files`:** review whether
-   `docs/` should ship. **Recommend: do NOT ship `docs/`** — keep the
-   tarball lean; the templates are repo-only and the README in the
-   tarball links to the repo for stealth templates. No `files` change
-   required (current allowlist already excludes `docs/`).
+6. **`packages/pi-lean-portal/package.json` `files`:** **DECISIONED: do
+   NOT ship `docs/`** — keep the tarball lean; the templates are
+   repo-only and the README in the tarball links to the repo for stealth
+   templates. No `files` change required (current allowlist already
+   excludes `docs/`).
 7. **CI:** new live-browser tests auto-skip in CI. Add an opt-in
    workflow that fetches the stealth binaries and runs the stealth
    contract tests on a Linux runner with `xvfb` (original Phase 3 item,
