@@ -14,8 +14,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
 	loadBrowserConfig,
+	loadPluginConfig,
 	invalidateConfigCache,
-} from "../core/plugin-config";
+} from "../core/plugin-config.js";
 
 // ─── Mock fs to intercept settings.json reads ────────────────────
 
@@ -156,5 +157,26 @@ describe("loadBrowserConfig()", () => {
 			const config = loadBrowserConfig();
 			expect(config.defaultProfile).toBe("session");
 		});
+	});
+});
+
+// ─── Default plugin fallback (Phase 0b) ─────────────────────────
+
+describe("loadPluginConfig() default fallback", () => {
+	it("returns the four shipped backends when browser.plugins is absent", () => {
+		// No settings files → default fallback branch in parsePluginConfig fires.
+		mockNoSettings();
+		const { plugins, errors } = loadPluginConfig();
+		expect(errors).toEqual([]);
+		const names = plugins.map((p) => p.name);
+		expect(names).toEqual(["chromium", "firefox", "chromium-py", "firefox-py"]);
+	});
+
+	it("does NOT include stealth backends (camoufox-py / invisible-py) in the default fallback", () => {
+		mockNoSettings();
+		const { plugins } = loadPluginConfig();
+		const names = plugins.map((p) => p.name);
+		expect(names).not.toContain("camoufox-py");
+		expect(names).not.toContain("invisible-py");
 	});
 });

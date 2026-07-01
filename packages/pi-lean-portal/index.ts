@@ -6,7 +6,7 @@ import { pluginRegistry } from "./core/plugin-registry.js";
 import {
 	loadPluginConfig,
 	detectPluginType,
-	DEFAULT_BACKENDS_ROOT,
+	DEFAULT_BACKEND_ROOTS,
 	invalidateConfigCache,
 } from "./core/plugin-config.js";
 import { ChromiumPlugin } from "./backends/chromium/index.js";
@@ -51,7 +51,12 @@ export default function (pi: ExtensionAPI) {
 	resetToggleModuleState();
 
 	// --- Plugin registration ----------------------------------------
-	const { plugins: pluginConfigs, errors: configErrors } = loadPluginConfig();
+	// Resolve plugin `dir` values against the shipped backends root first,
+	// then the user-writable `~/.pi/agent/pi-lean-portal/user-backends/`
+	// tree (Phase 0b).  An absolute `dir` short-circuits both roots.
+	const { plugins: pluginConfigs, errors: configErrors } = loadPluginConfig(
+		DEFAULT_BACKEND_ROOTS,
+	);
 
 	// Log config errors
 	for (const err of configErrors) {
@@ -68,7 +73,7 @@ export default function (pi: ExtensionAPI) {
 	for (const config of pluginConfigs) {
 		let detection;
 		try {
-			detection = detectPluginType(config.dir, DEFAULT_BACKENDS_ROOT);
+			detection = detectPluginType(config.dir, DEFAULT_BACKEND_ROOTS);
 		} catch (err) {
 			console.error(
 				`[pi-lean-portal] Plugin '${config.name}' (dir: '${config.dir}'): ${err instanceof Error ? err.message : String(err)}`,

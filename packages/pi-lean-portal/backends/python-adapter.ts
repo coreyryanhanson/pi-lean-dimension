@@ -25,9 +25,11 @@
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import { join, delimiter as pathDelimiter } from "node:path";
 
 import { sessionManager } from "../core/shared/session-manager.js";
 import { saveStorageState } from "../core/shared/storage-state.js";
+import { DEFAULT_BACKENDS_ROOT } from "../core/plugin-config.js";
 
 import {
 	DEFAULT_CAPABILITIES,
@@ -181,6 +183,15 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	private _started = false;
 
 	/**
+	 * Plugin config dict forwarded to the bridge via the `browser.init` RPC
+	 * immediately after the ping handshake.  Populated by `init()` from the
+	 * user's `settings.json` `config.config` object (which carries the
+	 * `launch` sub-object for stealth backends).  Empty when no config was
+	 * provided — the bridge defaults `_plugin_config` to `{}` either way.
+	 */
+	private _pluginInitConfig: Record<string, unknown> | undefined;
+
+	/**
 	 * Local element caches per task, populated from bridge responses.
 	 * Map: taskId → Map<ref, AriaCachedNode>
 	 */
@@ -236,8 +247,17 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	/**
 	 * Initialise the adapter.  Validates that the Python path and bridge
 	 * script are available, but does NOT spawn the subprocess yet.
+	 *
+	 * Stores the supplied plugin config dict (the user's `config.config`
+	 * from `settings.json`) so it can be forwarded to the bridge via the
+	 * `browser.init` RPC immediately after the ping handshake.  This is the
+	 * channel that carries stealth launch options (`config.launch`) to the
+	 * Python-side bridge.
 	 */
-	async init(_config?: Record<string, unknown>): Promise<void> {
+	async init(config?: Record<string, unknown>): Promise<void> {
+		// Stash the plugin config for the post-ping browser.init RPC.
+		this._pluginInitConfig = config;
+
 		// Validate pythonPath exists
 		const pythonOk = this._checkPythonExists();
 		if (!pythonOk) {
@@ -307,6 +327,13 @@ export class PythonPluginAdapter implements BrowserPlugin {
 					env: {
 						...process.env,
 						PYTHONUNBUFFERED: "1",
+						// Phase 0b: make the shared `pi_browser_bridge` library
+						// importable from any venv the user points `pythonPath`
+						// at, without requiring a `pip install` of the bridge.
+						// Appended to any existing PYTHONPATH so user entries keep
+						// precedence; for the shipped chromium-py / firefox-py
+						// venvs the editable install points at the same source.
+						PYTHONPATH: this._buildPythonPath(),
 					},
 				},
 			);
@@ -395,17 +422,34 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			setImmediate(async () => {
 				try {
 					await this._directRpcCall("ping", {}, PING_TIMEOUT_MS);
+
+					// ── Forward plugin config to the bridge (Phase 0) ──
+					// Sent exactly once, immediately after the ping handshake and
+					// before any other RPC, so stealth subclasses can read launch
+					// options from `self.plugin_config.get("launch", {})` at
+					// browser-init time.  A bridge too old to know this method
+					// returns METHOD_NOT_FOUND, which we surface as a clear error.
+					await this._directRpcCall(
+						"browser.init",
+						{ config: this._pluginInitConfig ?? {} },
+						PING_TIMEOUT_MS,
+					);
+
 					this._started = true;
 					resolve();
 				} catch (err: unknown) {
 					// If the process already exited, the exit handler will reject.
-					// Only reject here if the process is still alive but ping failed.
+					// Only reject here if the process is still alive but ping/init failed.
 					if (this._process && this._exitCode === null) {
-						// Ping failed — kill and reject
+						// Ping/init failed — kill and reject
 						this._killProcess();
+						const stage =
+							err instanceof PythonBridgeError && err.code === -32601
+								? "browser.init (bridge too old — upgrade pi-lean-portal)"
+								: "Ping handshake";
 						reject(
 							new Error(
-								`PythonPluginAdapter('${this.name}'): Ping handshake failed: ` +
+								`PythonPluginAdapter('${this.name}'): ${stage} failed: ` +
 									(err instanceof Error ? err.message : String(err)),
 							),
 						);
@@ -1118,6 +1162,25 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		} catch {
 			return false;
 		}
+	}
+
+	/**
+	 * Build the `PYTHONPATH` env value for the spawned bridge process.
+	 *
+	 * Appends the package's `backends/python-base/` directory (home of the
+	 * shared `pi_browser_bridge` Python library) to any existing
+	 * `PYTHONPATH` so user-installed stealth backends running in their
+	 * own venvs can `from pi_browser_bridge.playwright_base import
+	 * PlaywrightBridge` without a separate `pip install` of the bridge
+	 * library.  Appended (not prepended) so a user's own `PYTHONPATH`
+	 * entries keep precedence; for the shipped `chromium-py` / `firefox-py`
+	 * venvs the editable install resolves to the same source directory, so
+	 * ordering is moot either way.
+	 */
+	private _buildPythonPath(): string {
+		const pythonBaseDir = join(DEFAULT_BACKENDS_ROOT, "python-base");
+		const existing = process.env.PYTHONPATH;
+		return existing ? existing + pathDelimiter + pythonBaseDir : pythonBaseDir;
 	}
 
 	/**

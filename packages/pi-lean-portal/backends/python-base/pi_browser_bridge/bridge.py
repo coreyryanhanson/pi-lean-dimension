@@ -83,10 +83,30 @@ class BrowserBridge:
     #: Whether the bridge is still running.
     _running: bool
 
+    #: Plugin configuration dict forwarded from the TypeScript adapter via
+    #: the ``browser.init`` RPC.  Defaults to ``{}`` for bridges that never
+    #: receive an init call (e.g. older adapters, or the shipped
+    #: ``chromium-py``/``firefox-py`` when run standalone).  Subclasses read
+    #: engine-specific options from ``self.plugin_config.get("launch", {})``.
+    _plugin_config: dict[str, Any]
+
     def __init__(self) -> None:
         self.sessions = {}
         self.element_caches = {}
         self._running = False
+        self._plugin_config = {}
+
+    # ── Plugin config (forwarded via browser.init) ───────────────
+
+    @property
+    def plugin_config(self) -> dict[str, Any]:
+        """Return the plugin config dict forwarded from the TypeScript adapter.
+
+        Populated by the ``browser.init`` RPC handler.  Always returns a
+        dict (empty when no init was received) so subclasses can safely
+        call ``self.plugin_config.get("launch", {})``.
+        """
+        return self._plugin_config
 
     # ── Subclass hooks ──────────────────────────────────────────
 
@@ -392,6 +412,15 @@ class BrowserBridge:
         try:
             if method == "ping":
                 return make_success_response(cmd_id, "pong")
+
+            if method == "browser.init":
+                # Forward plugin config from the TypeScript adapter.
+                # The adapter sends this exactly once after the ping
+                # handshake, before any other RPC.  Subclasses read
+                # engine-specific launch options from
+                # ``self.plugin_config.get("launch", {})``.
+                self._plugin_config = params.get("config") or {}
+                return make_success_response(cmd_id, {"ok": True})
 
             if method == "shutdown":
                 self._running = False

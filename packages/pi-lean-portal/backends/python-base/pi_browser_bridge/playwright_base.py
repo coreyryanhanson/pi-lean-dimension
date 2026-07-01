@@ -20,7 +20,7 @@ import os
 import re
 import sys
 import time
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from .bridge import BrowserBridge, SessionNotFoundError
 from .bot_detection import check_bot_detection
@@ -101,6 +101,44 @@ class PlaywrightBridge(BrowserBridge):
 
     #: Engine-specific install hint (shown when browser executable missing).
     _install_hint: str = ""
+
+    # ── Stealth quirks (Phase 0) ──────────────────────────────────
+    #
+    # These opt-in flags let stealth subclasses (Camoufox, invisible_playwright)
+    # disable the base's hard-coded Playwright defaults that would otherwise
+    # clobber a fingerprint-managed browser context.  All default to ``off``
+    # so the shipped ``chromium-py`` / ``firefox-py`` bridges are bit-identical.
+    #
+    # See stealth-browser-plan-v2.md §Phase 0 "Quirks rationale" for the
+    # concrete correctness problem each flag fixes.
+
+    #: When True, ``create_browser_context()`` does NOT pass ``viewport`` or
+    #: ``user_agent`` to ``new_context`` — the fingerprint package (Camoufox
+    #: ``NewContext`` / invisible_playwright's patched ``new_context``)
+    #: generates those from the fingerprint, and the base's hard-coded
+    #: values would override them with a detectable mismatch.
+    _fingerprint_managed_context: bool = False
+
+    #: Prefix prepended to every ``page.evaluate`` expression in ``do_evaluate``.
+    #: Camoufox runs eval in an isolated world with read-only page access by
+    #: default; ``"mw:"`` routes the script to the main world where writes work.
+    #: Reads work with the prefix too, so it's safe to apply unconditionally.
+    #: Empty string = no prefix (the shipped bridges).
+    _eval_prefix: str = ""
+
+    #: When True, ``do_scroll`` uses ``page.mouse.wheel`` instead of
+    #: ``page.evaluate("window.scrollBy")``.  The eval-based scroll is a
+    #: write that silently no-ops under Camoufox's isolated world; the wheel
+    #: event performs the scroll via input events instead.
+    _scroll_via_wheel: bool = False
+
+    #: Which context-creation entry point ``create_browser_context()`` dispatches
+    #: to.  ``"new_context"`` (default) calls ``browser.new_context(**kwargs)``
+    #: directly.  ``"camoufox_new_context"`` dispatches to the internal
+    #: ``_camoufox_new_context`` helper, which calls ``camoufox.NewContext`` to
+    #: install the spoofed fingerprint init script.  invisible_playwright does
+    #: NOT need this — it patches ``browser.new_context`` itself.
+    _context_factory: Literal["new_context", "camoufox_new_context"] = "new_context"
 
     # ── Shared Playwright state ─────────────────────────────────
 
@@ -232,22 +270,41 @@ class PlaywrightBridge(BrowserBridge):
         """Create a new isolated BrowserContext for a task session.
 
         Applies the default viewport, :attr:`effective_user_agent`, and
-        ``storageState`` from config.  Starts Playwright tracing if
-        ``BROWSER_TRACE_DIR`` is set.
+        ``storageState`` from config — **unless**
+        :attr:`_fingerprint_managed_context` is True, in which case viewport
+        and user_agent are omitted so a stealth fingerprint package (Camoufox
+        ``NewContext`` / invisible_playwright's patched ``new_context``) can
+        generate them from the fingerprint without being clobbered.
+
+        Context creation dispatches on :attr:`_context_factory`:
+
+        * ``"new_context"`` (default) — ``browser.new_context(**kwargs)``.
+        * ``"camoufox_new_context"`` — delegates to :meth:`_camoufox_new_context`,
+          which calls ``camoufox.NewContext`` to install the spoofed
+          fingerprint init script.
+
+        Starts Playwright tracing if ``BROWSER_TRACE_DIR`` is set.
 
         Returns a Playwright ``BrowserContext`` (no Page yet).
         """
         _pw, browser = self._ensure_playwright()
 
-        context_kwargs: dict[str, Any] = {
-            "viewport": {"width": 1280, "height": 720},
-            "user_agent": self.effective_user_agent,
-        }
+        context_kwargs: dict[str, Any] = {}
+        if not self._fingerprint_managed_context:
+            # Shipped bridges: hard-coded defaults.
+            context_kwargs["viewport"] = {"width": 1280, "height": 720}
+            context_kwargs["user_agent"] = self.effective_user_agent
+        # When fingerprint-managed, ONLY pass storage_state (and let the
+        # fingerprint package set viewport/UA/screen/dpr).  proxy/geolocation
+        # are forwarded by stealth subclasses via their context-factory override.
         storage_state = config.get("storageState")
         if storage_state is not None:
             context_kwargs["storage_state"] = storage_state
 
-        context = browser.new_context(**context_kwargs)
+        if self._context_factory == "camoufox_new_context":
+            context = self._camoufox_new_context(browser, context_kwargs)
+        else:
+            context = browser.new_context(**context_kwargs)
 
         # Start Playwright trace capture if BROWSER_TRACE_DIR is set.
         _trace_dir = os.environ.get("BROWSER_TRACE_DIR")
@@ -264,6 +321,53 @@ class PlaywrightBridge(BrowserBridge):
                 pass  # Best-effort
 
         return context
+
+    def _camoufox_new_context(
+        self,
+        browser: Any,
+        context_kwargs: dict[str, Any],
+    ) -> Any:
+        """Create a Camoufox fingerprint-injected BrowserContext.
+
+        Called by :meth:`create_browser_context` when
+        :attr:`_context_factory` is ``"camoufox_new_context"``.  Delegates to
+        ``camoufox.NewContext`` so the BrowserForge fingerprint preset and its
+        init script (spoofed navigator/screen/WebGL/canvas/audio/fonts) are
+        installed — calling ``browser.new_context`` directly would produce a
+        vanilla Firefox fingerprint and defeat the whole point of Camoufox.
+
+        ``camoufox`` is imported lazily inside this helper so non-Camoufox
+        bridges never pay the import cost.
+
+        Launch options (``os``, ``fingerprint_preset``, ``proxy``,
+        ``geolocation``, ``geoip``) are read from
+        ``self.plugin_config.get("launch", {})``.  ``storage_state`` is
+        forwarded from ``context_kwargs`` so the existing profile flow works.
+        """
+        # Mirror _ensure_playwright's convention: prefer the subclass'
+        # _install_hint (which names the exact pip + fetch commands),
+        # falling back to a generic message for bridges that didn't set it.
+        # Computed before the try so the `or` lives outside the except body
+        # (keeps the no-boolean-in-except lint calm).
+        install_msg = (
+            self._install_hint
+            or "camoufox is not installed. Run: pip install camoufox[geoip] && python -m camoufox fetch"
+        )
+        try:
+            import camoufox  # type: ignore[import-unresolved]
+        except ImportError as exc:
+            raise RuntimeError(install_msg) from exc
+
+        launch = self.plugin_config.get("launch", {}) or {}
+        new_context_kwargs: dict[str, Any] = {}
+        if "storage_state" in context_kwargs:
+            new_context_kwargs["storage_state"] = context_kwargs["storage_state"]
+        # Forward optional stealth launch options if the user supplied them.
+        for opt in ("os", "fingerprint_preset", "proxy", "geolocation", "geoip"):
+            if opt in launch:
+                new_context_kwargs[opt] = launch[opt]
+
+        return camoufox.NewContext(browser, **new_context_kwargs)
 
     def _setup_page_session(self, page: Any) -> dict[str, Any]:
         """Attach console capture and dialog handlers to a new page.
@@ -591,9 +695,16 @@ class PlaywrightBridge(BrowserBridge):
                         re.IGNORECASE,
                     )
                 )
-                if is_transient and attempt == 0:
-                    time.sleep(2)
-                    last_error = msg
+                # Nested ifs (rather than `is_transient and attempt == 0`)
+                # keep the no-boolean-in-except lint calm; behavior is
+                # identical: retry once on a transient error, then give up.
+                if is_transient:
+                    if attempt == 0:
+                        time.sleep(2)
+                        last_error = msg
+                    else:
+                        last_error = msg
+                        break
                 else:
                     last_error = msg
                     break
@@ -884,10 +995,16 @@ class PlaywrightBridge(BrowserBridge):
 
         try:
             delta = 800 if direction == "down" else -800
-            page.evaluate(
-                """(d) => window.scrollBy({ top: d, behavior: 'smooth' })""",
-                delta,
-            )
+            if self._scroll_via_wheel:
+                # Camoufox runs page.evaluate in an isolated world where
+                # the eval-write window.scrollBy silently no-ops; drive the
+                # scroll via input events instead.
+                page.mouse.wheel(0, delta)
+            else:
+                page.evaluate(
+                    """(d) => window.scrollBy({ top: d, behavior: 'smooth' })""",
+                    delta,
+                )
             time.sleep(0.2)
 
             snap_text, element_count, elements = self._take_snapshot_and_cache(
@@ -1106,7 +1223,13 @@ class PlaywrightBridge(BrowserBridge):
             }
 
     def do_evaluate(self, task_id: str, expression: str) -> dict[str, Any]:
-        """Evaluate JavaScript in the page context."""
+        """Evaluate JavaScript in the page context.
+
+        When :attr:`_eval_prefix` is non-empty (e.g. Camoufox's ``"mw:"``),
+        it is prepended to the expression so the script runs in the main
+        world where writes work.  Reads work with the prefix too, so it is
+        safe to apply unconditionally.
+        """
         try:
             page = self._get_page(task_id)
         except SessionNotFoundError:
@@ -1118,7 +1241,10 @@ class PlaywrightBridge(BrowserBridge):
             }
 
         try:
-            result: Any = page.evaluate(expression)
+            effective_expression = (
+                self._eval_prefix + expression if self._eval_prefix else expression
+            )
+            result: Any = page.evaluate(effective_expression)
             return {
                 "success": True,
                 "result": result,
