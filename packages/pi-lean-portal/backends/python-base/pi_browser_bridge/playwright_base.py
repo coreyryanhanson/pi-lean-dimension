@@ -140,6 +140,19 @@ class PlaywrightBridge(BrowserBridge):
     #: NOT need this — it patches ``browser.new_context`` itself.
     _context_factory: Literal["new_context", "camoufox_new_context"] = "new_context"
 
+    #: When True, navigation-settle waits skip the ``networkidle`` load state.
+    #: The patched Firefox binaries used by stealth backends (invisible_playwright,
+    #: Camoufox) do not fire ``networkidle`` reliably, so waiting for it either
+    #: times out (``do_go_back``'s 30s default) or loiters in the Playwright sync
+    #: greenlet's event loop long enough to deadlock the Juggler driver when a
+    #: subsequent BrowserContext's ``new_page()`` is created.  When True,
+    #: ``do_go_back`` uses ``wait_until="load"`` and ``_wait_for_page_ready``
+    #: skips its ``networkidle`` wait — matching ``do_navigate``'s load-based
+    #: settle, which works reliably on the patched binaries.  Default ``False``
+    #: so the shipped chromium-py / firefox-py bridges keep their networkidle
+    #: settle behaviour bit-identical.
+    _skip_networkidle: bool = False
+
     # ── Shared Playwright state ─────────────────────────────────
 
     _pw: Any  # Playwright instance (lazy, shared)
@@ -558,7 +571,7 @@ class PlaywrightBridge(BrowserBridge):
     # ── Navigation settle helpers ───────────────────────────────
 
     @staticmethod
-    def _wait_for_page_ready(page: Any, timeout_ms: int) -> None:
+    def _wait_for_page_ready(page: Any, timeout_ms: int, skip_networkidle: bool = False) -> None:
         """Wait for page readiness after a navigation.
 
         Mirrors the TypeScript ``waitForPageReady`` helper — each load
@@ -570,15 +583,19 @@ class PlaywrightBridge(BrowserBridge):
         Args:
             page: Playwright Page.
             timeout_ms: Timeout for each wait_for_load_state call.
+            skip_networkidle: When True, skip the ``networkidle`` wait —
+                stealth patched-Firefox binaries don't fire it reliably and
+                loitering for it can deadlock the Juggler driver.
         """
         try:
             page.wait_for_load_state("load", timeout=timeout_ms)
         except Exception:
             pass
-        try:
-            page.wait_for_load_state("networkidle", timeout=timeout_ms)
-        except Exception:
-            pass
+        if not skip_networkidle:
+            try:
+                page.wait_for_load_state("networkidle", timeout=timeout_ms)
+            except Exception:
+                pass
 
     @staticmethod
     def _wait_for_navigation_settle(
@@ -586,6 +603,7 @@ class PlaywrightBridge(BrowserBridge):
         url_before: str,
         nav_timeout_ms: int = 5000,
         settle_timeout_ms: int = 400,
+        skip_networkidle: bool = False,
     ) -> tuple[bool, str]:
         """Wait for navigation to settle after a user interaction.
 
@@ -621,11 +639,11 @@ class PlaywrightBridge(BrowserBridge):
 
             waited_for_load = False
             if navigated:
-                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms)
+                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms, skip_networkidle)
                 waited_for_load = True
             elif page.url != url_before:
                 # URL changed without framenavigated event
-                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms)
+                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms, skip_networkidle)
                 waited_for_load = True
             else:
                 # No navigation — settle for client-side rerenders
@@ -633,7 +651,7 @@ class PlaywrightBridge(BrowserBridge):
 
             # Late-arrival gate: catch navigations that started during settle
             if not waited_for_load and (navigated or page.url != url_before):
-                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms)
+                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms, skip_networkidle)
 
         finally:
             page.remove_listener("framenavigated", _on_nav)
@@ -881,7 +899,9 @@ class PlaywrightBridge(BrowserBridge):
             url_before = page.url
             locator.click(timeout=5_000)
 
-            navigated, _ = self._wait_for_navigation_settle(page, url_before)
+            navigated, _ = self._wait_for_navigation_settle(
+                page, url_before, skip_networkidle=self._skip_networkidle,
+            )
 
             new_url = page.url
             new_title = page.title()
@@ -1048,7 +1068,14 @@ class PlaywrightBridge(BrowserBridge):
             }
 
         try:
-            page.go_back(wait_until="networkidle")
+            if self._skip_networkidle:
+                # Stealth patched Firefox doesn't fire networkidle; waiting for
+                # it times out (30s default) and loitering in the event loop can
+                # deadlock the Juggler driver for subsequent contexts.  Match
+                # ``do_navigate``'s load-based settle instead.
+                page.go_back(wait_until="load", timeout=15_000)
+            else:
+                page.go_back(wait_until="networkidle")
             time.sleep(0.3)
 
             new_url: Optional[str] = None
@@ -1109,7 +1136,8 @@ class PlaywrightBridge(BrowserBridge):
             page.keyboard.press(key)
 
             navigated, _ = self._wait_for_navigation_settle(
-                page, url_before, nav_timeout_ms=3000
+                page, url_before, nav_timeout_ms=3000,
+                skip_networkidle=self._skip_networkidle,
             )
 
             new_url = page.url
