@@ -20,7 +20,7 @@ import os
 import re
 import sys
 import time
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 from .bridge import BrowserBridge, SessionNotFoundError
 from .bot_detection import check_bot_detection
@@ -132,13 +132,16 @@ class PlaywrightBridge(BrowserBridge):
     #: event performs the scroll via input events instead.
     _scroll_via_wheel: bool = False
 
-    #: Which context-creation entry point ``create_browser_context()`` dispatches
-    #: to.  ``"new_context"`` (default) calls ``browser.new_context(**kwargs)``
-    #: directly.  ``"camoufox_new_context"`` dispatches to the internal
-    #: ``_camoufox_new_context`` helper, which calls ``camoufox.NewContext`` to
-    #: install the spoofed fingerprint init script.  invisible_playwright does
-    #: NOT need this — it patches ``browser.new_context`` itself.
-    _context_factory: Literal["new_context", "camoufox_new_context"] = "new_context"
+    #: When True, ``create_browser_context`` passes ``no_viewport=True`` to
+    #: ``browser.new_context()``, telling Playwright to skip the
+    #: ``Browser.setDefaultViewport`` CDP call.  The Camoufox patched Firefox
+    #: binary does not accept the ``isMobile`` property that Playwright Firefox
+    #: includes in ``setDefaultViewport``, which would otherwise cause a
+    #: ``Protocol error`` on context creation.  Other backends (including
+    #: invisible_playwright's patched ``new_context``) do not need this flag;
+    #: only set it when the binary rejects the default viewport call.
+    #: Default ``False`` so the shipped bridges stay bit-identical.
+    _skip_default_viewport: bool = False
 
     #: When True, navigation-settle waits skip the ``networkidle`` load state.
     #: The patched Firefox binaries used by stealth backends (invisible_playwright,
@@ -285,16 +288,15 @@ class PlaywrightBridge(BrowserBridge):
         Applies the default viewport, :attr:`effective_user_agent`, and
         ``storageState`` from config — **unless**
         :attr:`_fingerprint_managed_context` is True, in which case viewport
-        and user_agent are omitted so a stealth fingerprint package (Camoufox
-        ``NewContext`` / invisible_playwright's patched ``new_context``) can
+        and user_agent are omitted so the stealth fingerprint package can
         generate them from the fingerprint without being clobbered.
+        (Camoufox v135.x injects the fingerprint at browser launch via
+        ``NewBrowser``; invisible_playwright patches ``browser.new_context``.)
 
-        Context creation dispatches on :attr:`_context_factory`:
-
-        * ``"new_context"`` (default) — ``browser.new_context(**kwargs)``.
-        * ``"camoufox_new_context"`` — delegates to :meth:`_camoufox_new_context`,
-          which calls ``camoufox.NewContext`` to install the spoofed
-          fingerprint init script.
+        Context creation always goes through ``browser.new_context(**kwargs)``.
+        Stealth backends that need fingerprint injection at context creation
+        time can override this method; the shipped quirks (Camoufox, invisible)
+        both inject at launch/patch time and need no override.
 
         Starts Playwright tracing if ``BROWSER_TRACE_DIR`` is set.
 
@@ -307,17 +309,20 @@ class PlaywrightBridge(BrowserBridge):
             # Shipped bridges: hard-coded defaults.
             context_kwargs["viewport"] = {"width": 1280, "height": 720}
             context_kwargs["user_agent"] = self.effective_user_agent
+        elif self._skip_default_viewport:
+            # The Camoufox patched Firefox binary does not accept the
+            # ``isMobile`` property that Playwright Firefox includes in
+            # ``Browser.setDefaultViewport``.  Skip the call entirely.
+            context_kwargs["no_viewport"] = True
         # When fingerprint-managed, ONLY pass storage_state (and let the
         # fingerprint package set viewport/UA/screen/dpr).  proxy/geolocation
-        # are forwarded by stealth subclasses via their context-factory override.
+        # are forwarded by stealth subclasses at browser launch via their
+        # ``_launch_browser`` override (e.g. ``camoufox.NewBrowser``).
         storage_state = config.get("storageState")
         if storage_state is not None:
             context_kwargs["storage_state"] = storage_state
 
-        if self._context_factory == "camoufox_new_context":
-            context = self._camoufox_new_context(browser, context_kwargs)
-        else:
-            context = browser.new_context(**context_kwargs)
+        context = browser.new_context(**context_kwargs)
 
         # Start Playwright trace capture if BROWSER_TRACE_DIR is set.
         _trace_dir = os.environ.get("BROWSER_TRACE_DIR")
@@ -334,53 +339,6 @@ class PlaywrightBridge(BrowserBridge):
                 pass  # Best-effort
 
         return context
-
-    def _camoufox_new_context(
-        self,
-        browser: Any,
-        context_kwargs: dict[str, Any],
-    ) -> Any:
-        """Create a Camoufox fingerprint-injected BrowserContext.
-
-        Called by :meth:`create_browser_context` when
-        :attr:`_context_factory` is ``"camoufox_new_context"``.  Delegates to
-        ``camoufox.NewContext`` so the BrowserForge fingerprint preset and its
-        init script (spoofed navigator/screen/WebGL/canvas/audio/fonts) are
-        installed — calling ``browser.new_context`` directly would produce a
-        vanilla Firefox fingerprint and defeat the whole point of Camoufox.
-
-        ``camoufox`` is imported lazily inside this helper so non-Camoufox
-        bridges never pay the import cost.
-
-        Launch options (``os``, ``fingerprint_preset``, ``proxy``,
-        ``geolocation``, ``geoip``) are read from
-        ``self.plugin_config.get("launch", {})``.  ``storage_state`` is
-        forwarded from ``context_kwargs`` so the existing profile flow works.
-        """
-        # Mirror _ensure_playwright's convention: prefer the subclass'
-        # _install_hint (which names the exact pip + fetch commands),
-        # falling back to a generic message for bridges that didn't set it.
-        # Computed before the try so the `or` lives outside the except body
-        # (keeps the no-boolean-in-except lint calm).
-        install_msg = (
-            self._install_hint
-            or "camoufox is not installed. Run: pip install camoufox[geoip] && python -m camoufox fetch"
-        )
-        try:
-            import camoufox  # type: ignore[import-unresolved]
-        except ImportError as exc:
-            raise RuntimeError(install_msg) from exc
-
-        launch = self.plugin_config.get("launch", {}) or {}
-        new_context_kwargs: dict[str, Any] = {}
-        if "storage_state" in context_kwargs:
-            new_context_kwargs["storage_state"] = context_kwargs["storage_state"]
-        # Forward optional stealth launch options if the user supplied them.
-        for opt in ("os", "fingerprint_preset", "proxy", "geolocation", "geoip"):
-            if opt in launch:
-                new_context_kwargs[opt] = launch[opt]
-
-        return camoufox.NewContext(browser, **new_context_kwargs)
 
     def _setup_page_session(self, page: Any) -> dict[str, Any]:
         """Attach console capture and dialog handlers to a new page.

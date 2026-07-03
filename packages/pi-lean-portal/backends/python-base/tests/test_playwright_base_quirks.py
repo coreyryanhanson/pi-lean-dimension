@@ -5,8 +5,8 @@ Tests for ``pi_browser_bridge.playwright_base.PlaywrightBridge`` Phase 0 work:
   ``browser.init`` RPC handler (inherited from ``BrowserBridge``).
 * The four stealth quirks change base-class behavior:
     - ``_fingerprint_managed_context`` → viewport/user_agent omitted
-    - ``_context_factory == "camoufox_new_context"`` → dispatches to
-      ``_camoufox_new_context`` (lazy-import + ImportError path)
+    - ``_skip_default_viewport`` → ``no_viewport=True`` passed to avoid
+      the Camoufox binary's ``setDefaultViewport`` ``isMobile`` rejection
     - ``_scroll_via_wheel`` → ``do_scroll`` uses ``page.mouse.wheel``
     - ``_eval_prefix`` → ``do_evaluate`` prepends the prefix
 
@@ -14,10 +14,7 @@ These are pure-logic tests — no Playwright browser required.  A small
 fake page/context mocks the few Playwright methods the code paths touch.
 """
 
-import json
 from typing import Any
-
-import pytest  # type: ignore[import-unresolved]
 
 from pi_browser_bridge.bridge import BrowserBridge
 from pi_browser_bridge.playwright_base import PlaywrightBridge
@@ -206,107 +203,57 @@ class TestFingerprintManagedContext:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-#  _context_factory == "camoufox_new_context"
+#  _skip_default_viewport
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestCamoufoxContextFactory:
-    def test_camoufox_factory_dispatches_to_helper(self, monkeypatch):
+class TestSkipDefaultViewport:
+    """``_skip_default_viewport`` makes ``create_browser_context`` pass
+    ``no_viewport=True`` so the Camoufox patched Firefox binary doesn't
+    reject the ``Browser.setDefaultViewport`` CDP call (its ``isMobile``
+    property is not in the binary's schema).  Only meaningful alongside
+    ``_fingerprint_managed_context = True``.
+    """
+
+    def test_default_does_not_pass_no_viewport(self):
         bridge = _FakePlaywrightBridge()
-        bridge._context_factory = "camoufox_new_context"
         bridge._fingerprint_managed_context = True
-
-        captured: dict[str, Any] = {}
-
-        class _FakeCamoufox:
-            @staticmethod
-            def NewContext(browser: Any, **kwargs: Any) -> str:
-                captured["browser"] = browser
-                captured["kwargs"] = kwargs
-                return "fake-camoufox-context"
-
-        # Inject a fake `camoufox` module into sys.modules so the lazy import
-        # inside _camoufox_new_context picks it up.
-        import sys
-        monkeypatch.setitem(sys.modules, "camoufox", _FakeCamoufox)
-
-        ctx = bridge.create_browser_context({"storageState": {"cookies": []}})
-        assert ctx == "fake-camoufox-context"
-        assert captured["browser"] is bridge._fake_browser
-        # storage_state forwarded
-        assert captured["kwargs"]["storage_state"] == {"cookies": []}
-
-    def test_camoufox_factory_imports_options_from_launch(self, monkeypatch):
-        bridge = _FakePlaywrightBridge()
-        bridge._context_factory = "camoufox_new_context"
-        bridge._fingerprint_managed_context = True
-        # Seed plugin_config with launch options
-        bridge._plugin_config = {
-            "launch": {"os": "windows", "proxy": {"server": "http://p:8080"}}
-        }
-
-        captured: dict[str, Any] = {}
-
-        class _FakeCamoufox:
-            @staticmethod
-            def NewContext(browser: Any, **kwargs: Any) -> str:
-                captured["kwargs"] = kwargs
-                return "ctx"
-
-        import sys
-        monkeypatch.setitem(sys.modules, "camoufox", _FakeCamoufox)
-
+        # default _skip_default_viewport = False
         bridge.create_browser_context({})
-        assert captured["kwargs"]["os"] == "windows"
-        assert captured["kwargs"]["proxy"] == {"server": "http://p:8080"}
+        call = bridge._fake_browser.new_context_calls[-1]
+        assert "no_viewport" not in call
 
-    def test_camoufox_factory_raises_with_install_hint_when_missing(self, monkeypatch):
+    def test_skip_passes_no_viewport_true(self):
         bridge = _FakePlaywrightBridge()
-        bridge._context_factory = "camoufox_new_context"
-        bridge._install_hint = "pip install camoufox[geoip] && python -m camoufox fetch"
+        bridge._fingerprint_managed_context = True
+        bridge._skip_default_viewport = True
+        bridge.create_browser_context({})
+        call = bridge._fake_browser.new_context_calls[-1]
+        assert call["no_viewport"]
+        # viewport/user_agent still omitted (fingerprint-managed)
+        assert "viewport" not in call
+        assert "user_agent" not in call
 
-        # Ensure the import fails
-        import sys
-        monkeypatch.setitem(sys.modules, "camoufox", None)
-
-        with pytest.raises(RuntimeError) as excinfo:
-            bridge.create_browser_context({})
-        # When _install_hint is set, the error IS the hint (mirrors
-        # _ensure_playwright's convention) — no generic "not installed" text.
-        assert str(excinfo.value) == "pip install camoufox[geoip] && python -m camoufox fetch"
-
-    def test_camoufox_factory_falls_back_to_generic_message_without_hint(self, monkeypatch):
+    def test_skip_ignored_when_not_fingerprint_managed(self):
+        # The elif branch only fires under fingerprint-managed mode;
+        # shipped bridges keep their hard-coded viewport/UA regardless.
         bridge = _FakePlaywrightBridge()
-        bridge._context_factory = "camoufox_new_context"
-        bridge._install_hint = ""  # explicitly empty → generic fallback
+        bridge._skip_default_viewport = True
+        bridge.create_browser_context({})
+        call = bridge._fake_browser.new_context_calls[-1]
+        assert "no_viewport" not in call
+        assert call["viewport"] == {"width": 1280, "height": 720}
+        assert "user_agent" in call
 
-        import sys
-        monkeypatch.setitem(sys.modules, "camoufox", None)
-
-        with pytest.raises(RuntimeError) as excinfo:
-            bridge.create_browser_context({})
-        msg = str(excinfo.value)
-        assert "camoufox" in msg
-        assert "not installed" in msg
-        assert "pip install camoufox[geoip]" in msg
-
-    def test_default_factory_does_not_import_camoufox(self, monkeypatch):
-        """Default ``new_context`` dispatch must not touch the camoufox module."""
-        import sys
-
-        # Make any import of camoufox explode so we'd notice if it happened.
-        class _Boom:
-            @staticmethod
-            def NewContext(*a: Any, **k: Any) -> Any:  # pragma: no cover
-                raise AssertionError("camoufox should not be imported")
-
-        monkeypatch.setitem(sys.modules, "camoufox", _Boom)
-
+    def test_skip_forwards_storage_state(self):
         bridge = _FakePlaywrightBridge()
-        # default _context_factory = "new_context"
-        ctx = bridge.create_browser_context({})
-        # We got a real _FakeContext back, not an assertion error.
-        assert isinstance(ctx, _FakeContext)
+        bridge._fingerprint_managed_context = True
+        bridge._skip_default_viewport = True
+        state = {"cookies": [], "origins": []}
+        bridge.create_browser_context({"storageState": state})
+        call = bridge._fake_browser.new_context_calls[-1]
+        assert call["no_viewport"]
+        assert call["storage_state"] is state
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -407,4 +354,5 @@ class TestQuirksDefaultOff:
         assert bridge._fingerprint_managed_context == False
         assert bridge._eval_prefix == ""
         assert bridge._scroll_via_wheel == False
-        assert bridge._context_factory == "new_context"
+        assert bridge._skip_default_viewport == False
+        assert bridge._skip_networkidle == False
