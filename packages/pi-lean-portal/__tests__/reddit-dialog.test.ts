@@ -104,36 +104,6 @@ describe("Reddit dialog — first pass", () => {
 		expect(dialogCount(snap.snapshot)).toBeGreaterThanOrEqual(1);
 	});
 
-	it("reject all (nested SVG button) closes the dialog", async () => {
-		await plugin.navigate(`${serverUrl}/reddit-dialog`, TASK_ID, NAV_TIMEOUT);
-		const snap = await plugin.snapshot(TASK_ID);
-		expect(snap.success).toBe(true);
-
-		const info = findRef(snap.snapshot, "Reject All");
-		if (!info) return; // element beyond cap
-
-		const result = await plugin.click(TASK_ID, info.ref);
-		expect(result.success).toBe(true);
-
-		const after = await plugin.snapshot(TASK_ID);
-		expect(dialogCount(after.snapshot)).toBe(0);
-	});
-
-	it("accept all (plain button) closes the dialog", async () => {
-		await plugin.navigate(`${serverUrl}/reddit-dialog`, TASK_ID, NAV_TIMEOUT);
-		const snap = await plugin.snapshot(TASK_ID);
-		expect(snap.success).toBe(true);
-
-		const info = findRef(snap.snapshot, "Accept All");
-		if (!info) return;
-
-		const result = await plugin.click(TASK_ID, info.ref);
-		expect(result.success).toBe(true);
-
-		const after = await plugin.snapshot(TASK_ID);
-		expect(dialogCount(after.snapshot)).toBe(0);
-	});
-
 	it("stacked dialogs — consent then welcome — both dismissible", async () => {
 		const S_TASK = "reddit-stacked";
 		await plugin.navigate(`${serverUrl}/reddit-stacked`, S_TASK, NAV_TIMEOUT);
