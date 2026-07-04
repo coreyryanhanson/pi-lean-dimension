@@ -819,12 +819,24 @@ removeDisplay();
 `
 		: "";
 
-	return `
+	// Wrap in an IIFE so the multi-statement script is a valid expression
+	// across every backend. The camoufox-py bridge prepends a `"mw:"` main-
+	// world routing prefix to every `page.evaluate` expression; a bare
+	// `let`-bearing script becomes `"mw:let ..."` which is a SyntaxError
+	// (a label cannot prefix a LexicalDeclaration). Wrapping as
+	// `"mw:(() => { let ...; })()"` is a label prefixing an expression
+	// statement — valid everywhere. The IIFE also preserves the implicit-
+	// global assignments (`removeDisplay = ...`, `core.endEpisode = ...`)
+	// because they're bare assignments to undeclared identifiers, not
+	// block-scoped declarations. Functionally equivalent to base.py's
+	// bare injection on engines that tolerate it (Node Chromium/Firefox,
+	// the Python bridges without a prefix).
+	return `(() => {
 ${removeDisplayBlock}
 Math.seedrandom(${JSON.stringify(seed)});
 core.EPISODE_MAX_TIME = ${JSON.stringify(episodeMaxMs)};
 core.startEpisodeReal();
-`;
+})();`;
 }
 
 /**
@@ -880,7 +892,7 @@ export async function miniwobRewardInfo(
 ): Promise<MiniwobRewardInfo> {
 	const res = await plugin.evaluate(
 		taskId,
-		`() => [WOB_REWARD_GLOBAL, WOB_RAW_REWARD_GLOBAL, WOB_REWARD_REASON, WOB_DONE_GLOBAL, WOB_EPISODE_ID, WOB_TASK_READY]`,
+		`(() => [WOB_REWARD_GLOBAL, WOB_RAW_REWARD_GLOBAL, WOB_REWARD_REASON, WOB_DONE_GLOBAL, WOB_EPISODE_ID, WOB_TASK_READY])()`,
 	);
 	if (!res.success || !Array.isArray(res.result) || res.result.length < 6) {
 		return { ...NULL_REWARD_INFO };
@@ -906,7 +918,7 @@ export async function miniwobGetGoal(
 	plugin: BrowserPlugin,
 	taskId: string,
 ): Promise<string> {
-	const res = await plugin.evaluate(taskId, `() => core.getUtterance()`);
+	const res = await plugin.evaluate(taskId, `(() => core.getUtterance())()`);
 	if (!res.success || res.result === null || res.result === undefined)
 		return "";
 	const r = res.result;
