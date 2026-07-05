@@ -1,4 +1,29 @@
-# pi-lean-host Python dependencies
-# Pin versions when ready — see browsergym-migration-plan.md §1.2
-# browsergym[miniwob] == 0.x.y
-# playwright
+# pi-lean-host Python dependencies — dedicated browsergym venv
+#
+# Installed by `npm run setup:venv -w pi-lean-host` into
+# packages/pi-lean-host/venv/ (gitignored). Isolated from the
+# portal's chromium-py / firefox-py venv so browsergym's own
+# playwright pin (1.44) and gymnasium/numpy don't collide with
+# those backends' deps.
+#
+# ── Attribution ──────────────────────────────────────────────────
+# BrowserGym © ServiceNow (Apache-2.0).
+# MiniWoB++   © Farama-Foundation (Apache-2.0), pinned at
+#              miniwob-plusplus@7fd85d71a4b60325c6585396ec4f48377d049838.
+#
+# ── Why browsergym-miniwob and not browsergym[miniwob]? ──────────
+# The umbrella `browsergym` wheel (0.14.3) hard-depends on EVERY
+# sub-package (webarena, visualwebarena, assistantbench, workarena,
+# weblinx, ...) — there is no `[miniwob]` extra on it. Installing
+# `browsergym-miniwob` directly pulls only core + miniwob, which is
+# what pi-lean-host's Phase 1 adapter needs. WebArena / WorkArena /
+# VisualWebArena are a `pip install` extra away once Phase 3 lands
+# (add `browsergym-webarena==0.14.3` etc. here).
+
+browsergym-miniwob==0.14.3
+
+# playwright is pinned transitively by browsergym-core==0.14.3 to
+# ==1.44. We re-pin it explicitly here so the venv's `playwright
+# install chromium` step targets the same version the bridge uses,
+# and so a future `pip install --upgrade` can't silently drift it.
+playwright==1.44

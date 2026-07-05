@@ -8,17 +8,17 @@
  * path the test suite expects. No-op when the target directory already
  * exists (idempotent).
  *
- * The test suite (`miniwob.test.ts`) and helpers
- * (`helpers/miniwob.ts`) default to
+ * The suite and helpers default to
  * `/tmp/miniwob-plusplus/miniwob/html` as the HTML root.  Override
  * at test time via `MINIWOB_HTML_ROOT` (path to the html directory on
  * disk) or `MINIWOB_URL` (URL of an already-running HTTP server
  * serving the html directory).
  *
  * Usage:
- *   node scripts/setup-miniwob.mjs                          # default: /tmp/miniwob-plusplus
- *   MINIWOB_HTML_ROOT=/opt/miniwob node scripts/setup-miniwob.mjs  # custom path
- *   node scripts/setup-miniwob.mjs /custom/path             # positional override
+ *   npm run setup:miniwob                                     # workspace default
+ *   node packages/pi-lean-host/scripts/setup-miniwob.mjs      # same (direct)
+ *   MINIWOB_HTML_ROOT=/opt/miniwob node …setup-miniwob.mjs   # custom path
+ *   node packages/pi-lean-host/scripts/setup-miniwob.mjs /custom/path
  *
  * ── Attribution ────────────────────────────────────────────────
  *
@@ -52,6 +52,23 @@ function info(message) {
 	console.log(`[setup-miniwob] ${message}`);
 }
 
+function warn(message) {
+	console.warn(`[setup-miniwob] WARNING: ${message}`);
+}
+
+/** Return the SHA the checkout is currently at, or null if git fails. */
+function currentCommit(cwd) {
+	try {
+		return execSync("git rev-parse HEAD", {
+			stdio: ["ignore", "pipe", "ignore"],
+			cwd,
+			encoding: "utf8",
+		}).trim();
+	} catch {
+		return null;
+	}
+}
+
 // ─── Main ────────────────────────────────────────────────────────
 
 function main() {
@@ -61,10 +78,42 @@ function main() {
 	const checkoutRoot = resolve(positionalArg ?? envRoot ?? DEFAULT_ROOT);
 	const htmlDir = join(checkoutRoot, "miniwob", "html");
 
-	// ── Idempotency guard ────────────────────────────────────────
+	// ── Existing .git checkout — verify html/ presence + pinned commit ──
+	// (§1.7 hardening: a stale or partial checkout should be repaired,
+	//  not silently trusted. Drift from PINNED_COMMIT warns but proceeds.)
 	if (existsSync(join(checkoutRoot, ".git"))) {
+		if (!existsSync(htmlDir)) {
+			warn(
+				`Checkout at ${checkoutRoot} is missing miniwob/html/ — ` +
+					`repairing by re-checking out the pinned commit.`,
+			);
+			try {
+				execSync(`git reset --hard ${PINNED_COMMIT}`, {
+					stdio: "inherit",
+					cwd: checkoutRoot,
+				});
+			} catch {
+				die(
+					`Failed to repair checkout at ${checkoutRoot}. ` +
+						`Remove it and re-run to re-clone.`,
+				);
+			}
+			if (!existsSync(htmlDir)) {
+				die(`miniwob/html/ still missing after checkout repair: ${htmlDir}`);
+			}
+		}
+
+		const head = currentCommit(checkoutRoot);
+		if (head && head !== PINNED_COMMIT) {
+			warn(
+				`Checkout at ${checkoutRoot} is at ${head.slice(0, 12)}, ` +
+					`not the pinned ${PINNED_COMMIT.slice(0, 12)}. ` +
+					`Proceeding — re-pin deliberately or remove the checkout ` +
+					`and re-run to reset.`,
+			);
+		}
 		info(
-			`MiniWoB++ already cloned at ${checkoutRoot}. Nothing to do.\n` +
+			`MiniWoB++ already cloned at ${checkoutRoot}.\n` +
 				`  HTML root: ${htmlDir}\n` +
 				`  To re-clone, remove ${checkoutRoot} and re-run.`,
 		);

@@ -1,0 +1,9 @@
+# Dedicated BrowserGym venv (created by `npm run setup:venv -w pi-lean-host`).
+# Isolated from the portal's chromium-py / firefox-py venv.
+venv/
+
+# Benchmark run outputs (Phase 2+).
+results/
+
+# Python bytecode cache.
+__pycache__/
