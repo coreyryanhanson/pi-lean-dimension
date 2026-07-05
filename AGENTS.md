@@ -276,6 +276,28 @@ See [`miniwob-integration-plan.md`](miniwob-integration-plan.md) for the
 full plan, spike findings, per-backend parity status, and the
 camoufox-py diagnostic.
 
+## CI Pipeline
+
+The repository includes a GitHub Actions workflow at
+`.github/workflows/ci.yml` that runs on every PR and push to `main`:
+
+1. **Checkout** the repository
+2. **Setup Node.js 22** with npm caching
+3. **Install dependencies** via `npm ci`
+4. **Install Playwright browsers** (`chromium`, `firefox`) with system
+   deps
+5. **Clone MiniWoB++ content** via `npm run setup:miniwob`
+6. **Run structural tests** via `npm run test:ci`
+7. **Run MiniWoB browser tests** via `npm run test:miniwob`
+
+**Python/venv backends** (chromium-py, firefox-py) auto-skip in CI
+because no Python venv is set up. To enable them, add CI steps for
+creating the venv, installing `playwright` in it, and installing
+the Python-backed browsers.
+
+**Manual trigger:** The workflow also supports `workflow_dispatch`
+for re-running from the Actions tab without pushing a new commit.
+
 ## TypeScript Quirks
 
 - `noEmit: true` — source-only, no build step

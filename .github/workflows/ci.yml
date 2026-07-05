@@ -1,0 +1,73 @@
+# CI workflow for pi-lean-dimension monorepo
+#
+# Runs structural tests (test:ci) and MiniWoB++ browser tests
+# (test:miniwob) on every PR and push to main.
+#
+# ── Structure ──────────────────────────────────────────────────────
+#
+# - Fast structural tests run first (no browser required).
+# - MiniWoB++ browser tests run after, gated by:
+#   1. Playwright Chromium + Firefox (for Node backends)
+#   2. Cloned MiniWoB++ content at the pinned commit
+#   3. Python/venv backends auto-skip when the venv isn't present
+#
+# ── Attribution ────────────────────────────────────────────────────
+#
+# MiniWoB++ © Farama-Foundation (Apache-2.0)
+# BrowserGym © ServiceNow (Apache-2.0)
+# Pinned commit: miniwob-plusplus@7fd85d71a4b60325c6585396ec4f48377d049838
+#
+# ── Manual trigger ─────────────────────────────────────────────────
+#
+# workflow_dispatch lets you re-run from the Actions tab without
+# pushing a new commit.
+#
+# ── Environment ────────────────────────────────────────────────────
+#
+# Node 22 (matching engines requirement in package.json)
+# Ubuntu latest (for Playwright system deps)
+# Python backends auto-skip (no venv setup in CI by default)
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-flight runs for the same PR/branch to save CI minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers (chromium, firefox)
+        run: npx playwright install --with-deps chromium firefox
+
+      - name: Setup MiniWoB++ content
+        run: npm run setup:miniwob
+
+      - name: Run structural tests (test:ci)
+        run: npm run test:ci
+
+      - name: Run MiniWoB browser tests (test:miniwob)
+        run: npm run test:miniwob
