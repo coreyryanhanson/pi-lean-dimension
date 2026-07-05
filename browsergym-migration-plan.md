@@ -116,9 +116,21 @@ performer's act lands, not whether their vocal cords function.
 
 - **Phase 1:** delete the four MiniWoB files (`helpers/miniwob.ts`,
   `helpers/miniwob-suite.ts`, `miniwob.test.ts`, `miniwob-helper.test.ts`)
-  - the diag scratch files. They move to `pi-lean-host`.
-- **Phase 1:** apply the reviewer's "stacked dialogs dedup" cleanup
-  (one of `plugin-contract.ts:1091` or `reddit-dialog.test.ts:107`).
+  - they move to `pi-lean-host`.
+- **Phase 1:** delete the unfinished user-backend plugin tests
+  (`camoufox-py.test.ts`, `camoufox-py-persistence.test.ts`,
+  `invisible-py.test.ts`, `invisible-py-persistence.test.ts`). These were
+  scratch tests for in-development user plugins; the Option C migration
+  causes too much drift to justify keeping them around. They'll be
+  rebuilt after completion as **user-owned parity test files** that
+  consume the `pi-lean-host` public `benchPlugin` API (see "User-plugin
+  benchmarking") — which is the structurally correct home for them
+  anyway.
+- **Deferred to a separate PR (out of scope for this migration):** the
+  reviewer's "stacked dialogs dedup" cleanup at `plugin-contract.ts:1091`
+  / `reddit-dialog.test.ts:107`. It's orthogonal to Option C and
+  entangling it would muddy the file inventory. File it as its own
+  follow-up.
 - **Phase 4:** the behavioral portal tests (`reddit-dialog` behavioral
   parts, `cookie-persistence`) move to `pi-lean-host` as task
   invocations and the originals are deleted. The framework-internals
@@ -220,7 +232,7 @@ model authoritative and avoids any `bid`/`@e` vocabulary collision.
 
 ```
 packages/pi-lean-host/
-├── package.json                  (name: pi-lean-host, private: true, NOT lockstep, NOT in umbrella meta-package)
+├── package.json                  (name: pi-lean-host, NOT lockstep, NOT in umbrella meta-package; npm namespace reserved via an early placeholder publish — see §1.1)
 ├── README.md                     (host usage + "Benchmarking your own BrowserPlugin" guide, not shipped to end users)
 ├── AGENTS.md                     (stub — points at monorepo AGENTS.md)
 ├── src/
@@ -246,7 +258,7 @@ packages/pi-lean-host/
 
 **Depends on (external, dev-only):** `browsergym[miniwob]` (Python, in the dedicated venv), Pi SDK (Node, for Phase 2 agent spawning), `vitest` (test runner).
 
-**Not bundled in `pi-lean-dimension` umbrella meta-package** — that's for end-user-installed extensions. `pi-lean-host` is private research tooling. The Pylea pun continues: the Host (Lorne) watches performers from outside the performance.
+**Not bundled in `pi-lean-dimension` umbrella meta-package** — that's for end-user-installed extensions. `pi-lean-host` is research tooling; it's published to npm **only to reserve the namespace** (see §1.1), not for end-user installation. The Pylea pun continues: the Host (Lorne) watches performers from outside the performance.
 
 ### What `pi-lean-portal` loses
 
@@ -258,9 +270,12 @@ Deleted from `packages/pi-lean-portal/__tests__/`:
 - `miniwob-helper.test.ts` (~156 lines) — structural guards on the ported table
 - `miniwob-spike-findings.md` — moves to `pi-lean-host/docs/` (historical reference)
 
-Deleted from `packages/pi-lean-portal/__tests__/helpers/`:
+Deleted from `packages/pi-lean-portal/__tests__/` (unfinished user-backend plugin tests — rebuilt post-migration as user-owned parity files via the `pi-lean-host` public API):
 
-- The diagnostic files (`miniwob-diag*.test.ts`, `miniwob-cdiag.test.ts`, `miniwob-camdiag.test.ts`) — these were debugging scratch; the underlying camoufox-py issue is tracked in Phase 1.5.
+- `camoufox-py.test.ts`, `camoufox-py-persistence.test.ts` (camoufox stealth Firefox)
+- `invisible-py.test.ts`, `invisible-py-persistence.test.ts` (invisible-py user backend)
+
+The underlying camoufox-py execution-context bug is still tracked in Phase 1.5; only the scratch test files are removed now.
 
 **Kept** in `pi-lean-portal/__tests__/`:
 
@@ -276,15 +291,63 @@ Deleted from `packages/pi-lean-portal/__tests__/helpers/`:
 
 ## Phase 1 — Option C migration
 
-### 1.1 Scaffold `pi-lean-host` package
+### 1.0 CDP endpoint spike (load-bearing — runs before §1.3/1.4)
 
-- `packages/pi-lean-host/package.json` — `name: pi-lean-host`, `private: true`, `version: 0.0.1` (independent, NOT lockstep), `scripts: { test, "test:miniwob", "setup:miniwob", "setup:venv" }`. Workspace dep on `pi-lean-portal`.
+The `browsergym-adapter.ts` (§1.3) signature and the chromium plugin
+change (§1.4) both depend on **how we read the DevTools endpoint of a
+`chromium.launch()`-ed browser from Node Playwright**. Resolve this
+*before* writing the adapter or touching the plugin.
+
+- Launch chromium with `--remote-debugging-port=0` (OS-assigned port).
+- Confirm `http://localhost:<port>/json/version` is reachable and find
+  the actual port. Candidate mechanisms to evaluate: scraping the
+  DevTools listening URL from stderr, polling `/json/version` across the
+  port range, or using a `chromium.connectOverCDP` round-trip.
+- If Playwright Node doesn't surface the endpoint cleanly, fall back to
+  a **fixed port per test run** (e.g. `9222`), resolved via env var so
+  parallel CI matrix cells don't collide (`fail-fast: false` is
+  proposed in §1.8, which makes parallelism more likely).
+- Validate the two-CDP-client interleaving guard at the same time:
+  after Python `setup(page)`, run `ariaSnapshot()` from Node and confirm
+  the `@e`-ref tree is clean (no `bid` attrs in ARIA names). This is the
+  §"Risks & open questions" two-CDP-clients mitigation and must pass
+  before §1.3 is built on top of it.
+
+**Acceptance:** A throwaway script launches chromium, prints a working
+CDP endpoint, attaches a second Playwright client via
+`connect_over_cdp`, and snapshots a page the first client drove — with
+no `bid` leakage. The chosen mechanism is recorded in
+`pi-lean-host/docs/cdp-endpoint-spike.md` so §1.3/1.4 implement against
+a known answer.
+
+### 1.1 Scaffold `pi-lean-host` package + reserve npm namespace
+
+- `packages/pi-lean-host/package.json` — `name: pi-lean-host`, `version: 0.0.1` (independent, NOT lockstep, **not `private`**), `scripts: { test, "test:miniwob", "setup:miniwob", "setup:venv" }`. Workspace dep on `pi-lean-portal`.
+- **Reserve the npm namespace early.** npm has no name-reservation
+  without a publish, so the easiest way to claim `pi-lean-host` is to
+  publish a minimal placeholder `0.0.1` (stub `README.md` + the
+  `package.json` above) via `npm publish --access public` from the
+  scaffold commit. This locks the name before Phase 1 is complete; real
+  content ships under later versions. We won't run `sync-versions.js`
+  against `pi-lean-host` until it's ready, so the placeholder publish is
+  manual and one-off.
 - Add to root `package.json` `workspaces` (already `packages/*` — picked up automatically).
 - Root `vitest.config.ts` — include `packages/pi-lean-host/**` (or confirm workspaces glob already covers it).
+- **Extend the root `test:ci` exclude globs in the same commit.** The
+  current `test:ci` is `vitest run --exclude='**/miniwob.test.ts' ...
+  --exclude='**/reddit*.test.ts'`. The new host suites
+  (`miniwob-trivial.test.ts`, `miniwob-helper.test.ts`) do **not** match
+  the exact-filename `**/miniwob.test.ts` glob, and `vitest.config.ts`
+  includes `packages/*/**/*.test.ts` — so `npm test` and `npm run
+  test:ci` at root would discover host suites with no `browsergym` venv
+  installed. Add `--exclude='**/pi-lean-host/**'` to `test:ci` (and
+  optionally broaden `**/miniwob.test.ts` to `**/miniwob*.test.ts` for
+  clarity) so host tests only run via `npm run test:miniwob -w
+  pi-lean-host`.
 - `packages/pi-lean-host/AGENTS.md` stub pointing at monorepo `AGENTS.md`.
 - `packages/pi-lean-host/README.md` — usage: `npm run setup:venv && npm run setup:miniwob && npm run test:miniwob`.
 
-**Acceptance:** `npm test -w pi-lean-host` runs (no tests yet, exits clean).
+**Acceptance:** `npm test -w pi-lean-host` runs (no tests yet, exits clean); `npm run test:ci` at root does **not** discover host test files; `pi-lean-host@0.0.1` is visible on npm.
 
 ### 1.2 BrowserGym Python adapter (`adapter/browsergym-bridge.py`, ~150 lines)
 
@@ -299,7 +362,7 @@ A JSON-RPC-over-stdio server, modeled on the existing
 
 Attribution header (Apache-2.0, ServiceNow BrowserGym, Farama MiniWoB++, commit pin `miniwob-plusplus@7fd85d71`).
 
-**Dedicated venv:** `npm run setup:venv` creates `packages/pi-lean-host/venv/` with `pip install browsergym[miniwym] playwright` (pin versions in a `requirements.txt`). The adapter spawns under this venv's Python.
+**Dedicated venv:** `npm run setup:venv` creates `packages/pi-lean-host/venv/` with `pip install browsergym[miniwob] playwright` (pin versions in a `requirements.txt`). The adapter spawns under this venv's Python.
 
 **Acceptance:** `python adapter/browsergym-bridge.py` starts, responds to `miniwob.listTasks` with 125 entries, handles `miniwob.connect` against a manually-launched chromium with `--remote-debugging-port`.
 
@@ -333,8 +396,7 @@ Responsibilities:
 
 The chromium plugin currently launches via `chromium.launch({ args: [...] })` with no debugging port. To let the Python adapter attach:
 
-- Add `--remote-debugging-port=0` to the launch args (port 0 → OS-assigned free port).
-- After launch, read the actual port. Playwright's Node `chromium.launch()` returns a `Browser` whose underlying CDP endpoint is available via `browser.contexts()[0]?.pages()[0]`... actually the cleanest read is via the `--remote-debugging-port` DevTools listening URL printed to stderr, or by querying `http://localhost:<port>/json/version`. **Open question:** confirm the exact mechanism Playwright Node exposes for reading the CDP endpoint of a browser it launched. Likely: pass a fixed port (e.g. 9222) scoped to the test run, or use `chromium.connectOverCDP` round-trip.
+- Add `--remote-debugging-port=0` to the launch args (port 0 → OS-assigned free port). The exact read mechanism was resolved by the §1.0 spike — implement against the recorded answer (dynamic port via the spike-confirmed method, or a fixed env-var-resolved port if the spike fell back to that).
 - Add an optional `getCdpEndpoint(): string | null` method to `BrowserPlugin` (chromium returns the endpoint; firefox returns null until Phase 1.5; Python backends return null in Phase 1).
 
 **Risk:** This is the one place Phase 1 touches the shipped `pi-lean-portal` code. Keep the change minimal and gated so non-host usage is unaffected (the `--remote-debugging-port` arg is harmless for normal portal use; it just opens a debug port).
@@ -347,7 +409,7 @@ Move from `pi-lean-portal/__tests__/helpers/` to `pi-lean-host/solvers/`:
 
 - `miniwob-suite.ts` → split into `parser.ts`, `trivial-solvers.ts`, `register-suite.ts`.
 - Apply the reviewer's cleanup findings:
-  - Tighten `withRole` to match only the role segment of the snapshot line (not inside quoted accessible names) — anchor the regex to the segment before the first `"`.
+  - Tighten `withRole` to match only the role segment of the snapshot line (not inside quoted accessible names). The current `\b${roleKeyword}\b` regex already prevents the `button`/`spinbutton` collision; the real (lesser) bug is that the test runs against the whole line including the quoted accessible name, so a goal like `button "click the button"` matches `button` inside the quoted name too. Anchor the regex to the segment before the first `"`.
   - Remove the speculative `knownIssue` field (no shipped backend uses it; can re-add when a backend needs it).
   - Document that `registerMiniwobSuite` is the extension point for user-owned parity test files.
 
@@ -358,7 +420,7 @@ Move from `pi-lean-portal/__tests__/helpers/` to `pi-lean-host/solvers/`:
 - `miniwob.test.ts` → `pi-lean-host/suites/miniwob-trivial.test.ts`. Backend gates: chromium (confident), firefox (Phase 1 stretch — skip if no `launchServer` support), chromium-py/firefox-py (skip, Phase 1.5).
 - `miniwob-helper.test.ts` → `pi-lean-host/suites/miniwob-helper.test.ts`, slimmed from 156 → ~40 lines. No ported task table to lock; tests become "adapter spawns, `listTasks` returns 125, `setup` returns a goal, `validate` returns reward against a mock."
 
-**Acceptance:** `npm run test:miniwob -w pi-lean-host` runs 13 trivial-solver tests × chromium = 13 pass (or skip if browser absent), 112 element tasks skipped with `needs goal-aware solver`, 35 non-element tasks skipped with missing-tool reasons.
+**Acceptance:** `npm run test:miniwob -w pi-lean-host` runs 13 trivial-solver tests × chromium = 13 pass (or skip if browser absent), 77 element tasks skipped with `needs goal-aware solver`, 35 non-element tasks skipped with missing-tool reasons. (`13 + 77 + 35 = 125`, matching the AGENTS.md task split: 3 confident + 10 best-effort run, 77 element tasks lack a solver, 35 non-element tasks lack the tool.)
 
 ### 1.7 Move + keep the setup script
 
@@ -838,6 +900,17 @@ neither (in which case `pi-lean-host` skips it with a clear "plugin
 supports neither getCdpEndpoint nor connectOverCDP — cannot bench"
 reason).
 
+**Caller guard note (`exactOptionalPropertyTypes: true`):** because the
+repo enforces `exactOptionalPropertyTypes`, an optional method may be
+`undefined` at runtime, not just absent-on-the-type. Host-side callers
+must guard with `typeof plugin.getCdpEndpoint === "function"` (and
+likewise for `connectOverCDP`) — **not** a truthiness check like
+`if (plugin.getCdpEndpoint)`, which is safe under `strictNullChecks`
+but is the wrong pattern to teach in the public API docs. The
+`benchPlugin` mode negotiation uses the `typeof === "function"` guard
+and the README's "Benchmarking your own BrowserPlugin" section shows
+the same idiom.
+
 ### Documentation
 
 `pi-lean-host/README.md` includes a "Benchmarking your own BrowserPlugin"
@@ -860,7 +933,7 @@ output (what the skip reasons mean, what counts as a pass).
 
 | Risk | Mitigation |
 |---|---|
-| **CDP endpoint read from Node Playwright** — confirm the exact API for reading the CDP endpoint of a `chromium.launch()`-ed browser. | Phase 1.2 spike: launch chromium with `--remote-debugging-port=0`, verify `http://localhost:<port>/json/version` is reachable, find the port. If Playwright Node doesn't surface it cleanly, fall back to a fixed port per test run. |
+| **CDP endpoint read from Node Playwright** — confirm the exact API for reading the CDP endpoint of a `chromium.launch()`-ed browser. | **Step 1.0 spike (promoted ahead of §1.3/1.4):** launch chromium with `--remote-debugging-port=0`, verify `http://localhost:<port>/json/version` is reachable, find the port. If Playwright Node doesn't surface it cleanly, fall back to a fixed env-var-resolved port per test run (parallel CI cells need distinct slots). The two-CDP-client `ariaSnapshot()` cleanliness check runs in the same spike. |
 | **Firefox `launchServer` refactor** — switching the firefox plugin to `launchServer` + `connect` may break existing firefox tests. | Phase 1 chromium-first; firefox is a Phase 1 stretch goal, slips to Phase 1.5 if the refactor is invasive. Gate behind a feature flag if needed. |
 | **Two CDP clients on one Chromium** — Node Playwright + Python Playwright both attached. Standard feature, but validate no interleaving issues with `ariaSnapshot()` while Python holds a reference. | Phase 1.2 acceptance test: run `setup` from Python, `snapshot` from Node, confirm `@e`-ref tree is clean (no `bid` attrs in ARIA names). |
 | **`browsergym[miniwob]` Python dep weight in CI** — gymnasium, numpy, playwright pin. | Dedicated venv cached on `requirements.txt` hash; only installed in the bench CI step, not for `test:ci`. |
@@ -907,14 +980,15 @@ output (what the skip reasons mean, what counts as a pass).
 - `packages/pi-lean-portal/__tests__/helpers/miniwob-suite.ts`
 - `packages/pi-lean-portal/__tests__/miniwob.test.ts`
 - `packages/pi-lean-portal/__tests__/miniwob-helper.test.ts`
-- `packages/pi-lean-portal/__tests__/miniwob-diag*.test.ts`, `miniwob-cdiag.test.ts`, `miniwob-camdiag.test.ts` (debug scratch)
+- `packages/pi-lean-portal/__tests__/camoufox-py.test.ts`, `camoufox-py-persistence.test.ts` (unfinished user-backend plugin tests — rebuilt post-migration as user-owned parity files via the `pi-lean-host` public API)
+- `packages/pi-lean-portal/__tests__/invisible-py.test.ts`, `invisible-py-persistence.test.ts` (same rationale)
 - `automate-testing.md` (repo-root research notes)
 
 ### Kept unchanged
 
 - `packages/pi-lean-portal/__tests__/helpers/plugin-contract.ts`, `reddit-fixture.ts`, `test-server.ts`, `mock-plugin.ts`, `mock-python-bridge.py`
 - All portal structural tests + per-backend contract tests (framework integration tests stay in portal — see "Integration-test scope")
-- `scripts/sync-versions.js`, `scripts/release.mjs` (host is NOT lockstep; exclude `pi-lean-host` from `publish`)
+- `scripts/sync-versions.js`, `scripts/release.mjs` (host is NOT lockstep; its npm namespace is reserved via the manual placeholder publish in §1.1, and we won't run `sync-versions.js` against it until it's ready)
 
 ## Decision log
 
@@ -970,3 +1044,13 @@ output (what the skip reasons mean, what counts as a pass).
     surface is still growing; 1.0 marks "we commit to this API being
     stable," and we're not there yet. `pi-lean-host` is excluded from
     lockstep and stays on its own independent 0.x versioning regardless.
+11. **`pi-lean-host` is not `private` — namespace reserved via an early
+    placeholder publish** — npm offers no name reservation without a
+    publish, so the easiest way to claim `pi-lean-host` is to ship a
+    minimal `0.0.1` (stub README + scaffold `package.json`) from the
+    §1.1 commit via `npm publish --access public`. The package is
+    research tooling, not intended for end-user installation, but
+    publishing it reserves the name before Phase 1 completes. Real
+    content ships under later versions. `sync-versions.js` is not run
+    against `pi-lean-host` until it's ready, so the placeholder publish
+    is manual and one-off.
