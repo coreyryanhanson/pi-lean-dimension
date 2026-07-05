@@ -37,7 +37,7 @@ import { chromium } from "playwright";
 import { ChromiumPlugin } from "../../pi-lean-portal/backends/chromium/index.js";
 import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
 import type { TestServer } from "../../pi-lean-portal/__tests__/helpers/test-server.js";
-import { startMiniwobServer } from "../../pi-lean-portal/__tests__/helpers/miniwob.js";
+import { startMiniwobServer } from "../scripts/miniwob-server.js";
 import {
 	runMiniwobTask,
 	type TrivialSolver,

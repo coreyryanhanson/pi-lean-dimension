@@ -24,14 +24,17 @@
 		"README.md",
 		"AGENTS.md",
 		"LICENSE",
+		"src/",
 		"adapter/",
+		"solvers/",
 		"scripts/",
 		"requirements.txt"
 	],
 	"scripts": {
 		"prepack": "cp ../../LICENSE ./LICENSE",
 		"test": "vitest run",
-		"test:miniwob": "npm run test",
+		"test:miniwob": "vitest run suites/miniwob-trivial.test.ts",
+		"test:helper": "vitest run suites/miniwob-helper.test.ts",
 		"setup:miniwob": "node scripts/setup-miniwob.mjs",
 		"setup:venv": "node scripts/setup-venv.mjs"
 	},

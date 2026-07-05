@@ -74,6 +74,18 @@ export interface RunMiniwobTaskOptions {
 	donePollIntervalMs?: number;
 	/** How long to poll `done` after the solver returns (default 10_000ms). */
 	donePollTimeoutMs?: number;
+
+	/**
+	 * CDP endpoint override for Mode B (host-owns-browser). When set,
+	 * the bridge uses this endpoint directly instead of calling
+	 * `plugin.getCdpEndpoint()`. The host launched the reference
+	 * browser and owns the endpoint.
+	 *
+	 * Prefixed with `_` to indicate this is an internal detail of the
+	 * host-plugin interaction; external callers should use
+	 * `benchPlugin` with `mode: "host-owns-browser"` instead.
+	 */
+	_cdpEndpointOverride?: string;
 }
 
 /** Result of {@link runMiniwobTask}. */
@@ -136,7 +148,7 @@ interface PendingRequest {
 	timer: ReturnType<typeof setTimeout>;
 }
 
-class BridgeClient {
+export class BridgeClient {
 	private _proc: ChildProcess | null = null;
 	private _reqId = 0;
 	private _pending = new Map<number, PendingRequest>();
@@ -364,22 +376,27 @@ export async function runMiniwobTask(
 		return fail(`navigate failed: ${nav.error ?? "unknown"}`);
 	}
 
-	// 2. Resolve CDP endpoint (Mode A — plugin-owns-browser).
-	const getCdp = plugin.getCdpEndpoint;
-	if (typeof getCdp !== "function") {
-		await plugin.cleanup(taskId).catch(() => {});
-		return fail(
-			"plugin does not expose getCdpEndpoint() — Mode A unavailable. " +
-				"Implement getCdpEndpoint on the plugin or use benchPlugin (Mode B).",
-		);
-	}
-	const cdpEndpoint = getCdp.call(plugin);
+	// 2. Resolve CDP endpoint.
+	//    Mode B override takes priority (set by benchPlugin's host-owns-browser path).
+	//    Fall back to Mode A: plugin-owns-browser via getCdpEndpoint().
+	let cdpEndpoint: string | null = opts._cdpEndpointOverride ?? null;
 	if (!cdpEndpoint) {
-		await plugin.cleanup(taskId).catch(() => {});
-		return fail(
-			"plugin.getCdpEndpoint() returned null — browser may not have launched " +
-				"with a debug port, or port discovery failed (set CDP_PORT env as a fallback).",
-		);
+		const getCdp = plugin.getCdpEndpoint;
+		if (typeof getCdp !== "function") {
+			await plugin.cleanup(taskId).catch(() => {});
+			return fail(
+				"plugin does not expose getCdpEndpoint() — Mode A unavailable. " +
+					"Implement getCdpEndpoint on the plugin or use benchPlugin (Mode B).",
+			);
+		}
+		cdpEndpoint = getCdp.call(plugin);
+		if (!cdpEndpoint) {
+			await plugin.cleanup(taskId).catch(() => {});
+			return fail(
+				"plugin.getCdpEndpoint() returned null — browser may not have launched " +
+					"with a debug port, or port discovery failed (set CDP_PORT env as a fallback).",
+			);
+		}
 	}
 
 	// 3. Spawn the bridge + connect.

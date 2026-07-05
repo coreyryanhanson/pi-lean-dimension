@@ -17,7 +17,7 @@
 		"publish:dry": "npm run prepublishOnly && npm publish -w packages/pi-lean-portal -w packages/pi-lean-search --access public --dry-run && node scripts/publish-dimension.mjs --dry-run",
 		"test:ci": "vitest run --exclude='**/chromium*.test.ts' --exclude='**/firefox*.test.ts' --exclude='**/reddit*.test.ts' --exclude='**/miniwob.test.ts' --exclude='**/pi-lean-host/**'",
 		"setup:miniwob": "npm run setup:miniwob -w pi-lean-host",
-		"test:miniwob": "vitest run packages/pi-lean-portal/__tests__/miniwob.test.ts",
+		"test:miniwob": "npm run test:miniwob -w pi-lean-host",
 		"release:patch": "node scripts/release.mjs patch",
 		"release:minor": "node scripts/release.mjs minor",
 		"release:major": "node scripts/release.mjs major"
