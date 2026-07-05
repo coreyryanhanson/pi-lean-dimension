@@ -95,6 +95,15 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	 */
 	protected readonly captureUserAgent: boolean = false;
 
+	/**
+	 * Cached CDP / ws endpoint for external attach (BrowserGym Mode A).
+	 * Populated by subclasses in `onBrowserLaunched()`. Remains `null` for
+	 * backends that don't expose one (firefox / python backends in Phase 1).
+	 *
+	 * Reset to `null` on browser disconnect so a re-launch re-discovers.
+	 */
+	protected _cdpEndpoint: string | null = null;
+
 	// ── Private state ──────────────────────────────────────────
 
 	/** Enable structured debug logging via BROWSER_DEBUG env var */
@@ -193,6 +202,24 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		}
 	}
 
+	/**
+	 * Post-launch hook called once after the shared browser successfully
+	 * launches (and the `disconnected` recovery handler is wired). Runs
+	 * before any context/page is created on the new browser.
+	 *
+	 * Subclasses override this to perform once-per-launch setup — most
+	 * notably the chromium plugin discovers the `--remote-debugging-port=0`
+	 * endpoint via `ss -tlnp` and caches it in `_cdpEndpoint` so
+	 * `getCdpEndpoint()` can return it synchronously.
+	 *
+	 * Default: no-op. Failures thrown from overrides are caught and
+	 * logged by the caller (`_newBrowserContext`) so a port-scan glitch
+	 * never blocks normal browsing.
+	 */
+	protected async onBrowserLaunched(): Promise<void> {
+		// default: no-op
+	}
+
 	// ── Context lifecycle ────────────────────────────────────
 
 	/**
@@ -276,6 +303,7 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			// Auto-recover from browser crash/disconnect
 			this._browser.on("disconnected", () => {
 				this._browser = null;
+				this._cdpEndpoint = null;
 				for (const tid of this._pages.keys()) {
 					sessionManager.updateSession(tid, { crashed: true });
 					this._elementCache.delete(tid);
@@ -286,6 +314,21 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			// UA capture at first launch (Firefox opt-in)
 			if (this.captureUserAgent) {
 				await this._captureUA();
+			}
+
+			// Post-launch hook: subclasses can discover a CDP/ws endpoint
+			// (e.g. chromium scans `ss -tlnp` for the `--remote-debugging-port=0`
+			// port) or perform other once-per-launch setup. Failures are
+			// swallowed so a port-scan glitch never blocks normal browsing —
+			// `getCdpEndpoint()` will simply return null and Mode A attach
+			// will be unavailable for that session.
+			try {
+				await this.onBrowserLaunched();
+			} catch (err) {
+				this._log("onBrowserLaunched", {
+					plugin: this.name,
+					error: err instanceof Error ? err.message : String(err),
+				});
 			}
 		}
 

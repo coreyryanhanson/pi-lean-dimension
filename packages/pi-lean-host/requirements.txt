@@ -1,0 +1,4 @@
+# pi-lean-host Python dependencies
+# Pin versions when ready — see browsergym-migration-plan.md §1.2
+# browsergym[miniwob] == 0.x.y
+# playwright

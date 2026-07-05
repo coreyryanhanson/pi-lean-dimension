@@ -1,0 +1,47 @@
+{
+	"name": "pi-lean-host",
+	"version": "0.0.1",
+	"description": "Placeholder for future pi-lean-portal browser benchmarking suite. Host is the evaluation harness for BrowserPlugin backends against BrowserGym task suites (MiniWoB, WebArena, etc.).",
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"benchmark",
+		"browsergym",
+		"miniwob",
+		"webarena"
+	],
+	"license": "AGPL-3.0-only",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/coreyryanhanson/pi-lean-dimension.git",
+		"directory": "packages/pi-lean-host"
+	},
+	"type": "module",
+	"publishConfig": {
+		"access": "public"
+	},
+	"files": [
+		"README.md",
+		"AGENTS.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"prepack": "cp ../../LICENSE ./LICENSE",
+		"test": "vitest run",
+		"test:miniwob": "npm run test",
+		"setup:miniwob": "echo 'Not yet implemented — see browsergym-migration-plan.md §1.7'",
+		"setup:venv": "echo 'Not yet implemented — see browsergym-migration-plan.md §1.7'"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*",
+		"pi-lean-portal": "*",
+		"typebox": "*"
+	},
+	"peerDependenciesMeta": {
+		"pi-lean-portal": {
+			"optional": true
+		}
+	}
+}
