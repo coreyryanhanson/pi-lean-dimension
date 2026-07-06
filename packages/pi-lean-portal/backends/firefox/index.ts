@@ -7,10 +7,20 @@
  * Uses probe-then-cache UA capture at first launch, with a hardcoded
  * fallback Firefox UA string. Launch args are empty — Firefox does
  * not accept Chromium sandbox flags.
+ *
+ * Phase 1.5 (`browsergym-migration-phase-1.5.md` §2.1): optionally
+ * launches Firefox via `firefox.launchServer()` + `firefox.connect(ws)`
+ * so an external client (`pi-lean-host`'s BrowserGym bridge) can attach
+ * over the WebSocket endpoint (Mode A — plugin-owns-browser, ws
+ * variant). The launchServer path is feature-flagged behind
+ * `BROWSER_FIREFOX_LAUNCH_SERVER=1` (default off) — existing firefox
+ * usage runs the unchanged `firefox.launch()` path. When the flag is
+ * set, `getWsEndpoint()` returns the server's `ws://` URL for external
+ * attach; otherwise it returns null.
  */
 
 import { firefox } from "playwright";
-import type { Browser } from "playwright";
+import type { Browser, BrowserServer } from "playwright";
 import { PlaywrightPluginBase } from "../playwright-base/playwright-plugin.js";
 import {
 	DEFAULT_CAPABILITIES,
@@ -47,9 +57,52 @@ export class FirefoxPlugin extends PlaywrightPluginBase {
 	}
 
 	protected async launchBrowser(): Promise<Browser> {
-		return firefox.launch({
+		// Feature-flagged launchServer path (Phase 1.5). Default off →
+		// existing firefox usage runs the unchanged `firefox.launch()`
+		// path. The host opts in via `BROWSER_FIREFOX_LAUNCH_SERVER=1`
+		// when running the MiniWoB bench so the BrowserGym bridge can
+		// attach over the WebSocket endpoint.
+		if (process.env.BROWSER_FIREFOX_LAUNCH_SERVER !== "1") {
+			return firefox.launch({ headless: true });
+		}
+
+		const server: BrowserServer = await firefox.launchServer({
 			headless: true,
 		});
+		// Cache the server + wsEndpoint on the base so cleanupAll closes
+		// the server and the disconnected handler reconnects instead of
+		// relaunching. The base wires the server `close` handler in
+		// `_newBrowserContext` once it sees `_browserServer` non-null.
+		this._browserServer = server;
+		this._wsEndpoint = server.wsEndpoint();
+		return firefox.connect(this._wsEndpoint);
+	}
+
+	/**
+	 * Reconnect to the launchServer after the connected Browser
+	 * disconnects. The server stays up across Browser disconnects, so a
+	 * fresh `connect(wsEndpoint)` recovers without relaunching. Only
+	 * called by the base when `_browserServer` is non-null.
+	 */
+	protected async _reconnectBrowser(): Promise<Browser> {
+		if (!this._wsEndpoint) {
+			throw new Error(
+				"firefox: cannot reconnect — no wsEndpoint cached " +
+					"(launchServer not active)",
+			);
+		}
+		return firefox.connect(this._wsEndpoint);
+	}
+
+	/**
+	 * WebSocket endpoint for BrowserGym / external attach (Mode A, ws
+	 * variant). Returns the server's `ws://` URL once the launchServer
+	 * path is active and the browser has launched, or `null` otherwise
+	 * (default `firefox.launch()` path, or before launch). External
+	 * callers must guard with `typeof plugin.getWsEndpoint === "function"`.
+	 */
+	getWsEndpoint(): string | null {
+		return this._wsEndpoint;
 	}
 
 	protected get installHint(): string {
