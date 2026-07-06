@@ -220,11 +220,7 @@ export class BridgeClient {
 
 	async stop(): Promise<void> {
 		if (!this._proc) return;
-		try {
-			await this.call("shutdown", {}, 5_000).catch(() => {});
-		} finally {
-			this._kill();
-		}
+		this._kill();
 	}
 
 	private _flush(): void {
@@ -432,8 +428,6 @@ export async function runMiniwobTask(
 			}
 			await sleep(donePollIntervalMs);
 		}
-
-		await bridge.call("teardown", {}).catch(() => {});
 
 		return {
 			goal,

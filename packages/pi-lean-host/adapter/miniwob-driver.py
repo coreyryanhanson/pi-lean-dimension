@@ -29,14 +29,11 @@ class MiniwobDriver:
         return {"pong": True}
 
     def connect(self, endpoint, kind):
-        """Attach to an existing browser via CDP or WebSocket."""
+        """Attach to an existing browser via CDP."""
         self._pw = sync_playwright().start()
-        if kind == "cdp":
-            self._browser = self._pw.chromium.connect_over_cdp(endpoint)
-        elif kind == "ws":
-            self._browser = self._pw.firefox.connect(endpoint)
-        else:
+        if kind != "cdp":
             raise ValueError(f"Unknown connect kind: {kind}")
+        self._browser = self._pw.chromium.connect_over_cdp(endpoint)
         # Use the first context's first page, or create one
         ctxs = self._browser.contexts
         if ctxs:
@@ -63,20 +60,12 @@ class MiniwobDriver:
 
     def validate(self):
         """Read reward and done flags from the MiniWoB++ page globals."""
-        info = self._page.evaluate("() => ({"
+        return self._page.evaluate("() => ({"
             "reward: WOB_RAW_REWARD_GLOBAL > 0 ? 1 : 0,"
             "raw_reward: WOB_RAW_REWARD_GLOBAL,"
             "done: WOB_DONE_GLOBAL,"
-            "reason: WOB_REWARD_REASON,"
-            "episode_id: WOB_EPISODE_ID || null,"
-            "task_ready: typeof WOB_TASK_READY !== 'undefined' ? WOB_TASK_READY : false"
+            "reason: WOB_REWARD_REASON"
         "})")
-        return info
-
-    def teardown(self):
-        """No-op: MiniWoB++ has no teardown side-effects."""
-        return {"ok": True}
-
 
 def main():
     driver = MiniwobDriver()
