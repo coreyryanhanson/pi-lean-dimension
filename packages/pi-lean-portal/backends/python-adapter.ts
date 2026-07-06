@@ -191,13 +191,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	 */
 	private _cdpEndpoint: string | null = null;
 
-	/**
-	 * Cached WebSocket endpoint for external attach (firefox family).
-	 * Populated by calling the bridge's ``get_ws_endpoint``
-	 * RPC after a launch-server-backed browser has started. Reset to null
-	 * when the bridge subprocess exits. Synchronous after first discovery.
-	 */
-	private _wsEndpoint: string | null = null;
+
 
 	/**
 	 * Plugin config dict forwarded to the bridge via the `browser.init` RPC
@@ -336,7 +330,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			this._started = false;
 			this._stderrAccumulated = "";
 			this._cdpEndpoint = null;
-			this._wsEndpoint = null;
 
 			const proc = spawn(
 				this._pythonPath,
@@ -398,7 +391,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				this._exitCode = code;
 				this._process = null;
 				this._cdpEndpoint = null;
-				this._wsEndpoint = null;
 
 				// Build stderr guidance for error messages
 				const stderrSuffix = this._stderrAccumulated
@@ -550,7 +542,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		}
 
 		this._cdpEndpoint = null;
-		this._wsEndpoint = null;
 		this._process = null;
 		this._exitCode = 0; // Mark as dead
 		this._buffer = "";
@@ -785,12 +776,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 					this._discoverCdpEndpoint().catch(() => {});
 				}
 
-				// Discover WebSocket endpoint (firefox family, best-effort).
-				// Fired after each successful navigate so the endpoint is
-				// available for the bridge before a task connects.
-				if (!this._wsEndpoint) {
-					this._discoverWsEndpoint().catch(() => {});
-				}
 			}
 
 			const navResult: NavigateResult = {
@@ -1263,39 +1248,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		return this._cdpEndpoint;
 	}
 
-	/**
-	 * Discover the WebSocket endpoint from the bridge's launched Firefox.
-	 *
-	 * When firefox-py runs with ``PI_BROWSER_USE_LAUNCH_SERVER=1``, the
-	 * bridge uses ``firefox.launch_server()`` and exposes the server's
-	 * ``ws_endpoint`` via the ``get_ws_endpoint`` JSON-RPC method. This
-	 * method queries that RPC and caches the result for
-	 * attach (Mode A, firefox family).
-	 *
-	 * Silent on platforms / backends that don't support launch_server
-	 * — ``getWsEndpoint()`` returns null and ws-mode attach is unavailable.
-	 */
-	private async _discoverWsEndpoint(): Promise<void> {
-		try {
-			const raw = await this._rpcCall("get_ws_endpoint", {}, 5_000);
-			const result = raw as { wsEndpoint?: string | null };
-			if (result.wsEndpoint) {
-				this._wsEndpoint = result.wsEndpoint;
-			}
-		} catch {
-			// Swallow — ws attach unavailable but normal browsing unaffected
-		}
-	}
 
-	/**
-	 * WebSocket endpoint for external attach (firefox family).
-	 * Returns ``ws://...`` after a successful navigate has triggered
-	 * endpoint discovery against a launch-server-backed Firefox, or
-	 * ``null`` before navigation / when launch-server mode is not active.
-	 */
-	getWsEndpoint(): string | null {
-		return this._wsEndpoint;
-	}
 
 	/**
 	 * Convert a raw RPC result to an InteractionResult.

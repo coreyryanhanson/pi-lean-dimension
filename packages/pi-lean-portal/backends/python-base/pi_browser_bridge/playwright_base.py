@@ -156,13 +156,6 @@ class PlaywrightBridge(BrowserBridge):
     #: settle behaviour bit-identical.
     _skip_networkidle: bool = False
 
-    #: When True, ``_launch_browser()`` uses ``firefox.launch_server()``
-    #: + ``firefox.connect(wsEndpoint)`` instead of plain ``firefox.launch()``.
-    #: The firefox-py bridge reads ``PI_BROWSER_USE_LAUNCH_SERVER`` env var
-    #: to set this flag dynamically.  Default ``False`` so the shipped
-    #: chromium-py / firefox-py paths stay bit-identical; normal portal
-    #: usage is unaffected until the host opts in for bench.
-    _use_launch_server: bool = False
 
     # ── Shared Playwright state ─────────────────────────────────
 
@@ -173,7 +166,6 @@ class PlaywrightBridge(BrowserBridge):
         super().__init__()
         self._pw = None
         self._browser = None
-        self._browser_server = None  # BrowserServer from launch_server() (firefox family)
         self._cached_ua: str = ""
 
     # ── Subclass extension point ───────────────────────────────
@@ -226,27 +218,7 @@ class PlaywrightBridge(BrowserBridge):
                 except Exception:
                     pass
 
-    # ── WebSocket endpoint (external attach, firefox family) ─────
 
-    def do_get_ws_endpoint(self) -> dict[str, Any]:
-        """Return the WebSocket endpoint for external attach.
-
-        When ``_use_launch_server`` is True and a ``BrowserServer`` has
-        been created, returns its ``ws_endpoint`` so an external client can
-        attach via
-        ``playwright.firefox.connect(wsEndpoint)``.
-
-        Returns:
-            A dict with ``{"wsEndpoint": str | None}``.
-        """
-        if self._browser_server is not None:
-            try:
-                ep = self._browser_server.ws_endpoint
-                if ep:
-                    return {"wsEndpoint": ep}
-            except Exception:
-                pass
-        return {"wsEndpoint": None}
 
     # ── Debug logging ───────────────────────────────────────────
 
@@ -304,12 +276,6 @@ class PlaywrightBridge(BrowserBridge):
                     self._browser.close()
             except Exception:
                 pass
-            try:
-                if self._browser_server:
-                    self._browser_server.close()
-            except Exception:
-                pass
-            self._browser_server = None
             try:
                 self._pw.stop()
             except Exception:
