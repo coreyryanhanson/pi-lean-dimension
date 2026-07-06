@@ -57,7 +57,7 @@ export interface RunMiniwobTaskOptions {
 	actor: "trivial";
 	/** Required when `actor === "trivial"`. */
 	solver?: TrivialSolver;
-	/** Max solver/validate round-trips before bailing (default 20). */
+	/** Hard safety cap on solver/validate round-trips (default 20). Wall-clock `donePollTimeoutMs` is the primary bail; this is a defensive upper bound. */
 	maxSteps?: number;
 	/** Episode max time in ms (default 30_000). */
 	episodeMaxTimeMs?: number;
@@ -83,10 +83,12 @@ export interface MiniwobTaskResult {
 	rawReward: number;
 	done: boolean;
 	reason: string;
-	/** Number of solver/validate round-trips executed. */
+	/** Number of solver/validate round-trips executed (reported count, not a bail condition). */
 	steps: number;
-	/** True if the done-poll timed out before `done` flipped. */
+	/** True if the done-poll bailed before `done` flipped. */
 	timedOut: boolean;
+	/** Why the poll loop bailed: `"wall-clock"` (exceeded `donePollTimeoutMs`), `"max-steps"` (hit the `maxSteps` safety cap), or `null` if `done` flipped naturally. */
+	bailReason: "wall-clock" | "max-steps" | null;
 	/** True if a setup step (navigate / connect / setup) failed. */
 	setupFailed: boolean;
 	error?: string;
@@ -403,12 +405,16 @@ export async function runMiniwobTask(
 				reason: "",
 				steps: 0,
 				timedOut: false,
+				bailReason: null,
 				setupFailed: false,
 				error: `solver raised: ${err instanceof Error ? err.message : String(err)}`,
 			};
 		}
 
-		// 6. Poll validate until done.
+		// 6. Poll validate until done. Wall-clock (`donePollTimeoutMs`) is the
+		// primary bail; `maxSteps` is a hard safety cap. `steps` is a reported
+		// count, not a bail condition — both bails set `timedOut=true` and
+		// record a `bailReason` so callers can distinguish them.
 		const pollStart = Date.now();
 		let steps = 0;
 		let last = { reward: 0, raw_reward: 0, done: false, reason: "" } as {
@@ -418,12 +424,22 @@ export async function runMiniwobTask(
 			reason: string;
 		};
 		let timedOut = false;
-		while (steps < maxSteps) {
+		let bailReason: "wall-clock" | "max-steps" | null = null;
+		while (true) {
 			last = (await bridge.call("validate", {})) as typeof last;
 			steps++;
-			if (last.done) break;
+			if (last.done) {
+				bailReason = null;
+				break;
+			}
 			if (Date.now() - pollStart > donePollTimeoutMs) {
 				timedOut = true;
+				bailReason = "wall-clock";
+				break;
+			}
+			if (steps >= maxSteps) {
+				timedOut = true;
+				bailReason = "max-steps";
 				break;
 			}
 			await sleep(donePollIntervalMs);
@@ -437,6 +453,7 @@ export async function runMiniwobTask(
 			reason: last.reason,
 			steps,
 			timedOut,
+			bailReason,
 			setupFailed: false,
 		};
 	} catch (err) {
@@ -458,6 +475,7 @@ function fail(error: string): MiniwobTaskResult {
 		reason: "",
 		steps: 0,
 		timedOut: false,
+		bailReason: null,
 		setupFailed: true,
 		error,
 	};

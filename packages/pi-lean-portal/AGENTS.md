@@ -36,6 +36,25 @@ The 12 registered tools map to 12 tool-facing plugin methods. The cookie/storage
 
 Capabilities (`PluginCapabilities`) advertise quirks. The router checks them at dispatch time.
 
+## External CDP attach (benchmarking)
+
+The `BrowserPlugin` interface exposes one optional method for external CDP attach, used by `pi-lean-host`'s MiniWoB++ harness (Mode A — plugin-owns-browser):
+
+```ts
+getCdpEndpoint?(): string | null;
+```
+
+Returns the CDP endpoint URL (`http://127.0.0.1:<port>`) once the browser has launched and the port has been discovered, or `null` if the plugin doesn't expose one (firefox family, or before launch). Host-side callers must guard with `typeof plugin.getCdpEndpoint === "function"` (not a truthiness check) under `exactOptionalPropertyTypes`.
+
+`PlaywrightPluginBase` provides the discovery scaffolding:
+
+- **`onBrowserLaunched()`** — a post-launch hook (default no-op) called once after the shared browser successfully launches, before any context/page is created. Subclasses override it to perform once-per-launch setup. The chromium plugin overrides it to scan for the `--remote-debugging-port=0` endpoint and cache it in `protected _cdpEndpoint`.
+- **`_cdpEndpoint`** — cached endpoint string, reset to `null` on browser disconnect so a re-launch re-discovers.
+- **Error swallowing**: failures from `onBrowserLaunched()` are caught and logged by `_newBrowserContext`, so a port-scan glitch never blocks normal browsing — `getCdpEndpoint()` simply returns `null`.
+- **`resolveCdpEndpoint()`** (`core/shared/cdp-endpoint.ts`) — shared discovery utility (reads `CDP_PORT` env, falls back to scanning). Used by the chromium plugin's `onBrowserLaunched()` override.
+
+There is no `connectOverCDP?` interface hook — a host-owns-browser ("Mode B") path was considered and dropped as YAGNI; it will be re-added alongside a real consumer that needs it.
+
 ## Router (`core/router.ts`)
 
 All tool calls dispatch through the router. Key responsibilities:
