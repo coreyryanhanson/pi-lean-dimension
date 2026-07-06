@@ -17,9 +17,6 @@ export type {
 	MiniwobTaskResult,
 } from "../adapter/miniwob-adapter.js";
 
-export { benchPlugin } from "../adapter/bench.js";
-export type { BenchMode, BenchOpts, BenchResult } from "../adapter/bench.js";
-
 export { registerMiniwobSuite } from "../solvers/register-suite.js";
 export type { MiniwobBackend } from "../solvers/register-suite.js";
 export { SEED, TEST_TIMEOUT } from "../solvers/register-suite.js";

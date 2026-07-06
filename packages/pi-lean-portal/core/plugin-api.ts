@@ -317,17 +317,4 @@ export interface BrowserPlugin {
 	 * check) under `exactOptionalPropertyTypes: true`.
 	 */
 	getCdpEndpoint?(): string | null;
-
-	/**
-	 * Connect to an externally-launched browser via CDP instead of
-	 * launching one. This allows an external harness (e.g. a benchmark
-	 * runner) to manage the browser lifecycle and have the plugin drive
-	 * the same page.
-	 *
-	 * Mutually exclusive with the default `launchBrowser()` path: a
-	 * plugin typically implements exactly one of `launchBrowser()` /
-	 * `connectOverCDP()`, though it may implement both and pick at
-	 * construction time.
-	 */
-	connectOverCDP?(endpoint: string): Promise<void>;
 }
