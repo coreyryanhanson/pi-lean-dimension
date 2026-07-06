@@ -5,8 +5,7 @@
  * tightened regex that avoids matching roles inside quoted accessible
  * names), and goal-utterance text extraction.
  *
- * Moved from `pi-lean-portal/__tests__/helpers/miniwob-suite.ts` as part
- * of the BrowserGym migration (Batch C, §1.5). The `withRole` regex is
+ * Moved from `pi-lean-portal/__tests__/helpers/miniwob-suite.ts`. The `withRole` regex is
  * tightened per the reviewer's finding: it now matches only in the
  * prefix before the first `"`, so a button named `"click the button"`
  * doesn't produce a false match for the `button` role keyword.

@@ -53,6 +53,12 @@ class ChromiumPyBridge(PlaywrightBridge):
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
+                # Expose a CDP endpoint for external attach. Port 0 → OS assigns
+                # a free port; the actual port is discovered on the TypeScript side via
+                # `ss -tlnp` (Linux) or `CDP_PORT` env (non-Linux fallback).
+                "--remote-debugging-port=0",
+                # Bind the debug endpoint to loopback only.
+                "--remote-debugging-address=127.0.0.1",
             ],
         )
 

@@ -12,7 +12,7 @@
  * - Launch errors are wrapped with engine-specific install hints.
  */
 
-import type { Browser, BrowserContext, BrowserServer, Page } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 import {
 	parseSnapshot,
 	buildLocator,
@@ -96,36 +96,13 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	protected readonly captureUserAgent: boolean = false;
 
 	/**
-	 * Cached CDP endpoint for external attach (BrowserGym Mode A, chromium
-	 * family). Populated by subclasses in `onBrowserLaunched()`. Remains
-	 * `null` for the firefox family (which uses `_wsEndpoint` instead) and
-	 * other backends that don't expose one.
+	 * Cached CDP endpoint for external attach (chromium family).
+	 * Populated by subclasses in `onBrowserLaunched()`. Remains
+	 * `null` for backends that don't expose one.
 	 *
 	 * Reset to `null` on browser disconnect so a re-launch re-discovers.
 	 */
 	protected _cdpEndpoint: string | null = null;
-
-	/**
-	 * BrowserServer handle for the `launchServer` path (firefox family).
-	 * Set by subclasses inside `launchBrowser()` when they opt into
-	 * `firefox.launchServer()` / `browser_type.launch_server()`. When
-	 * non-null, the base treats the connected `Browser` as a *client* of
-	 * this server: a disconnect triggers a reconnect (`_reconnectBrowser()`)
-	 * instead of a relaunch, and `cleanupAll()` closes both the Browser
-	 * and the BrowserServer.
-	 *
-	 * Remains `null` for default-path backends (chromium, plain firefox) —
-	 * their lifecycle is unchanged.
-	 */
-	protected _browserServer: BrowserServer | null = null;
-
-	/**
-	 * Cached WebSocket endpoint for the `launchServer` path. Set by
-	 * subclasses alongside `_browserServer`. Exposed to external clients
-	 * via the subclass's `getWsEndpoint()` implementation. Reset to
-	 * `null` when the BrowserServer closes.
-	 */
-	protected _wsEndpoint: string | null = null;
 
 	// ── Private state ──────────────────────────────────────────
 
@@ -141,16 +118,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 
 	/** Shared browser instance (lazy-initialised) */
 	private _browser: Browser | null = null;
-
-	/**
-	 * In-flight reconnect promise for the launchServer path. Set by the
-	 * `disconnected` handler when it kicks off `_reconnectBrowser()`;
-	 * cleared when the promise settles. `_newBrowserContext` awaits it
-	 * (instead of relaunching) so a navigate that races in during the
-	 * reconnect window reuses the reconnected Browser rather than
-	 * launching a second BrowserServer and leaking the first.
-	 */
-	private _reconnectPromise: Promise<Browser> | null = null;
 
 	/** Cached user-agent string after dynamic capture (Firefox) */
 	private _cachedUA: string | null = null;
@@ -183,20 +150,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				/* browser may already be closed */
 			}
 			this._browser = null;
-		}
-
-		// launchServer path: the connected Browser is just a client of the
-		// server — closing it does NOT close the server. Close the server
-		// explicitly so the browser process exits. No-op for default-path
-		// backends (the field stays null).
-		if (this._browserServer) {
-			try {
-				await this._browserServer.close();
-			} catch {
-				/* server may already be closed */
-			}
-			this._browserServer = null;
-			this._wsEndpoint = null;
 		}
 	}
 
@@ -251,13 +204,12 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 
 	/**
 	 * Post-launch hook called once after the shared browser successfully
-	 * launches (and the `disconnected` recovery handler is wired). Runs
-	 * before any context/page is created on the new browser.
+	 * launches. Runs before any context/page is created on the new browser.
 	 *
 	 * Subclasses override this to perform once-per-launch setup — most
 	 * notably the chromium plugin discovers the `--remote-debugging-port=0`
-	 * endpoint via `ss -tlnp` and caches it in `_cdpEndpoint` so
-	 * `getCdpEndpoint()` can return it synchronously.
+	 * endpoint and caches it in `_cdpEndpoint` so `getCdpEndpoint()` can
+	 * return it synchronously.
 	 *
 	 * Default: no-op. Failures thrown from overrides are caught and
 	 * logged by the caller (`_newBrowserContext`) so a port-scan glitch
@@ -265,101 +217,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	 */
 	protected async onBrowserLaunched(): Promise<void> {
 		// default: no-op
-	}
-
-	/**
-	 * Reconnect to the BrowserServer after the connected `Browser`
-	 * disconnects (crash, network drop). Only meaningful for the
-	 * `launchServer` path — the server stays up across Browser
-	 * disconnects, so a fresh `connect(wsEndpoint)` recovers without
-	 * relaunching.
-	 *
-	 * Default implementation throws: only `launchServer` subclasses
-	 * (firefox Node, firefox-py adapter) override this. The base never
-	 * calls it when `_browserServer` is null, so default-path backends
-	 * never hit the throw.
-	 */
-	protected async _reconnectBrowser(): Promise<Browser> {
-		throw new Error(
-			`${this.name}: _reconnectBrowser() not implemented ` +
-				"(launchServer path not active)",
-		);
-	}
-
-	/**
-	 * Wire the `disconnected` handler on a freshly-launched or
-	 * freshly-reconnected `Browser`. Extracted from `_newBrowserContext`
-	 * so the launchServer reconnect path can re-wire it on the new
-	 * connection without duplicating the recovery logic.
-	 *
-	 * Behavior split by `_browserServer`:
-	 * - **Default path** (`_browserServer === null`): null `_browser` and
-	 *   `_cdpEndpoint`, mark in-flight sessions crashed. The next call
-	 *   re-launches from scratch.
-	 * - **launchServer path** (`_browserServer !== null`): the server is
-	 *   still up — mark in-flight sessions crashed (their contexts are
-	 *   gone with the disconnected Browser), null `_browser`, then
-	 *   attempt `_reconnectBrowser()`. On success, install the new
-	 *   Browser and re-wire this handler on it. On failure, leave
-	 *   `_browser` null; `_browserServer` stays until its own `close`
-	 *   event or `cleanupAll()`.
-	 */
-	private _wireDisconnectHandler(browser: Browser): void {
-		browser.on("disconnected", () => {
-			// In-flight sessions are dead regardless of path — their
-			// contexts lived on the just-disconnected Browser.
-			for (const tid of this._pages.keys()) {
-				sessionManager.updateSession(tid, { crashed: true });
-				this._elementCache.delete(tid);
-			}
-			this._pages.clear();
-			this._browser = null;
-
-			if (this._browserServer) {
-				// launchServer path: try to reconnect to the still-up server.
-				// Track the promise so a navigate racing in during the
-				// reconnect window awaits it (in `_newBrowserContext`)
-				// instead of relaunching a second BrowserServer. Fire-and-
-				// forget with respect to the disconnect handler itself —
-				// in-flight callers already saw their pages die; the
-				// reconnect services *future* sessions.
-				const reconnectPromise = this._reconnectBrowser();
-				this._reconnectPromise = reconnectPromise;
-				reconnectPromise
-					.then((reconnected) => {
-						// Only accept if this is still the pending reconnect
-						// (not superseded by a relaunch or cleanup).
-						if (this._reconnectPromise === reconnectPromise) {
-							this._browser = reconnected;
-							this._wireDisconnectHandler(reconnected);
-							this._reconnectPromise = null;
-							this._log("reconnect", {
-								plugin: this.name,
-								success: true,
-							});
-						}
-					})
-					.catch((err: unknown) => {
-						if (this._reconnectPromise === reconnectPromise) {
-							this._reconnectPromise = null;
-						}
-						this._log("reconnect", {
-							plugin: this.name,
-							success: false,
-							error: err instanceof Error ? err.message : String(err),
-						});
-						// _browser stays null; _browserServer persists until
-						// its `close` event or cleanupAll(). A subsequent
-						// navigate will relaunch (closing the stale server
-						// first — see _newBrowserContext).
-					});
-				return;
-			}
-
-			// Default path: drop the cached CDP endpoint too — a relaunch
-			// re-discovers it via onBrowserLaunched().
-			this._cdpEndpoint = null;
-		});
 	}
 
 	// ── Context lifecycle ────────────────────────────────────
@@ -438,71 +295,31 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	private async _newBrowserContext(
 		storageState?: unknown,
 	): Promise<BrowserContext> {
-		// launchServer path: if the connected Browser crashed and a
-		// reconnect is in flight, await it instead of relaunching. This
-		// avoids a second `launchBrowser()` call creating a new
-		// BrowserServer and leaking the still-reconnecting one. If the
-		// reconnect failed, fall through to the relaunch block (which
-		// closes the stale server first).
-		if (!this._browser && this._reconnectPromise) {
-			try {
-				this._browser = await this._reconnectPromise;
-			} catch {
-				// reconnect failed — fall through to relaunch
-			} finally {
-				this._reconnectPromise = null;
-			}
-		}
-
 		// Lazy-init the shared browser
 		if (!this._browser) {
-			// If a stale BrowserServer lingers from a failed reconnect,
-			// close it before launching a fresh one to avoid a process
-			// leak. Capture into a local so the field nulling doesn't
-			// poison TS narrowing for the new-server read below. No-op
-			// for default-path backends (`_browserServer` stays null).
-			const staleServer = this._browserServer;
-			if (staleServer) {
-				this._browserServer = null;
-				this._wsEndpoint = null;
-				await staleServer.close().catch(() => {});
-			}
-
 			this._browser = await this._launchWithHint();
 
-			// Auto-recover from browser crash/disconnect. The launchServer
-			// path (firefox family) reconnects instead of relaunching; the
-			// default path nulls state so the next call re-launches.
-			this._wireDisconnectHandler(this._browser);
-
-			// launchServer path: wire a one-time close handler on the server
-			// so a server-side shutdown nulls `_browserServer` / `_wsEndpoint`.
-			// Read with an explicit type annotation — `launchBrowser()` (called
-			// by `_launchWithHint` above) sets `_browserServer` in subclasses,
-			// but TS can't see that cross-method mutation, so without this the
-			// earlier `= null` would narrow the field to `null` and dead-code
-			// this block.
-			const newServer: BrowserServer | null = this._browserServer;
-			if (newServer) {
-				newServer.on("close", () => {
-					if (this._browserServer === newServer) {
-						this._browserServer = null;
-						this._wsEndpoint = null;
-					}
-				});
-			}
+			// Auto-recover from browser crash/disconnect
+			this._browser.on("disconnected", () => {
+				this._browser = null;
+				this._cdpEndpoint = null;
+				for (const tid of this._pages.keys()) {
+					sessionManager.updateSession(tid, { crashed: true });
+					this._elementCache.delete(tid);
+				}
+				this._pages.clear();
+			});
 
 			// UA capture at first launch (Firefox opt-in)
 			if (this.captureUserAgent) {
 				await this._captureUA();
 			}
 
-			// Post-launch hook: subclasses can discover a CDP/ws endpoint
-			// (e.g. chromium scans `ss -tlnp` for the `--remote-debugging-port=0`
-			// port) or perform other once-per-launch setup. Failures are
+			// Post-launch hook: subclasses can discover a CDP endpoint
+			// (e.g. chromium scans for the `--remote-debugging-port=0` port)
+			// or perform other once-per-launch setup. Failures are
 			// swallowed so a port-scan glitch never blocks normal browsing —
-			// `getCdpEndpoint()` will simply return null and Mode A attach
-			// will be unavailable for that session.
+			// `getCdpEndpoint()` will simply return null.
 			try {
 				await this.onBrowserLaunched();
 			} catch (err) {

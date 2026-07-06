@@ -1,16 +1,16 @@
 /**
  * High-level `benchPlugin()` entry point — benchmark any `BrowserPlugin`
- * against a MiniWoB++ (and future BrowserGym) task.
+ * against a MiniWoB++ task.
  *
  * Two browser-ownership modes:
  *
  * **Mode A — plugin-owns-browser** (default). The plugin launches its
- * own browser and exposes `getCdpEndpoint()`. The BrowserGym bridge
+ * own browser and exposes `getCdpEndpoint()`. The MiniWoB driver
  * attaches via CDP. Tests the plugin's real launch path.
  *
  * **Mode B — host-owns-browser** (for plugins that implement
  * `connectOverCDP`). `pi-lean-host` launches a reference Chromium with
- * `--remote-debugging-port`, BrowserGym attaches via CDP, and the
+ * `--remote-debugging-port`, the driver attaches via CDP, and the
  * plugin connects to the same endpoint. Only tests snapshot/click/type
  * methods, not the plugin's launch path.
  *
@@ -23,20 +23,16 @@
  *
  * ── Attribution ───────────────────────────────────────────────────
  *
- * MiniWoB++ © Farama-Foundation (Apache-2.0); BrowserGym © ServiceNow
- * (Apache-2.0). This file only wires the adapter; the actual task and
- * reward protocol live in the BrowserGym Python package.
+ * This file only wires the adapter; the actual task and reward protocol
+ * live in the MiniWoB Python driver.
  *
  * @module
  */
 
 import { chromium as playwrightChromium } from "playwright";
 
-import {
-	runMiniwobTask,
-	type MiniwobTaskResult,
-} from "./browsergym-adapter.js";
-import type { TrivialSolver } from "./browsergym-adapter.js";
+import { runMiniwobTask, type MiniwobTaskResult } from "./miniwob-adapter.js";
+import type { TrivialSolver } from "./miniwob-adapter.js";
 import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
 import { resolveCdpEndpoint } from "../../pi-lean-portal/core/shared/cdp-endpoint.js";
 
@@ -101,7 +97,6 @@ export async function benchPlugin(
 
 	if (mode_ === "plugin-owns-browser") {
 		// Mode A: plugin has already launched (or will on first navigate).
-		// The plugin exposes its own CDP endpoint via getCdpEndpoint.
 		return runMiniwobTask({
 			plugin,
 			taskName,
@@ -138,9 +133,6 @@ export async function benchPlugin(
 			solver,
 			maxSteps: maxSteps ?? 20,
 			episodeMaxTimeMs: episodeMaxTimeMs ?? 30_000,
-			// Pass the CDP endpoint directly so the bridge doesn't need
-			// plugin.getCdpEndpoint() — the Mode B host owns the browser.
-			_cdpEndpointOverride: endpoint,
 		});
 	} finally {
 		await closeBrowser().catch(() => {});

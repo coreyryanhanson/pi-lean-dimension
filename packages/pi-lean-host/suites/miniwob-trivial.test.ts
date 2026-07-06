@@ -1,6 +1,6 @@
 /**
  * MiniWoB++ trivial-solver suite — pipeline smoke test for the shipped
- * BrowserPlugin backends via the BrowserGym bridge.
+ * BrowserPlugin backends.
  *
  * Phase 1: chromium Node backend (Mode A, plugin-owns-browser).
  * Phase 1.5 will add: firefox, chromium-py, firefox-py.

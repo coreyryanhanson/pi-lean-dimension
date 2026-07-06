@@ -4,12 +4,11 @@
  * Thin subclass of PlaywrightPluginBase. All shared logic lives in
  * backends/playwright-base/playwright-plugin.ts.
  *
- * Phase 1 (`browsergym-migration-plan-v2.md` §1.4): launches Chromium
- * with `--remote-debugging-port=0` and discovers the OS-assigned CDP
- * port via `ss -tlnp` (Linux) / `CDP_PORT` env fallback, exposing it
- * through `getCdpEndpoint()` so `pi-lean-host`'s BrowserGym bridge can
- * attach (Mode A — plugin-owns-browser). The debug port is harmless for
- * normal portal use; it simply allows an external CDP client to attach.
+ * Launches Chromium with `--remote-debugging-port=0` and discovers the
+ * OS-assigned CDP port via `ss -tlnp` (Linux) / `CDP_PORT` env fallback,
+ * exposing it through `getCdpEndpoint()` so an external CDP client can
+ * attach. The debug port is harmless for normal portal use; it simply
+ * allows an external CDP client to attach.
  */
 
 import { chromium } from "playwright";
@@ -46,10 +45,9 @@ export class ChromiumPlugin extends PlaywrightPluginBase {
 				"--disable-setuid-sandbox",
 				"--disable-dev-shm-usage",
 				"--disable-gpu",
-				// Expose a CDP endpoint for external attach (BrowserGym bridge,
-				// pi-lean-host Mode A). Port 0 → OS assigns a free port; the
-				// actual port is discovered in onBrowserLaunched() via
-				// `ss -tlnp` (Linux) or `CDP_PORT` env (non-Linux fallback).
+				// Expose a CDP endpoint for external attach. Port 0 → OS assigns
+				// a free port; the actual port is discovered in onBrowserLaunched()
+				// via `ss -tlnp` (Linux) or `CDP_PORT` env (non-Linux fallback).
 				// Harmless for normal portal use — just opens a debug port.
 				"--remote-debugging-port=0",
 				// Bind the debug endpoint to loopback only — never expose it
@@ -97,7 +95,7 @@ export class ChromiumPlugin extends PlaywrightPluginBase {
 	}
 
 	/**
-	 * CDP endpoint for BrowserGym / external attach (Mode A).
+	 * CDP endpoint for external attach.
 	 * Returns `http://127.0.0.1:<port>` once the browser has launched
 	 * and the port has been discovered, or `null` before launch / on
 	 * platforms where discovery failed and no `CDP_PORT` was set.

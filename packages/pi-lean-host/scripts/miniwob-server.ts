@@ -2,7 +2,7 @@
  * Lightweight HTTP static-file server for MiniWoB++ HTML content.
  *
  * Serves the cloned `miniwob-plusplus/miniwob/html/` directory over
- * HTTP so the BrowserGym bridge and BrowserPlugin can navigate task
+ * HTTP so the MiniWoB driver and BrowserPlugin can navigate task
  * pages. Replaces the old `startMiniwobServer` from
  * `pi-lean-portal/__tests__/helpers/miniwob.ts` (deleted in Batch C).
  *

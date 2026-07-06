@@ -2,21 +2,20 @@
  * pi-lean-host — public API entry point.
  *
  * Exports the benchmarking API that any BrowserPlugin can use to run
- * against BrowserGym-backed task suites (MiniWoB++, and in future
- * phases WebArena / WorkArena).
+ * against MiniWoB++ task suites.
  *
  * Phase 1: MiniWoB++ (chromium Mode A) via trivial solvers.
  *
  * @module
  */
 
-export { runMiniwobTask } from "../adapter/browsergym-adapter.js";
+export { runMiniwobTask } from "../adapter/miniwob-adapter.js";
 export type {
 	TrivialSolver,
 	SolverCtx,
 	RunMiniwobTaskOptions,
 	MiniwobTaskResult,
-} from "../adapter/browsergym-adapter.js";
+} from "../adapter/miniwob-adapter.js";
 
 export { benchPlugin } from "../adapter/bench.js";
 export type { BenchMode, BenchOpts, BenchResult } from "../adapter/bench.js";

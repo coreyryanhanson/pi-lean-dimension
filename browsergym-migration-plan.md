@@ -1,5 +1,7 @@
 # BrowserGym Migration Plan — Option C (task/reward source, keep `@e` refs)
 
+> **Superseded** — see chat 2026-07-06 and `PLAN-browsergym-removal.md`. BrowserGym dropped as a runtime dependency due to playwright pin incompatibility.
+
 > **Status:** Draft for review.
 > **Supersedes:** The "Architecture decision: port the task model, not the
 > framework" section of [`miniwob-integration-plan.md`](miniwob-integration-plan.md),

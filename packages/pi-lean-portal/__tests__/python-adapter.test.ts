@@ -1079,6 +1079,136 @@ describeBrowserInit("browser.init RPC (Phase 0)", () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════
+//  CDP endpoint discovery (Batch 1.5-B)
+// ═════════════════════════════════════════════════════════════════════
+
+const describeCdpEndpoint = PYTHON_AVAILABLE ? describe : describe.skip;
+
+describeCdpEndpoint("getCdpEndpoint — CDP endpoint discovery", () => {
+	let savedCdpPort: string | undefined;
+
+	beforeEach(() => {
+		// Save and set CDP_PORT so resolveCdpEndpoint returns immediately
+		// (no ss -tlnp poll required). The actual port need not be
+		// listening — we're testing discovery, not connectivity.
+		savedCdpPort = process.env.CDP_PORT;
+		process.env.CDP_PORT = "29999";
+	});
+
+	afterEach(() => {
+		if (savedCdpPort !== undefined) {
+			process.env.CDP_PORT = savedCdpPort;
+		} else {
+			delete process.env.CDP_PORT;
+		}
+	});
+
+	/**
+	 * Wait up to 2s for getCdpEndpoint() to return a non-null value.
+	 * CDP discovery is fire-and-forget (async), so after navigate returns
+	 * we may need a microtask tick for the Promise to settle. With CDP_PORT
+	 * set, resolution is instant but still happens on the microtask queue.
+	 */
+	async function pollCdpEndpoint(
+		adapter: PythonPluginAdapter,
+	): Promise<string | null> {
+		for (let i = 0; i < 200; i++) {
+			const ep = adapter.getCdpEndpoint();
+			if (ep !== null) return ep;
+			await new Promise((r) => setTimeout(r, 10));
+		}
+		return adapter.getCdpEndpoint();
+	}
+
+	it("returns null before any navigation", () => {
+		const adapter = createAdapter();
+		expect(adapter.getCdpEndpoint()).toBeNull();
+	});
+
+	it("returns the CDP endpoint after a successful navigation", async () => {
+		const adapter = createAdapter();
+		try {
+			await adapter.init();
+			const result = await adapter.navigate(
+				"https://example.com",
+				"cdp-t1",
+				30_000,
+			);
+			expect(result.success).toBe(true);
+
+			const endpoint = await pollCdpEndpoint(adapter);
+			expect(endpoint).toBe("http://127.0.0.1:29999");
+		} finally {
+			await adapter.cleanupAll().catch(() => {});
+		}
+	});
+
+	it("resets to null after bridge process death", async () => {
+		const adapter = createAdapter();
+		try {
+			await adapter.init();
+			await adapter.navigate("https://example.com", "cdp-t2", 30_000);
+
+			// Wait for async discovery, then assert endpoint
+			const ep = await pollCdpEndpoint(adapter);
+			expect(ep).toBe("http://127.0.0.1:29999");
+
+			// Kill the subprocess
+			const proc = (
+				adapter as unknown as Record<
+					string,
+					{ kill: (s: string) => void } | null
+				>
+			)["_process"];
+			expect(proc).not.toBeNull();
+			proc!.kill("SIGKILL");
+			await new Promise((r) => setTimeout(r, 200));
+
+			// getCdpEndpoint should now return null
+			expect(adapter.getCdpEndpoint()).toBeNull();
+		} finally {
+			await adapter.cleanupAll().catch(() => {});
+		}
+	});
+
+	it("re-discovers endpoint after crash recovery restart", async () => {
+		const adapter = createAdapter();
+		try {
+			await adapter.init();
+			await adapter.navigate("https://example.com/first", "cdp-t3", 30_000);
+
+			// Wait for async discovery, then assert endpoint
+			let ep = await pollCdpEndpoint(adapter);
+			expect(ep).toBe("http://127.0.0.1:29999");
+
+			// Kill the subprocess
+			const proc = (
+				adapter as unknown as Record<
+					string,
+					{ kill: (s: string) => void } | null
+				>
+			)["_process"];
+			expect(proc).not.toBeNull();
+			proc!.kill("SIGKILL");
+			await new Promise((r) => setTimeout(r, 200));
+
+			// Navigating again should restart the bridge and re-discover
+			const r2 = await adapter.navigate(
+				"https://example.com/second",
+				"cdp-t4",
+				30_000,
+			);
+			expect(r2.success).toBe(true);
+
+			ep = await pollCdpEndpoint(adapter);
+			expect(ep).toBe("http://127.0.0.1:29999");
+		} finally {
+			await adapter.cleanupAll().catch(() => {});
+		}
+	});
+});
+
+// ═════════════════════════════════════════════════════════════════════
 //  PYTHONPATH injection (Phase 0b)
 // ═════════════════════════════════════════════════════════════════════
 

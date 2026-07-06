@@ -8,9 +8,8 @@
  * the only textbox). Best-effort solvers verify the pipeline doesn't
  * crash; confident solvers additionally assert `rawReward > 0`.
  *
- * Moved from `pi-lean-portal/__tests__/helpers/miniwob-suite.ts` as
- * part of the BrowserGym migration (Batch C, §1.5). Uses the
- * `TrivialSolver` type from `pi-lean-host`'s browser gym adapter.
+ * Moved from `pi-lean-portal/__tests__/helpers/miniwob-suite.ts`. Uses the
+ * `TrivialSolver` type from `pi-lean-host`'s miniwob adapter.
  *
  * ── Attribution ─────────────────────────────────────────────────
  *
@@ -22,7 +21,7 @@
  */
 
 import { parseRefs, withRole, firstWith, goalQuotedTexts } from "./parser.js";
-import type { TrivialSolver } from "../adapter/browsergym-adapter.js";
+import type { TrivialSolver } from "../adapter/miniwob-adapter.js";
 
 // ─── Individual solvers ───────────────────────────────────────────
 

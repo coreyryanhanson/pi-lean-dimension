@@ -1,5 +1,7 @@
 # Design — In-process BrowserGym co-hosting on `PlaywrightBridge`
 
+> **Superseded** — see chat 2026-07-06 and `PLAN-browsergym-removal.md`. BrowserGym dropped as a runtime dependency due to playwright pin incompatibility.
+
 > Status: **decisions closed — ready for implementation.** The four
 > open questions from the draft were accepted as recommended and are
 > recorded in §10. Load-bearing abstraction for resolving

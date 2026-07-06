@@ -27,23 +27,22 @@
  * dispatch, and result assertions automatically. See the "Benchmarking your
  * own BrowserPlugin" section of `pi-lean-host/README.md` for details.
  *
- * Moved from `pi-lean-portal/__tests__/helpers/miniwob-suite.ts` as part
- * of the BrowserGym migration (Batch C, §1.5). Changes from the original:
+ * Moved from `pi-lean-portal/__tests__/helpers/miniwob-suite.ts`.
+ * Changes from the original:
  * - Removed the speculative `knownIssue` field (no shipped backend used it;
  *   re-add when a backend needs a per-task skip reason).
  * - Task classification uses a static non-element subdomain set instead of
  *   iterating a full ported task table.
- * - Uses the BrowserGym-backed `runMiniwobTask` from `pi-lean-host/adapter/`
- *   instead of the old portal-injection-based task driver.
  *
  * @module
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
-import { runMiniwobTask } from "../adapter/browsergym-adapter.js";
+import { runMiniwobTask } from "../adapter/miniwob-adapter.js";
 import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
 import { SOLVERS, CONFIDENT_TASKS } from "./trivial-solvers.js";
+import { MINIWOB_SUBDOMAINS } from "../generated/subdomains.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -262,109 +261,9 @@ export function registerMiniwobSuite(
 // ─── Subdomain collection ────────────────────────────────────────
 
 /**
- * Collect all 125 subdomains: the union of solver keys, non-element
- * keys, and a hardcoded remainder of element-but-unsolved subdomains.
- *
- * This avoids porting the 125-entry table while keeping the suite
- * structure stable (every subdomain that the old table produced is
- * still present with the same classification).
+ * Collect all known subdomains from the generated file derived from
+ * the MiniWoB++ html directory at setup time.
  */
 function collectAllSubdomains(): string[] {
-	const solverKeys = new Set(SOLVERS.keys());
-	const nonElementKeys = new Set(Object.keys(NON_ELEMENT_TASKS));
-
-	// Manually maintained list of the 77 element subdomains that have no
-	// trivial solver. This list is frozen from
-	// `miniwob-plusplus@7fd85d71` and stays stable as long as the pin
-	// doesn't change. Re-pin deliberately and sync this list.
-	const unsolvedElement: readonly string[] = [
-		"ascending-numbers",
-		"book-flight",
-		"book-flight-nodelay",
-		"buy-ticket",
-		"choose-date",
-		"choose-date-easy",
-		"choose-date-medium",
-		"choose-date-nodelay",
-		"choose-list",
-		"click-button-sequence",
-		"click-checkboxes",
-		"click-checkboxes-large",
-		"click-checkboxes-soft",
-		"click-checkboxes-transfer",
-		"click-collapsible",
-		"click-collapsible-2",
-		"click-collapsible-2-nodelay",
-		"click-collapsible-nodelay",
-		"click-menu",
-		"click-menu-2",
-		"click-option",
-		"click-scroll-list",
-		"click-tab",
-		"click-tab-2",
-		"click-tab-2-easy",
-		"click-tab-2-hard",
-		"click-tab-2-medium",
-		"click-test-transfer",
-		"click-widget",
-		"daily-calendar",
-		"email-inbox",
-		"email-inbox-delete",
-		"email-inbox-forward",
-		"email-inbox-forward-nl",
-		"email-inbox-forward-nl-turk",
-		"email-inbox-important",
-		"email-inbox-nl-turk",
-		"email-inbox-noscroll",
-		"email-inbox-reply",
-		"email-inbox-star-reply",
-		"enter-date",
-		"enter-text-2",
-		"enter-time",
-		"find-greatest",
-		"find-word",
-		"form-sequence",
-		"form-sequence-2",
-		"form-sequence-3",
-		"generate-number",
-		"highlight-text",
-		"highlight-text-2",
-		"multi-layouts",
-		"multi-orderings",
-		"navigate-tree",
-		"number-checkboxes",
-		"odd-or-even",
-		"order-food",
-		"phone-book",
-		"read-table",
-		"read-table-2",
-		"scroll-text",
-		"scroll-text-2",
-		"search-engine",
-		"sign-agreement",
-		"simple-algebra",
-		"simple-arithmetic",
-		"social-media",
-		"social-media-all",
-		"social-media-some",
-		"stock-market",
-		"terminal",
-		"text-editor",
-		"text-transform",
-		"tic-tac-toe",
-		"unicode-test",
-		"use-autocomplete",
-		"use-autocomplete-nodelay",
-	];
-
-	// Build the union: solver tasks + non-element tasks + unsolved element.
-	// The three sets are disjoint (solved tasks are excluded from the
-	// unsolved list), so the union count is 13 + 35 + 77 = 125.
-	const all = new Set<string>();
-
-	for (const key of solverKeys) all.add(key);
-	for (const key of nonElementKeys) all.add(key);
-	for (const key of unsolvedElement) all.add(key);
-
-	return [...all].sort();
+	return [...MINIWOB_SUBDOMAINS].sort();
 }

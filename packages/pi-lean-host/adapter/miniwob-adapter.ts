@@ -1,21 +1,17 @@
 /**
- * BrowserGym adapter — TypeScript wrapper around the Python bridge
- * (`adapter/browsergym-bridge.py`) that runs a MiniWoB++ task
+ * MiniWoB adapter — TypeScript wrapper around the Python driver
+ * (`adapter/miniwob-driver.py`) that runs a MiniWoB++ task
  * end-to-end against a `BrowserPlugin`.
  *
- * Phase 1 (`browsergym-migration-plan-v2.md` §1.3): Mode A only
- * (plugin-owns-browser). The plugin launches its own Chromium with
- * `--remote-debugging-port=0` and exposes `getCdpEndpoint()`; the
- * Python bridge attaches via `connect_over_cdp` and runs
- * `task.setup(page)` / `task.validate(page)` on the shared page.
- * Mode B (host-owns-browser, `connectOverCDP`) is wired by
- * `bench.ts`'s mode negotiation, not here.
+ * Mode A (plugin-owns-browser): The plugin launches its own Chromium
+ * with `--remote-debugging-port=0` and exposes `getCdpEndpoint()`; the
+ * Python driver attaches via `connect_over_cdp` and runs setup/validate
+ * on the shared page.
  *
  * Invariant: only the Node plugin drives actions (click/type/scroll).
- * The Python bridge only runs `setup` and `validate` — it never
- * touches the DOM beyond BrowserGym's own setup injection. This keeps
- * the `@e`-ref accessibility model authoritative and avoids any
- * collision with BrowserGym's `bid` stamping.
+ * The Python driver only runs `setup` and `validate` — it never
+ * touches the DOM. This keeps the `@e`-ref accessibility model
+ * authoritative.
  *
  * @module
  */
@@ -23,18 +19,18 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
 
 // ─── Types ────────────────────────────────────────────────────────
 
-/** Context handed to a {@link TrivialSolver} — mirrors the portal's old `MiniwobSolverCtx`. */
+/** Context handed to a {@link TrivialSolver}. */
 export interface SolverCtx {
 	plugin: BrowserPlugin;
 	taskId: string;
-	/** Task utterance / goal (from BrowserGym's `task_info["goal"]`). */
+	/** Task utterance / goal. */
 	goal: string;
 	/** Post-setup accessibility snapshot with `@e` refs. */
 	snapshot: string;
@@ -43,9 +39,7 @@ export interface SolverCtx {
 }
 
 /**
- * A trivial, task-specific solver. Batch C moves the 13 shipped
- * solvers from the portal into `pi-lean-host/solvers/`; for Batch B's
- * smoke test an inline solver is sufficient.
+ * A trivial, task-specific solver.
  */
 export type TrivialSolver = (ctx: SolverCtx) => Promise<void>;
 
@@ -58,15 +52,14 @@ export interface RunMiniwobTaskOptions {
 	baseUrl: string;
 	/**
 	 * Actor strategy. Phase 1 supports `"trivial"` only — the caller
-	 * supplies a {@link TrivialSolver}. Phase 2 widens this to a union
-	 * that adds a Pi-agent actor.
+	 * supplies a {@link TrivialSolver}.
 	 */
 	actor: "trivial";
 	/** Required when `actor === "trivial"`. */
 	solver?: TrivialSolver;
 	/** Max solver/validate round-trips before bailing (default 20). */
 	maxSteps?: number;
-	/** Episode max time in ms, forwarded to BrowserGym setup (default 30_000). */
+	/** Episode max time in ms (default 30_000). */
 	episodeMaxTimeMs?: number;
 	/** Per-call navigate timeout in ms (default 15_000). */
 	navigateTimeoutMs?: number;
@@ -74,26 +67,19 @@ export interface RunMiniwobTaskOptions {
 	donePollIntervalMs?: number;
 	/** How long to poll `done` after the solver returns (default 10_000ms). */
 	donePollTimeoutMs?: number;
-
 	/**
-	 * CDP endpoint override for Mode B (host-owns-browser). When set,
-	 * the bridge uses this endpoint directly instead of calling
-	 * `plugin.getCdpEndpoint()`. The host launched the reference
-	 * browser and owns the endpoint.
-	 *
-	 * Prefixed with `_` to indicate this is an internal detail of the
-	 * host-plugin interaction; external callers should use
-	 * `benchPlugin` with `mode: "host-owns-browser"` instead.
+	 * Python interpreter path for the driver process.
+	 * Defaults to the plugin's Python adapter path if not set.
 	 */
-	_cdpEndpointOverride?: string;
+	pythonPath?: string;
 }
 
 /** Result of {@link runMiniwobTask}. */
 export interface MiniwobTaskResult {
 	goal: string;
-	/** `1` if `reward > 0`, else `0` — matches BrowserGym's `validate` convention. */
+	/** `1` if `rawReward > 0`, else `0`. */
 	reward: number;
-	/** Raw reward float from `task.validate(page)`. */
+	/** Raw reward float from `validate()`. */
 	rawReward: number;
 	done: boolean;
 	reason: string;
@@ -118,29 +104,9 @@ const BRIDGE_RPC_TIMEOUT_MS = 60_000;
 // ─── Bridge path resolution ───────────────────────────────────────
 
 const ADAPTER_DIR = dirname(fileURLToPath(import.meta.url));
-const HOST_PKG_DIR = resolve(ADAPTER_DIR, "..");
-const BRIDGE_SCRIPT = join(ADAPTER_DIR, "browsergym-bridge.py");
+const BRIDGE_SCRIPT = join(ADAPTER_DIR, "miniwob-driver.py");
 
-/** Default dedicated-venv Python interpreter path. */
-const DEFAULT_VENV_PYTHON = join(HOST_PKG_DIR, "venv", "bin", "python3");
-
-/**
- * Resolve the Python interpreter for the bridge subprocess.
- * Precedence: `PI_LEAN_HOST_VENV_PYTHON` env →
- * `packages/pi-lean-host/venv/bin/python3` default.
- */
-function resolveVenvPython(): string {
-	const p = process.env.PI_LEAN_HOST_VENV_PYTHON ?? DEFAULT_VENV_PYTHON;
-	if (!existsSync(p)) {
-		throw new Error(
-			`BrowserGym venv Python not found at ${p}. ` +
-				`Run: npm run setup:venv -w pi-lean-host`,
-		);
-	}
-	return p;
-}
-
-// ─── JSON-RPC client for the bridge subprocess ────────────────────
+// ─── JSON-RPC client for the driver subprocess ────────────────────
 
 interface PendingRequest {
 	resolve: (value: unknown) => void;
@@ -160,7 +126,7 @@ export class BridgeClient {
 		private readonly _bridgeScript: string,
 	) {
 		if (!existsSync(_bridgeScript)) {
-			throw new Error(`BrowserGym bridge script not found: ${_bridgeScript}`);
+			throw new Error(`MiniWoB driver script not found: ${_bridgeScript}`);
 		}
 	}
 
@@ -188,7 +154,7 @@ export class BridgeClient {
 					clearTimeout(p.timer);
 					p.reject(
 						new Error(
-							`BrowserGym bridge exited (code=${code})${
+							`MiniWoB driver exited (code=${code})${
 								this._stderr ? `\nstderr:\n${this._stderr}` : ""
 							}`,
 						),
@@ -205,7 +171,7 @@ export class BridgeClient {
 					if (this._proc) this._kill();
 					rejectStart(
 						new Error(
-							`BrowserGym bridge ping failed: ${
+							`MiniWoB driver ping failed: ${
 								err instanceof Error ? err.message : String(err)
 							}${this._stderr ? `\nstderr:\n${this._stderr}` : ""}`,
 						),
@@ -221,7 +187,7 @@ export class BridgeClient {
 		timeoutMs: number = BRIDGE_RPC_TIMEOUT_MS,
 	): Promise<T> {
 		if (!this._proc || this._proc.killed) {
-			throw new Error("BrowserGym bridge is not running");
+			throw new Error("MiniWoB driver is not running");
 		}
 		return new Promise<T>((resolveCall, rejectCall) => {
 			const id = ++this._reqId;
@@ -230,7 +196,7 @@ export class BridgeClient {
 				this._kill();
 				rejectCall(
 					new Error(
-						`BrowserGym bridge RPC timed out after ${timeoutMs}ms: ${method}`,
+						`MiniWoB driver RPC timed out after ${timeoutMs}ms: ${method}`,
 					),
 				);
 			}, timeoutMs);
@@ -245,7 +211,7 @@ export class BridgeClient {
 			if (!stdin || stdin.destroyed) {
 				clearTimeout(timer);
 				this._pending.delete(id);
-				rejectCall(new Error("BrowserGym bridge stdin closed"));
+				rejectCall(new Error("MiniWoB driver stdin closed"));
 				return;
 			}
 			stdin.write(line);
@@ -330,12 +296,16 @@ function sleep(ms: number): Promise<void> {
  *
  * Steps:
  *   1. Navigate the plugin to `${baseUrl}/miniwob/${taskName}.html`.
- *      (Launches the browser, populates `getCdpEndpoint()`.)
- *   2. Spawn the BrowserGym bridge, `miniwob.connect(cdpEndpoint)`.
- *   3. `miniwob.setup({ taskName, seed, baseUrl })` → goal.
+ *      (Launches the browser, populates the CDP endpoint.)
+ *   2. Spawn the MiniWoB Python driver, connect over CDP.
+ *   3. `setup({ subdomain, seed, base_url, episode_max_time_ms })` → goal.
  *   4. Take an `@e`-ref snapshot; hand it to the solver.
- *   5. Poll `miniwob.validate()` until `done` or `donePollTimeoutMs`.
- *   6. `miniwob.teardown()`, stop the bridge, return the result bag.
+ *   5. Poll `validate()` until `done` or `donePollTimeoutMs`.
+ *   6. Teardown, stop the driver, return the result bag.
+ *
+ * CDP endpoint: reads `plugin.getCdpEndpoint()` (chromium family).
+ * The caller must ensure the plugin has launched and the endpoint is
+ * populated (e.g. via `navigate`).
  *
  * The caller owns the plugin lifecycle (`init` / `cleanupAll`); this
  * function calls `plugin.navigate` and (on success) `plugin.cleanup`
@@ -355,6 +325,7 @@ export async function runMiniwobTask(
 		navigateTimeoutMs = DEFAULT_NAVIGATE_TIMEOUT_MS,
 		donePollIntervalMs = DEFAULT_DONE_POLL_INTERVAL_MS,
 		donePollTimeoutMs = DEFAULT_DONE_POLL_TIMEOUT_MS,
+		pythonPath,
 	} = opts;
 
 	if (!solver) {
@@ -370,50 +341,45 @@ export async function runMiniwobTask(
 		return fail(`navigate failed: ${nav.error ?? "unknown"}`);
 	}
 
-	// 2. Resolve CDP endpoint.
-	//    Mode B override takes priority (set by benchPlugin's host-owns-browser path).
-	//    Fall back to Mode A: plugin-owns-browser via getCdpEndpoint().
-	let cdpEndpoint: string | null = opts._cdpEndpointOverride ?? null;
-	if (!cdpEndpoint) {
-		const getCdp = plugin.getCdpEndpoint;
-		if (typeof getCdp !== "function") {
-			await plugin.cleanup(taskId).catch(() => {});
-			return fail(
-				"plugin does not expose getCdpEndpoint() — Mode A unavailable. " +
-					"Implement getCdpEndpoint on the plugin or use benchPlugin (Mode B).",
-			);
-		}
-		cdpEndpoint = getCdp.call(plugin);
-		if (!cdpEndpoint) {
-			await plugin.cleanup(taskId).catch(() => {});
-			return fail(
-				"plugin.getCdpEndpoint() returned null — browser may not have launched " +
-					"with a debug port, or port discovery failed (set CDP_PORT env as a fallback).",
-			);
-		}
+	// 2. Resolve CDP endpoint (Mode A: plugin-owns-browser).
+	const getCdp = plugin.getCdpEndpoint;
+	if (typeof getCdp !== "function") {
+		await plugin.cleanup(taskId).catch(() => {});
+		return fail(
+			"plugin does not expose getCdpEndpoint() — Mode A (cdp) unavailable.",
+		);
+	}
+	const endpoint = getCdp.call(plugin);
+	if (!endpoint) {
+		await plugin.cleanup(taskId).catch(() => {});
+		return fail(
+			"plugin.getCdpEndpoint() returned null — browser may not have launched " +
+				"with a debug port, or port discovery failed (set CDP_PORT env as a fallback).",
+		);
 	}
 
-	// 3. Spawn the bridge + connect.
+	// 3. Spawn the driver + connect.
+	const resolvedPython = pythonPath ?? "python3";
 	let bridge: BridgeClient;
 	try {
-		bridge = new BridgeClient(resolveVenvPython(), BRIDGE_SCRIPT);
+		bridge = new BridgeClient(resolvedPython, BRIDGE_SCRIPT);
 		await bridge.start();
 	} catch (err) {
 		await plugin.cleanup(taskId).catch(() => {});
 		return fail(
-			`bridge spawn failed: ${err instanceof Error ? err.message : String(err)}`,
+			`driver spawn failed: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	}
 
 	try {
-		await bridge.call("miniwob.connect", { cdpEndpoint });
+		await bridge.call("connect", { endpoint, kind: "cdp" });
 
 		// 4. Setup → goal.
-		const setupRes = (await bridge.call("miniwob.setup", {
-			taskName,
+		const setupRes = (await bridge.call("setup", {
+			subdomain: taskName,
+			base_url: baseUrl,
 			seed,
-			baseUrl,
-			episodeMaxTimeMs,
+			episode_max_time_ms: episodeMaxTimeMs,
 		})) as { goal?: string };
 		const goal = setupRes.goal ?? "";
 
@@ -449,14 +415,15 @@ export async function runMiniwobTask(
 		// 6. Poll validate until done.
 		const pollStart = Date.now();
 		let steps = 0;
-		let last = { reward: 0, done: false, reason: "" } as {
+		let last = { reward: 0, raw_reward: 0, done: false, reason: "" } as {
 			reward: number;
+			raw_reward: number;
 			done: boolean;
 			reason: string;
 		};
 		let timedOut = false;
 		while (steps < maxSteps) {
-			last = (await bridge.call("miniwob.validate", {})) as typeof last;
+			last = (await bridge.call("validate", {})) as typeof last;
 			steps++;
 			if (last.done) break;
 			if (Date.now() - pollStart > donePollTimeoutMs) {
@@ -466,12 +433,12 @@ export async function runMiniwobTask(
 			await sleep(donePollIntervalMs);
 		}
 
-		await bridge.call("miniwob.teardown", {}).catch(() => {});
+		await bridge.call("teardown", {}).catch(() => {});
 
 		return {
 			goal,
 			reward: last.reward > 0 ? 1 : 0,
-			rawReward: last.reward,
+			rawReward: last.raw_reward,
 			done: last.done,
 			reason: last.reason,
 			steps,
@@ -480,7 +447,7 @@ export async function runMiniwobTask(
 		};
 	} catch (err) {
 		return fail(
-			`bridge RPC failed: ${err instanceof Error ? err.message : String(err)}`,
+			`driver RPC failed: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	} finally {
 		await bridge.stop().catch(() => {});

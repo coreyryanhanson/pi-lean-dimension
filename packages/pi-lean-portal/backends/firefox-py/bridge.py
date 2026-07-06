@@ -26,6 +26,7 @@ Requires
 * Playwright Firefox browsers installed (``playwright install firefox``)
 """
 
+import os
 import sys
 
 from pi_browser_bridge.playwright_base import PlaywrightBridge, check_playwright_or_exit
@@ -48,7 +49,22 @@ class FirefoxPyBridge(PlaywrightBridge):
     )
 
     def _launch_browser(self):
-        """Launch a Firefox browser instance."""
+        """Launch a Firefox browser instance.
+
+        When ``PI_BROWSER_USE_LAUNCH_SERVER=1`` is set (bench mode),
+        uses ``firefox.launch_server()`` + ``firefox.connect(wsEndpoint)``
+        so an external client can attach via the WebSocket endpoint.
+
+        Normal portal usage (env var absent): plain ``firefox.launch()``
+        — unchanged from the shipped firefox-py path.
+        """
+        if os.environ.get("PI_BROWSER_USE_LAUNCH_SERVER") == "1":
+            self._browser_server = self._pw.firefox.launch_server(
+                headless=True,
+            )
+            ws_endpoint = self._browser_server.ws_endpoint
+            self._log("launchServer", wsEndpoint=ws_endpoint)
+            return self._pw.firefox.connect(ws_endpoint)
         return self._pw.firefox.launch(
             headless=True,
         )

@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 
 /**
- * One-time setup script for MiniWoB++ test content (Step 4 of
- * `miniwob-integration-plan.md`).
+ * One-time setup script for MiniWoB++ test content.
  *
  * Clones `miniwob-plusplus` at the frozen commit pin and prints the
  * path the test suite expects. No-op when the target directory already
  * exists (idempotent).
+ *
+ * After cloning, generates `packages/pi-lean-host/generated/subdomains.ts`
+ * from the `*.html` files in the html directory so the test suite has
+ * a committed, reviewable task list without requiring the cloned content
+ * to be present at compile time.
  *
  * The suite and helpers default to
  * `/tmp/miniwob-plusplus/miniwob/html` as the HTML root.  Override
@@ -26,8 +30,8 @@
  * miniwob-plusplus@7fd85d71a4b60325c6585396ec4f48377d049838
  */
 
-import { existsSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { join, resolve, relative } from "node:path";
 import { execSync } from "node:child_process";
 
 // ─── Config ──────────────────────────────────────────────────────
@@ -112,6 +116,7 @@ function main() {
 					`and re-run to reset.`,
 			);
 		}
+		generateSubdomainsFile(htmlDir);
 		info(
 			`MiniWoB++ already cloned at ${checkoutRoot}.\n` +
 				`  HTML root: ${htmlDir}\n` +
@@ -122,6 +127,7 @@ function main() {
 
 	// ── Guard: if HTML root exists w/o .git (e.g. user placed it manually) ──
 	if (existsSync(htmlDir)) {
+		generateSubdomainsFile(htmlDir);
 		info(
 			`HTML content already present at ${htmlDir} (no .git checkout). Nothing to do.\n` +
 				`  Set MINIWOB_HTML_ROOT=${htmlDir} or leave the default if that matches.`,
@@ -158,6 +164,8 @@ function main() {
 		die(`Expected HTML root not found after clone: ${htmlDir}`);
 	}
 
+	generateSubdomainsFile(htmlDir);
+
 	info("Done. MiniWoB++ content ready at:");
 	console.log(`  HTML root: ${htmlDir}`);
 	console.log("");
@@ -168,6 +176,42 @@ function main() {
 	);
 	console.log(
 		"    export MINIWOB_URL=http://…   # URL of an already-running server",
+	);
+}
+
+/**
+ * Generate the `generated/subdomains.ts` file from the MiniWoB++ html
+ * directory. Writes a sorted `MINIWOB_SUBDOMAINS` const array of all
+ * `.html` file stem names (minus extension).
+ */
+function generateSubdomainsFile(htmlDir) {
+	const generatedDir = resolve(import.meta.dirname, "..", "generated");
+	mkdirSync(generatedDir, { recursive: true });
+
+	const files = readdirSync(htmlDir)
+		.filter((f) => f.endsWith(".html"))
+		.map((f) => f.replace(/\.html$/, ""))
+		.sort();
+
+	const content = [
+		"/**",
+		" * Auto-generated MiniWoB++ subdomain list.",
+		" *",
+		" * Generated from `miniwob-plusplus@7fd85d71a4b60325c6585396ec4f48377d049838`.",
+		" * Regenerate via: npm run setup:miniwob",
+		" *",
+		" * Do not edit by hand — edit setup-miniwob.mjs to change the source.",
+		" */",
+		"export const MINIWOB_SUBDOMAINS = [",
+		...files.map((f) => `\t"${f}",`),
+		"] as const;",
+		"",
+	].join("\n");
+
+	const outPath = join(generatedDir, "subdomains.ts");
+	writeFileSync(outPath, content, "utf-8");
+	info(
+		`Generated ${relative(process.cwd(), outPath)} (${files.length} subdomains)`,
 	);
 }
 

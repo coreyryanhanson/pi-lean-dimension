@@ -9,12 +9,10 @@
 # - MiniWoB++ browser tests run after, gated by:
 #   1. Playwright Chromium (Phase 1; Firefox + Python backends are Phase 1.5)
 #   2. Cloned MiniWoB++ content at the pinned commit
-#   3. Dedicated browsergym venv (cached on requirements.txt hash)
 #
 # ── Attribution ────────────────────────────────────────────────────
 #
 # MiniWoB++ © Farama-Foundation (Apache-2.0)
-# BrowserGym © ServiceNow (Apache-2.0)
 # Pinned commit: miniwob-plusplus@7fd85d71a4b60325c6585396ec4f48377d049838
 #
 # ── Manual trigger ─────────────────────────────────────────────────
@@ -64,13 +62,13 @@ jobs:
       - name: Run structural tests (test:ci)
         run: npm run test:ci
 
-  # ── MiniWoB browser tests (venv + content + browser) ─────────────
+  # ── MiniWoB browser tests (content + browser) ────────────────────
   miniwob:
     name: MiniWoB browser tests
     runs-on: ubuntu-latest
     needs: structural
 
-    # Only runs on push to main or PR (auto-skips when browser/venv/content absent)
+    # Only runs on push to main or PR (auto-skips when browser/content absent)
 
     steps:
       - name: Checkout repository
@@ -88,22 +86,8 @@ jobs:
       - name: Install Playwright browsers (chromium)
         run: npx playwright install --with-deps chromium
 
-      - name: Create dedicated browsergym venv
-        id: cache-venv
-        uses: actions/cache@v4
-        with:
-          path: packages/pi-lean-host/venv
-          key: browsergym-venv-${{ hashFiles('packages/pi-lean-host/requirements.txt') }}
-
-      - name: Setup browsergym venv (if cache miss)
-        if: steps.cache-venv.outputs.cache-hit != 'true'
-        run: npm run setup:venv -w pi-lean-host
-
       - name: Setup MiniWoB++ content
         run: npm run setup:miniwob
-
-      - name: Run MiniWoB helper tests (test:helper)
-        run: npm run test:helper -w pi-lean-host
 
       - name: Run MiniWoB browser tests (test:miniwob)
         run: npm run test:miniwob

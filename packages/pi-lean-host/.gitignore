@@ -1,5 +1,4 @@
-# Dedicated BrowserGym venv (created by `npm run setup:venv -w pi-lean-host`).
-# Isolated from the portal's chromium-py / firefox-py venv.
+# Python virtual environment (legacy — no longer needed).
 venv/
 
 # Benchmark run outputs (Phase 2+).

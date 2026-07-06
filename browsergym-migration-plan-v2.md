@@ -1,5 +1,7 @@
 # BrowserGym Migration Plan v2 — Option C implementation guide
 
+> **Superseded** — see chat 2026-07-06 and `PLAN-browsergym-removal.md`. BrowserGym dropped as a runtime dependency due to playwright pin incompatibility.
+
 > **Status:** Active implementation guide. supersedes
 > [`browsergym-migration-plan.md`](browsergym-migration-plan.md) for
 > implementation guidance; the original is retained as decision history.
@@ -175,6 +177,7 @@ packages/pi-lean-host/
 ```
 
 **Depends on (workspace):** `pi-lean-portal` (for `BrowserPlugin` types
+
 - plugin constructors), `pi-lean-search` (if host varies search tool
 presence in Phase 2).
 

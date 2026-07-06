@@ -1,5 +1,7 @@
 # BrowserGym Migration — Phase 1.5 (Firefox + Python backend support)
 
+> **Superseded** — see chat 2026-07-06 and `PLAN-browsergym-removal.md`. BrowserGym dropped as a runtime dependency due to playwright pin incompatibility.
+
 > **Status:** Active implementation guide. Self-contained and definitive
 > for Phase 1.5. Sits downstream of
 > [`browsergym-migration-plan-v2.md`](browsergym-migration-plan-v2.md)

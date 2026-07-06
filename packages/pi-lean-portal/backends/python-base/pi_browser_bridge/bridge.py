@@ -389,6 +389,18 @@ class BrowserBridge:
             f"{type(self).__name__} must implement do_get_storage_state()"
         )
 
+    def do_get_ws_endpoint(self) -> dict[str, Any]:
+        """Return the WebSocket endpoint for external attach (Firefox family).
+
+        Subclasses that use ``launch_server()`` (Firefox playright) override
+        this to return the server's ``ws_endpoint`` string. The default
+        implementation returns ``None`` — no ws endpoint is available.
+
+        Returns:
+            A dict with ``{"wsEndpoint": str | None}``.
+        """
+        return {"wsEndpoint": None}
+
     def do_cleanup(self, task_id: str) -> dict[str, Any]:
         """Clean up resources for a specific task.
 
@@ -425,6 +437,14 @@ class BrowserBridge:
             if method == "shutdown":
                 self._running = False
                 return make_success_response(cmd_id, "shutting_down")
+
+            if method == "get_ws_endpoint":
+                # Return the WebSocket endpoint for external attach (Firefox family,
+                # launch_server path). Subclasses using launch_server() override
+                # do_get_ws_endpoint to return the server's wsEndpoint. Default
+                # implementation returns None.
+                result = self.do_get_ws_endpoint()
+                return make_success_response(cmd_id, result)
 
             if method == "browser.navigate":
                 url = self._require_param(params, "url", str, cmd_id)

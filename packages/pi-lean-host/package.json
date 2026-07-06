@@ -1,14 +1,12 @@
 {
 	"name": "pi-lean-host",
 	"version": "0.0.1",
-	"description": "BrowserGym evaluation harness for BrowserPlugin backends. Adapter-driven MiniWoB++ (and future WebArena/WorkArena) task pipeline: Python bridge via CDP attach, Node-plugin @e-ref action layer, TypeScript runMiniwobTask/benchPlugin API. Phase 1 complete: chromium Mode A adapter smoke test passes (click-test, rawReward > 0).",
+	"description": "MiniWoB++ evaluation harness for BrowserPlugin backends. Adapter-driven task pipeline: Python driver via CDP attach, Node-plugin @e-ref action layer, TypeScript runMiniwobTask/benchPlugin API.",
 	"keywords": [
 		"pi-package",
 		"pi-extension",
 		"benchmark",
-		"browsergym",
-		"miniwob",
-		"webarena"
+		"miniwob"
 	],
 	"license": "AGPL-3.0-only",
 	"repository": {
@@ -27,16 +25,13 @@
 		"src/",
 		"adapter/",
 		"solvers/",
-		"scripts/",
-		"requirements.txt"
+		"scripts/"
 	],
 	"scripts": {
 		"prepack": "cp ../../LICENSE ./LICENSE",
 		"test": "vitest run",
 		"test:miniwob": "vitest run suites/miniwob-trivial.test.ts",
-		"test:helper": "vitest run suites/miniwob-helper.test.ts",
-		"setup:miniwob": "node scripts/setup-miniwob.mjs",
-		"setup:venv": "node scripts/setup-venv.mjs"
+		"setup:miniwob": "node scripts/setup-miniwob.mjs"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-ai": "*",

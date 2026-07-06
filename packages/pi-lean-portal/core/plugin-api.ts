@@ -300,20 +300,17 @@ export interface BrowserPlugin {
 	 */
 	cleanup(taskId: string): Promise<void>;
 
-	// ── External attach (BrowserGym / benchmarking) ────────────
+	// ── External attach (benchmarking / tooling) ───────────────
 
 	/**
 	 * CDP endpoint an external client can attach to in order to share
-	 * the page this plugin drives — used by `pi-lean-host`'s BrowserGym
-	 * bridge in "plugin-owns-browser" (Mode A) mode for the Chromium
-	 * family (Node `chromium`, Python `chromium-py`). The Firefox family
-	 * exposes `getWsEndpoint()` instead — see below.
+	 * the page this plugin drives. The endpoint is discovered after
+	 * browser launch via `ss -tlnp` / `CDP_PORT` env var.
 	 *
 	 * Returns the endpoint string (`http://127.0.0.1:<port>`) once the
-	 * browser has launched and the `--remote-debugging-port=0` port has
-	 * been discovered via `ss -tlnp` / `CDP_PORT`, or `null` if the plugin
-	 * does not expose one (firefox / python-firefox backends, or before
-	 * the browser has launched).
+	 * browser has launched and the port has been discovered, or `null`
+	 * if the plugin does not expose one (firefox / python-firefox
+	 * backends, or before the browser has launched).
 	 *
 	 * Host-side callers must guard with
 	 * `typeof plugin.getCdpEndpoint === "function"` (not a truthiness
@@ -322,36 +319,10 @@ export interface BrowserPlugin {
 	getCdpEndpoint?(): string | null;
 
 	/**
-	 * Playwright WebSocket endpoint an external client can attach to in
-	 * order to share the page this plugin drives — used by `pi-lean-host`'s
-	 * BrowserGym bridge in "plugin-owns-browser" (Mode A) mode for the
-	 * Firefox family, which doesn't speak CDP.
-	 *
-	 * Returns a `ws://` endpoint once the browser has launched via
-	 * `firefox.launchServer()` (Node) or `browser_type.launch_server()`
-	 * (Python) and the `wsEndpoint` has been captured, or `null` before
-	 * launch / when the launchServer path is not active (default-off
-	 * behind `BROWSER_FIREFOX_LAUNCH_SERVER` / `PI_BROWSER_USE_LAUNCH_SERVER`).
-	 *
-	 * Mutually exclusive with `getCdpEndpoint()` per backend: a
-	 * chromium-family backend exposes `getCdpEndpoint`, a firefox-family
-	 * backend exposes `getWsEndpoint`. Host-side callers pick the attach
-	 * `kind` ("cdp" | "ws") based on which method the plugin implements.
-	 *
-	 * Host-side callers must guard with
-	 * `typeof plugin.getWsEndpoint === "function"` (not a truthiness
-	 * check) under `exactOptionalPropertyTypes: true`.
-	 */
-	getWsEndpoint?(): string | null;
-
-	/**
-	 * Connect to an externally-launched browser instead of launching one.
-	 *
-	 * Plugins that implement this can be benchmarked in
-	 * "host-owns-browser" (Mode B) mode without exercising their own
-	 * launch path — `pi-lean-host` launches a reference chromium with a
-	 * CDP port, BrowserGym attaches via CDP, and the plugin connects to
-	 * the same endpoint to drive the page.
+	 * Connect to an externally-launched browser via CDP instead of
+	 * launching one. This allows an external harness (e.g. a benchmark
+	 * runner) to manage the browser lifecycle and have the plugin drive
+	 * the same page.
 	 *
 	 * Mutually exclusive with the default `launchBrowser()` path: a
 	 * plugin typically implements exactly one of `launchBrowser()` /
