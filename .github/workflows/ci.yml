@@ -7,9 +7,9 @@
 #
 # - Fast structural tests run first (no browser required).
 # - MiniWoB++ browser tests run after, gated by:
-#   1. Playwright Chromium + Firefox (for Node backends)
+#   1. Playwright Chromium (Phase 1; Firefox + Python backends are Phase 1.5)
 #   2. Cloned MiniWoB++ content at the pinned commit
-#   3. Python/venv backends auto-skip when the venv isn't present
+#   3. Dedicated browsergym venv (cached on requirements.txt hash)
 #
 # ── Attribution ────────────────────────────────────────────────────
 #
@@ -26,7 +26,7 @@
 #
 # Node 22 (matching engines requirement in package.json)
 # Ubuntu latest (for Playwright system deps)
-# Python backends auto-skip (no venv setup in CI by default)
+# Python/venv backends auto-skip (no combined venv setup in CI — Phase 1.5)
 
 name: CI
 
@@ -43,8 +43,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test
+  # ── Structural tests (fast, no browser) ──────────────────────────
+  structural:
+    name: Structural tests
     runs-on: ubuntu-latest
 
     steps:
@@ -60,14 +61,56 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright browsers (chromium, firefox)
-        run: npx playwright install --with-deps chromium firefox
+      - name: Run structural tests (test:ci)
+        run: npm run test:ci
+
+  # ── MiniWoB browser tests (venv + content + browser) ─────────────
+  miniwob:
+    name: MiniWoB browser tests
+    runs-on: ubuntu-latest
+    needs: structural
+
+    # Only runs on push to main or PR (auto-skips when browser/venv/content absent)
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers (chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: Create dedicated browsergym venv
+        id: cache-venv
+        uses: actions/cache@v4
+        with:
+          path: packages/pi-lean-host/venv
+          key: browsergym-venv-${{ hashFiles('packages/pi-lean-host/requirements.txt') }}
+
+      - name: Setup browsergym venv (if cache miss)
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: npm run setup:venv -w pi-lean-host
 
       - name: Setup MiniWoB++ content
         run: npm run setup:miniwob
 
-      - name: Run structural tests (test:ci)
-        run: npm run test:ci
-
       - name: Run MiniWoB browser tests (test:miniwob)
         run: npm run test:miniwob
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: miniwob-test-results
+          path: |
+            packages/pi-lean-host/results/
+            packages/pi-lean-portal/__tests__/*.xml
+          if-no-files-found: ignore

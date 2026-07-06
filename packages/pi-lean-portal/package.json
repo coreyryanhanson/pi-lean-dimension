@@ -20,6 +20,16 @@
 	"publishConfig": {
 		"access": "public"
 	},
+	"exports": {
+		".": {
+			"types": "./core/plugin-api.ts",
+			"default": "./index.ts"
+		},
+		"./*": {
+			"types": "./*",
+			"default": "./*"
+		}
+	},
 	"files": [
 		"index.ts",
 		"browser-toggle.ts",
