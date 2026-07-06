@@ -102,6 +102,9 @@ jobs:
       - name: Setup MiniWoB++ content
         run: npm run setup:miniwob
 
+      - name: Run MiniWoB helper tests (test:helper)
+        run: npm run test:helper -w pi-lean-host
+
       - name: Run MiniWoB browser tests (test:miniwob)
         run: npm run test:miniwob
 

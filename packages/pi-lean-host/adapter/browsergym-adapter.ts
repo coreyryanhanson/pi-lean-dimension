@@ -58,10 +58,10 @@ export interface RunMiniwobTaskOptions {
 	baseUrl: string;
 	/**
 	 * Actor strategy. Phase 1 supports `"trivial"` only — the caller
-	 * supplies a {@link TrivialSolver}. Phase 2 adds `{ type: "pi",
-	 * config }` to run Pi as the agent.
+	 * supplies a {@link TrivialSolver}. Phase 2 widens this to a union
+	 * that adds a Pi-agent actor.
 	 */
-	actor: "trivial" | { type: "pi"; config: unknown };
+	actor: "trivial";
 	/** Required when `actor === "trivial"`. */
 	solver?: TrivialSolver;
 	/** Max solver/validate round-trips before bailing (default 20). */
@@ -349,7 +349,6 @@ export async function runMiniwobTask(
 		taskName,
 		seed,
 		baseUrl,
-		actor,
 		solver,
 		maxSteps = DEFAULT_MAX_STEPS,
 		episodeMaxTimeMs = DEFAULT_EPISODE_MAX_MS,
@@ -358,11 +357,6 @@ export async function runMiniwobTask(
 		donePollTimeoutMs = DEFAULT_DONE_POLL_TIMEOUT_MS,
 	} = opts;
 
-	if (actor !== "trivial") {
-		return fail(
-			"Phase 1 supports actor: 'trivial' only (Phase 2 adds Pi agent).",
-		);
-	}
 	if (!solver) {
 		return fail("actor: 'trivial' requires a solver.");
 	}

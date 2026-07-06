@@ -117,11 +117,10 @@ export async function resolveCdpEndpoint(
 /**
  * Read a `CDP_PORT`-style env value and return the corresponding
  * `http://127.0.0.1:<port>` endpoint, or `null` if unset / non-numeric.
- * Convenience wrapper for callers that only want the fixed-port path
- * (no `ss` scan) and for `resolveCdpEndpoint` to share the validation
+ * Shared helper for `resolveCdpEndpoint` to reuse the validation
  * logic.
  */
-export function cdpEndpointFromEnv(
+function cdpEndpointFromEnv(
 	envPort: string | undefined = process.env.CDP_PORT,
 ): string | null {
 	if (envPort && /^\d+$/.test(envPort.trim())) {

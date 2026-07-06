@@ -5,9 +5,10 @@
  * Phase 1: chromium Node backend (Mode A, plugin-owns-browser).
  * Phase 1.5 will add: firefox, chromium-py, firefox-py.
  *
- * Uses the public `benchPlugin` API from `pi-lean-host` — the same API
- * a user-owned parity test file would import. This proves the public
- * API is the same code path the shipped tests exercise.
+ * Uses the public `registerMiniwobSuite` + `runMiniwobTask` API from
+ * `pi-lean-host` — the same API a user-owned parity test file would
+ * import. This proves the public API is the same code path the shipped
+ * tests exercise.
  *
  * ── Task breakdown ────────────────────────────────────────────────
  * - 13 trivial-solver tasks run: 3 confident (reward > 0 asserted) +

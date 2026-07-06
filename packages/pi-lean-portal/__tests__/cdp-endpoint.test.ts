@@ -8,7 +8,6 @@ import { describe, it, expect } from "vitest";
 import {
 	resolveCdpEndpoint,
 	scanSsForEndpoint,
-	cdpEndpointFromEnv,
 } from "../core/shared/cdp-endpoint.js";
 
 // ─── `ss -tlnp` output fixture ─────────────────────────────────────
@@ -97,25 +96,60 @@ describe("scanSsForEndpoint", () => {
 	});
 });
 
-// ─── cdpEndpointFromEnv ────────────────────────────────────────────
+// ─── ResolveCdpEndpoint env-based resolution ─────────────────
 
-describe("cdpEndpointFromEnv", () => {
-	it("returns the endpoint for a numeric CDP_PORT", () => {
-		expect(cdpEndpointFromEnv("9222")).toBe("http://127.0.0.1:9222");
+describe("resolveCdpEndpoint — env-based resolution", () => {
+	it("returns endpoint for a numeric envPort", async () => {
+		const runSs = (): string => {
+			throw new Error("ss should not be called");
+		};
+		expect(
+			await resolveCdpEndpoint({
+				processNames: ["chrome-headless"],
+				envPort: "9222",
+				runSs,
+			}),
+		).toBe("http://127.0.0.1:9222");
 	});
 
-	it("trims whitespace", () => {
-		expect(cdpEndpointFromEnv("  9222  ")).toBe("http://127.0.0.1:9222");
+	it("trims whitespace from envPort", async () => {
+		const runSs = (): string => {
+			throw new Error("ss should not be called");
+		};
+		expect(
+			await resolveCdpEndpoint({
+				processNames: ["chrome-headless"],
+				envPort: "  9222  ",
+				runSs,
+			}),
+		).toBe("http://127.0.0.1:9222");
 	});
 
-	it("returns null for non-numeric values", () => {
-		expect(cdpEndpointFromEnv("abc")).toBeNull();
-		expect(cdpEndpointFromEnv("")).toBeNull();
-		expect(cdpEndpointFromEnv(undefined)).toBeNull();
+	it("falls back to ss scan for non-numeric envPort", async () => {
+		const endpoint = await resolveCdpEndpoint({
+			processNames: ["chrome-headless"],
+			envPort: "abc",
+			runSs: () => SS_WITH_CHROME,
+		});
+		expect(endpoint).toBe("http://127.0.0.1:9222");
 	});
 
-	it("rejects values with trailing junk", () => {
-		expect(cdpEndpointFromEnv("9222abc")).toBeNull();
+	it("falls back to ss scan for empty envPort", async () => {
+		const endpoint = await resolveCdpEndpoint({
+			processNames: ["chrome-headless"],
+			envPort: "",
+			runSs: () => SS_WITH_CHROME,
+		});
+		expect(endpoint).toBe("http://127.0.0.1:9222");
+	});
+
+	it("falls back to ss scan for envPort with trailing junk", async () => {
+		const endpoint = await resolveCdpEndpoint({
+			processNames: ["chrome-headless"],
+			envPort: "9222abc",
+			runSs: () => SS_WITH_CHROME,
+		});
+		expect(endpoint).toBe("http://127.0.0.1:9222");
 	});
 });
 

@@ -24,10 +24,6 @@
 		".": {
 			"types": "./core/plugin-api.ts",
 			"default": "./index.ts"
-		},
-		"./*": {
-			"types": "./*",
-			"default": "./*"
 		}
 	},
 	"files": [

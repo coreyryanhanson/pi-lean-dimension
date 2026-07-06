@@ -14,9 +14,10 @@
 **pi-lean-host** is the evaluation harness for `BrowserPlugin` backends.
 It runs behavioral evaluation (MiniWoB, WebArena, etc.) against any
 plugin implementation via BrowserGym, while staying agnostic to the plugin
-internals. See [`browsergym-migration-plan.md`](../../browsergym-migration-plan.md)
+internals. See [`browsergym-migration-plan-v2.md`](../../browsergym-migration-plan-v2.md)
 for the full plan.
 
 ## Status
 
-Placeholder — see the README.
+Phase 1 complete (chromium Mode A via trivial solvers). See the
+[README](./README.md) for setup, usage, and public API documentation.
