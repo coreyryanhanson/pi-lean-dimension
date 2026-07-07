@@ -3,10 +3,10 @@
  * (`adapter/miniwob-driver.py`) that runs a MiniWoB++ task
  * end-to-end against a `BrowserPlugin`.
  *
- * Mode A (plugin-owns-browser): The plugin launches its own Chromium
- * with `--remote-debugging-port=0` and exposes `getAttachEndpoint()`; the
- * Python driver attaches via `connect_over_cdp` and runs setup/validate
- * on the shared page.
+ * Mode A (plugin-owns-browser): The plugin launches its own browser
+ * and exposes an attach endpoint via `getAttachEndpoint()` (chromium:
+ * `{kind:"cdp", endpoint}`, firefox: `{kind:"firefox-ws", endpoint}`);
+ * the Python driver attaches and runs setup/validate on the shared page.
  *
  * Invariant: only the Node plugin drives actions (click/type/scroll).
  * The Python driver only runs `setup` and `validate` — it never
@@ -22,7 +22,10 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { BrowserPlugin, AttachEndpoint } from "../../pi-lean-portal/core/plugin-api.js";
+import type {
+	BrowserPlugin,
+	AttachEndpoint,
+} from "../../pi-lean-portal/core/plugin-api.js";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -376,7 +379,10 @@ export async function runMiniwobTask(
 	}
 
 	try {
-		await bridge.call("connect", { endpoint: attachEp.endpoint, kind: attachEp.kind });
+		await bridge.call("connect", {
+			endpoint: attachEp.endpoint,
+			kind: attachEp.kind,
+		});
 
 		// 4. Setup → goal.
 		const setupRes = (await bridge.call("setup", {

@@ -338,6 +338,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			this._started = false;
 			this._stderrAccumulated = "";
 			this._cdpEndpoint = null;
+			this._wsEndpoint = null;
 
 			const proc = spawn(
 				this._pythonPath,
@@ -399,6 +400,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				this._exitCode = code;
 				this._process = null;
 				this._cdpEndpoint = null;
+				this._wsEndpoint = null;
 
 				// Build stderr guidance for error messages
 				const stderrSuffix = this._stderrAccumulated
@@ -550,6 +552,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		}
 
 		this._cdpEndpoint = null;
+		this._wsEndpoint = null;
 		this._process = null;
 		this._exitCode = 0; // Mark as dead
 		this._buffer = "";
@@ -1297,8 +1300,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		}
 		return null;
 	}
-
-
 
 	/**
 	 * Convert a raw RPC result to an InteractionResult.

@@ -185,7 +185,7 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			}
 			this._browser = null;
 		}
-	if (this._browserServer) {
+		if (this._browserServer) {
 			try {
 				await this._browserServer.close();
 			} catch {
