@@ -149,6 +149,18 @@ export interface MiniwobBackend {
 	name: string;
 	available: boolean;
 	initPlugin: () => Promise<BrowserPlugin>;
+	/**
+	 * Python interpreter path used to spawn the MiniWoB++ driver
+	 * (`miniwob-driver.py`), which requires the `playwright` Python
+	 * package. If omitted, `runMiniwobTask` defaults to `python3` —
+	 * only works when system `python3` has `playwright` installed.
+	 *
+	 * Shipped suites auto-detect the venv at
+	 * `pi-lean-portal/backends/python-base/.venv/bin/python3` via
+	 * `registerMiniwobBackend`. User-owned parity test files should
+	 * point this at whatever Python has `playwright` for their setup.
+	 */
+	driverPythonPath?: string;
 }
 
 // ─── Suite registration ──────────────────────────────────────────
@@ -222,15 +234,18 @@ export function registerMiniwobSuite(
 			it(
 				label,
 				async () => {
-					const result = await runMiniwobTask({
-						plugin,
-						taskName: subdomain,
-						seed: SEED,
-						baseUrl,
-						actor: "trivial",
-						solver,
-						episodeMaxTimeMs: 30_000,
-					});
+				const result = await runMiniwobTask({
+					plugin,
+					taskName: subdomain,
+					seed: SEED,
+					baseUrl,
+					actor: "trivial",
+					solver,
+					episodeMaxTimeMs: 30_000,
+					...(backend.driverPythonPath
+						? { pythonPath: backend.driverPythonPath }
+						: {}),
+				});
 
 					// The pipeline must not fail at any setup step.
 					expect(

@@ -254,8 +254,25 @@ export class BridgeClient {
 			clearTimeout(pending.timer);
 			this._pending.delete(id);
 			if (resp.error) {
+				// The MiniWoB driver sends errors as
+				//   { error: "<message string>", traceback: "<tb string>" }
+				// (top-level fields — see miniwob-driver.py). Some callers
+				// may use the JSON-RPC object shape
+				//   { error: { code, message, data: { traceback } } }.
+				// Handle both so a driver-side failure always surfaces a real
+				// message instead of being swallowed into `undefined`.
+				const errObj = resp.error as unknown;
+				const message =
+					typeof errObj === "string"
+						? errObj
+						: (errObj as { message?: string }).message ??
+							  String(errObj);
+				const tb =
+					typeof errObj === "string"
+						? (resp as { traceback?: string }).traceback
+						: (errObj as { data?: { traceback?: string } }).data?.traceback;
 				const e = new Error(
-					`${resp.error.message}${resp.error.data?.traceback ? `\n${resp.error.data.traceback}` : ""}`,
+					`${message}${tb ? `\n${tb}` : ""}`,
 				);
 				pending.reject(e);
 			} else {

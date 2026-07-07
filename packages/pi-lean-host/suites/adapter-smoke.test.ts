@@ -37,6 +37,19 @@ import { clickFirstButton } from "../solvers/trivial-solvers.js";
 const HTML_ROOT =
 	process.env.MINIWOB_HTML_ROOT ?? "/tmp/miniwob-plusplus/miniwob/html";
 
+/**
+ * Python interpreter for the MiniWoB driver. Auto-detected from the
+ * shared `pi-lean-portal` venv (where CI installs `playwright`); falls
+ * back to `python3` when the venv is absent.
+ */
+const DRIVER_PYTHON = (() => {
+	const candidate = resolve(
+		__dirname,
+		"../../pi-lean-portal/backends/python-base/.venv/bin/python3",
+	);
+	return existsSync(candidate) ? candidate : "python3";
+})();
+
 // --- Availability gates --------------------------------------------
 
 const CHROMIUM_AVAILABLE = (() => {
@@ -99,6 +112,7 @@ describe("MiniWoB adapter smoke — chromium + click-test", () => {
 				actor: "trivial",
 				solver: clickFirstButton,
 				episodeMaxTimeMs: 30_000,
+				pythonPath: DRIVER_PYTHON,
 			});
 
 			expect(

@@ -48,7 +48,11 @@ class MiniwobDriver:
 
     def setup(self, subdomain, base_url, seed, episode_max_time_ms):
         """Navigate to a MiniWoB++ task and start an episode."""
-        url = f"{base_url}{subdomain}.html"
+        # Task HTML lives at `${base_url}/miniwob/<subdomain>.html` —
+        # `miniwob/` holds per-task files, `core/` + `common/` hold shared
+        # resources (see miniwob-server.ts). Strip any trailing slash on
+        # base_url so the join is stable regardless of caller.
+        url = f"{base_url.rstrip('/')}/miniwob/{subdomain}.html"
         self._page.goto(url, wait_until="load")
         # Episode-setup JS: seed the RNG, set max time, start the episode.
         # Paraphrased from BrowserGym's base.py (ServiceNow, Apache-2.0).
