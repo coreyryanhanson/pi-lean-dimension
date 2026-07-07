@@ -4,7 +4,7 @@
  * end-to-end against a `BrowserPlugin`.
  *
  * Mode A (plugin-owns-browser): The plugin launches its own Chromium
- * with `--remote-debugging-port=0` and exposes `getCdpEndpoint()`; the
+ * with `--remote-debugging-port=0` and exposes `getAttachEndpoint()`; the
  * Python driver attaches via `connect_over_cdp` and runs setup/validate
  * on the shared page.
  *
@@ -22,7 +22,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
+import type { BrowserPlugin, AttachEndpoint } from "../../pi-lean-portal/core/plugin-api.js";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -301,7 +301,8 @@ function sleep(ms: number): Promise<void> {
  *   5. Poll `validate()` until `done` or `donePollTimeoutMs`.
  *   6. Teardown, stop the driver, return the result bag.
  *
- * CDP endpoint: reads `plugin.getCdpEndpoint()` (chromium family).
+ * Attach endpoint: reads `plugin.getAttachEndpoint()` (chromium →
+ * `{kind:"cdp", endpoint}`, firefox → `{kind:"firefox-ws", endpoint}`).
  * The caller must ensure the plugin has launched and the endpoint is
  * populated (e.g. via `navigate`).
  *
@@ -339,20 +340,25 @@ export async function runMiniwobTask(
 		return fail(`navigate failed: ${nav.error ?? "unknown"}`);
 	}
 
-	// 2. Resolve CDP endpoint (Mode A: plugin-owns-browser).
-	const getCdp = plugin.getCdpEndpoint;
-	if (typeof getCdp !== "function") {
+	// 2. Resolve attach endpoint (plugin-owns-browser).
+	//    The plugin exposes `getAttachEndpoint()` returning a typed
+	//    descriptor ({kind, endpoint}) — "cdp" for chromium family,
+	//    "firefox-ws" for firefox family. The driver dispatches on
+	//    `kind` to use the right Playwright client.
+	const attachFn = plugin.getAttachEndpoint;
+	if (typeof attachFn !== "function") {
 		await plugin.cleanup(taskId).catch(() => {});
 		return fail(
-			"plugin does not expose getCdpEndpoint() — Mode A (cdp) unavailable.",
+			"plugin does not expose getAttachEndpoint() — external attach unavailable.",
 		);
 	}
-	const endpoint = getCdp.call(plugin);
-	if (!endpoint) {
+	const attachEp: AttachEndpoint | null = attachFn.call(plugin);
+	if (!attachEp) {
 		await plugin.cleanup(taskId).catch(() => {});
 		return fail(
-			"plugin.getCdpEndpoint() returned null — browser may not have launched " +
-				"with a debug port, or port discovery failed (set CDP_PORT env as a fallback).",
+			"plugin.getAttachEndpoint() returned null — browser may not have launched " +
+				"with an attach port (set CDP_PORT env for chromium as fallback, " +
+				"or ensure firefox launch_server path is active).",
 		);
 	}
 
@@ -370,7 +376,7 @@ export async function runMiniwobTask(
 	}
 
 	try {
-		await bridge.call("connect", { endpoint, kind: "cdp" });
+		await bridge.call("connect", { endpoint: attachEp.endpoint, kind: attachEp.kind });
 
 		// 4. Setup → goal.
 		const setupRes = (await bridge.call("setup", {

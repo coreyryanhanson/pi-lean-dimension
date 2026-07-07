@@ -1,7 +1,7 @@
 /**
  * Adapter smoke test — proves the end-to-end MiniWoB pipeline works
  * against the shipped `chromium` plugin (Mode A): the plugin launches
- * Chromium with `--remote-debugging-port=0`, `getCdpEndpoint()` resolves
+ * Chromium with `--remote-debugging-port=0`, `getAttachEndpoint()` resolves
  * the port, the Python driver attaches via `connect_over_cdp`, runs
  * setup + validate, and a trivial inline solver drives the page through
  * the `@e`-ref action layer.

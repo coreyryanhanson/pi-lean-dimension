@@ -4,18 +4,24 @@
  * Thin subclass of PlaywrightPluginBase. All shared logic lives in
  * backends/playwright-base/playwright-plugin.ts.
  *
- * Uses probe-then-cache UA capture at first launch, with a hardcoded
- * fallback Firefox UA string. Launch args are empty — Firefox does
- * not accept Chromium sandbox flags.
+ * Uses `firefox.launchServer()` + `firefox.connect(wsEndpoint)` so an
+ * external client (`pi-lean-host`'s MiniWoB++ driver) can attach over
+ * the WebSocket endpoint (Mode A — plugin-owns-browser, ws variant).
+ * The `launchServer` path is the default — `firefox.connect(wsEndpoint)`
+ * returns a normal Browser that works identically to `firefox.launch()`,
+ * so portal browsing is unaffected.
  *
+ * Uses probe-then-cache UA capture at first launch, with a hardcoded
+ * fallback Firefox UA string.
  */
 
 import { firefox } from "playwright";
-import type { Browser } from "playwright";
+import type { Browser, BrowserServer } from "playwright";
 import { PlaywrightPluginBase } from "../playwright-base/playwright-plugin.js";
 import {
 	DEFAULT_CAPABILITIES,
 	type PluginCapabilities,
+	type AttachEndpoint,
 } from "../../core/plugin-api.js";
 
 // ─── Capabilities ──────────────────────────────────────────────────
@@ -48,9 +54,39 @@ export class FirefoxPlugin extends PlaywrightPluginBase {
 	}
 
 	protected async launchBrowser(): Promise<Browser> {
-		return firefox.launch({
+		const server: BrowserServer = await firefox.launchServer({
 			headless: true,
 		});
+		this._browserServer = server;
+		this._wsEndpoint = server.wsEndpoint();
+		return firefox.connect(this._wsEndpoint);
+	}
+
+	/**
+	 * Reconnect to the launchServer after the connected Browser
+	 * disconnects. The server stays up across Browser disconnects, so a
+	 * fresh `connect(wsEndpoint)` recovers without relaunching. Only
+	 * called by the base when `_browserServer` is non-null.
+	 */
+	protected async _reconnectBrowser(): Promise<Browser> {
+		if (!this._wsEndpoint) {
+			throw new Error(
+				"firefox: cannot reconnect — no wsEndpoint cached " +
+					"(launchServer not active)",
+			);
+		}
+		return firefox.connect(this._wsEndpoint);
+	}
+
+	/**
+	 * Attach endpoint for external clients (firefox-ws, firefox family).
+	 * Returns `{ kind: "firefox-ws", endpoint: "ws://..." }` once the
+	 * launchServer has started, or `null` before launch.
+	 */
+	getAttachEndpoint(): AttachEndpoint | null {
+		return this._wsEndpoint
+			? { kind: "firefox-ws", endpoint: this._wsEndpoint }
+			: null;
 	}
 
 	protected get installHint(): string {

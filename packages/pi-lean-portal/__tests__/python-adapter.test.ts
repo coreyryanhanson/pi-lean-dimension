@@ -27,6 +27,7 @@ import {
 	type PythonBridgeConfig,
 } from "../backends/python-adapter.js";
 import { sessionManager } from "../core/shared/session-manager.js";
+import type { AttachEndpoint } from "../core/plugin-api.js";
 import {
 	loadStorageState,
 	deleteStorageState,
@@ -1084,7 +1085,7 @@ describeBrowserInit("browser.init RPC (Phase 0)", () => {
 
 const describeCdpEndpoint = PYTHON_AVAILABLE ? describe : describe.skip;
 
-describeCdpEndpoint("getCdpEndpoint — CDP endpoint discovery", () => {
+describeCdpEndpoint("getAttachEndpoint — CDP endpoint discovery", () => {
 	let savedCdpPort: string | undefined;
 
 	beforeEach(() => {
@@ -1104,25 +1105,25 @@ describeCdpEndpoint("getCdpEndpoint — CDP endpoint discovery", () => {
 	});
 
 	/**
-	 * Wait up to 2s for getCdpEndpoint() to return a non-null value.
+	 * Wait up to 2s for getAttachEndpoint() to return a non-null value.
 	 * CDP discovery is fire-and-forget (async), so after navigate returns
 	 * we may need a microtask tick for the Promise to settle. With CDP_PORT
 	 * set, resolution is instant but still happens on the microtask queue.
 	 */
 	async function pollCdpEndpoint(
 		adapter: PythonPluginAdapter,
-	): Promise<string | null> {
+	): Promise<AttachEndpoint | null> {
 		for (let i = 0; i < 200; i++) {
-			const ep = adapter.getCdpEndpoint();
+			const ep = adapter.getAttachEndpoint();
 			if (ep !== null) return ep;
 			await new Promise((r) => setTimeout(r, 10));
 		}
-		return adapter.getCdpEndpoint();
+		return adapter.getAttachEndpoint();
 	}
 
 	it("returns null before any navigation", () => {
 		const adapter = createAdapter();
-		expect(adapter.getCdpEndpoint()).toBeNull();
+		expect(adapter.getAttachEndpoint()).toBeNull();
 	});
 
 	it("returns the CDP endpoint after a successful navigation", async () => {
@@ -1136,8 +1137,11 @@ describeCdpEndpoint("getCdpEndpoint — CDP endpoint discovery", () => {
 			);
 			expect(result.success).toBe(true);
 
-			const endpoint = await pollCdpEndpoint(adapter);
-			expect(endpoint).toBe("http://127.0.0.1:29999");
+			const attachEp = await pollCdpEndpoint(adapter);
+			expect(attachEp).toEqual({
+				kind: "cdp",
+				endpoint: "http://127.0.0.1:29999",
+			});
 		} finally {
 			await adapter.cleanupAll().catch(() => {});
 		}
@@ -1151,7 +1155,10 @@ describeCdpEndpoint("getCdpEndpoint — CDP endpoint discovery", () => {
 
 			// Wait for async discovery, then assert endpoint
 			const ep = await pollCdpEndpoint(adapter);
-			expect(ep).toBe("http://127.0.0.1:29999");
+			expect(ep).toEqual({
+				kind: "cdp",
+				endpoint: "http://127.0.0.1:29999",
+			});
 
 			// Kill the subprocess
 			const proc = (
@@ -1164,8 +1171,8 @@ describeCdpEndpoint("getCdpEndpoint — CDP endpoint discovery", () => {
 			proc!.kill("SIGKILL");
 			await new Promise((r) => setTimeout(r, 200));
 
-			// getCdpEndpoint should now return null
-			expect(adapter.getCdpEndpoint()).toBeNull();
+			// getAttachEndpoint should now return null
+			expect(adapter.getAttachEndpoint()).toBeNull();
 		} finally {
 			await adapter.cleanupAll().catch(() => {});
 		}
@@ -1179,7 +1186,10 @@ describeCdpEndpoint("getCdpEndpoint — CDP endpoint discovery", () => {
 
 			// Wait for async discovery, then assert endpoint
 			let ep = await pollCdpEndpoint(adapter);
-			expect(ep).toBe("http://127.0.0.1:29999");
+			expect(ep).toEqual({
+				kind: "cdp",
+				endpoint: "http://127.0.0.1:29999",
+			});
 
 			// Kill the subprocess
 			const proc = (
@@ -1201,7 +1211,10 @@ describeCdpEndpoint("getCdpEndpoint — CDP endpoint discovery", () => {
 			expect(r2.success).toBe(true);
 
 			ep = await pollCdpEndpoint(adapter);
-			expect(ep).toBe("http://127.0.0.1:29999");
+			expect(ep).toEqual({
+				kind: "cdp",
+				endpoint: "http://127.0.0.1:29999",
+			});
 		} finally {
 			await adapter.cleanupAll().catch(() => {});
 		}

@@ -181,6 +181,28 @@ export interface StorageStateResult extends ResultBase {
 // ─── BrowserPlugin Interface ──────────────────────────────────────
 
 /**
+ * Discriminated attach-endpoint descriptor. An external client
+ * (e.g. the `pi-lean-host` MiniWoB++ driver) uses this to attach a
+ * second Playwright client to the browser the plugin drives, so the
+ * two can share pages without the plugin ceding control of actions.
+ *
+ * - `"cdp"` — Chrome DevTools Protocol. Chromium family exposes a
+ *   CDP endpoint (`http://127.0.0.1:<port>`) discovered after launch
+ *   via `ss -tlnp` / `CDP_PORT` env var. The external client attaches
+ *   with `chromium.connect_over_cdp(endpoint)`.
+ * - `"firefox-ws"` — Juggler over WebSocket. Firefox family exposes a
+ *   `ws://` endpoint from `firefox.launchServer()`; the plugin drives
+ *   the browser via `firefox.connect(wsEndpoint)` and the external
+ *   client attaches with `firefox.connect(wsEndpoint)` the same way.
+ *
+ * The `kind` tells the caller which Playwright client + connect call
+ * to use, so the harness stays engine-agnostic.
+ */
+export type AttachEndpoint =
+	| { kind: "cdp"; endpoint: string }
+	| { kind: "firefox-ws"; endpoint: string };
+
+/**
  * The contract every interactive browser backend must implement.
  *
  * The 12 required operations (plus getElementCache and cookie/storage
@@ -303,18 +325,17 @@ export interface BrowserPlugin {
 	// ── External attach (benchmarking / tooling) ───────────────
 
 	/**
-	 * CDP endpoint an external client can attach to in order to share
-	 * the page this plugin drives. The endpoint is discovered after
-	 * browser launch via `ss -tlnp` / `CDP_PORT` env var.
+	 * Attach endpoint an external client can use to share the browser
+	 * this plugin drives. See {@link AttachEndpoint} for the two variants.
 	 *
-	 * Returns the endpoint string (`http://127.0.0.1:<port>`) once the
-	 * browser has launched and the port has been discovered, or `null`
-	 * if the plugin does not expose one (firefox / python-firefox
-	 * backends, or before the browser has launched).
+	 * Returns the descriptor once the browser has launched and the
+	 * endpoint has been discovered, or `null` if the plugin does not
+	 * expose one (e.g. a backend that launches without a debug port, or
+	 * before the browser has launched).
 	 *
 	 * Host-side callers must guard with
-	 * `typeof plugin.getCdpEndpoint === "function"` (not a truthiness
+	 * `typeof plugin.getAttachEndpoint === "function"` (not a truthiness
 	 * check) under `exactOptionalPropertyTypes: true`.
 	 */
-	getCdpEndpoint?(): string | null;
+	getAttachEndpoint?(): AttachEndpoint | null;
 }

@@ -2,7 +2,7 @@
  * CDP endpoint discovery — finds the DevTools Protocol endpoint of a
  * Chromium browser launched with `--remote-debugging-port=0`.
  *
- * Used by the chromium plugin's `getCdpEndpoint()` — see
+ * Used by the chromium plugin's `getAttachEndpoint()` — see
  * `packages/pi-lean-host/docs/cdp-endpoint-spike.md`.
  *
  * Mechanism (spike-confirmed on Linux):

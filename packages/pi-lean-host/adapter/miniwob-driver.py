@@ -29,11 +29,14 @@ class MiniwobDriver:
         return {"pong": True}
 
     def connect(self, endpoint, kind):
-        """Attach to an existing browser via CDP."""
+        """Attach to an existing browser via CDP or WebSocket."""
         self._pw = sync_playwright().start()
-        if kind != "cdp":
+        if kind == "cdp":
+            self._browser = self._pw.chromium.connect_over_cdp(endpoint)
+        elif kind == "firefox-ws":
+            self._browser = self._pw.firefox.connect(endpoint)
+        else:
             raise ValueError(f"Unknown connect kind: {kind}")
-        self._browser = self._pw.chromium.connect_over_cdp(endpoint)
         # Use the first context's first page, or create one
         ctxs = self._browser.contexts
         if ctxs:

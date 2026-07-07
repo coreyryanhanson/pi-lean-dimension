@@ -48,6 +48,7 @@ import {
 	type ClearCookiesOptions,
 	type StorageStateResult,
 	type ResultBase,
+	type AttachEndpoint,
 } from "../core/plugin-api.js";
 import type { AriaCachedNode } from "../core/shared/accessibility-tree.js";
 
@@ -191,7 +192,14 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	 */
 	private _cdpEndpoint: string | null = null;
 
-
+	/**
+	 * Cached WebSocket endpoint for external attach (firefox family).
+	 * Populated by calling the bridge's ``get_ws_endpoint``
+	 * RPC after a launch-server-backed firefox browser has started.
+	 * Reset to null when the bridge subprocess exits.
+	 * Synchronous after first discovery.
+	 */
+	private _wsEndpoint: string | null = null;
 
 	/**
 	 * Plugin config dict forwarded to the bridge via the `browser.init` RPC
@@ -776,6 +784,12 @@ export class PythonPluginAdapter implements BrowserPlugin {
 					this._discoverCdpEndpoint().catch(() => {});
 				}
 
+				// Discover WebSocket endpoint (firefox family, best-effort).
+				// Fired after each successful navigate so the endpoint is
+				// available for the bridge before a task connects.
+				if (!this._wsEndpoint) {
+					this._discoverWsEndpoint().catch(() => {});
+				}
 			}
 
 			const navResult: NavigateResult = {
@@ -1222,7 +1236,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	 * reads the `CDP_PORT` env var on non-Linux / CI, exactly like
 	 * the Chromium plugin's `onBrowserLaunched()`.
 	 *
-	 * Errors are swallowed — `getCdpEndpoint()` returns null and
+	 * Errors are swallowed — `getAttachEndpoint()` returns null and
 	 * Mode A attach is unavailable for that session.
 	 */
 	private async _discoverCdpEndpoint(): Promise<void> {
@@ -1239,13 +1253,49 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	}
 
 	/**
-	 * CDP endpoint for external attach.
-	 * Returns `http://127.0.0.1:<port>` after a successful navigate
-	 * has triggered endpoint discovery, or `null` before navigation /
-	 * on platforms where discovery failed.
+	 * Discover the WebSocket endpoint from the bridge's launched Firefox.
+	 *
+	 * When firefox-py runs with ``launch_server()``, the bridge exposes
+	 * the server's ``ws_endpoint`` via the ``get_ws_endpoint`` JSON-RPC
+	 * method. This method queries that RPC and caches the result for
+	 * external attach (firefox family).
+	 *
+	 * Silent on platforms / backends that don't support launch_server
+	 * — ``getAttachEndpoint()`` returns null and ws-mode attach is
+	 * unavailable.
 	 */
-	getCdpEndpoint(): string | null {
-		return this._cdpEndpoint;
+	private async _discoverWsEndpoint(): Promise<void> {
+		try {
+			const raw = await this._rpcCall("get_ws_endpoint", {}, 5_000);
+			const result = raw as { wsEndpoint?: string | null };
+			if (result.wsEndpoint) {
+				this._wsEndpoint = result.wsEndpoint;
+			}
+		} catch {
+			// Swallow — ws attach unavailable but normal browsing unaffected
+		}
+	}
+
+	/**
+	 * Attach endpoint for external clients.
+	 *
+	 * Returns the descriptor once it has been discovered, or ``null``
+	 * before navigation / on platforms where discovery failed.
+	 *
+	 * Two kinds advertised depending on the backend:
+	 * - ``{ kind: "cdp", endpoint: "http://127.0.0.1:<port>" }`` for
+	 *   chromium-family backends (cdp endpoint from ``ss -tlnp`` / ``CDP_PORT``)
+	 * - ``{ kind: "firefox-ws", endpoint: "ws://..." }`` for firefox-family
+	 *   backends that use ``launch_server()``
+	 */
+	getAttachEndpoint(): AttachEndpoint | null {
+		if (this._cdpEndpoint) {
+			return { kind: "cdp", endpoint: this._cdpEndpoint };
+		}
+		if (this._wsEndpoint) {
+			return { kind: "firefox-ws", endpoint: this._wsEndpoint };
+		}
+		return null;
 	}
 
 

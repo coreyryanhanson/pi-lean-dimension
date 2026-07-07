@@ -12,7 +12,7 @@
  * - Launch errors are wrapped with engine-specific install hints.
  */
 
-import type { Browser, BrowserContext, Page } from "playwright";
+import type { Browser, BrowserContext, BrowserServer, Page } from "playwright";
 import {
 	parseSnapshot,
 	buildLocator,
@@ -104,7 +104,41 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	 */
 	protected _cdpEndpoint: string | null = null;
 
-	// ── Private state ──────────────────────────────────────────
+	/**
+	 * BrowserServer handle for the `launchServer` path (firefox family).
+	 * Set by subclasses that use `firefox.launchServer()` / `browser_type.launch_server()`.
+	 * Non-null when the plugin is running in launchServer mode; when the
+	 * connected Browser disconnects, the server stays up and the base
+	 * calls `_reconnectBrowser()` instead of clearing state.
+	 *
+	 * Reset to `null` when the server itself closes, or during `cleanupAll()`.
+	 */
+	protected _browserServer: BrowserServer | null = null;
+
+	/**
+	 * Cached WebSocket endpoint for the `launchServer` path (firefox family).
+	 * Set by subclasses alongside `_browserServer`. Used to reconnect after
+	 * a Browser disconnect without relaunching the server. Exposed to external
+	 * clients via `getAttachEndpoint()`.
+	 */
+	protected _wsEndpoint: string | null = null;
+
+	/**
+	 * Reconnect to a `launchServer` after the connected Browser disconnects.
+	 * The BrowserServer stays up across Browser disconnects, so a fresh
+	 * `connect(wsEndpoint)` recovers without relaunching.
+	 *
+	 * Only called by the base when `_browserServer` is non-null. The default
+	 * implementation throws — only `launchServer` subclasses (firefox) override
+	 * this. The base never calls it when `_browserServer` is null, so
+	 * default-path backends (chromium) are unaffected.
+	 */
+	protected async _reconnectBrowser(): Promise<Browser> {
+		throw new Error(
+			`${this.name}: _reconnectBrowser() not implemented ` +
+				"(launchServer path not active)",
+		);
+	}
 
 	/** Enable structured debug logging via BROWSER_DEBUG env var */
 	private readonly _debug = process.env.BROWSER_DEBUG === "1";
@@ -150,6 +184,15 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				/* browser may already be closed */
 			}
 			this._browser = null;
+		}
+	if (this._browserServer) {
+			try {
+				await this._browserServer.close();
+			} catch {
+				/* server may already be closed */
+			}
+			this._browserServer = null;
+			this._wsEndpoint = null;
 		}
 	}
 
@@ -206,10 +249,10 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	 * Post-launch hook called once after the shared browser successfully
 	 * launches. Runs before any context/page is created on the new browser.
 	 *
-	 * Subclasses override this to perform once-per-launch setup — most
-	 * notably the chromium plugin discovers the `--remote-debugging-port=0`
-	 * endpoint and caches it in `_cdpEndpoint` so `getCdpEndpoint()` can
-	 * return it synchronously.
+	 * Subclasses override this to perform once-per-launch setup:
+	 * - Chromium discovers the `--remote-debugging-port=0` endpoint and
+	 *   caches it in `_cdpEndpoint` so `getAttachEndpoint()` can return it.
+	 * - Firefox (launchServer path) caches `_wsEndpoint` for reconnect.
 	 *
 	 * Default: no-op. Failures thrown from overrides are caught and
 	 * logged by the caller (`_newBrowserContext`) so a port-scan glitch
@@ -299,16 +342,71 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		if (!this._browser) {
 			this._browser = await this._launchWithHint();
 
-			// Auto-recover from browser crash/disconnect
+			// Auto-recover from browser crash/disconnect.
+			// Behavior split by `_browserServer`:
+			// - Default path (`_browserServer === null`): null `_browser` and
+			//   clear all sessions — a re-navigate will relaunch.
+			// - launchServer path (`_browserServer !== null`): the server is
+			//   still up, so attempt `_reconnectBrowser()`. On success, install
+			//   the new Browser and re-wire its disconnected handler.
 			this._browser.on("disconnected", () => {
-				this._browser = null;
-				this._cdpEndpoint = null;
-				for (const tid of this._pages.keys()) {
-					sessionManager.updateSession(tid, { crashed: true });
-					this._elementCache.delete(tid);
+				if (this._browserServer) {
+					// launchServer path: try to reconnect to the still-up server.
+					// The reconnect promise is tracked so we don't pile up
+					// reconnect attempts if disconnect fires twice.
+					this._reconnectBrowser()
+						.then((newBrowser) => {
+							this._browser = newBrowser;
+							this._cdpEndpoint = null;
+							this._browser.on("disconnected", () => {
+								if (this._browserServer) {
+									this._reconnectBrowser()
+										.then((nb) => {
+											this._browser = nb;
+										})
+										.catch(() => {
+											this._browser = null;
+										});
+								} else {
+									this._browser = null;
+									this._cdpEndpoint = null;
+								}
+							});
+						})
+						.catch(() => {
+							// Reconnect failed — _browser stays null; _browserServer
+							// persists until its own close handler fires.
+						});
+				} else {
+					// Default path: clear everything, re-navigate will relaunch
+					this._browser = null;
+					this._cdpEndpoint = null;
+					for (const tid of this._pages.keys()) {
+						sessionManager.updateSession(tid, { crashed: true });
+						this._elementCache.delete(tid);
+					}
+					this._pages.clear();
 				}
-				this._pages.clear();
 			});
+
+			// Also wire the server's close handler (launchServer path only).
+			// The server fires `close` when the server process itself exits.
+			// We need to null `_browserServer` / `_wsEndpoint` so
+			// `_newBrowserContext` falls back to `_launchWithHint()` on
+			// the next call, restarting the server.
+			// We guard on `this._browserServer` being the same object so a
+			// cleanupAll race doesn't leak a stale handler.
+			const newServer: BrowserServer | null = this._browserServer;
+			if (newServer) {
+				newServer.on("close", () => {
+					if (this._browserServer === newServer) {
+						this._browserServer = null;
+						this._wsEndpoint = null;
+						this._browser = null;
+						this._cdpEndpoint = null;
+					}
+				});
+			}
 
 			// UA capture at first launch (Firefox opt-in)
 			if (this.captureUserAgent) {
@@ -319,7 +417,7 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			// (e.g. chromium scans for the `--remote-debugging-port=0` port)
 			// or perform other once-per-launch setup. Failures are
 			// swallowed so a port-scan glitch never blocks normal browsing —
-			// `getCdpEndpoint()` will simply return null.
+			// `getAttachEndpoint()` will simply return null.
 			try {
 				await this.onBrowserLaunched();
 			} catch (err) {

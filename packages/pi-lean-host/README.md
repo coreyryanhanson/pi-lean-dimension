@@ -286,14 +286,23 @@ All suites auto-skip when prerequisites (browser, MiniWoB++ content) are absent.
 ## Browser-ownership model
 
 `pi-lean-host` uses **Mode A — plugin-owns-browser** exclusively. The
-plugin launches its own Chromium with `--remote-debugging-port=0`,
-exposes `getCdpEndpoint(): string | null`, and the MiniWoB Python
-driver attaches via `connect_over_cdp`. This tests the plugin's real
-launch path.
+plugin exposes an attach endpoint through `getAttachEndpoint()`, and the
+MiniWoB Python driver attaches a second Playwright client to the same
+browser instance to read episode rewards.
 
-**Required on the plugin:** implements `getCdpEndpoint()` returning the
-CDP endpoint URL. The caller must guard with
-`typeof plugin.getCdpEndpoint === "function"` (a truthiness check
+Two attach kinds are supported depending on the engine:
+
+- **`"cdp"`** — Chrome DevTools Protocol. **Chromium** backends launch with
+  `--remote-debugging-port=0`, discover the OS-assigned port via
+  `ss -tlnp` / `CDP_PORT` env, and the driver attaches with
+  `chromium.connect_over_cdp(endpoint)`.
+- **`"firefox-ws"`** — Juggler over WebSocket. **Firefox** backends use
+  `firefox.launchServer()` + `firefox.connect(wsEndpoint)`, and the
+  driver attaches with `firefox.connect(wsEndpoint)` the same way.
+
+**Required on the plugin:** implements `getAttachEndpoint()` returning
+`AttachEndpoint | null`. The caller must guard with
+`typeof plugin.getAttachEndpoint === "function"` (a truthiness check
 would be incorrect under `exactOptionalPropertyTypes`).
 
 There is no "Mode B" (host-owns-browser) path — a `connectOverCDP`
