@@ -121,9 +121,11 @@ BrowserPlugin backend:
 
 ```ts
 import { runMiniwobTask } from "pi-lean-host";
-import { ChromiumPlugin } from "pi-lean-portal/backends/chromium/index.js";
+import type { BrowserPlugin } from "pi-lean-portal";
 
-const plugin = new ChromiumPlugin();
+// Your own BrowserPlugin drives the page via @e-ref accessibility snapshots.
+// The MiniWoB driver only reads rewards via CDP attach — it never drives actions.
+const plugin: BrowserPlugin = new MyPlugin();
 await plugin.init({});
 
 const result = await runMiniwobTask({
@@ -278,8 +280,11 @@ interface MiniwobBackend {
 
 | Suite file | What it tests |
 |---|---|
-| `suites/miniwob-trivial.test.ts` | 125 MiniWoB tasks × chromium — 13 trivial solvers pass, 112 skip. The real Phase 1 delivery. |
-| `suites/adapter-smoke.test.ts` | End-to-end `runMiniwobTask(click-test)` through real ChromiumPlugin + hand-rolled driver. Verifies `rawReward > 0`. Runs standalone (excluded from `test:miniwob` to avoid resource contention). |
+| `suites/miniwob-trivial.test.ts` | 125 MiniWoB tasks × chromium — 13 trivial solvers pass, 112 skip. |
+| `suites/miniwob-firefox.test.ts` | 125 MiniWoB tasks × firefox — 13 trivial solvers pass, 112 skip. |
+| `suites/miniwob-chromium-py.test.ts` | 125 MiniWoB tasks × chromium-py (Python bridge) — 13 trivial solvers pass, 112 skip. |
+| `suites/miniwob-firefox-py.test.ts` | 125 MiniWoB tasks × firefox-py (Python bridge) — 13 trivial solvers pass, 112 skip. |
+| `suites/adapter-smoke.test.ts` | End-to-end `runMiniwobTask(click-test)` through real Chromium + hand-rolled driver. Asserts `rawReward > 0`. |
 
 All suites auto-skip when prerequisites (browser, MiniWoB++ content) are absent.
 
