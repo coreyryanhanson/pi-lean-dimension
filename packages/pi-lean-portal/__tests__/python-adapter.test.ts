@@ -1106,9 +1106,9 @@ describeCdpEndpoint("getAttachEndpoint — CDP endpoint discovery", () => {
 
 	/**
 	 * Wait up to 2s for getAttachEndpoint() to return a non-null value.
-	 * CDP discovery is fire-and-forget (async), so after navigate returns
-	 * we may need a microtask tick for the Promise to settle. With CDP_PORT
-	 * set, resolution is instant but still happens on the microtask queue.
+	 * CDP discovery is now awaited in navigate (no longer fire-and-forget),
+	 * so the endpoint should be available immediately. The poll is kept
+	 * as a safety net for CI timing variance.
 	 */
 	async function pollCdpEndpoint(
 		adapter: PythonPluginAdapter,
@@ -1217,6 +1217,245 @@ describeCdpEndpoint("getAttachEndpoint — CDP endpoint discovery", () => {
 			});
 		} finally {
 			await adapter.cleanupAll().catch(() => {});
+		}
+	});
+});
+
+// ═════════════════════════════════════════════════════════════════════
+//  WebSocket endpoint discovery (firefox-ws attach path, Phase 2)
+// ═════════════════════════════════════════════════════════════════════
+
+const describeWsEndpoint = PYTHON_AVAILABLE ? describe : describe.skip;
+
+describeWsEndpoint("getAttachEndpoint — firefox-ws endpoint discovery", () => {
+	it("returns null before any navigation", () => {
+		const adapter = createAdapter();
+		expect(adapter.getAttachEndpoint()).toBeNull();
+	});
+
+	it("returns the firefox-ws endpoint after a successful navigate when bridge returns wsEndpoint", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-lean-portal-ws-"));
+		const bridgePath = writeBridge(
+			{
+				get_ws_endpoint:
+					'sys.stdout.write(json.dumps({"jsonrpc":"2.0","id":_rid,' +
+					'"result":{"wsEndpoint":"ws://127.0.0.1:12345/devtools/abc123"}}) + "\\n")',
+				"browser.navigate":
+					'params = _req.get("params", {})\n' +
+					"sys.stdout.write(json.dumps({\n" +
+					'"jsonrpc":"2.0",\n' +
+					'"id":_rid,\n' +
+					'"result":{\n' +
+					'    "success":True,\n' +
+					'    "url": params.get("url", ""),\n' +
+					'    "title": "WS Page",\n' +
+					'    "snapshot": "- [button] X",\n' +
+					'    "elementCount": 1\n' +
+					"}\n" +
+					'}) + "\\n")',
+				"browser.cleanup":
+					"sys.stdout.write(json.dumps({\n" +
+					'"jsonrpc":"2.0",\n' +
+					'"id":_rid,\n' +
+					'"result":{"success":True}\n' +
+					'}) + "\\n")',
+			},
+			dir,
+		);
+
+		const adapter = new PythonPluginAdapter("ws-test", {
+			bridgeScript: bridgePath,
+			pythonPath: "python3",
+			capabilities: {
+				engine: "firefox",
+			},
+		});
+
+		try {
+			await adapter.init({});
+
+			// Returns null before navigate (bridge hasn't started).
+			expect(adapter.getAttachEndpoint()).toBeNull();
+
+			const result = await adapter.navigate(
+				"https://example.com",
+				"ws-t1",
+				30_000,
+			);
+			expect(result.success).toBe(true);
+
+			// getAttachEndpoint should now return the firefox-ws endpoint.
+			// The discovery is awaited in navigate, so it's available
+			// synchronously after navigate returns.
+			const attachEp = adapter.getAttachEndpoint();
+			expect(attachEp).toEqual({
+				kind: "firefox-ws",
+				endpoint: "ws://127.0.0.1:12345/devtools/abc123",
+			});
+		} finally {
+			await adapter.cleanupAll().catch(() => {});
+			try {
+				rmSync(dir, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
+		}
+	});
+
+	it("returns null when bridge returns no wsEndpoint", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-lean-portal-ws-null-"));
+		const bridgePath = writeBridge(
+			{
+				get_ws_endpoint:
+					'sys.stdout.write(json.dumps({"jsonrpc":"2.0","id":_rid,' +
+					'"result":{"wsEndpoint":null}}) + "\\n")',
+				"browser.navigate":
+					'params = _req.get("params", {})\n' +
+					"sys.stdout.write(json.dumps({\n" +
+					'"jsonrpc":"2.0",\n' +
+					'"id":_rid,\n' +
+					'"result":{\n' +
+					'    "success":True,\n' +
+					'    "url": params.get("url", ""),\n' +
+					'    "title": "WS Null",\n' +
+					'    "snapshot": "- [button] X",\n' +
+					'    "elementCount": 1\n' +
+					"}\n" +
+					'}) + "\\n")',
+				"browser.cleanup":
+					"sys.stdout.write(json.dumps({\n" +
+					'"jsonrpc":"2.0",\n' +
+					'"id":_rid,\n' +
+					'"result":{"success":True}\n' +
+					'}) + "\\n")',
+			},
+			dir,
+		);
+
+		const adapter = new PythonPluginAdapter("ws-null-test", {
+			bridgeScript: bridgePath,
+			pythonPath: "python3",
+			capabilities: {
+				engine: "firefox",
+			},
+		});
+
+		try {
+			await adapter.init({});
+
+			const result = await adapter.navigate(
+				"https://example.com",
+				"ws-null-t1",
+				30_000,
+			);
+			expect(result.success).toBe(true);
+
+			// Bridge returned null wsEndpoint, so getAttachEndpoint should
+			// still be null.
+			expect(adapter.getAttachEndpoint()).toBeNull();
+		} finally {
+			await adapter.cleanupAll().catch(() => {});
+			try {
+				rmSync(dir, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
+		}
+	});
+
+	it("caches wsEndpoint so subsequent calls return it without re-querying bridge", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-lean-portal-ws-cache-"));
+		const bridgePath = writeBridge(
+			{
+				get_ws_endpoint:
+					// Increment a counter to verify the bridge is only queried once.
+					"global query_count; query_count = query_count + 1 if 'query_count' in dir() else 1\n" +
+					'sys.stderr.write("QUERY_COUNT:" + str(query_count) + "\\n")\n' +
+					"sys.stderr.flush()\n" +
+					'sys.stdout.write(json.dumps({"jsonrpc":"2.0","id":_rid,' +
+					'"result":{"wsEndpoint":"ws://127.0.0.1:12345/devtools/cached"}}) + "\\n")',
+				"browser.navigate":
+					'params = _req.get("params", {})\n' +
+					"sys.stdout.write(json.dumps({\n" +
+					'"jsonrpc":"2.0",\n' +
+					'"id":_rid,\n' +
+					'"result":{\n' +
+					'    "success":True,\n' +
+					'    "url": params.get("url", ""),\n' +
+					'    "title": "WS Cache",\n' +
+					'    "snapshot": "- [button] X",\n' +
+					'    "elementCount": 1\n' +
+					"}\n" +
+					'}) + "\\n")',
+				"browser.cleanup":
+					"sys.stdout.write(json.dumps({\n" +
+					'"jsonrpc":"2.0",\n' +
+					'"id":_rid,\n' +
+					'"result":{"success":True}\n' +
+					'}) + "\\n")',
+			},
+			dir,
+		);
+
+		const adapter = new PythonPluginAdapter("ws-cache-test", {
+			bridgeScript: bridgePath,
+			pythonPath: "python3",
+			capabilities: {
+				engine: "firefox",
+			},
+		});
+
+		try {
+			await adapter.init({});
+
+			// First navigate discovers the ws endpoint.
+			const r1 = await adapter.navigate(
+				"https://example.com/first",
+				"ws-cache-t1",
+				30_000,
+			);
+			expect(r1.success).toBe(true);
+
+			const attachEp1 = adapter.getAttachEndpoint();
+			expect(attachEp1).toEqual({
+				kind: "firefox-ws",
+				endpoint: "ws://127.0.0.1:12345/devtools/cached",
+			});
+
+			// Second navigate — cached wsEndpoint should prevent re-querying the bridge.
+			const r2 = await adapter.navigate(
+				"https://example.com/second",
+				"ws-cache-t1",
+				30_000,
+			);
+			expect(r2.success).toBe(true);
+
+			// Same endpoint returned.
+			const attachEp2 = adapter.getAttachEndpoint();
+			expect(attachEp2).toEqual({
+				kind: "firefox-ws",
+				endpoint: "ws://127.0.0.1:12345/devtools/cached",
+			});
+
+			// Verify the bridge was only queried once.
+			const stderr =
+				(adapter as unknown as Record<string, string>)["_stderrAccumulated"] ??
+				"";
+			const queryLines = stderr
+				.split("\n")
+				.filter((l: string) => l.startsWith("QUERY_COUNT:"));
+			// With the second navigate not re-querying, there should be
+			// exactly one QUERY_COUNT line (from the factory call during
+			// the first attempt).
+			expect(queryLines.length).toBe(1);
+			expect(queryLines[0]).toBe("QUERY_COUNT:1");
+		} finally {
+			await adapter.cleanupAll().catch(() => {});
+			try {
+				rmSync(dir, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
 		}
 	});
 });

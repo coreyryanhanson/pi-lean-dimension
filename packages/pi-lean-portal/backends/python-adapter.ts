@@ -778,20 +778,30 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				this._populateElementCache(taskId, result.elements);
 
 				// Discover CDP endpoint if not already cached (best-effort,
-				// errors swallowed). Fire-and-forget so the navigate caller
-				// isn't blocked by the ss -tlnp poll — the discovery runs
-				// asynchronously and populates _cdpEndpoint when it completes.
-				// This mirrors the Chromium plugin's onBrowserLaunched() ->
-				// resolveCdpEndpoint() pattern.
+				// errors swallowed). Only runs when CDP_PORT is set to a
+				// numeric value (common in CI), which makes
+				// resolveCdpEndpoint return instantly from the env var
+				// without an expensive ss -tlnp scan.  Without CDP_PORT,
+				// the attach endpoint stays null — external CDP attach
+				// is unavailable but normal browsing is unaffected.
+				// The Node Chromium plugin always awaits the ss scan
+				// because it always launches a real browser; the Python
+				// bridge may run against a mock that doesn't.
 				if (!this._cdpEndpoint) {
-					this._discoverCdpEndpoint().catch(() => {});
+					const cdpPort = process.env.CDP_PORT;
+					if (cdpPort && /^\d+$/.test(cdpPort.trim())) {
+						await this._discoverCdpEndpoint().catch(() => {});
+					}
 				}
 
 				// Discover WebSocket endpoint (firefox family, best-effort).
 				// Fired after each successful navigate so the endpoint is
-				// available for the bridge before a task connects.
+				// available for the bridge before a task connects.  Awaited
+				// because get_ws_endpoint is a fast RPC (the bridge reads
+				// _browser_server.ws_endpoint synchronously), so blocking
+				// navigate is negligible.
 				if (!this._wsEndpoint) {
-					this._discoverWsEndpoint().catch(() => {});
+					await this._discoverWsEndpoint().catch(() => {});
 				}
 			}
 
