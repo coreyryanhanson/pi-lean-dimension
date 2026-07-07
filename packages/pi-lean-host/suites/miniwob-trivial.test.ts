@@ -3,7 +3,7 @@
  * BrowserPlugin backends.
  *
  * Phase 1: chromium Node backend (Mode A, plugin-owns-browser).
- * Phase 1.5 will add: firefox, chromium-py, firefox-py.
+ * Phase 2 will add: chromium-py, firefox-py (Python backends).
  *
  * Uses the public `registerMiniwobSuite` + `runMiniwobTask` API from
  * `pi-lean-host` — the same API a user-owned parity test file would

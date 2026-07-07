@@ -93,11 +93,10 @@ pi-lean-dimension/                       (monorepo root)
     │   ├── AGENTS.md                    (stub — points here)
     │   ├── generated/
     │   │   └── subdomains.ts            Auto-generated MiniWoB subdomain list
-    │   ├── src/index.ts                 Public API entry: runMiniwobTask, benchPlugin, registerMiniwobSuite
+    │   ├── src/index.ts                 Public API entry: runMiniwobTask, registerMiniwobSuite
     │   ├── adapter/
     │   │   ├── miniwob-driver.py        Hand-rolled MiniWoB++ Python driver (JSON-RPC over stdio)
     │   │   ├── miniwob-adapter.ts       TS wrapper: spawns driver, exposes runMiniwobTask()
-    │   │   └── bench.ts                 High-level benchPlugin(): mode negotiation, task list, results
     │   ├── solvers/
     │   │   ├── parser.ts                @e-ref parsing, withRole, ReDoS-safe role allowlist
     │   │   ├── trivial-solvers.ts       13 trivial MiniWoB solvers (3 confident + 10 best-effort)
@@ -228,7 +227,7 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 |----------|----------|-----------|-----------|-------------------|
 | Portal structural | `pi-lean-portal/__tests__/` | 20 | 650+ | No |
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 7 | varies | Per-backend (auto-skip) |
-| Host behavioral (MiniWoB) | `pi-lean-host/suites/` | 2 | 125 tasks + smoke | Chromium + MiniWoB content |
+| Host behavioral (MiniWoB) | `pi-lean-host/suites/` | 3 | 125 tasks + smoke | Chromium + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 17+ | No |
 | Dimension | `pi-lean-dimension/` | 1 | 2 | No |
 
@@ -236,7 +235,7 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 
 **Portal per-backend contract tests (7 files):** reddit-dialog (errors if Chromium missing), cookie-persistence (auto-skip), chromium-py (auto-skip), chromium-py-persistence (auto-skip), firefox (auto-skip), firefox-py (auto-skip), firefox-py-persistence (auto-skip)
 
-**Host behavioral tests (2 files):** miniwob-trivial (125 MiniWoB++ tasks × chromium — 13 run with trivial solvers, 112 skip), adapter-smoke (end-to-end runMiniwobTask via real Chromium + hand-rolled driver)
+**Host behavioral tests (3 files):** miniwob-trivial (125 MiniWoB++ tasks × chromium — 13 run with trivial solvers, 112 skip), miniwob-firefox (same 125 tasks × firefox — mirrors chromium suite), adapter-smoke (end-to-end runMiniwobTask via real Chromium + hand-rolled driver)
 
 **Shared test utilities** (`packages/pi-lean-portal/__tests__/helpers/`):
 
@@ -253,8 +252,9 @@ hand-rolled MiniWoB++ driver (no BrowserGym dependency).
 
 The suite at `packages/pi-lean-host/suites/miniwob-trivial.test.ts` drives
 all 125 [MiniWoB++](https://miniwob.farama.org/) tasks through the
-Chromium BrowserPlugin (Phase 1). Firefox and Python backends are
-Phase 1.5.
+Chromium BrowserPlugin (Phase 1). A matching Firefox suite at
+`packages/pi-lean-host/suites/miniwob-firefox.test.ts` mirrors the same 125 tasks.
+Python backends (chromium-py, firefox-py) are Phase 2.
 
 - **13 tasks run** with trivial solvers — 3 confident (assert reward > 0)
   and 10 best-effort (pipeline smoke tests).
@@ -294,8 +294,8 @@ framework/structural concern (router dispatch, plugin registry, config
 loading, snapshot cache, etc.). Those remain covered by the existing
 portal structural tests.
 
-See [`PLAN-browsergym-removal.md`](PLAN-browsergym-removal.md) for the
-BrowserGym removal plan.
+See [`docs/decisions/browsergym-removal.md`](docs/decisions/browsergym-removal.md) for the
+BrowserGym removal decision record.
 
 ## CI Pipeline
 
