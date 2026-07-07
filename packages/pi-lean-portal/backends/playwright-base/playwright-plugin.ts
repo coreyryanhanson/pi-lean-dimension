@@ -343,51 +343,47 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			this._browser = await this._launchWithHint();
 
 			// Auto-recover from browser crash/disconnect.
+			// Single handler extracted as a named function so it can
+			// reattach itself to a reconnected Browser — one handler
+			// per browser, no nesting.
 			// Behavior split by `_browserServer`:
 			// - Default path (`_browserServer === null`): null `_browser` and
 			//   clear all sessions — a re-navigate will relaunch.
 			// - launchServer path (`_browserServer !== null`): the server is
-			//   still up, so attempt `_reconnectBrowser()`. On success, install
-			//   the new Browser and re-wire its disconnected handler.
-			this._browser.on("disconnected", () => {
+			//   still up, so attempt `_reconnectBrowser()`. On success,
+			//   reattach this same handler to the new Browser.
+			const onDisconnected = () => {
+				// Common cleanup: all Page/Context objects are dead once the
+				// Browser disconnects, regardless of whether we reconnect.
+				for (const tid of this._pages.keys()) {
+					sessionManager.updateSession(tid, { crashed: true });
+					this._elementCache.delete(tid);
+				}
+				this._pages.clear();
+				this._cdpEndpoint = null;
+
 				if (this._browserServer) {
-					// launchServer path: try to reconnect to the still-up server.
-					// The reconnect promise is tracked so we don't pile up
-					// reconnect attempts if disconnect fires twice.
+					// launchServer path: the server stays up across Browser
+					// disconnects, so attempt reconnect. On success, reattach
+					// this same handler to the reconnected browser.
 					this._reconnectBrowser()
 						.then((newBrowser) => {
 							this._browser = newBrowser;
-							this._cdpEndpoint = null;
-							this._browser.on("disconnected", () => {
-								if (this._browserServer) {
-									this._reconnectBrowser()
-										.then((nb) => {
-											this._browser = nb;
-										})
-										.catch(() => {
-											this._browser = null;
-										});
-								} else {
-									this._browser = null;
-									this._cdpEndpoint = null;
-								}
-							});
+							this._browser.on("disconnected", onDisconnected);
 						})
 						.catch(() => {
-							// Reconnect failed — _browser stays null; _browserServer
-							// persists until its own close handler fires.
+							// Reconnect failed — null `_browser` so the next
+							// navigate() re-launches the server via lazy-init.
+							// `_browserServer` persists until its own close
+							// handler fires, which nulls it.
+							this._browser = null;
 						});
 				} else {
-					// Default path: clear everything, re-navigate will relaunch
+					// Default path: null the browser, re-navigate will relaunch
 					this._browser = null;
-					this._cdpEndpoint = null;
-					for (const tid of this._pages.keys()) {
-						sessionManager.updateSession(tid, { crashed: true });
-						this._elementCache.delete(tid);
-					}
-					this._pages.clear();
 				}
-			});
+			};
+			this._browser.on("disconnected", onDisconnected);
 
 			// Also wire the server's close handler (launchServer path only).
 			// The server fires `close` when the server process itself exits.
