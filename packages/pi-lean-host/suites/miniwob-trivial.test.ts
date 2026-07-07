@@ -2,7 +2,9 @@
  * MiniWoB++ trivial-solver suite — Chromium (Node) backend.
  *
  * Phase 1: chromium Node backend (Mode A, plugin-owns-browser).
- * Phase 2 will add: chromium-py, firefox-py (Python backends).
+ * Phase 2: chromium-py, firefox-py (Python bridge backends) — see
+ * miniwob-chromium-py.test.ts and miniwob-firefox-py.test.ts.
+ * Phase 3: CI cross-engine setup.
  *
  * Uses the public `registerMiniwobSuite` + `runMiniwobTask` API from
  * `pi-lean-host` — the same API a user-owned parity test file would

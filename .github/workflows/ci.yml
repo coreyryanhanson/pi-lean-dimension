@@ -7,8 +7,9 @@
 #
 # - Fast structural tests run first (no browser required).
 # - MiniWoB++ browser tests run after, gated by:
-#   1. Playwright Chromium (Phase 1; Firefox + Python backends are Phase 1.5)
-#   2. Cloned MiniWoB++ content at the pinned commit
+#   1. Playwright Chromium + Firefox (Node backends)
+#   2. Python 3.12 venv with Playwright (Python bridge backends)
+#   3. Cloned MiniWoB++ content at the pinned commit
 #
 # ── Attribution ────────────────────────────────────────────────────
 #
@@ -24,7 +25,7 @@
 #
 # Node 22 (matching engines requirement in package.json)
 # Ubuntu latest (for Playwright system deps)
-# Python/venv backends auto-skip (no combined venv setup in CI — Phase 1.5)
+# Python 3.12 + venv for bridge backends (chromium-py, firefox-py)
 
 name: CI
 
@@ -62,13 +63,13 @@ jobs:
       - name: Run structural tests (test:ci)
         run: npm run test:ci
 
-  # ── MiniWoB browser tests (content + browser) ────────────────────
+  # ── MiniWoB browser tests (cross-engine: chromium + firefox + python) ─
   miniwob:
     name: MiniWoB browser tests
     runs-on: ubuntu-latest
     needs: structural
 
-    # Only runs on push to main or PR (auto-skips when browser/content absent)
+    # Auto-skips individual backends when their prerequisites are absent.
 
     steps:
       - name: Checkout repository
@@ -85,6 +86,20 @@ jobs:
 
       - name: Install Playwright browsers (chromium)
         run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright browsers (firefox)
+        run: npx playwright install --with-deps firefox
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Python venv for bridge backends
+        run: |
+          python3 -m venv packages/pi-lean-portal/backends/python-base/.venv
+          packages/pi-lean-portal/backends/python-base/.venv/bin/pip install --quiet playwright
+          packages/pi-lean-portal/backends/python-base/.venv/bin/python -m playwright install chromium firefox
 
       - name: Setup MiniWoB++ content
         run: npm run setup:miniwob

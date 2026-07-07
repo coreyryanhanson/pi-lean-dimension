@@ -3,12 +3,12 @@
  * against the shipped `chromium` plugin (Mode A): the plugin launches
  * Chromium with `--remote-debugging-port=0`, `getAttachEndpoint()` resolves
  * the port, the Python driver attaches via `connect_over_cdp`, runs
- * setup + validate, and a trivial inline solver drives the page through
+ * setup + validate, and a trivial solver drives the page through
  * the `@e`-ref action layer.
  *
  * Uses `click-test` (the confident single-button task — clicking the
- * only button IS the pass condition) with an inline "click first
- * button" solver. Asserts `rawReward > 0`.
+ * only button IS the pass condition) with the shared `clickFirstButton`
+ * solver from `solvers/trivial-solvers.ts`. Asserts `rawReward > 0`.
  *
  * Auto-skip gates (keeps `npm test` / `npm run test:ci` green in
  * bare environments):
@@ -22,22 +22,18 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 import { chromium } from "playwright";
 import { ChromiumPlugin } from "../../pi-lean-portal/backends/chromium/index.js";
 import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
 import type { TestServer } from "../../pi-lean-portal/__tests__/helpers/test-server.js";
 import { startMiniwobServer } from "../scripts/miniwob-server.js";
-import {
-	runMiniwobTask,
-	type TrivialSolver,
-} from "../adapter/miniwob-adapter.js";
+import { runMiniwobTask } from "../adapter/miniwob-adapter.js";
+import { clickFirstButton } from "../solvers/trivial-solvers.js";
 
 // --- Paths ---------------------------------------------------------
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 const HTML_ROOT =
 	process.env.MINIWOB_HTML_ROOT ?? "/tmp/miniwob-plusplus/miniwob/html";
 
@@ -63,28 +59,6 @@ function skipReason(): string {
 }
 
 const SHOULD_RUN = CHROMIUM_AVAILABLE && CONTENT_AVAILABLE;
-
-// --- Inline trivial solver + @e-ref parser ---
-
-/** Parse `@e`-ref snapshot lines into `{ref, line}` pairs. */
-function parseRefs(snapshot: string): { ref: string; line: string }[] {
-	const out: { ref: string; line: string }[] = [];
-	for (const line of snapshot.split("\n")) {
-		const m = line.match(/@(e\d+)/);
-		if (m?.[1]) out.push({ ref: `@${m[1]}`, line });
-	}
-	return out;
-}
-
-/** Click the first button on the page — solves `click-test` (single button). */
-const clickFirstButton: TrivialSolver = async ({
-	plugin,
-	taskId,
-	snapshot,
-}) => {
-	const btn = parseRefs(snapshot).find((e) => /\bbutton\b/.test(e.line));
-	if (btn) await plugin.click(taskId, btn.ref);
-};
 
 // --- Suite ---------------------------------------------------------
 

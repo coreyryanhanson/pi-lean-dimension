@@ -26,13 +26,13 @@ With search installed, the suite totals **13 tools + 2 commands** (portal + sear
 ```bash
 npm test                                           # vitest run — all workspace tests (may hang if browser binaries missing)
 npm run test:ci                                     # vitest run — structural tests only, excludes browser-dependent tests that may hang
-npm run test:miniwob                                # MiniWoB++ live-browser test suite (host: 125 tasks, auto-skips)
+npm run test:miniwob                                # MiniWoB++ cross-engine test suite (host: 125 tasks × 4 backends + smoke, auto-skips)
 npm run setup:miniwob                               # one-time clone of MiniWoB++ content
 # (no dedicated venv needed — the driver uses the plugin's Python path)
 npx vitest run packages/pi-lean-portal/__tests__/router-dispatch.test.ts  # single test file
 npx vitest run packages/pi-lean-portal/__tests__/cookie-persistence.test.ts  # Chromium persistence
 npx vitest run packages/pi-lean-portal/__tests__/firefox.test.ts  # Firefox contract tests
-npm run test:miniwob -w pi-lean-host                # host-only MiniWoB suite (excludes adapter-smoke)
+npm run test:miniwob -w pi-lean-host                # run all MiniWoB suites (chromium, firefox, chromium-py, firefox-py, adapter-smoke)
 npm run test:helper -w pi-lean-host                 # host bridge-client helper tests
 npm run test:watch                                 # vitest in watch mode
 npm run publish:dry                                # npm publish --workspaces --dry-run (inspect tarballs)
@@ -102,8 +102,12 @@ pi-lean-dimension/                       (monorepo root)
     │   │   ├── trivial-solvers.ts       13 trivial MiniWoB solvers (3 confident + 10 best-effort)
     │   │   └── register-suite.ts        registerMiniwobSuite — vitest suite of 125 MiniWoB tasks
     │   ├── suites/
-    │   │   ├── miniwob-trivial.test.ts  125 tasks × chromium (13 run, 112 skip)
-    │   │   └── adapter-smoke.test.ts    End-to-end runMiniwobTask (click-test, rawReward > 0)
+    │   │   ├── miniwob-trivial.test.ts      125 tasks × chromium (13 run, 112 skip)
+    │   │   ├── miniwob-firefox.test.ts      125 tasks × firefox (13 run, 112 skip)
+    │   │   ├── miniwob-chromium-py.test.ts  125 tasks × chromium-py (13 run, 112 skip)
+    │   │   ├── miniwob-firefox-py.test.ts   125 tasks × firefox-py (13 run, 112 skip)
+    │   │   ├── miniwob-suite-helper.ts      Shared suite infrastructure
+    │   │   └── adapter-smoke.test.ts        End-to-end runMiniwobTask (click-test, rawReward > 0)
     │   ├── scripts/
     │   │   ├── setup-miniwob.mjs        Clone miniwob-plusplus at pinned commit + repair
     │   │   └── miniwob-server.ts        Static file server for MiniWoB++ content
@@ -227,7 +231,7 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 |----------|----------|-----------|-----------|-------------------|
 | Portal structural | `pi-lean-portal/__tests__/` | 20 | 650+ | No |
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 7 | varies | Per-backend (auto-skip) |
-| Host behavioral (MiniWoB) | `pi-lean-host/suites/` | 3 | 125 tasks + smoke | Chromium + MiniWoB content |
+| Host behavioral (MiniWoB) | `pi-lean-host/suites/` | 5 | 125 tasks × 4 + smoke | Chromium + Firefox + Python + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 17+ | No |
 | Dimension | `pi-lean-dimension/` | 1 | 2 | No |
 
@@ -235,7 +239,13 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 
 **Portal per-backend contract tests (7 files):** reddit-dialog (errors if Chromium missing), cookie-persistence (auto-skip), chromium-py (auto-skip), chromium-py-persistence (auto-skip), firefox (auto-skip), firefox-py (auto-skip), firefox-py-persistence (auto-skip)
 
-**Host behavioral tests (3 files):** miniwob-trivial (125 MiniWoB++ tasks × chromium — 13 run with trivial solvers, 112 skip), miniwob-firefox (same 125 tasks × firefox — mirrors chromium suite), adapter-smoke (end-to-end runMiniwobTask via real Chromium + hand-rolled driver)
+**Host behavioral tests (5 files):**
+
+- `miniwob-trivial.test.ts` — 125 MiniWoB++ tasks × chromium (13 run, 112 skip)
+- `miniwob-firefox.test.ts` — 125 tasks × firefox (13 run, 112 skip)
+- `miniwob-chromium-py.test.ts` — 125 tasks × chromium-py (13 run, 112 skip)
+- `miniwob-firefox-py.test.ts` — 125 tasks × firefox-py (13 run, 112 skip)
+- `adapter-smoke.test.ts` — end-to-end runMiniwobTask via real Chromium + hand-rolled driver
 
 **Shared test utilities** (`packages/pi-lean-portal/__tests__/helpers/`):
 
@@ -250,11 +260,17 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 Behavioral MiniWoB++ evaluation lives in `pi-lean-host` and uses a
 hand-rolled MiniWoB++ driver (no BrowserGym dependency).
 
-The suite at `packages/pi-lean-host/suites/miniwob-trivial.test.ts` drives
-all 125 [MiniWoB++](https://miniwob.farama.org/) tasks through the
-Chromium BrowserPlugin (Phase 1). A matching Firefox suite at
-`packages/pi-lean-host/suites/miniwob-firefox.test.ts` mirrors the same 125 tasks.
-Python backends (chromium-py, firefox-py) are Phase 2.
+Shipped suite files under `packages/pi-lean-host/suites/` drive
+all 125 [MiniWoB++](https://miniwob.farama.org/) tasks through each
+backend. The shared helper at `miniwob-suite-helper.ts` owns content
+availability gates and the MiniWoB static server lifecycle; each
+per-backend file supplies only the browser-availability probe and
+plugin factory:
+
+- **`miniwob-trivial.test.ts`** — Chromium (Node)
+- **`miniwob-firefox.test.ts`** — Firefox (Node)
+- **`miniwob-chromium-py.test.ts`** — Chromium-Py (Python bridge)
+- **`miniwob-firefox-py.test.ts`** — Firefox-Py (Python bridge)
 
 - **13 tasks run** with trivial solvers — 3 confident (assert reward > 0)
   and 10 best-effort (pipeline smoke tests).
@@ -284,9 +300,10 @@ export MINIWOB_HTML_ROOT=/path/to/miniwob/html  # path on disk
 export MINIWOB_URL=http://…                      # already-running server
 ```
 
-**Auto-skip gates:** The suite skips when Chromium is absent or
-MiniWoB content is unreachable. This keeps `npm test`
-and `npm run test:ci` green in bare CI.
+**Auto-skip gates:** Each per-backend suite file independently
+auto-skips when its browser prerequisites are absent or MiniWoB++
+content is unreachable. This keeps `npm test` and
+`npm run test:ci` green in bare CI without path-filtering logic.
 
 **What MiniWoB does NOT cover:** canvas/coordinate tasks (no tool),
 drag-and-drop (no tool), hover/slider/select (no tool), and any
@@ -310,19 +327,26 @@ split into two parallel jobs:
 3. **Install dependencies** via `npm ci`
 4. **Run structural tests** via `npm run test:ci`
 
-**`miniwob` job (browser tests, depends on structural passing):**
+**`miniwob` job (cross-engine browser tests, depends on structural):**
 
 1. **Checkout** + **Setup Node.js 22** + `npm ci`
-2. **Install Playwright Chromium** with system deps
-3. **Clone MiniWoB++ content** via `npm run setup:miniwob`
-4. **Run MiniWoB browser tests** via `npm run test:miniwob` (host
-   workspace, chromium-only Phase 1)
-5. **Upload test artifacts on failure** (vitest output, Playwright traces)
+2. **Install Playwright Chromium** (drives Node chromium +
+   chromium-py suites)
+3. **Install Playwright Firefox** (drives Node firefox +
+   firefox-py suites)
+4. **Setup Python 3.12 + venv** with `playwright` pip package
+   (drives chromium-py + firefox-py suites)
+5. **Clone MiniWoB++ content** via `npm run setup:miniwob`
+6. **Run all MiniWoB browser tests** via `npm run test:miniwob`
+   (runs `packages/pi-lean-host/suites/`, covering all 5 suite
+   files)
+7. **Upload test artifacts on failure** (vitest output, Playwright
+   traces)
 
-**Auto-skip gates:** The MiniWoB suite auto-skips when Chromium is
-absent or MiniWoB++ content is unreachable — no
-path-filtering logic needed in the workflow. This keeps `npm test`
-and `npm run test:ci` green in bare CI.
+**Auto-skip gates:** Each per-backend suite file independently
+auto-skips when its browser prerequisites are absent or MiniWoB++
+content is unreachable. This keeps `npm test` and
+`npm run test:ci` green in bare CI without path-filtering logic.
 
 **Manual trigger:** The workflow also supports `workflow_dispatch`
 for re-running from the Actions tab without pushing a new commit.

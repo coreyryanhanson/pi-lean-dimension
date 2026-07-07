@@ -31,7 +31,7 @@
 	"scripts": {
 		"prepack": "cp ../../LICENSE ./LICENSE",
 		"test": "vitest run",
-		"test:miniwob": "vitest run suites/miniwob-trivial.test.ts",
+		"test:miniwob": "vitest run suites/",
 		"setup:miniwob": "node scripts/setup-miniwob.mjs"
 	},
 	"peerDependencies": {
