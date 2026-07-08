@@ -637,26 +637,38 @@ last.
 
 ---
 
-## Open questions to resolve before/during implementation
+## Resolved decisions (closed — record for implementers)
 
-1. **`probeUserBackend` placement** (Sprint 1): suite-helper vs new module.
-   Pick one, record in PR. Recommendation: new `src/probe-user-backend.ts`
-   module — keeps the suite-helper focused on suite lifecycle and avoids
-   touching its stale-but-separate doc comment semantics. Confirm with plan
-   owner if unsure.
-2. **`probeUserBackend` sync vs async return** (Sprint 1): the v3 signature
-   shows a plain object, but the venv check may need a spawn. Decide
-   upfront and keep the 1b template consistent.
-3. **Capabilities `engine` derivation in the generic runner** (Sprint 2):
-   how does the runner infer `engine` for an unknown backend? Options: (a)
-   omit `engine` and let the adapter default; (b) read a convention file
-   (e.g. `engine.txt`) in the user backend dir; (c) require the user's
-   parity file to override. Recommendation: (a) for the generic runner,
-   (c) for the shipped Camoufox template. Confirm.
-4. **Manual-verification fallback for AC 3.2/3.4 and AC 2.3** (Sprints 2/3):
-   if no dev machine has Camoufox, fall back to a TypeScript compile check
-   - a TODO, and let Sprint 5's CI be the real verification. State this
-   explicitly in the PR so it's not a silent gap.
+1. **`probeUserBackend` placement** (Sprint 1) — **DECIDED: new
+   `packages/pi-lean-host/src/probe-user-backend.ts`**, re-exported from
+   `src/index.ts`. Keeps the suite-helper focused on suite lifecycle and
+   does **not** inherit the pre-existing broken `probePythonBackend`
+   re-export-from-unshipped-`suites`-defect (see the Note in Sprint 1's
+   "Files touched"). Do not use the suite-helper option.
+2. **`probeUserBackend` sync vs async return** (Sprint 1) — **DECIDED:
+   synchronous, `spawnSync` + plain object return**, mirroring the existing
+   `probePythonBackend` in `miniwob-suite-helper.ts` (which uses
+   `spawnSync(venvPython, ["--version"], { stdio: "ignore", timeout: 5_000 })`
+   and returns a plain object). Sprint 2's Camoufox template and the generic
+   runner stay synchronous to match. The probe runs once at suite-load, so
+   blocking briefly is acceptable.
+3. **Capabilities `engine` derivation in the generic runner** (Sprint 2) —
+   **DECIDED: (a) for the generic runner, (c) for the shipped Camoufox
+   template.** The generic `miniwob-user-backends.test.ts` **omits `engine`**
+   and lets the adapter default (auto-skip behavior is engine-agnostic).
+   The shipped `camoufox-py/miniwob-parity.test.ts` template **explicitly
+   sets `engine: "firefox"`** in its `capabilities` override so the contract
+   suite's identity test reads the engine correctly. No `engine.txt`
+   convention file; no filesystem magic.
 
-Resolve these in the first PR that touches the relevant sprint, or raise
-them with the plan owner before starting.
+## Open item to resolve during implementation
+
+1. **Manual-verification fallback for AC 3.2/3.4 and AC 2.3** (Sprints 2/3)
+   — **NOT a decision; an environment-contingent fact.** The *policy* is
+   already settled by cross-cutting **X.6** (branch-level merge gate): if no
+   dev machine has Camoufox, Sprints 2–3 merge on `tsc --noEmit` + auto-skip
+   evidence, and the Sprint 5 green workflow run (AC 5.2) is the real
+   behavioral verification for AC 2.3 / 3.2 / 3.4. The only thing left to
+   determine during implementation is the *fact* of whether a dev machine
+   has Camoufox — state that fact explicitly in the relevant PR so the
+   fallback is not a silent gap. No further plan-owner input needed.
