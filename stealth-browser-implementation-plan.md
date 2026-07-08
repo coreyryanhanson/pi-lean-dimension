@@ -131,6 +131,16 @@ This is the foundation for Sprints 2, 3, and 5.
     houses the public `probePythonBackend`); **or**
   - new `packages/pi-lean-host/src/probe-user-backend.ts` — new module
     re-exported from `src/index.ts`, leaving the suite-helper doc untouched.
+
+> **Note (pre-existing, out of scope to fix):** `src/index.ts` already
+> re-exports `probePythonBackend` from `../suites/miniwob-suite-helper.js`,
+> but `suites/` is **not** in `pi-lean-host` `files` — so the *currently
+> published* tarball's `probePythonBackend` re-export already points at an
+> unshipped module. Option A above would inherit this defect; option B
+> (new `src/probe-user-backend.ts`) avoids it. Do **not** fix the
+> pre-existing `probePythonBackend` re-export in this branch — just don't
+> make it worse, and don't imply option A is safe.
+
 - `packages/pi-lean-host/__tests__/probe-user-backend.test.ts` — new unit
   test (structural; no real browser needed).
 - `packages/pi-lean-host/package.json` `files` — confirm the chosen module is
@@ -167,13 +177,29 @@ runtime loader agree):**
 
 **Implementation notes:**
 
-- Import `USER_BACKENDS_DIR` from
-  `packages/pi-lean-portal/core/shared/paths.js`. **Verify the import path
-  resolves from `pi-lean-host`** — `pi-lean-host` already imports from
-  `pi-lean-portal` (see the existing `miniwob-chromium-py.test.ts` which
-  references the portal adapter). If a direct import would create a cycle or
-  packaging issue, copy the resolution logic locally and document why. Do
-  **not** duplicate `USER_BACKENDS_DIR` as a magic string.
+- **Vendor a local `userBackendsDir()` helper — do not import
+  `USER_BACKENDS_DIR` from `pi-lean-portal` at runtime.** Rationale:
+  `pi-lean-host` declares `pi-lean-portal` as an **optional** peer
+  dependency (by design — host is usable standalone), and
+  `pi-lean-portal`'s `package.json` `exports` exposes only `.` with no
+  subpath for `./core/shared/paths.js`. A runtime value-import would break
+  for any consumer installing `pi-lean-host` as a standalone tarball
+  without monorepo source colocation (the relative path cannot climb from
+  `node_modules/pi-lean-host/src/` into a sibling package's internals).
+  The portal-side precedent for cross-package imports is either
+  `import type` (erased at runtime, no resolution needed — see
+  `adapter/miniwob-adapter.ts`) or imports in `suites/` (not in
+  `pi-lean-host` `files` → not shipped). Neither is a runtime value-import
+  from shipped `src/`.
+- The vendored helper: a tiny function in `src/` (or inlined in
+  `probe-user-backend.ts`) that returns `process.env.PI_USER_BACKENDS_DIR`
+  if set, else `path.join(homedir(), ".pi", "agent", "pi-lean-portal",
+  "user-backends")`. This duplicates one stable path string (documented as
+  stable in `pi-lean-portal/core/shared/paths.ts`), which is the lesser
+  evil versus making `pi-lean-portal` a required peer just to read a
+  directory path. The env override is also genuinely useful for
+  non-standard installs — something the portal constant does not offer.
+  Sprint 2's generic runner must use this same helper for consistency.
 - The probe must be synchronous-ish in shape but may spawn python for the
   venv check — return a plain object, no promises. (If a sync spawn is
   awkward, return a Promise; just be consistent and update the 1b template
@@ -197,7 +223,7 @@ runtime loader agree):**
 - [ ] **AC 1.3** The placement decision (suite-helper vs new module) is
   recorded in the PR description, and any stale doc comment is updated to
   match.
-- [ ] **AC 1.4** `npm run test:ci` is green.
+- [ ] **AC 1.4** `npx vitest run packages/pi-lean-host/__tests__/probe-user-backend.test.ts` is green. (Note: `npm run test:ci` excludes `pi-lean-host/**` by design — see `vitest.globalSetup.ts` — so it would not exercise this test and must not be used as the gate for host-side structural tests.)
 - [ ] **AC 1.5** No reference to `invisible` in any touched file
   (`git grep -ni "invisible" -- packages/pi-lean-host/` is empty).
 
@@ -227,8 +253,11 @@ copy-pasteable parity-test template for Camoufox so users can run the full
 
 **Generic runner spec (`miniwob-user-backends.test.ts`):**
 
-- On load, read the user-backends root: `process.env.PI_USER_BACKENDS_DIR`
-  if set, else `USER_BACKENDS_DIR` from `pi-lean-portal/core/shared/paths.js`.
+- On load, read the user-backends root via the vendored `userBackendsDir()`
+  helper from Sprint 1 (which honors `PI_USER_BACKENDS_DIR` else computes
+  the default `~/.pi/agent/pi-lean-portal/user-backends/`). Do **not**
+  import from `pi-lean-portal` at runtime — see Sprint 1's implementation
+  notes.
 - If the root is absent or contains no `<name>-py/` directory with a
   `bridge.py`, **auto-skip the entire file** with a clear reason (this is
   the normal CI state — the file must be a no-op there).
@@ -240,9 +269,11 @@ copy-pasteable parity-test template for Camoufox so users can run the full
   per-backend> } })`.
 - The `capabilities` override: derive `engine` per backend if possible
   (Camoufox → `"firefox"`); if unknown, omit `engine` and let the adapter
-  default. Set the `supports*` flags to the same values as the
-  `miniwob-chromium-py.test.ts:82` reference so the contract/MiniWoB suites
-  read capabilities consistently.
+  default. Set the `supports*` flags to the same values as the existing
+  `*-py` suite references — the `supports*` set is engine-independent
+  (AbortSignal false, rest true), so reference `miniwob-firefox-py.test.ts`
+  for Firefox-based backends and `miniwob-chromium-py.test.ts` for
+  Chromium-based ones; only `engine` differs.
 - The `baseUrl` async getter: `async () => process.env.MINIWOB_URL ??
   "http://localhost:8080"`.
 - No stealth engine is **named** in the shipped runner source. It discovers
@@ -265,8 +296,9 @@ copy-pasteable parity-test template for Camoufox so users can run the full
 
 - [ ] **AC 2.1** `miniwob-user-backends.test.ts` auto-skips cleanly when
   `user-backends/` is absent/empty. Verified by running
-  `npm run test:ci` (structural) — must be green with the file reported as
-  skipped, not failed.
+  `npm run test:miniwob` (the only script that runs `suites/` —
+  `npm run test:ci` excludes `pi-lean-host/**` and would not exercise this
+  file) — must be green with the file reported as skipped, not failed.
 - [ ] **AC 2.2** With a fake `user-backends/<name>-py/` (temp dir + stub
   `bridge.py` + a working python venv) pointed at by
   `PI_USER_BACKENDS_DIR`, the runner discovers it and registers a suite
@@ -506,10 +538,12 @@ CI, and enforce the invisible-playwright policy going forward with a
      `miniwob-user-backends.test.ts` suite (Sprint 2, which will discover
      the copied camoufox-py).
   7. **Run the invisible-reference grep guard:**
-     `git grep -ni "invisible" -- packages/` must exit non-zero on any
-     match. Express as a step that fails on non-empty output. Tracked-files
-     only — the untracked `invisible-py/` dev artifact is correctly ignored
-     by `git grep`. **This step depends on Sprint 0 being complete.**
+     `git grep -ni "invisible" -- packages/ AGENTS.md` must exit non-zero
+     on any match. Express as a step that fails on non-empty output.
+     Tracked-files only — the untracked `invisible-py/` dev artifact is
+     correctly ignored by `git grep`. The scope includes root `AGENTS.md`
+     because Sprint 4 edits it. **This step depends on Sprint 0 being
+     complete.**
   8. Upload traces + vitest output on failure.
 
 **Acceptance criteria:**
@@ -521,10 +555,10 @@ CI, and enforce the invisible-playwright policy going forward with a
   checkout: installs Camoufox, copies the template, runs the contract tests
   - user-backends runner, and exits green. Capture the run URL in the PR.
 - [ ] **AC 5.3** The grep guard step runs
-  `git grep -ni "invisible" -- packages/` and fails the job if it returns
-  any match. Verified by temporarily inserting a tracked `invisible`
-  reference in a throwaway commit on a branch and confirming the job fails
-  (then reverting). Record this verification in the PR.
+  `git grep -ni "invisible" -- packages/ AGENTS.md` and fails the job if
+  it returns any match. Verified by temporarily inserting a tracked
+  `invisible` reference in a throwaway commit on a branch and confirming
+  the job fails (then reverting). Record this verification in the PR.
 - [ ] **AC 5.4** The job uploads traces + vitest output on failure
   (`actions/upload-artifact`).
 - [ ] **AC 5.5** `npm run test:ci` and `npm run test:miniwob` (auto-skip
@@ -533,15 +567,20 @@ CI, and enforce the invisible-playwright policy going forward with a
 
 **Definition of done:** AC 5.1 – AC 5.5 all pass. AC 5.2 requires an actual
 green workflow run linked from the PR; AC 5.3 requires the negative-test
-verification note.
+verification note. This sprint's green workflow run (AC 5.2) is also the
+**branch-level merge gate** (see X.6) — the branch does not merge until it
+is linked. Sprints 2–3 may merge with `tsc --noEmit` + auto-skip evidence
+when no dev machine has Camoufox, but every behavioral claim (AC 2.3,
+3.2, 3.4) ultimately rests on this one green run.
 
 ---
 
 ## Cross-cutting acceptance criteria (apply to every sprint PR)
 
 - [ ] **X.1** `npm run test:ci` is green on the PR branch.
-- [ ] **X.2** `git grep -ni "invisible" -- packages/` is empty (tracked
-  files). Paste the empty output in the PR description for every sprint.
+- [ ] **X.2** `git grep -ni "invisible" -- packages/ AGENTS.md` is empty
+  (tracked files). Paste the empty output in the PR description for every
+  sprint. (Scope includes root `AGENTS.md` because Sprint 4 edits it.)
 - [ ] **X.3** No new file or edit introduces a named reference to
   `invisible-playwright` / `invisible-py` (the policy is permanent, not just
   Sprint 0).
@@ -549,6 +588,12 @@ verification note.
   without a recorded justification in the PR.
 - [ ] **X.5** The PR description links back to the relevant Gap(s) in v3 and
   lists which ACs are satisfied, with command output / run URLs as evidence.
+- [ ] **X.6** The branch (`feat/stealth-browser-quirks`) is not considered
+  "done" / mergeable until at least one green Sprint 5 workflow run is
+  linked (AC 5.2). Sprints 2–3 may merge with `tsc --noEmit` + auto-skip
+  evidence when no dev machine has Camoufox, but every behavioral claim
+  (AC 2.3, 3.2, 3.4) ultimately rests on that one green run — so the
+  branch-level gate is the green Sprint 5 workflow, not the per-sprint ACs.
 
 ---
 
