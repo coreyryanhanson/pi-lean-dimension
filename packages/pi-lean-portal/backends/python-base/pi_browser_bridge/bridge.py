@@ -389,6 +389,8 @@ class BrowserBridge:
             f"{type(self).__name__} must implement do_get_storage_state()"
         )
 
+
+
     def do_cleanup(self, task_id: str) -> dict[str, Any]:
         """Clean up resources for a specific task.
 

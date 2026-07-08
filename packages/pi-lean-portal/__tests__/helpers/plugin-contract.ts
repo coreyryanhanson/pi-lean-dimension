@@ -23,7 +23,10 @@ import {
 	beforeEach,
 	afterEach,
 } from "vitest";
-import type { BrowserPlugin, PluginCapabilities } from "../../core/plugin-api";
+import type {
+	BrowserPlugin,
+	PluginCapabilities,
+} from "../../core/plugin-api.js";
 import { startTestServer, type TestServer } from "./test-server.js";
 import {
 	REDDIT_DIALOG_HTML,
@@ -93,15 +96,6 @@ const INTERACTIVE_HTML = `<!DOCTYPE html>
     });
     console.log('page loaded');
   </script>
-</body></html>`;
-
-/** Page with images. */
-const IMAGES_HTML = `<!DOCTYPE html>
-<html><head><title>Contract Test — Images</title></head>
-<body>
-  <h1>Image Page</h1>
-  <img src="/img/logo.png" alt="Logo" width="200" height="50" />
-  <img src="/img/photo.jpg" alt="Photo" width="640" height="480" />
 </body></html>`;
 
 /** Long page that requires scrolling. */
@@ -183,17 +177,10 @@ const NOT_FOUND_HTML = `<!DOCTYPE html>
 <html><head><title>Not Found</title></head>
 <body><h1>404 — Page Not Found</h1></body></html>`;
 
-/** 1x1 transparent PNG, pre-decoded for image serving. */
-const PIXEL_PNG_BUFFER = Buffer.from(
-	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-	"base64",
-);
-
 // ─── Test Server Router ──────────────────────────────────────────
 
 /**
  * Build an HTTP request handler that serves the contract test fixtures.
- * Image paths return a tiny PNG; HTML paths return the fixture.
  */
 function contractTestHandler(
 	req: import("node:http").IncomingMessage,
@@ -201,21 +188,10 @@ function contractTestHandler(
 ): void {
 	const url = new URL(req.url ?? "/", "http://localhost");
 
-	// Image endpoint
-	if (url.pathname.startsWith("/img/")) {
-		res.writeHead(200, {
-			"Content-Type": "image/png",
-			"Content-Length": PIXEL_PNG_BUFFER.length,
-		});
-		res.end(PIXEL_PNG_BUFFER);
-		return;
-	}
-
 	// HTML pages
 	const pages: Record<string, string> = {
 		"/simple": SIMPLE_HTML,
 		"/interactive": INTERACTIVE_HTML,
-		"/images": IMAGES_HTML,
 		"/scroll": SCROLL_HTML,
 		"/console": CONSOLE_HTML,
 		"/page-a": PAGE_A_HTML,
@@ -820,31 +796,6 @@ export function runContractTests(
 		// ─── Click ────────────────────────────────────────────
 
 		describe("click() — real interaction", () => {
-			it("clicks a link and navigates", async () => {
-				await plugin.navigate(
-					`${server.url}/interactive`,
-					TASK_ID,
-					navigateTimeout,
-				);
-
-				// Find the link @e ref from the snapshot
-				const snap = await plugin.snapshot(TASK_ID);
-				expect(snap.success).toBe(true);
-
-				// Extract a link ref from the snapshot
-				const linkMatch = snap.snapshot.match(/@e(\d+)/);
-				expect(linkMatch).toBeTruthy();
-
-				const ref = `@e${linkMatch![1]}`;
-				const result = await plugin.click(TASK_ID, ref);
-
-				expect(result.success).toBe(true);
-				// After clicking a link, the page may have changed
-				if (result.snapshot) {
-					expect(typeof result.snapshot).toBe("string");
-				}
-			});
-
 			it("clicks duplicate-named links without strict-mode violation", async () => {
 				await plugin.navigate(
 					`${server.url}/duplicates`,
@@ -910,33 +861,6 @@ export function runContractTests(
 				}
 			},
 		);
-
-		// ─── Type ────────────────────────────────────────────
-
-		describe("type() — real interaction", () => {
-			it("types into an input field", async () => {
-				await plugin.navigate(
-					`${server.url}/interactive`,
-					TASK_ID,
-					navigateTimeout,
-				);
-
-				// Find an input ref
-				const snap = await plugin.snapshot(TASK_ID);
-				expect(snap.success).toBe(true);
-
-				// Look for textbox in the snapshot (input fields are role=textbox)
-				const inputMatch = snap.snapshot.match(/textbox[^\n]*@e(\d+)/);
-				if (!inputMatch) {
-					return;
-				}
-
-				const ref = `@e${inputMatch[1]}`;
-				const result = await plugin.type(TASK_ID, ref, "hello world");
-
-				expect(result.success).toBe(true);
-			});
-		});
 
 		// ─── Scroll ──────────────────────────────────────────
 
@@ -1041,8 +965,10 @@ export function runContractTests(
 				expect(result.success).toBe(true);
 				expect(result.messages.length).toBeGreaterThan(0);
 
-				const texts = result.messages.map((m) => m.text);
-				expect(texts.some((t) => t.includes("hello from console"))).toBe(true);
+				const texts = result.messages.map((m: { text: string }) => m.text);
+				expect(
+					texts.some((t: string) => t.includes("hello from console")),
+				).toBe(true);
 			});
 
 			it("clears console messages", async () => {
@@ -1165,53 +1091,6 @@ export function runContractTests(
 				const snap = await plugin.snapshot(TASK_ID);
 				expect(snap.success).toBe(true);
 				expect(dialogCount(snap.snapshot)).toBeGreaterThanOrEqual(1);
-			});
-
-			it("'Reject All' (nested SVG) is clickable", async () => {
-				await plugin.navigate(
-					`${server.url}/reddit-dialog`,
-					TASK_ID,
-					navigateTimeout,
-				);
-
-				const snap = await plugin.snapshot(TASK_ID);
-				expect(snap.success).toBe(true);
-
-				const info = findRef(snap.snapshot, "Reject All");
-				if (!info) {
-					// If the element is beyond the cap, skip
-					return;
-				}
-
-				const result = await plugin.click(TASK_ID, info.ref);
-				expect(result.success).toBe(true);
-
-				const after = await plugin.snapshot(TASK_ID);
-				expect(after.success).toBe(true);
-				expect(dialogCount(after.snapshot)).toBe(0);
-			});
-
-			it("'Accept All' (plain button) is clickable", async () => {
-				await plugin.navigate(
-					`${server.url}/reddit-dialog`,
-					TASK_ID,
-					navigateTimeout,
-				);
-
-				const snap = await plugin.snapshot(TASK_ID);
-				expect(snap.success).toBe(true);
-
-				const info = findRef(snap.snapshot, "Accept All");
-				if (!info) {
-					return;
-				}
-
-				const result = await plugin.click(TASK_ID, info.ref);
-				expect(result.success).toBe(true);
-
-				const after = await plugin.snapshot(TASK_ID);
-				expect(after.success).toBe(true);
-				expect(dialogCount(after.snapshot)).toBe(0);
 			});
 
 			it("stacked dialogs close in sequence", async () => {

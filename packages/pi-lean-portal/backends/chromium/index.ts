@@ -3,6 +3,9 @@
  *
  * Thin subclass of PlaywrightPluginBase. All shared logic lives in
  * backends/playwright-base/playwright-plugin.ts.
+ *
+ * Launches Chromium directly and drives its own page; the plugin is the
+ * sole browser owner. No external-attach endpoint is exposed.
  */
 
 import { chromium } from "playwright";

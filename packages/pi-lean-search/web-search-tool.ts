@@ -75,8 +75,9 @@ export const webSearchTool = defineTool({
 		"Use for finding current information, research, news, and fact-checking.",
 	promptSnippet:
 		"Search the web via a local SearXNG instance — use for up-to-date facts, verification, or research.",
-	promptGuidelines:
+	promptGuidelines: [
 		'Use when you need recent/current information not already known. Increase `count` for broad research; keep it small for quick lookups. Filter by time_range="day" for breaking news, category="news" for journalism. Set language to match the query (e.g. "de" for German, "es" for Spanish).',
+	],
 
 	parameters: Type.Object({
 		query: Type.String({ description: "The search query" }),

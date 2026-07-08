@@ -95,8 +95,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	 */
 	protected readonly captureUserAgent: boolean = false;
 
-	// ── Private state ──────────────────────────────────────────
-
 	/** Enable structured debug logging via BROWSER_DEBUG env var */
 	private readonly _debug = process.env.BROWSER_DEBUG === "1";
 
@@ -193,6 +191,23 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		}
 	}
 
+	/**
+	 * Post-launch hook called once after the shared browser successfully
+	 * launches. Runs before any context/page is created on the new browser.
+	 *
+	 * Subclasses override this to perform once-per-launch setup. The
+	 * portal's own backends no longer override this (external-attach
+	 * discovery has been removed), but the hook is retained for
+	 * third-party subclasses.
+	 *
+	 * Default: no-op. Failures thrown from overrides are caught and
+	 * logged by the caller (`_newBrowserContext`) so a setup glitch
+	 * never blocks normal browsing.
+	 */
+	protected async onBrowserLaunched(): Promise<void> {
+		// default: no-op
+	}
+
 	// ── Context lifecycle ────────────────────────────────────
 
 	/**
@@ -273,19 +288,38 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		if (!this._browser) {
 			this._browser = await this._launchWithHint();
 
-			// Auto-recover from browser crash/disconnect
-			this._browser.on("disconnected", () => {
-				this._browser = null;
+			// Auto-recover from browser crash/disconnect.
+			// Extracted as a named function for readability. On disconnect:
+			// mark all sessions crashed, clear caches, and null `_browser`
+			// so the next navigate() relaunches via lazy-init (which attaches
+			// a fresh handler to the new browser).
+			const onDisconnected = () => {
+				// All Page/Context objects are dead once the Browser
+				// disconnects — mark sessions crashed and clear caches.
 				for (const tid of this._pages.keys()) {
 					sessionManager.updateSession(tid, { crashed: true });
 					this._elementCache.delete(tid);
 				}
 				this._pages.clear();
-			});
+				this._browser = null;
+			};
+			this._browser.on("disconnected", onDisconnected);
 
 			// UA capture at first launch (Firefox opt-in)
 			if (this.captureUserAgent) {
 				await this._captureUA();
+			}
+
+			// Post-launch hook: subclasses can perform once-per-launch
+			// setup. Failures are swallowed so a setup glitch never blocks
+			// normal browsing.
+			try {
+				await this.onBrowserLaunched();
+			} catch (err) {
+				this._log("onBrowserLaunched", {
+					plugin: this.name,
+					error: err instanceof Error ? err.message : String(err),
+				});
 			}
 		}
 
@@ -465,12 +499,12 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	private async checkBotDetection(page: Page): Promise<boolean> {
 		try {
 			const title = await page.title();
-			const bodyText = await page.evaluate(
-				() => document.body?.innerText || "",
+			const bodyText: string = await page.evaluate(
+				"document.body?.innerText || ''",
 			);
 			// Also grab raw HTML to check for CAPTCHA widget embed codes.
-			const html = await page.evaluate(
-				() => document.documentElement?.innerHTML || "",
+			const html: string = await page.evaluate(
+				"document.documentElement?.innerHTML || ''",
 			);
 			// checkPage handles all three: title (challenge phrases),
 			// body (challenge phrases + CDN patterns), and HTML (CAPTCHA embeds).
@@ -547,16 +581,12 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			// Wait for dynamic content to settle
 			try {
 				await page.waitForFunction(
-					() =>
-						new Promise<boolean>((resolve) => {
-							const count = document.querySelectorAll("*").length;
-							setTimeout(() => {
-								resolve(
-									document.querySelectorAll("*").length === count ||
-										count > 5000,
-								);
-							}, 400);
-						}),
+					`new Promise((resolve) => {
+						const count = document.querySelectorAll("*").length;
+						setTimeout(() => {
+							resolve(document.querySelectorAll("*").length === count || count > 5000);
+						}, 400);
+					})`,
 					{ timeout: 5000 },
 				);
 			} catch {
@@ -903,9 +933,9 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 
 		try {
 			const delta = direction === "down" ? 800 : -800;
-			await page.evaluate((d: number) => {
-				window.scrollBy({ top: d, behavior: "smooth" });
-			}, delta);
+			await page.evaluate(
+				`window.scrollBy({ top: ${delta}, behavior: "smooth" })`,
+			);
 			await page.waitForTimeout(200);
 
 			const snapResult = await this.takeSnapshot(taskId, page);

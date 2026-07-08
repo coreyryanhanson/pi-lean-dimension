@@ -1,0 +1,126 @@
+# CI workflow for pi-lean-dimension monorepo
+#
+# Runs structural tests (test:ci) and MiniWoB++ browser tests
+# (test:miniwob) on every PR and push to main.
+#
+# ── Structure ──────────────────────────────────────────────────────
+#
+# - Fast structural tests run first (no browser required).
+# - MiniWoB++ browser tests run after, gated by:
+#   1. Playwright Chromium + Firefox (Node backends)
+#   2. Python 3.12 venv with Playwright (Python bridge backends)
+#   3. Cloned MiniWoB++ content at the pinned commit
+#
+# Suites run in parallel by default (vitest file-level parallelism).
+# The former CDP-scan concurrency race that forced serialization is
+# gone — the cross-process attach was eliminated and the episode
+# lifecycle now runs as plugin.evaluate calls on each plugin's own
+# page (see docs/decisions/miniwob-and-host-setup.md).
+#
+# ── Attribution ────────────────────────────────────────────────────
+#
+# MiniWoB++ © Farama-Foundation (Apache-2.0)
+# Pinned commit: miniwob-plusplus@7fd85d71a4b60325c6585396ec4f48377d049838
+#
+# ── Manual trigger ─────────────────────────────────────────────────
+#
+# workflow_dispatch lets you re-run from the Actions tab without
+# pushing a new commit.
+#
+# ── Environment ────────────────────────────────────────────────────
+#
+# Node 22 (matching engines requirement in package.json)
+# Ubuntu latest (for Playwright system deps)
+# Python 3.12 + venv for bridge backends (chromium-py, firefox-py)
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-flight runs for the same PR/branch to save CI minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Structural tests (fast, no browser) ──────────────────────────
+  structural:
+    name: Structural tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run structural tests (test:ci)
+        run: npm run test:ci
+
+  # ── MiniWoB browser tests (cross-engine: chromium + firefox + python) ─
+  miniwob:
+    name: MiniWoB browser tests
+    runs-on: ubuntu-latest
+    needs: structural
+
+    # Auto-skips individual backends when their prerequisites are absent.
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers (chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright browsers (firefox)
+        run: npx playwright install --with-deps firefox
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Python venv for bridge backends
+        run: |
+          python3 -m venv packages/pi-lean-portal/backends/python-base/.venv
+          packages/pi-lean-portal/backends/python-base/.venv/bin/pip install --quiet playwright
+          packages/pi-lean-portal/backends/python-base/.venv/bin/python -m playwright install chromium firefox
+
+      - name: Setup MiniWoB++ content
+        run: npm run setup:miniwob
+
+      - name: Run MiniWoB browser tests (test:miniwob)
+        # Runs in parallel by default — no serialization flag needed
+        # (the CDP-scan concurrency race is gone post-attach-elimination).
+        run: npm run test:miniwob
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: miniwob-test-results
+          path: |
+            packages/pi-lean-host/results/
+            packages/pi-lean-portal/__tests__/*.xml
+          if-no-files-found: ignore

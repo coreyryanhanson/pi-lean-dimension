@@ -1183,6 +1183,10 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		return existing ? existing + pathDelimiter + pythonBaseDir : pythonBaseDir;
 	}
 
+	// ═════════════════════════════════════════════════════════════════
+	//  Result conversion helpers
+	// ═════════════════════════════════════════════════════════════════
+
 	/**
 	 * Convert a raw RPC result to an InteractionResult.
 	 */

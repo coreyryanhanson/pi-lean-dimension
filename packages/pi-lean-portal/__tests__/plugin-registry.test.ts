@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { PluginRegistry, validatePlugin } from "../core/plugin-registry";
-import { MockPlugin, makeConfig } from "./helpers/mock-plugin";
+import { PluginRegistry, validatePlugin } from "../core/plugin-registry.js";
+import { MockPlugin, makeConfig } from "./helpers/mock-plugin.js";
 
 // ─── validatePlugin ──────────────────────────────────────────────
 
@@ -181,11 +181,9 @@ describe("PluginRegistry.getOrdered", () => {
 		registry.register(p2, makeConfig({ name: "beta" }));
 		registry.register(p3, makeConfig({ name: "gamma" }));
 		const ordered = registry.getOrdered();
-		expect(ordered.map((e) => e.plugin.name)).toEqual([
-			"alpha",
-			"beta",
-			"gamma",
-		]);
+		expect(
+			ordered.map((e: { plugin: { name: string } }) => e.plugin.name),
+		).toEqual(["alpha", "beta", "gamma"]);
 	});
 
 	it("excludes disabled plugins", () => {
@@ -196,7 +194,9 @@ describe("PluginRegistry.getOrdered", () => {
 		registry.register(p2, makeConfig({ name: "beta", enabled: false }));
 		registry.register(p3, makeConfig({ name: "gamma" }));
 		const ordered = registry.getOrdered();
-		expect(ordered.map((e) => e.plugin.name)).toEqual(["alpha", "gamma"]);
+		expect(
+			ordered.map((e: { plugin: { name: string } }) => e.plugin.name),
+		).toEqual(["alpha", "gamma"]);
 	});
 
 	it("assigns correct priority levels", () => {
@@ -272,7 +272,9 @@ describe("PluginRegistry.getHigherStealth", () => {
 		registry.register(p1, makeConfig({ name: "chromium" }));
 		registry.register(p2, makeConfig({ name: "stealth" }));
 		const higher = registry.getHigherStealth(0);
-		expect(higher.map((e) => e.plugin.name)).toEqual(["stealth"]);
+		expect(
+			higher.map((e: { plugin: { name: string } }) => e.plugin.name),
+		).toEqual(["stealth"]);
 	});
 
 	it("returns empty array when no higher-priority plugins exist", () => {

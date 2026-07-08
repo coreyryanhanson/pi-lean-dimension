@@ -24,8 +24,8 @@ vi.mock("node:fs", () => ({
 	unlinkSync: vi.fn(),
 }));
 
-import browserToggle from "../browser-toggle";
-import { listProfiles, formatProfileList } from "../browser-profile";
+import browserToggle from "../browser-toggle.js";
+import { listProfiles, formatProfileList } from "../browser-profile.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
@@ -113,7 +113,7 @@ describe("listProfiles()", () => {
 		(statSync as Mock).mockReturnValue({ size: 100 });
 
 		const profiles = listProfiles();
-		expect(profiles.map((p) => p.name)).toEqual([
+		expect(profiles.map((p: { name: string }) => p.name)).toEqual([
 			"default",
 			"shopping",
 			"work",

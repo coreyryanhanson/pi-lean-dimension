@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { validateUrl } from "../core/shared/url-safety";
+import { validateUrl } from "../core/shared/url-safety.js";
 
 // ─── Allowed URLs ──────────────────────────────────────────────
 
