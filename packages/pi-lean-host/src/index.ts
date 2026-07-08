@@ -43,3 +43,12 @@ export {
 export type { SnapEl } from "../solvers/parser.js";
 
 export { probePythonBackend } from "../suites/miniwob-suite-helper.js";
+
+export {
+	probeUserBackend,
+	userBackendsDir,
+} from "./probe-user-backend.js";
+export type {
+	ProbeUserBackendOptions,
+	ProbeUserBackendResult,
+} from "./probe-user-backend.js";
