@@ -311,8 +311,8 @@ framework/structural concern (router dispatch, plugin registry, config
 loading, snapshot cache, etc.). Those remain covered by the existing
 portal structural tests.
 
-See [`docs/decisions/browsergym-removal.md`](docs/decisions/browsergym-removal.md) for the
-BrowserGym removal decision record.
+See [`docs/decisions/miniwob-and-host-setup.md`](docs/decisions/miniwob-and-host-setup.md) for the
+BrowserGym removal and host/MiniWoB setup decision record.
 
 ## CI Pipeline
 

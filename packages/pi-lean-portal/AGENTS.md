@@ -44,7 +44,7 @@ their own page — there is **no external-attach path**. The
 `core/shared/cdp-endpoint.ts`, the `launchServer()` / `connect()`
 hop, and the `_cdpEndpoint` / `_wsEndpoint` / `_browserServer` /
 `_reconnectBrowser()` scaffolding were all removed (see
-[`docs/decisions/miniwob-driver-attach-elimination.md`](../../docs/decisions/miniwob-driver-attach-elimination.md)).
+[`docs/decisions/miniwob-and-host-setup.md`](../../docs/decisions/miniwob-and-host-setup.md)).
 
 One post-launch hook is retained for third-party subclasses:
 

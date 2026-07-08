@@ -15,7 +15,7 @@
 # The former CDP-scan concurrency race that forced serialization is
 # gone — the cross-process attach was eliminated and the episode
 # lifecycle now runs as plugin.evaluate calls on each plugin's own
-# page (see docs/decisions/miniwob-driver-attach-elimination.md).
+# page (see docs/decisions/miniwob-and-host-setup.md).
 #
 # ── Attribution ────────────────────────────────────────────────────
 #
