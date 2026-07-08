@@ -1,6 +1,6 @@
 {
 	"name": "pi-lean-host",
-	"version": "0.0.1",
+	"version": "0.1.0",
 	"description": "MiniWoB++ evaluation harness for BrowserPlugin backends. plugin.evaluate-driven episode lifecycle (setup/validate on the plugin's own page), Node-plugin @e-ref action layer, TypeScript runMiniwobTask API.",
 	"keywords": [
 		"pi-package",
@@ -35,11 +35,7 @@
 		"setup:miniwob": "node scripts/setup-miniwob.mjs"
 	},
 	"peerDependencies": {
-		"@earendil-works/pi-ai": "*",
-		"@earendil-works/pi-coding-agent": "*",
-		"@earendil-works/pi-tui": "*",
-		"pi-lean-portal": "*",
-		"typebox": "*"
+		"pi-lean-portal": "*"
 	},
 	"peerDependenciesMeta": {
 		"pi-lean-portal": {

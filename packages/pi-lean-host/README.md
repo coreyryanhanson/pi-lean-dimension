@@ -139,7 +139,6 @@ const result = await runMiniwobTask({
   taskName: "click-test",
   seed: 42,
   baseUrl: "http://localhost:8080",
-  actor: "trivial",
   solver: async (ctx) => {
     // Find the first button in the snapshot and click it.
     const { parseRefs, withRole } = await import("pi-lean-host");
@@ -250,7 +249,6 @@ interface RunMiniwobTaskOptions {
   taskName: string;
   seed: number;
   baseUrl: string;
-  actor: "trivial";
   solver?: TrivialSolver;
   maxSteps?: number;            // hard safety cap (default 20)
   episodeMaxTimeMs?: number;    // default 30_000

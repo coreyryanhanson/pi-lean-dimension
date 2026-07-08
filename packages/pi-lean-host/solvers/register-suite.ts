@@ -239,7 +239,6 @@ export function registerMiniwobSuite(
 						taskName: subdomain,
 						seed: SEED,
 						baseUrl,
-						actor: "trivial",
 						solver,
 						episodeMaxTimeMs: 30_000,
 					});

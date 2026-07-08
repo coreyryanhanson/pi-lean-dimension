@@ -46,12 +46,7 @@ export interface RunMiniwobTaskOptions {
 	seed: number;
 	/** Base URL of the running MiniWoB server (the `miniwob/html/` root). */
 	baseUrl: string;
-	/**
-	 * Actor strategy. Phase 1 supports `"trivial"` only — the caller
-	 * supplies a {@link TrivialSolver}.
-	 */
-	actor: "trivial";
-	/** Required when `actor === "trivial"`. */
+	/** Task-specific solver that drives the page via @e-ref actions. */
 	solver?: TrivialSolver;
 	/** Hard safety cap on solver/validate round-trips (default 20). Wall-clock `donePollTimeoutMs` is the primary bail; this is a defensive upper bound. */
 	maxSteps?: number;
@@ -128,13 +123,21 @@ async function setupMiniwobEpisode(
 	// 1. Remove human display overlay.
 	const rm = await plugin.evaluate(taskId, REMOVE_DISPLAY_JS);
 	if (!rm.success) {
-		return { goal: "", setupFailed: true, error: rm.error ?? "removeDisplay failed" };
+		return {
+			goal: "",
+			setupFailed: true,
+			error: rm.error ?? "removeDisplay failed",
+		};
 	}
 
 	// 2. Seed RNG, set max time, start episode.
 	const setup = await plugin.evaluate(taskId, SETUP_JS(seed, episodeMaxTimeMs));
 	if (!setup.success) {
-		return { goal: "", setupFailed: true, error: setup.error ?? "setup JS failed" };
+		return {
+			goal: "",
+			setupFailed: true,
+			error: setup.error ?? "setup JS failed",
+		};
 	}
 
 	// 3. Poll WOB_TASK_READY.
@@ -162,7 +165,11 @@ async function setupMiniwobEpisode(
 	// 4. Read utterance (goal).
 	const goal = await plugin.evaluate(taskId, UTTERANCE_JS);
 	if (!goal.success) {
-		return { goal: "", setupFailed: true, error: goal.error ?? "utterance read failed" };
+		return {
+			goal: "",
+			setupFailed: true,
+			error: goal.error ?? "utterance read failed",
+		};
 	}
 
 	return { goal: String(goal.result ?? ""), setupFailed: false };
@@ -242,7 +249,7 @@ export async function runMiniwobTask(
 	} = opts;
 
 	if (!solver) {
-		return fail("actor: 'trivial' requires a solver.");
+		return fail("runMiniwobTask requires a solver.");
 	}
 
 	const taskId = `miniwob-${taskName}-${seed}`;

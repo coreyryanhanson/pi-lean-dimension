@@ -19,6 +19,7 @@
  */
 
 import { afterAll } from "vitest";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -60,6 +61,29 @@ afterAll(async () => {
 });
 
 // ─── Backend registration ─────────────────────────────────────────
+
+/**
+ * Probe the Python backend availability: whether the venv's Python
+ * interpreter works and the bridge script exists on disk.
+ *
+ * This is shared between `chromium-py` and `firefox-py` suite files
+ * to avoid duplicating the same spawnSync + existsSync checks.
+ */
+export function probePythonBackend(
+	venvPython: string,
+	bridgeScript: string,
+): { pythonAvailable: boolean; bridgeExists: boolean } {
+	const pythonAvailable = (() => {
+		if (!existsSync(venvPython)) return false;
+		const result = spawnSync(venvPython, ["--version"], {
+			stdio: "ignore",
+			timeout: 5_000,
+		});
+		return result.status === 0;
+	})();
+	const bridgeExists = existsSync(bridgeScript);
+	return { pythonAvailable, bridgeExists };
+}
 
 /**
  * Register one shipped backend against the full 130-task MiniWoB++

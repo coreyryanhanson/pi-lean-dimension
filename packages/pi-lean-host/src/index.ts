@@ -41,3 +41,5 @@ export {
 	goalQuotedTexts,
 } from "../solvers/parser.js";
 export type { SnapEl } from "../solvers/parser.js";
+
+export { probePythonBackend } from "../suites/miniwob-suite-helper.js";

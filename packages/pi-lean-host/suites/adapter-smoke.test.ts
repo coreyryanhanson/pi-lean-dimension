@@ -95,7 +95,6 @@ describe("MiniWoB adapter smoke — chromium + click-test", () => {
 				taskName: "click-test",
 				seed: 12345,
 				baseUrl,
-				actor: "trivial",
 				solver: clickFirstButton,
 				episodeMaxTimeMs: 30_000,
 			});

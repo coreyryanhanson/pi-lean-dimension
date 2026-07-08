@@ -17,7 +17,7 @@ An npm-workspaces monorepo containing four packages:
 - **`pi-lean-portal`** — Interactive web browsing (owns `/web` command). **12 tools + 1 command.**
 - **`pi-lean-search`** — SearXNG search tool (`web-search`), wired into portal's `/web` toggle. **1 tool + 1 command** (`/searxng-status`).
 - **`pi-lean-dimension`** — Umbrella meta-package that bundles portal + search (codeless manifest).
-- **`pi-lean-host`** — MiniWoB++ evaluation harness for `BrowserPlugin` backends. **Research tooling — not a pi extension, not in the umbrella meta-package, independently versioned.**
+- **`pi-lean-host`** — MiniWoB++ evaluation harness for `BrowserPlugin` backends. **Research tooling — not a pi extension, not in the umbrella meta-package, lockstep-versioned.**
 
 With search installed, the suite totals **13 tools + 2 commands** (portal + search only; host is non-extension research tooling). Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool. Portal entrypoint: `packages/pi-lean-portal/index.ts`.
 
@@ -88,7 +88,7 @@ pi-lean-dimension/                       (monorepo root)
     │   ├── AGENTS.md                    (portal internals — additive to this file)
     │   └── README.md                    (portal-specific docs)
     ├── pi-lean-host/                    ← MiniWoB++ evaluation harness (research tooling)
-    │   ├── package.json                 (name: pi-lean-host, published, NOT lockstep)
+    │   ├── package.json                 (name: pi-lean-host, published, lockstep)
     │   ├── README.md                    Setup, usage, architecture, public API docs
     │   ├── AGENTS.md                    (stub — points here)
     │   ├── generated/

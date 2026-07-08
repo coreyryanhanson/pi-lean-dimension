@@ -22,7 +22,6 @@
  * @module
  */
 
-import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,7 +29,10 @@ import { fileURLToPath } from "node:url";
 import { PythonPluginAdapter } from "../../pi-lean-portal/backends/python-adapter.js";
 import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
 
-import { registerMiniwobBackend } from "./miniwob-suite-helper.js";
+import {
+	probePythonBackend,
+	registerMiniwobBackend,
+} from "./miniwob-suite-helper.js";
 
 // ─── Paths ──────────────────────────────────────────────────────────
 
@@ -48,18 +50,32 @@ const VENV_PYTHON = resolve(
 
 // ─── Environment check ───────────────────────────────────────────────
 
-const pythonAvailable = (() => {
-	if (!existsSync(VENV_PYTHON)) return false;
-	const result = spawnSync(VENV_PYTHON, ["--version"], {
-		stdio: "ignore",
-		timeout: 5_000,
-	});
-	return result.status === 0;
+const { pythonAvailable, bridgeExists } = probePythonBackend(
+	VENV_PYTHON,
+	BRIDGE_SCRIPT,
+);
+
+const chromiumAvailable = (() => {
+	try {
+		const result = spawnSync(
+			VENV_PYTHON,
+			[
+				"-c",
+				"from playwright.sync_api import sync_playwright; " +
+					"p = sync_playwright().start(); " +
+					"import os; print(os.path.exists(p.chromium.executable_path)); " +
+					"p.stop()",
+			],
+			{ stdio: "pipe", timeout: 10_000 },
+		);
+		return result.status === 0 && result.stdout.toString().trim() === "True";
+	} catch {
+		return false;
+	}
 })();
 
-const bridgeExists = existsSync(BRIDGE_SCRIPT);
-
-const CHROMIUM_PY_AVAILABLE = pythonAvailable && bridgeExists;
+const CHROMIUM_PY_AVAILABLE =
+	pythonAvailable && bridgeExists && chromiumAvailable;
 
 // ─── Suite — register the chromium-py backend ─────────────────────
 
