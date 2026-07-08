@@ -183,7 +183,7 @@ export interface StorageStateResult extends ResultBase {
 /**
  * The contract every interactive browser backend must implement.
  *
- * The 12 required operations (plus getElementCache and cookie/storage
+ * The 18 required operations (plus getElementCache and cookie/storage
  * methods) make up the full contract. Lifecycle hooks are called by
  * the framework, not the agent.
  */

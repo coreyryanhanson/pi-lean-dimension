@@ -48,10 +48,13 @@ class FirefoxPyBridge(PlaywrightBridge):
     )
 
     def _launch_browser(self):
-        """Launch a Firefox browser instance."""
-        return self._pw.firefox.launch(
-            headless=True,
-        )
+        """Launch a Firefox browser instance.
+
+        Launches Firefox directly with ``firefox.launch()`` and drives its
+        own page; the plugin is the sole browser owner.  No external-attach
+        endpoint is exposed.
+        """
+        return self._pw.firefox.launch(headless=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════

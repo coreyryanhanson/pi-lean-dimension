@@ -1,0 +1,52 @@
+{
+	"name": "pi-lean-host",
+	"version": "0.0.1",
+	"description": "MiniWoB++ evaluation harness for BrowserPlugin backends. plugin.evaluate-driven episode lifecycle (setup/validate on the plugin's own page), Node-plugin @e-ref action layer, TypeScript runMiniwobTask API.",
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"benchmark",
+		"miniwob"
+	],
+	"license": "AGPL-3.0-only",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/coreyryanhanson/pi-lean-dimension.git",
+		"directory": "packages/pi-lean-host"
+	},
+	"type": "module",
+	"publishConfig": {
+		"access": "public"
+	},
+	"files": [
+		"README.md",
+		"AGENTS.md",
+		"LICENSE",
+		"src/",
+		"adapter/",
+		"solvers/",
+		"scripts/",
+		"generated/"
+	],
+	"scripts": {
+		"prepack": "cp ../../LICENSE ./LICENSE",
+		"test": "vitest run",
+		"test:miniwob": "vitest run suites/",
+		"setup:miniwob": "node scripts/setup-miniwob.mjs"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*",
+		"pi-lean-portal": "*",
+		"typebox": "*"
+	},
+	"peerDependenciesMeta": {
+		"pi-lean-portal": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"playwright": "*"
+	}
+}

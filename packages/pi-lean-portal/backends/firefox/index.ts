@@ -4,9 +4,12 @@
  * Thin subclass of PlaywrightPluginBase. All shared logic lives in
  * backends/playwright-base/playwright-plugin.ts.
  *
+ * Launches Firefox directly with `firefox.launch()` and drives its own
+ * page; the plugin is the sole browser owner. No external-attach
+ * endpoint is exposed.
+ *
  * Uses probe-then-cache UA capture at first launch, with a hardcoded
- * fallback Firefox UA string. Launch args are empty — Firefox does
- * not accept Chromium sandbox flags.
+ * fallback Firefox UA string.
  */
 
 import { firefox } from "playwright";
@@ -47,9 +50,7 @@ export class FirefoxPlugin extends PlaywrightPluginBase {
 	}
 
 	protected async launchBrowser(): Promise<Browser> {
-		return firefox.launch({
-			headless: true,
-		});
+		return firefox.launch({ headless: true });
 	}
 
 	protected get installHint(): string {

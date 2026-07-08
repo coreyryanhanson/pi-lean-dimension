@@ -12,24 +12,28 @@
 
 ## What This Is
 
-An npm-workspaces monorepo containing three Pi extension packages:
+An npm-workspaces monorepo containing four packages:
 
 - **`pi-lean-portal`** — Interactive web browsing (owns `/web` command). **12 tools + 1 command.**
 - **`pi-lean-search`** — SearXNG search tool (`web-search`), wired into portal's `/web` toggle. **1 tool + 1 command** (`/searxng-status`).
 - **`pi-lean-dimension`** — Umbrella meta-package that bundles portal + search (codeless manifest).
+- **`pi-lean-host`** — MiniWoB++ evaluation harness for `BrowserPlugin` backends. **Research tooling — not a pi extension, not in the umbrella meta-package, independently versioned.**
 
-With search installed, the suite totals **13 tools + 2 commands**. Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool. Portal entrypoint: `packages/pi-lean-portal/index.ts`.
+With search installed, the suite totals **13 tools + 2 commands** (portal + search only; host is non-extension research tooling). Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool. Portal entrypoint: `packages/pi-lean-portal/index.ts`.
 
 ## Developer Commands
 
 ```bash
 npm test                                           # vitest run — all workspace tests (may hang if browser binaries missing)
 npm run test:ci                                     # vitest run — structural tests only, excludes browser-dependent tests that may hang
-npm run test:miniwob                                # MiniWoB++ live-browser test suite (auto-skips)
+npm run test:miniwob                                # MiniWoB++ cross-engine test suite (host: 130 tasks × 4 backends + smoke, auto-skips)
 npm run setup:miniwob                               # one-time clone of MiniWoB++ content
+# (no dedicated venv needed — the driver uses the plugin's Python path)
 npx vitest run packages/pi-lean-portal/__tests__/router-dispatch.test.ts  # single test file
 npx vitest run packages/pi-lean-portal/__tests__/cookie-persistence.test.ts  # Chromium persistence
 npx vitest run packages/pi-lean-portal/__tests__/firefox.test.ts  # Firefox contract tests
+npm run test:miniwob -w pi-lean-host                # run all MiniWoB suites (chromium, firefox, chromium-py, firefox-py, adapter-smoke)
+npm run test:helper -w pi-lean-host                 # host bridge-client helper tests
 npm run test:watch                                 # vitest in watch mode
 npm run publish:dry                                # npm publish --workspaces --dry-run (inspect tarballs)
 npm run publish                                    # npm publish --workspaces --access public
@@ -83,6 +87,33 @@ pi-lean-dimension/                       (monorepo root)
     │   ├── __tests__/                   Test files + helpers/
     │   ├── AGENTS.md                    (portal internals — additive to this file)
     │   └── README.md                    (portal-specific docs)
+    ├── pi-lean-host/                    ← MiniWoB++ evaluation harness (research tooling)
+    │   ├── package.json                 (name: pi-lean-host, published, NOT lockstep)
+    │   ├── README.md                    Setup, usage, architecture, public API docs
+    │   ├── AGENTS.md                    (stub — points here)
+    │   ├── generated/
+    │   │   └── subdomains.ts            Auto-generated MiniWoB subdomain list
+    │   ├── src/index.ts                 Public API entry: runMiniwobTask, registerMiniwobSuite
+    │   ├── adapter/
+    │   │   ├── miniwob-episode.ts       JS-string constants for the plugin.evaluate episode lifecycle (setup/validate/removeDisplay)
+    │   │   ├── miniwob-adapter.ts       TS wrapper: orchestrates plugin.evaluate setup/validate, exposes runMiniwobTask()
+    │   ├── solvers/
+    │   │   ├── parser.ts                @e-ref parsing, withRole, ReDoS-safe role allowlist
+    │   │   ├── trivial-solvers.ts       13 trivial MiniWoB solvers (3 confident + 10 best-effort)
+    │   │   └── register-suite.ts        registerMiniwobSuite — vitest suite of 130 MiniWoB tasks
+    │   ├── suites/
+    │   │   ├── miniwob-trivial.test.ts      130 tasks × chromium (13 run, 117 skip)
+    │   │   ├── miniwob-firefox.test.ts      130 tasks × firefox (13 run, 117 skip)
+    │   │   ├── miniwob-chromium-py.test.ts  130 tasks × chromium-py (13 run, 117 skip)
+    │   │   ├── miniwob-firefox-py.test.ts   130 tasks × firefox-py (13 run, 117 skip)
+    │   │   ├── miniwob-suite-helper.ts      Shared suite infrastructure
+    │   │   └── adapter-smoke.test.ts        End-to-end runMiniwobTask (click-test, rawReward > 0)
+    │   ├── scripts/
+    │   │   ├── setup-miniwob.mjs        Clone miniwob-plusplus at pinned commit + repair
+    │   │   └── miniwob-server.ts        Static file server for MiniWoB++ content
+    │   ├── docs/
+    │   │   ├── cdp-endpoint-spike.md    CDP attach spike findings
+    │   │   └── miniwob-spike-findings.md (moved from portal for historical reference)
     ├── pi-lean-search/                  ← SearXNG search leaf
     │   ├── package.json                 (name: pi-lean-search, published)
     │   ├── index.ts                     Entry: tool registration, health probe, /searxng-status command
@@ -186,62 +217,70 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 
 ## Testing
 
-### Test files (30 files, 676 tests passing + live-browser tests)
+### Test split principle
 
-**Portal structural tests (19 files, 650+ tests):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, ship-manifest
+**Subject under test** determines where a test lives, not *needs a browser*.
 
-**Portal MiniWoB tests (2 files):** miniwob-helper (16 structural tests, no browser), miniwob (125 MiniWoB++ tasks × 4 shipped backends) — see [MiniWoB Integration](#miniwob-integration) below.
+- **Portal structural tests** (`pi-lean-portal`): framework internals (router dispatch, registry, config loading, snapshot cache, nav-settle, storage state, accessibility parsing, url safety, plugin contract validation, browser toggle, fetch backend, python adapter). These are mocked unit tests — no real browser or MiniWoB content required.
+- **Host behavioral tests** (`pi-lean-host`): behavioral evaluation against real browser engines (MiniWoB tasks, browser interaction pipeline verification). These require a live browser and MiniWoB++ content.
+- **Per-backend contract tests** (in `pi-lean-portal`): verify each backend (chromium, firefox, chromium-py, firefox-py, etc.) against the `BrowserPlugin` interface contract. Require their respective browser engine.
 
-**Search tests (2 files, 17+ tests):** web-search (config reader + tool structure), ship-manifest
+### Test file summary
 
-**Dimension tests (1 file, 2 tests):** ship-manifest
+| Category | Location | Files (~) | Tests (~) | Requires browser? |
+|----------|----------|-----------|-----------|-------------------|
+| Portal structural | `pi-lean-portal/__tests__/` | 19 | 650+ | No |
+| Portal contract/backend | `pi-lean-portal/__tests__/` | 7 | varies | Per-backend (auto-skip) |
+| Host behavioral (MiniWoB) | `pi-lean-host/suites/` | 5 | 130 tasks × 4 + smoke | Chromium + Firefox + Python + MiniWoB content |
+| Search | `pi-lean-search/` | 2 | 17+ | No |
+| Dimension | `pi-lean-dimension/` | 1 | 2 | No |
 
-| File | Requires browser? |
-|------|--------------------|
-| All portal structural tests (listed above) | No |
-| Search tests (web-search, ship-manifest) | No |
-| Dimension tests (ship-manifest) | No |
-| reddit-dialog.test.ts | Chromium (errors if unavailable) |
-| cookie-persistence.test.ts | Chromium (auto-skip) |
-| chromium-py.test.ts | Chromium + Python venv (auto-skip) |
-| chromium-py-persistence.test.ts | Chromium + Python venv (auto-skip) |
-| firefox.test.ts | Playwright Firefox (auto-skip) |
-| firefox-py.test.ts | Playwright Firefox + Python venv (auto-skip) |
-| firefox-py-persistence.test.ts | Playwright Firefox + Python venv (auto-skip) |
-| miniwob.test.ts | MiniWoB++ content + browser(s) per-backend (auto-skip) |
+**Portal structural (19 files):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, ship-manifest
 
-Live-browser tests auto-skip when the required browser or Python venv is absent. `reddit-dialog` errors if Chromium is missing (it's a structural requirement for the Node Chromium backend). `browser-toggle-profile` tests exercise the full profile lifecycle via mock API.
+**Portal per-backend contract tests (7 files):** reddit-dialog (errors if Chromium missing), cookie-persistence (auto-skip), chromium-py (auto-skip), chromium-py-persistence (auto-skip), firefox (auto-skip), firefox-py (auto-skip), firefox-py-persistence (auto-skip)
 
-### Shared test utilities (`packages/pi-lean-portal/__tests__/helpers/`)
+**Host behavioral tests (5 files):**
+
+- `miniwob-trivial.test.ts` — 130 MiniWoB++ tasks × chromium (13 run, 117 skip)
+- `miniwob-firefox.test.ts` — 130 tasks × firefox (13 run, 117 skip)
+- `miniwob-chromium-py.test.ts` — 130 tasks × chromium-py (13 run, 117 skip)
+- `miniwob-firefox-py.test.ts` — 130 tasks × firefox-py (13 run, 117 skip)
+- `adapter-smoke.test.ts` — end-to-end runMiniwobTask via real Chromium + `plugin.evaluate` episode lifecycle
+
+**Shared test utilities** (`packages/pi-lean-portal/__tests__/helpers/`):
 
 - `plugin-contract.ts` — `runContractTests(name, factory, opts?)` validates any BrowserPlugin
 - `mock-plugin.ts` — MockPlugin for structural contract validation
 - `reddit-fixture.ts` — HTML fixtures for Reddit dialog scenarios (4 variants)
 - `test-server.ts` — `startTestServer()` returns a local HTTP server for integration tests
-- `mock-python-bridge.py` — Python bridge stub used by python-adapter tests (supports `browser.getStorageState` and `browser.getCookies` for persistence testing)
-
-### Contract test harness
-
-`runContractTests()` validates structural contracts (all operations exist, result shapes) without a browser, and behavioral tests (`realBrowser: true`) with a live browser (Chromium or Firefox depending on the plugin passed).
+- `mock-python-bridge.py` — Python bridge stub used by python-adapter tests
 
 ### MiniWoB Integration
 
-The suite at `packages/pi-lean-portal/__tests__/miniwob.test.ts` drives all 125
-[MiniWoB++](https://miniwob.farama.org/) tasks through the four shipped
-BrowserPlugin backends (chromium, firefox, chromium-py, firefox-py) to
-verify the interactive plugin pipeline (navigate, snapshot, click, type,
-press, scroll, goBack).
+Behavioral MiniWoB++ evaluation lives in `pi-lean-host` and uses a
+hand-rolled MiniWoB++ driver (no BrowserGym dependency).
+
+Shipped suite files under `packages/pi-lean-host/suites/` drive
+all 130 [MiniWoB++](https://miniwob.farama.org/) tasks through each
+backend. The shared helper at `miniwob-suite-helper.ts` owns content
+availability gates and the MiniWoB static server lifecycle; each
+per-backend file supplies only the browser-availability probe and
+plugin factory:
+
+- **`miniwob-trivial.test.ts`** — Chromium (Node)
+- **`miniwob-firefox.test.ts`** — Firefox (Node)
+- **`miniwob-chromium-py.test.ts`** — Chromium-Py (Python bridge)
+- **`miniwob-firefox-py.test.ts`** — Firefox-Py (Python bridge)
 
 - **13 tasks run** with trivial solvers — 3 confident (assert reward > 0)
   and 10 best-effort (pipeline smoke tests).
-- **77 element tasks** without a registered solver → `it.skip` with reason
+- **82 element tasks** without a registered solver → `it.skip` with reason
   `needs goal-aware solver (Step 2 follow-up)`.
 - **35 non-element tasks** (coord/drag/hover/select) → `it.skip` with
   the missing-tool reason.
-- **Reusable machinery** in `helpers/miniwob-suite.ts`
-  (`registerMiniwobSuite()`, solver registry, parsing toolkit) lets
+- **Public API:** `registerMiniwobSuite` from `pi-lean-host` lets
   user-owned parity test files register custom backends without editing
-  shipped code — see that file for the pattern.
+  shipped code.
 
 **One-time setup:**
 
@@ -249,51 +288,65 @@ press, scroll, goBack).
 # Clone MiniWoB++ at the pinned commit (idempotent — no-op if exists)
 npm run setup:miniwob
 
-# Run the MiniWoB suite (auto-skips when content unreachable)
+# Run the MiniWoB suite (auto-skips when prereqs absent)
 npm run test:miniwob
 ```
 
-The setup script (`scripts/setup-miniwob.mjs`) defaults to
-`/tmp/miniwob-plusplus/miniwob/html`. Override at test time:
+The setup script (`packages/pi-lean-host/scripts/setup-miniwob.mjs`)
+defaults to `/tmp/miniwob-plusplus/miniwob/html`. Override at test time:
 
 ```bash
 export MINIWOB_HTML_ROOT=/path/to/miniwob/html  # path on disk
 export MINIWOB_URL=http://…                      # already-running server
 ```
 
-**Auto-skip gates:** The suite skips each backend when its required
-browser is absent, and skips entirely when MiniWoB content is
-unreachable (no `MINIWOB_HTML_ROOT`/default path AND no `MINIWOB_URL`).
-This keeps `npm test` and `npm run test:ci` green in bare CI.
+**Auto-skip gates:** Each per-backend suite file independently
+auto-skips when its browser prerequisites are absent or MiniWoB++
+content is unreachable. This keeps `npm test` and
+`npm run test:ci` green in bare CI without path-filtering logic.
 
 **What MiniWoB does NOT cover:** canvas/coordinate tasks (no tool),
 drag-and-drop (no tool), hover/slider/select (no tool), and any
 framework/structural concern (router dispatch, plugin registry, config
 loading, snapshot cache, etc.). Those remain covered by the existing
-structural tests.
+portal structural tests.
 
-See [`miniwob-integration-plan.md`](miniwob-integration-plan.md) for the
-full plan, spike findings, per-backend parity status, and the
-camoufox-py diagnostic.
+See [`docs/decisions/miniwob-and-host-setup.md`](docs/decisions/miniwob-and-host-setup.md) for the
+BrowserGym removal and host/MiniWoB setup decision record.
 
 ## CI Pipeline
 
 The repository includes a GitHub Actions workflow at
-`.github/workflows/ci.yml` that runs on every PR and push to `main`:
+`.github/workflows/ci.yml` that runs on every PR and push to `main`,
+split into two parallel jobs:
+
+**`structural` job (fast, no browser):**
 
 1. **Checkout** the repository
 2. **Setup Node.js 22** with npm caching
 3. **Install dependencies** via `npm ci`
-4. **Install Playwright browsers** (`chromium`, `firefox`) with system
-   deps
-5. **Clone MiniWoB++ content** via `npm run setup:miniwob`
-6. **Run structural tests** via `npm run test:ci`
-7. **Run MiniWoB browser tests** via `npm run test:miniwob`
+4. **Run structural tests** via `npm run test:ci`
 
-**Python/venv backends** (chromium-py, firefox-py) auto-skip in CI
-because no Python venv is set up. To enable them, add CI steps for
-creating the venv, installing `playwright` in it, and installing
-the Python-backed browsers.
+**`miniwob` job (cross-engine browser tests, depends on structural):**
+
+1. **Checkout** + **Setup Node.js 22** + `npm ci`
+2. **Install Playwright Chromium** (drives Node chromium +
+   chromium-py suites)
+3. **Install Playwright Firefox** (drives Node firefox +
+   firefox-py suites)
+4. **Setup Python 3.12 + venv** with `playwright` pip package
+   (drives chromium-py + firefox-py suites)
+5. **Clone MiniWoB++ content** via `npm run setup:miniwob`
+6. **Run all MiniWoB browser tests** via `npm run test:miniwob`
+   (runs `packages/pi-lean-host/suites/`, covering all 5 suite
+   files)
+7. **Upload test artifacts on failure** (vitest output, Playwright
+   traces)
+
+**Auto-skip gates:** Each per-backend suite file independently
+auto-skips when its browser prerequisites are absent or MiniWoB++
+content is unreachable. This keeps `npm test` and
+`npm run test:ci` green in bare CI without path-filtering logic.
 
 **Manual trigger:** The workflow also supports `workflow_dispatch`
 for re-running from the Actions tab without pushing a new commit.

@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
 	test: {
+		globalSetup: ["packages/pi-lean-host/vitest.globalSetup.ts"],
 		globals: true,
 		include: ["packages/*/**/*.test.ts"],
 		passWithNoTests: true,

@@ -156,6 +156,7 @@ class PlaywrightBridge(BrowserBridge):
     #: settle behaviour bit-identical.
     _skip_networkidle: bool = False
 
+
     # ── Shared Playwright state ─────────────────────────────────
 
     _pw: Any  # Playwright instance (lazy, shared)
@@ -216,6 +217,8 @@ class PlaywrightBridge(BrowserBridge):
                     page.close()
                 except Exception:
                     pass
+
+
 
     # ── Debug logging ───────────────────────────────────────────
 

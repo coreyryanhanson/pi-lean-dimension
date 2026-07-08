@@ -32,9 +32,33 @@ getCookies, addCookies, clearCookies  — cookie operations
 getStorageState     — profile storage for session restore
 ```
 
-The 12 registered tools map to 12 tool-facing plugin methods. The cookie/storage methods (`getCookies`, `addCookies`, `clearCookies`, `getStorageState`) are router-facing, not tool-mapped. Element cache access (`getElementCache`) is used internally by `browser-inspect`. The lifecycle methods (`init`, `cleanupAll`) are framework-facing. Total interface: 19 methods.
+The 12 registered tools map to 12 tool-facing plugin methods. The cookie/storage methods (`getCookies`, `addCookies`, `clearCookies`, `getStorageState`) are router-facing, not tool-mapped. Element cache access (`getElementCache`) is used internally by `browser-inspect`. The lifecycle methods (`init`, `cleanupAll`) are framework-facing. Total interface: 19 methods (18 required + 1 optional).
 
 Capabilities (`PluginCapabilities`) advertise quirks. The router checks them at dispatch time.
+
+## Browser launch hook
+
+The portal's own backends launch their browser directly and drive
+their own page — there is **no external-attach path**. The
+`getAttachEndpoint()` interface method, the `AttachEndpoint` union,
+`core/shared/cdp-endpoint.ts`, the `launchServer()` / `connect()`
+hop, and the `_cdpEndpoint` / `_wsEndpoint` / `_browserServer` /
+`_reconnectBrowser()` scaffolding were all removed (see
+[`docs/decisions/miniwob-and-host-setup.md`](../../docs/decisions/miniwob-and-host-setup.md)).
+
+One post-launch hook is retained for third-party subclasses:
+
+- **`onBrowserLaunched()`** — a post-launch hook (default no-op) called
+  once after the browser successfully launches, before any
+  context/page is created. The portal's own backends no longer override
+  it (external-attach discovery has been removed), but the hook is
+  retained for third-party subclasses. Failures thrown from overrides
+  are caught and logged by `_newBrowserContext`, so a setup glitch
+  never blocks normal browsing.
+
+There is no `connectOverCDP?` interface hook — a host-owns-browser
+("Mode B") path was considered and dropped as YAGNI; it will be
+re-added alongside a real consumer that needs it.
 
 ## Router (`core/router.ts`)
 

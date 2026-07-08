@@ -1,24 +1,27 @@
 #!/usr/bin/env node
 
 /**
- * One-time setup script for MiniWoB++ test content (Step 4 of
- * `miniwob-integration-plan.md`).
+ * One-time setup script for MiniWoB++ test content.
  *
  * Clones `miniwob-plusplus` at the frozen commit pin and prints the
  * path the test suite expects. No-op when the target directory already
  * exists (idempotent).
  *
- * The test suite (`miniwob.test.ts`) and helpers
- * (`helpers/miniwob.ts`) default to
+ * After cloning, generates `packages/pi-lean-host/generated/subdomains.ts`
+ * from the `*.html` files in the html directory (gitignored — regenerated
+ * by the vitest globalSetup before test runs, or by this script).
+ *
+ * The suite and helpers default to
  * `/tmp/miniwob-plusplus/miniwob/html` as the HTML root.  Override
  * at test time via `MINIWOB_HTML_ROOT` (path to the html directory on
  * disk) or `MINIWOB_URL` (URL of an already-running HTTP server
  * serving the html directory).
  *
  * Usage:
- *   node scripts/setup-miniwob.mjs                          # default: /tmp/miniwob-plusplus
- *   MINIWOB_HTML_ROOT=/opt/miniwob node scripts/setup-miniwob.mjs  # custom path
- *   node scripts/setup-miniwob.mjs /custom/path             # positional override
+ *   npm run setup:miniwob                                     # workspace default
+ *   node packages/pi-lean-host/scripts/setup-miniwob.mjs      # same (direct)
+ *   MINIWOB_HTML_ROOT=/opt/miniwob node …setup-miniwob.mjs   # custom path
+ *   node packages/pi-lean-host/scripts/setup-miniwob.mjs /custom/path
  *
  * ── Attribution ────────────────────────────────────────────────
  *
@@ -26,8 +29,8 @@
  * miniwob-plusplus@7fd85d71a4b60325c6585396ec4f48377d049838
  */
 
-import { existsSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { join, resolve, relative } from "node:path";
 import { execSync } from "node:child_process";
 
 // ─── Config ──────────────────────────────────────────────────────
@@ -52,6 +55,23 @@ function info(message) {
 	console.log(`[setup-miniwob] ${message}`);
 }
 
+function warn(message) {
+	console.warn(`[setup-miniwob] WARNING: ${message}`);
+}
+
+/** Return the SHA the checkout is currently at, or null if git fails. */
+function currentCommit(cwd) {
+	try {
+		return execSync("git rev-parse HEAD", {
+			stdio: ["ignore", "pipe", "ignore"],
+			cwd,
+			encoding: "utf8",
+		}).trim();
+	} catch {
+		return null;
+	}
+}
+
 // ─── Main ────────────────────────────────────────────────────────
 
 function main() {
@@ -61,10 +81,43 @@ function main() {
 	const checkoutRoot = resolve(positionalArg ?? envRoot ?? DEFAULT_ROOT);
 	const htmlDir = join(checkoutRoot, "miniwob", "html");
 
-	// ── Idempotency guard ────────────────────────────────────────
+	// ── Existing .git checkout — verify html/ presence + pinned commit ──
+	// (§1.7 hardening: a stale or partial checkout should be repaired,
+	//  not silently trusted. Drift from PINNED_COMMIT warns but proceeds.)
 	if (existsSync(join(checkoutRoot, ".git"))) {
+		if (!existsSync(htmlDir)) {
+			warn(
+				`Checkout at ${checkoutRoot} is missing miniwob/html/ — ` +
+					`repairing by re-checking out the pinned commit.`,
+			);
+			try {
+				execSync(`git reset --hard ${PINNED_COMMIT}`, {
+					stdio: "inherit",
+					cwd: checkoutRoot,
+				});
+			} catch {
+				die(
+					`Failed to repair checkout at ${checkoutRoot}. ` +
+						`Remove it and re-run to re-clone.`,
+				);
+			}
+			if (!existsSync(htmlDir)) {
+				die(`miniwob/html/ still missing after checkout repair: ${htmlDir}`);
+			}
+		}
+
+		const head = currentCommit(checkoutRoot);
+		if (head && head !== PINNED_COMMIT) {
+			warn(
+				`Checkout at ${checkoutRoot} is at ${head.slice(0, 12)}, ` +
+					`not the pinned ${PINNED_COMMIT.slice(0, 12)}. ` +
+					`Proceeding — re-pin deliberately or remove the checkout ` +
+					`and re-run to reset.`,
+			);
+		}
+		generateSubdomainsFile(htmlDir);
 		info(
-			`MiniWoB++ already cloned at ${checkoutRoot}. Nothing to do.\n` +
+			`MiniWoB++ already cloned at ${checkoutRoot}.\n` +
 				`  HTML root: ${htmlDir}\n` +
 				`  To re-clone, remove ${checkoutRoot} and re-run.`,
 		);
@@ -73,6 +126,7 @@ function main() {
 
 	// ── Guard: if HTML root exists w/o .git (e.g. user placed it manually) ──
 	if (existsSync(htmlDir)) {
+		generateSubdomainsFile(htmlDir);
 		info(
 			`HTML content already present at ${htmlDir} (no .git checkout). Nothing to do.\n` +
 				`  Set MINIWOB_HTML_ROOT=${htmlDir} or leave the default if that matches.`,
@@ -109,6 +163,8 @@ function main() {
 		die(`Expected HTML root not found after clone: ${htmlDir}`);
 	}
 
+	generateSubdomainsFile(htmlDir);
+
 	info("Done. MiniWoB++ content ready at:");
 	console.log(`  HTML root: ${htmlDir}`);
 	console.log("");
@@ -119,6 +175,56 @@ function main() {
 	);
 	console.log(
 		"    export MINIWOB_URL=http://…   # URL of an already-running server",
+	);
+}
+
+/**
+ * Generate the `generated/subdomains.ts` file from the MiniWoB++ html
+ * directory. Writes a sorted `MINIWOB_SUBDOMAINS` const array of all
+ * `.html` file stem names (minus extension).
+ *
+ * Task HTML files live one level under the html root, at
+ * `html/miniwob/*.html` (matching the server's URL contract:
+ * `${url}/miniwob/<subdomain>.html`).
+ */
+function generateSubdomainsFile(htmlDir) {
+	const generatedDir = resolve(import.meta.dirname, "..", "generated");
+	mkdirSync(generatedDir, { recursive: true });
+
+	// Task HTML lives one level under the html root, at html/miniwob/*.html
+	// (matches the server's URL contract: ${url}/miniwob/<subdomain>.html).
+	const taskDir = join(htmlDir, "miniwob");
+	if (!existsSync(taskDir)) {
+		die(
+			`Task HTML directory not found: ${taskDir}. ` +
+				`Expected the clone to contain miniwob/html/miniwob/*.html.`,
+		);
+	}
+
+	const files = readdirSync(taskDir)
+		.filter((f) => f.endsWith(".html"))
+		.map((f) => f.replace(/\.html$/, ""))
+		.sort();
+
+	const content = [
+		"/**",
+		" * Auto-generated MiniWoB++ subdomain list.",
+		" *",
+		" * Generated from `miniwob-plusplus@7fd85d71a4b60325c6585396ec4f48377d049838`.",
+		" * Regenerate via: npm run setup:miniwob",
+		" *",
+		" * Do not edit by hand — edit setup-miniwob.mjs to change the source.",
+		" */",
+		"export const MINIWOB_SUBDOMAINS = [",
+		...files.map((f) => `\t"${f}",`),
+		"] as const;",
+		"",
+	].join("\n");
+
+	const outPath = join(generatedDir, "subdomains.ts");
+	writeFileSync(outPath, content, "utf-8");
+	info(
+		`Generated ${relative(process.cwd(), outPath)} (${files.length} subdomains)`,
 	);
 }
 

@@ -336,7 +336,7 @@ describe("formatCacheNotice()", () => {
 describe("Integration: router + cache (via MockPlugin)", () => {
 	beforeEach(async () => {
 		const { pluginRegistry } = await import("../core/plugin-registry.js");
-		const { default: _sm } = await import("../core/shared/session-manager.js");
+		await import("../core/shared/session-manager.js");
 		const { MockPlugin, makeConfig } = await import("./helpers/mock-plugin.js");
 		pluginRegistry.clear();
 		cleanCacheDir();
@@ -424,7 +424,7 @@ describe("Integration: router + cache (via MockPlugin)", () => {
 describe("Interaction tool caching (via MockPlugin)", () => {
 	beforeEach(async () => {
 		const { pluginRegistry } = await import("../core/plugin-registry.js");
-		const { default: _sm } = await import("../core/shared/session-manager.js");
+		await import("../core/shared/session-manager.js");
 		const { MockPlugin, makeConfig } = await import("./helpers/mock-plugin.js");
 		pluginRegistry.clear();
 		cleanCacheDir();
