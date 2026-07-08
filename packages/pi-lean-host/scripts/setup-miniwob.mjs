@@ -29,9 +29,10 @@
  * miniwob-plusplus@7fd85d71a4b60325c6585396ec4f48377d049838
  */
 
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { join, resolve, relative } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { execSync } from "node:child_process";
+import { generateSubdomainsFile } from "./generate-subdomains-core.js";
 
 // ─── Config ──────────────────────────────────────────────────────
 
@@ -175,56 +176,6 @@ function main() {
 	);
 	console.log(
 		"    export MINIWOB_URL=http://…   # URL of an already-running server",
-	);
-}
-
-/**
- * Generate the `generated/subdomains.ts` file from the MiniWoB++ html
- * directory. Writes a sorted `MINIWOB_SUBDOMAINS` const array of all
- * `.html` file stem names (minus extension).
- *
- * Task HTML files live one level under the html root, at
- * `html/miniwob/*.html` (matching the server's URL contract:
- * `${url}/miniwob/<subdomain>.html`).
- */
-function generateSubdomainsFile(htmlDir) {
-	const generatedDir = resolve(import.meta.dirname, "..", "generated");
-	mkdirSync(generatedDir, { recursive: true });
-
-	// Task HTML lives one level under the html root, at html/miniwob/*.html
-	// (matches the server's URL contract: ${url}/miniwob/<subdomain>.html).
-	const taskDir = join(htmlDir, "miniwob");
-	if (!existsSync(taskDir)) {
-		die(
-			`Task HTML directory not found: ${taskDir}. ` +
-				`Expected the clone to contain miniwob/html/miniwob/*.html.`,
-		);
-	}
-
-	const files = readdirSync(taskDir)
-		.filter((f) => f.endsWith(".html"))
-		.map((f) => f.replace(/\.html$/, ""))
-		.sort();
-
-	const content = [
-		"/**",
-		" * Auto-generated MiniWoB++ subdomain list.",
-		" *",
-		" * Generated from `miniwob-plusplus@7fd85d71a4b60325c6585396ec4f48377d049838`.",
-		" * Regenerate via: npm run setup:miniwob",
-		" *",
-		" * Do not edit by hand — edit setup-miniwob.mjs to change the source.",
-		" */",
-		"export const MINIWOB_SUBDOMAINS = [",
-		...files.map((f) => `\t"${f}",`),
-		"] as const;",
-		"",
-	].join("\n");
-
-	const outPath = join(generatedDir, "subdomains.ts");
-	writeFileSync(outPath, content, "utf-8");
-	info(
-		`Generated ${relative(process.cwd(), outPath)} (${files.length} subdomains)`,
 	);
 }
 

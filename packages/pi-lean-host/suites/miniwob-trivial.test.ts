@@ -1,25 +1,13 @@
 /**
  * MiniWoB++ trivial-solver suite — Chromium (Node) backend.
  *
- * Phase 1: chromium Node backend (plugin-owns-browser, plugin.evaluate
- * episode lifecycle — no cross-process attach).
- * Phase 2: chromium-py, firefox-py (Python bridge backends) — see
- * miniwob-chromium-py.test.ts and miniwob-firefox-py.test.ts.
- * Phase 3: CI cross-engine setup.
+ * Uses the public `registerMiniwobSuite` API from `pi-lean-host` with
+ * the shipped `ChromiumPlugin`. Proves the plugin.evaluate episode
+ * lifecycle works end-to-end through the MiniWoB harness with the
+ * Chromium engine.
  *
- * Uses the public `registerMiniwobSuite` + `runMiniwobTask` API from
- * `pi-lean-host` — the same API a user-owned parity test file would
- * import. This proves the public API is the same code path the shipped
- * tests exercise.
- *
- * ── Task breakdown ────────────────────────────────────────────────
- * - 13 trivial-solver tasks run: 3 confident (reward > 0 asserted) +
- *   10 best-effort (pipeline smoke only)
- * - 82 element tasks skip with `needs goal-aware solver (Step 2 follow-up)`
- * - 35 non-element tasks skip with missing-tool reason
- * ── 13 + 82 + 35 = 130, matching the MiniWoB++ task count (the older
- *     generator only picked up 125; regenerating from the pinned commit
- *     now correctly reads all 130 task HTML files). ────────────────
+ * For the task breakdown (13 puzzle-solved / 82 no-solver / 35 non-element),
+ * see the `registerMiniwobBackend` doc comment in `miniwob-suite-helper.ts`.
  *
  * Run: npx vitest run packages/pi-lean-host/suites/miniwob-trivial.test.ts
  *

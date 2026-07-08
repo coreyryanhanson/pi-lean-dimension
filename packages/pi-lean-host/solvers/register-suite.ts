@@ -37,6 +37,9 @@
  * @module
  */
 
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { runMiniwobTask } from "../adapter/miniwob-adapter.js";
@@ -51,6 +54,12 @@ export const SEED = 12345;
 
 /** Per-test timeout — navigate + setup + solve + done-poll can take ~20s. */
 export const TEST_TIMEOUT = 60_000;
+
+/** Default MiniWoB++ html root (matches miniwob-suite-helper.ts and generate-subdomains.ts). */
+const DEFAULT_HTML_ROOT = "/tmp/miniwob-plusplus/miniwob/html";
+
+/** Subdirectory under html root containing MiniWoB++ task HTML files. */
+const HTML_DIR = "miniwob";
 
 // ─── Task classification (static, no ported table) ───────────────
 
@@ -272,9 +281,28 @@ export function registerMiniwobSuite(
 // ─── Subdomain collection ────────────────────────────────────────
 
 /**
- * Collect all known subdomains from the generated file derived from
- * the MiniWoB++ html directory at setup time.
+ * Collect all known MiniWoB++ subdomains.
+ *
+ * Uses the generated static list (`generated/subdomains.ts`) as the
+ * fast path. When the generated list is empty (stale npm-publish
+ * artifact, fresh monorepo clone before setup), falls back to a
+ * runtime scan of the MiniWoB++ html directory — ensuring the suite
+ * works without a pre-generated file.
  */
 function collectAllSubdomains(): string[] {
-	return [...MINIWOB_SUBDOMAINS].sort();
+	if (MINIWOB_SUBDOMAINS.length > 0) {
+		return [...MINIWOB_SUBDOMAINS].sort();
+	}
+	// Fallback: scan MiniWoB++ html directory at runtime.
+	// Handles stale publish artifacts where the globalSetup didn’t run
+	// and fresh clones before the generated file was created.
+	const root = process.env.MINIWOB_HTML_ROOT ?? DEFAULT_HTML_ROOT;
+	const taskDir = join(root, HTML_DIR);
+	if (existsSync(taskDir)) {
+		return readdirSync(taskDir)
+			.filter((f) => f.endsWith(".html"))
+			.map((f) => f.replace(/\.html$/, ""))
+			.sort();
+	}
+	return [];
 }

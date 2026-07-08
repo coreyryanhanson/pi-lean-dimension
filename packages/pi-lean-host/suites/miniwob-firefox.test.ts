@@ -2,16 +2,12 @@
  * MiniWoB++ trivial-solver suite — Firefox (Node) backend.
  *
  * Uses the public `registerMiniwobSuite` API from `pi-lean-host` with
- * the shipped FirefoxPlugin. Proves the plugin.evaluate episode
+ * the shipped `FirefoxPlugin`. Proves the plugin.evaluate episode
  * lifecycle works end-to-end through the MiniWoB harness with the
- * Firefox engine (no second Playwright client, no launchServer).
+ * Firefox engine.
  *
- * ── Task breakdown ────────────────────────────────────────────────
- * Same as the chromium suite:
- * - 13 trivial-solver tasks run: 3 confident (reward > 0 asserted) +
- *   10 best-effort (pipeline smoke only)
- * - 82 element tasks skip with `needs goal-aware solver`
- * - 35 non-element tasks skip with missing-tool reason
+ * For the task breakdown (13 puzzle-solved / 82 no-solver / 35 non-element),
+ * see the `registerMiniwobBackend` doc comment in `miniwob-suite-helper.ts`.
  *
  * Run: npx vitest run packages/pi-lean-host/suites/miniwob-firefox.test.ts
  *

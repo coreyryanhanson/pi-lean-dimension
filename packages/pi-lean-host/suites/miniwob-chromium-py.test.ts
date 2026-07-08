@@ -2,16 +2,12 @@
  * MiniWoB++ trivial-solver suite — Chromium-Py (Python bridge) backend.
  *
  * Uses the public `registerMiniwobSuite` API from `pi-lean-host` with
- * the PythonPluginAdapter driving the chromium-py bridge.py. Proves
+ * the `PythonPluginAdapter` driving the chromium-py `bridge.py`. Proves
  * the plugin.evaluate episode lifecycle works end-to-end through the
- * Python bridge harness (no CDP attach, no CDP_PORT).
+ * Python bridge harness.
  *
- * ── Task breakdown ────────────────────────────────────────────────
- * Same as the Node chromium suite:
- * - 13 trivial-solver tasks run: 3 confident (reward > 0 asserted) +
- *   10 best-effort (pipeline smoke only)
- * - 82 element tasks skip with `needs goal-aware solver`
- * - 35 non-element tasks skip with missing-tool reason
+ * For the task breakdown (13 puzzle-solved / 82 no-solver / 35 non-element),
+ * see the `registerMiniwobBackend` doc comment in `miniwob-suite-helper.ts`.
  *
  * Prerequisites:
  *   - Python venv at backends/python-base/.venv with playwright installed

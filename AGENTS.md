@@ -33,7 +33,6 @@ npx vitest run packages/pi-lean-portal/__tests__/router-dispatch.test.ts  # sing
 npx vitest run packages/pi-lean-portal/__tests__/cookie-persistence.test.ts  # Chromium persistence
 npx vitest run packages/pi-lean-portal/__tests__/firefox.test.ts  # Firefox contract tests
 npm run test:miniwob -w pi-lean-host                # run all MiniWoB suites (chromium, firefox, chromium-py, firefox-py, adapter-smoke)
-npm run test:helper -w pi-lean-host                 # host bridge-client helper tests
 npm run test:watch                                 # vitest in watch mode
 npm run publish:dry                                # npm publish --workspaces --dry-run (inspect tarballs)
 npm run publish                                    # npm publish --workspaces --access public
@@ -111,9 +110,6 @@ pi-lean-dimension/                       (monorepo root)
     │   ├── scripts/
     │   │   ├── setup-miniwob.mjs        Clone miniwob-plusplus at pinned commit + repair
     │   │   └── miniwob-server.ts        Static file server for MiniWoB++ content
-    │   ├── docs/
-    │   │   ├── cdp-endpoint-spike.md    CDP attach spike findings
-    │   │   └── miniwob-spike-findings.md (moved from portal for historical reference)
     ├── pi-lean-search/                  ← SearXNG search leaf
     │   ├── package.json                 (name: pi-lean-search, published)
     │   ├── index.ts                     Entry: tool registration, health probe, /searxng-status command

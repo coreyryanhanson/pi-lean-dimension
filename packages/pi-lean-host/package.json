@@ -3,8 +3,6 @@
 	"version": "0.1.0",
 	"description": "MiniWoB++ evaluation harness for BrowserPlugin backends. plugin.evaluate-driven episode lifecycle (setup/validate on the plugin's own page), Node-plugin @e-ref action layer, TypeScript runMiniwobTask API.",
 	"keywords": [
-		"pi-package",
-		"pi-extension",
 		"benchmark",
 		"miniwob"
 	],
