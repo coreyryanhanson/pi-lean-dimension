@@ -881,6 +881,29 @@ export function runContractTests(
 
 				expect(result.success).toBe(true);
 			});
+
+			it("scrolls to the bottom after repeated scrolls", async () => {
+				await plugin.navigate(`${server.url}/scroll`, TASK_ID, navigateTimeout);
+
+				let bottomReached = false;
+				const MAX_SCROLLS = 100;
+				for (let i = 0; i < MAX_SCROLLS; i++) {
+					const scroll = await plugin.scroll(TASK_ID, "down");
+					expect(scroll.success).toBe(true);
+
+					const evalResult = await plugin.evaluate(
+						TASK_ID,
+						"document.getElementById('bottom-marker').getBoundingClientRect().top < window.innerHeight",
+					);
+
+					if (evalResult.success && evalResult.result === true) {
+						bottomReached = true;
+						break;
+					}
+				}
+
+				expect(bottomReached).toBe(true);
+			});
 		});
 
 		// ─── GoBack ──────────────────────────────────────────
