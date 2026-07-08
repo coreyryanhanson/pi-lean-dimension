@@ -109,13 +109,13 @@ class PlaywrightBridge(BrowserBridge):
     # clobber a fingerprint-managed browser context.  All default to ``off``
     # so the shipped ``chromium-py`` / ``firefox-py`` bridges are bit-identical.
     #
-    # See stealth-browser-plan-v2.md §Phase 0 "Quirks rationale" for the
-    # concrete correctness problem each flag fixes.
+    # See stealth-browser-plan-v3.md "Quirks schema" for the concrete
+    # correctness problem each flag fixes.
 
     #: When True, ``create_browser_context()`` does NOT pass ``viewport`` or
-    #: ``user_agent`` to ``new_context`` — the fingerprint package (Camoufox
-    #: ``NewContext`` / invisible_playwright's patched ``new_context``)
-    #: generates those from the fingerprint, and the base's hard-coded
+    #: ``user_agent`` to ``new_context`` — the fingerprint package (e.g.
+    #: Camoufox at browser launch via ``NewBrowser``) generates those from
+    #: the fingerprint, and the base's hard-coded
     #: values would override them with a detectable mismatch.
     _fingerprint_managed_context: bool = False
 
