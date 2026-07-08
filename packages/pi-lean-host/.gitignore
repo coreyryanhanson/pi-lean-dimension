@@ -6,3 +6,7 @@ results/
 
 # Python bytecode cache.
 __pycache__/
+
+# Generated lists of MiniWoB subdomains.
+generated/
+
