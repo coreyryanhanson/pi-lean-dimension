@@ -8,9 +8,8 @@
  * exists (idempotent).
  *
  * After cloning, generates `packages/pi-lean-host/generated/subdomains.ts`
- * from the `*.html` files in the html directory so the test suite has
- * a committed, reviewable task list without requiring the cloned content
- * to be present at compile time.
+ * from the `*.html` files in the html directory (gitignored — regenerated
+ * by the vitest globalSetup before test runs, or by this script).
  *
  * The suite and helpers default to
  * `/tmp/miniwob-plusplus/miniwob/html` as the HTML root.  Override

@@ -196,11 +196,18 @@ export function registerMiniwobSuite(
 			if (plugin) await plugin.cleanupAll().catch(() => {});
 		});
 
-		// Build the task list: all known subdomains from the solver map
-		// plus all non-element subdomains, plus 90 - 13 - 35 = learn-as-we-go.
-		// We use the NON_ELEMENT_TASKS + SOLVERS + implicit-element approach:
-		// iterate the known universe.
+		// Collect all known subdomains (generated from the MiniWoB++ html
+		// directory). Classification uses the NON_ELEMENT_TASKS static set
+		// (35 entries) — everything else is assumed element-reachable.
 		const allSubdomains = collectAllSubdomains();
+
+		// When MiniWoB++ content is absent (fresh clone without setup),
+		// the globalSetup writes a placeholder stub with an empty array.
+		// Surface a single clear skip reason instead of silent 0-test pass.
+		if (allSubdomains.length === 0) {
+			it.skip("MiniWoB++ content not available — run `npm run setup:miniwob` to download the task fixtures", () => {});
+			return;
+		}
 
 		for (const subdomain of allSubdomains) {
 			const requires = taskRequires(subdomain);
