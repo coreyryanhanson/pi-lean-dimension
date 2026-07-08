@@ -266,9 +266,10 @@ class CamoufoxPyBridge(PlaywrightBridge):
     # ``enable_cache=True`` default is in effect, because it restores
     # Camoufox's ``browser.sessionhistory.max_entries`` from 0 to 10.
     #
-    # There is no need for a ``document.referrer`` workaround — that
-    # pattern was inherited from the invisible-py template, which has
-    # a real binary-level back-navigation bug.
+    # There is no need for a ``document.referrer`` workaround — some
+    # patched Firefox binaries have a binary-level back-navigation bug
+    # that requires that workaround; Camoufox does not, with
+    # ``enable_cache=True``.
     #
     # Testing: with ``enable_cache=True``, back navigation completes
     # in ~0.04s and correctly returns the previous page URL/title/body.

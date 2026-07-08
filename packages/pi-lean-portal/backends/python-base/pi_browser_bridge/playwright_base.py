@@ -104,7 +104,7 @@ class PlaywrightBridge(BrowserBridge):
 
     # ── Stealth quirks (Phase 0) ──────────────────────────────────
     #
-    # These opt-in flags let stealth subclasses (Camoufox, invisible_playwright)
+    # These opt-in flags let stealth subclasses (Camoufox and other stealth engines)
     # disable the base's hard-coded Playwright defaults that would otherwise
     # clobber a fingerprint-managed browser context.  All default to ``off``
     # so the shipped ``chromium-py`` / ``firefox-py`` bridges are bit-identical.
@@ -137,15 +137,15 @@ class PlaywrightBridge(BrowserBridge):
     #: ``Browser.setDefaultViewport`` CDP call.  The Camoufox patched Firefox
     #: binary does not accept the ``isMobile`` property that Playwright Firefox
     #: includes in ``setDefaultViewport``, which would otherwise cause a
-    #: ``Protocol error`` on context creation.  Other backends (including
-    #: invisible_playwright's patched ``new_context``) do not need this flag;
+    #: ``Protocol error`` on context creation.  Other backends that patch
+    #: ``new_context`` do not need this flag;
     #: only set it when the binary rejects the default viewport call.
     #: Default ``False`` so the shipped bridges stay bit-identical.
     _skip_default_viewport: bool = False
 
     #: When True, navigation-settle waits skip the ``networkidle`` load state.
-    #: The patched Firefox binaries used by stealth backends (invisible_playwright,
-    #: Camoufox) do not fire ``networkidle`` reliably, so waiting for it either
+    #: The patched Firefox binaries used by some stealth backends
+    #: do not fire ``networkidle`` reliably, so waiting for it either
     #: times out (``do_go_back``'s 30s default) or loiters in the Playwright sync
     #: greenlet's event loop long enough to deadlock the Juggler driver when a
     #: subsequent BrowserContext's ``new_page()`` is created.  When True,
@@ -294,12 +294,12 @@ class PlaywrightBridge(BrowserBridge):
         and user_agent are omitted so the stealth fingerprint package can
         generate them from the fingerprint without being clobbered.
         (Camoufox v135.x injects the fingerprint at browser launch via
-        ``NewBrowser``; invisible_playwright patches ``browser.new_context``.)
+        ``NewBrowser``; some stealth engines patch ``browser.new_context``.)
 
         Context creation always goes through ``browser.new_context(**kwargs)``.
         Stealth backends that need fingerprint injection at context creation
-        time can override this method; the shipped quirks (Camoufox, invisible)
-        both inject at launch/patch time and need no override.
+        time can override this method; the shipped Camoufox bridge injects at
+        browser launch time and needs no override.
 
         Starts Playwright tracing if ``BROWSER_TRACE_DIR`` is set.
 

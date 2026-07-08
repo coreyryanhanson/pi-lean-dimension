@@ -32,7 +32,7 @@ export const PORTAL_DATA_DIR = join(
 /**
  * User-installed Python backend root, sibling to `web-guides/` and
  * `browser-state/`.  Houses user-contributed stealth backends
- * (e.g. `camoufox-py/`, `invisible-py/`) and any future user Python
+ * (e.g. `camoufox-py/`) and any future user Python
  * backend, each as a `<name>-py/` directory containing a `bridge.py`.
  *
  * Lives outside the npm-managed `node_modules/` tree so it survives

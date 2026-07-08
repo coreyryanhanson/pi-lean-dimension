@@ -172,11 +172,11 @@ describe("loadPluginConfig() default fallback", () => {
 		expect(names).toEqual(["chromium", "firefox", "chromium-py", "firefox-py"]);
 	});
 
-	it("does NOT include stealth backends (camoufox-py / invisible-py) in the default fallback", () => {
+	it("does NOT include stealth backends (camoufox-py / stealth-py) in the default fallback", () => {
 		mockNoSettings();
 		const { plugins } = loadPluginConfig();
 		const names = plugins.map((p) => p.name);
 		expect(names).not.toContain("camoufox-py");
-		expect(names).not.toContain("invisible-py");
+		expect(names).not.toContain("stealth-py");
 	});
 });
