@@ -3,8 +3,8 @@
  *
  * Uses the public `registerMiniwobSuite` API from `pi-lean-host` with
  * the PythonPluginAdapter driving the firefox-py bridge.py. Proves
- * the firefox-ws attach kind works end-to-end through the Python
- * harness.
+ * the plugin.evaluate episode lifecycle works end-to-end through the
+ * Python bridge harness (no launch_server, no firefox-ws attach).
  *
  * ── Task breakdown ────────────────────────────────────────────────
  * Same as the Node firefox suite:

@@ -11,6 +11,12 @@
 #   2. Python 3.12 venv with Playwright (Python bridge backends)
 #   3. Cloned MiniWoB++ content at the pinned commit
 #
+# Suites run in parallel by default (vitest file-level parallelism).
+# The former CDP-scan concurrency race that forced serialization is
+# gone — the cross-process attach was eliminated and the episode
+# lifecycle now runs as plugin.evaluate calls on each plugin's own
+# page (see docs/decisions/miniwob-driver-attach-elimination.md).
+#
 # ── Attribution ────────────────────────────────────────────────────
 #
 # MiniWoB++ © Farama-Foundation (Apache-2.0)
@@ -105,6 +111,8 @@ jobs:
         run: npm run setup:miniwob
 
       - name: Run MiniWoB browser tests (test:miniwob)
+        # Runs in parallel by default — no serialization flag needed
+        # (the CDP-scan concurrency race is gone post-attach-elimination).
         run: npm run test:miniwob
 
       - name: Upload test results on failure

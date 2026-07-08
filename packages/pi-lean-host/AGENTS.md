@@ -13,10 +13,13 @@
 
 **pi-lean-host** is the evaluation harness for `BrowserPlugin` backends.
 It runs behavioral evaluation (MiniWoB++ tasks) against any
-plugin implementation via a hand-rolled MiniWoB driver, while staying agnostic to the plugin
-internals.
+plugin implementation via `plugin.evaluate`-driven episode lifecycle
+(setup/validate on the plugin's own page), while staying agnostic to
+the plugin internals.
 
 ## Status
 
-Phase 1 complete (chromium Mode A via trivial solvers). See the
-[README](./README.md) for setup, usage, and public API documentation.
+Phase 1 complete (all four backends — chromium, firefox, chromium-py,
+firefox-py — pass the 13 trivial-solver MiniWoB tasks via
+`plugin.evaluate`). See the [README](./README.md) for setup, usage,
+and public API documentation.

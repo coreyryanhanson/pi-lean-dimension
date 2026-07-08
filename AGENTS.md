@@ -81,7 +81,7 @@ pi-lean-dimension/                       (monorepo root)
     │   │   ├── router.ts                Dispatch, session lifecycle, truncation
     │   │   ├── guides.ts                Guide types, builtin guides, file loader
     │   │   ├── fetch-backend.ts         Stateless HTTP → Markdown
-    │   │   └── shared/                  nav-settle, paths, task-id, accessibility-tree, cdp-endpoint, etc.
+    │   │   └── shared/                  nav-settle, paths, task-id, accessibility-tree, etc.
     │   ├── verify-ship-manifest.ts      Ship-manifest test helper (production .ts coverage checker)
     │   ├── tools/                       Tool definitions — one file per tool (12 files) + index.ts + utils.ts
     │   ├── __tests__/                   Test files + helpers/
@@ -95,8 +95,8 @@ pi-lean-dimension/                       (monorepo root)
     │   │   └── subdomains.ts            Auto-generated MiniWoB subdomain list
     │   ├── src/index.ts                 Public API entry: runMiniwobTask, registerMiniwobSuite
     │   ├── adapter/
-    │   │   ├── miniwob-driver.py        Hand-rolled MiniWoB++ Python driver (JSON-RPC over stdio)
-    │   │   ├── miniwob-adapter.ts       TS wrapper: spawns driver, exposes runMiniwobTask()
+    │   │   ├── miniwob-episode.ts       JS-string constants for the plugin.evaluate episode lifecycle (setup/validate/removeDisplay)
+    │   │   ├── miniwob-adapter.ts       TS wrapper: orchestrates plugin.evaluate setup/validate, exposes runMiniwobTask()
     │   ├── solvers/
     │   │   ├── parser.ts                @e-ref parsing, withRole, ReDoS-safe role allowlist
     │   │   ├── trivial-solvers.ts       13 trivial MiniWoB solvers (3 confident + 10 best-effort)
@@ -134,7 +134,7 @@ pi-lean-dimension/                       (monorepo root)
 
 ## Architecture (suite-level overview)
 
-All interactive backends implement the `BrowserPlugin` interface (`packages/pi-lean-portal/core/plugin-api.ts`) — 19 methods (18 required + 1 optional). The 12 registered browser tools map to 12 tool-facing plugin methods; the cookie/storage methods are router-facing. Capabilities (`PluginCapabilities`) advertise quirks the router checks at dispatch time.
+All interactive backends implement the `BrowserPlugin` interface (`packages/pi-lean-portal/core/plugin-api.ts`) — 18 methods (17 required + 1 optional). The 12 registered browser tools map to 12 tool-facing plugin methods; the cookie/storage methods are router-facing. Capabilities (`PluginCapabilities`) advertise quirks the router checks at dispatch time.
 
 Plugin loading reads `browser.plugins` from `~/.pi/agent/settings.json` (global, merged with `.pi/settings.json` project-local). Each entry is `{name, dir, enabled, config}`; `dir` maps to `backends/<dir>/`, entry point auto-detected (`index.ts` = Node, `bridge.py` = Python). Default config: chromium + firefox enabled, chromium-py + firefox-py disabled.
 
@@ -229,13 +229,13 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 
 | Category | Location | Files (~) | Tests (~) | Requires browser? |
 |----------|----------|-----------|-----------|-------------------|
-| Portal structural | `pi-lean-portal/__tests__/` | 20 | 650+ | No |
+| Portal structural | `pi-lean-portal/__tests__/` | 19 | 650+ | No |
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 7 | varies | Per-backend (auto-skip) |
 | Host behavioral (MiniWoB) | `pi-lean-host/suites/` | 5 | 125 tasks × 4 + smoke | Chromium + Firefox + Python + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 17+ | No |
 | Dimension | `pi-lean-dimension/` | 1 | 2 | No |
 
-**Portal structural (20 files):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, cdp-endpoint, ship-manifest
+**Portal structural (19 files):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, ship-manifest
 
 **Portal per-backend contract tests (7 files):** reddit-dialog (errors if Chromium missing), cookie-persistence (auto-skip), chromium-py (auto-skip), chromium-py-persistence (auto-skip), firefox (auto-skip), firefox-py (auto-skip), firefox-py-persistence (auto-skip)
 
@@ -245,7 +245,7 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 - `miniwob-firefox.test.ts` — 125 tasks × firefox (13 run, 112 skip)
 - `miniwob-chromium-py.test.ts` — 125 tasks × chromium-py (13 run, 112 skip)
 - `miniwob-firefox-py.test.ts` — 125 tasks × firefox-py (13 run, 112 skip)
-- `adapter-smoke.test.ts` — end-to-end runMiniwobTask via real Chromium + hand-rolled driver
+- `adapter-smoke.test.ts` — end-to-end runMiniwobTask via real Chromium + `plugin.evaluate` episode lifecycle
 
 **Shared test utilities** (`packages/pi-lean-portal/__tests__/helpers/`):
 

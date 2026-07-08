@@ -166,7 +166,6 @@ class PlaywrightBridge(BrowserBridge):
         super().__init__()
         self._pw = None
         self._browser = None
-        self._browser_server = None  # BrowserServer from launch_server() (firefox family)
         self._cached_ua: str = ""
 
     # ── Subclass extension point ───────────────────────────────
@@ -239,26 +238,6 @@ class PlaywrightBridge(BrowserBridge):
 
     # ── Shared Playwright lifecycle ────────────────────────────
 
-    def do_get_ws_endpoint(self) -> dict[str, Any]:
-        """Return the WebSocket endpoint for external attach.
-
-        When a ``_browser_server`` (from ``launch_server()``) has
-        been created by a firefox-family subclass, returns its
-        ``ws_endpoint`` so an external client can attach via
-        ``playwright.firefox.connect(wsEndpoint)``.
-
-        Returns:
-            A dict with ``{"wsEndpoint": str | None}``.
-        """
-        if self._browser_server is not None:
-            try:
-                ep = self._browser_server.ws_endpoint
-                if ep:
-                    return {"wsEndpoint": ep}
-            except Exception:
-                pass
-        return {"wsEndpoint": None}
-
     def _ensure_playwright(self) -> tuple[Any, Any]:
         """Return the shared ``(pw, browser)`` pair, starting if needed.
 
@@ -297,12 +276,6 @@ class PlaywrightBridge(BrowserBridge):
                     self._browser.close()
             except Exception:
                 pass
-            try:
-                if self._browser_server:
-                    self._browser_server.close()
-            except Exception:
-                pass
-            self._browser_server = None
             try:
                 self._pw.stop()
             except Exception:

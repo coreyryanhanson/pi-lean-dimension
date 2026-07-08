@@ -48,18 +48,13 @@ class FirefoxPyBridge(PlaywrightBridge):
     )
 
     def _launch_browser(self):
-        """Launch a Firefox browser instance via launch_server for external attach.
+        """Launch a Firefox browser instance.
 
-        Uses ``firefox.launch_server()`` + ``firefox.connect(ws_endpoint)``
-        so the MiniWoB driver (or any external client) can attach over the
-        WebSocket endpoint.  ``firefox.connect()`` returns a normal Browser
-        that works identically to ``firefox.launch()`` for browsing.
+        Launches Firefox directly with ``firefox.launch()`` and drives its
+        own page; the plugin is the sole browser owner.  No external-attach
+        endpoint is exposed.
         """
-        self._browser_server = self._pw.firefox.launch_server(
-            headless=True,
-        )
-        ws_endpoint = self._browser_server.ws_endpoint
-        return self._pw.firefox.connect(ws_endpoint)
+        return self._pw.firefox.launch(headless=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -2,8 +2,9 @@
  * MiniWoB++ trivial-solver suite — Firefox (Node) backend.
  *
  * Uses the public `registerMiniwobSuite` API from `pi-lean-host` with
- * the shipped FirefoxPlugin. Proves the firefox-ws attach kind works
- * end-to-end through the MiniWoB harness.
+ * the shipped FirefoxPlugin. Proves the plugin.evaluate episode
+ * lifecycle works end-to-end through the MiniWoB harness with the
+ * Firefox engine (no second Playwright client, no launchServer).
  *
  * ── Task breakdown ────────────────────────────────────────────────
  * Same as the chromium suite:

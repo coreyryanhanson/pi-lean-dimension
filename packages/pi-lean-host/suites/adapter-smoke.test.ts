@@ -1,10 +1,9 @@
 /**
  * Adapter smoke test — proves the end-to-end MiniWoB pipeline works
- * against the shipped `chromium` plugin (Mode A): the plugin launches
- * Chromium with `--remote-debugging-port=0`, `getAttachEndpoint()` resolves
- * the port, the Python driver attaches via `connect_over_cdp`, runs
- * setup + validate, and a trivial solver drives the page through
- * the `@e`-ref action layer.
+ * against the shipped `chromium` plugin: the plugin launches Chromium,
+ * navigates to the MiniWoB task, the adapter runs setup + validate via
+ * `plugin.evaluate()` calls, and a trivial solver drives the page
+ * through the `@e`-ref action layer.
  *
  * Uses `click-test` (the confident single-button task — clicking the
  * only button IS the pass condition) with the shared `clickFirstButton`
@@ -36,19 +35,6 @@ import { clickFirstButton } from "../solvers/trivial-solvers.js";
 
 const HTML_ROOT =
 	process.env.MINIWOB_HTML_ROOT ?? "/tmp/miniwob-plusplus/miniwob/html";
-
-/**
- * Python interpreter for the MiniWoB driver. Auto-detected from the
- * shared `pi-lean-portal` venv (where CI installs `playwright`); falls
- * back to `python3` when the venv is absent.
- */
-const DRIVER_PYTHON = (() => {
-	const candidate = resolve(
-		__dirname,
-		"../../pi-lean-portal/backends/python-base/.venv/bin/python3",
-	);
-	return existsSync(candidate) ? candidate : "python3";
-})();
 
 // --- Availability gates --------------------------------------------
 
@@ -112,7 +98,6 @@ describe("MiniWoB adapter smoke — chromium + click-test", () => {
 				actor: "trivial",
 				solver: clickFirstButton,
 				episodeMaxTimeMs: 30_000,
-				pythonPath: DRIVER_PYTHON,
 			});
 
 			expect(

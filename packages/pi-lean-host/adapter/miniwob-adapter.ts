@@ -1,31 +1,24 @@
 /**
- * MiniWoB adapter — TypeScript wrapper around the Python driver
- * (`adapter/miniwob-driver.py`) that runs a MiniWoB++ task
- * end-to-end against a `BrowserPlugin`.
+ * MiniWoB adapter — runs a MiniWoB++ task end-to-end against a
+ * `BrowserPlugin` via `plugin.evaluate()`.
  *
- * Mode A (plugin-owns-browser): The plugin launches its own browser
- * and exposes an attach endpoint via `getAttachEndpoint()` (chromium:
- * `{kind:"cdp", endpoint}`, firefox: `{kind:"firefox-ws", endpoint}`);
- * the Python driver attaches and runs setup/validate on the shared page.
- *
- * Invariant: only the Node plugin drives actions (click/type/scroll).
- * The Python driver only runs `setup` and `validate` — it never
- * touches the DOM. This keeps the `@e`-ref accessibility model
- * authoritative.
+ * The adapter navigates the plugin to a MiniWoB++ task page, runs the
+ * episode lifecycle JS (setup, validate) directly on the plugin's own
+ * page (no subprocess, no cross-process attach), dispatches to a
+ * trivial solver, and returns the result.
  *
  * @module
  */
 
-import { spawn } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
 
-import type {
-	BrowserPlugin,
-	AttachEndpoint,
-} from "../../pi-lean-portal/core/plugin-api.js";
+import {
+	SETUP_JS,
+	VALIDATE_JS,
+	READY_PROBE_JS,
+	UTTERANCE_JS,
+	REMOVE_DISPLAY_JS,
+} from "./miniwob-episode.js";
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -70,11 +63,6 @@ export interface RunMiniwobTaskOptions {
 	donePollIntervalMs?: number;
 	/** How long to poll `done` after the solver returns (default 10_000ms). */
 	donePollTimeoutMs?: number;
-	/**
-	 * Python interpreter path for the driver process.
-	 * Defaults to the plugin's Python adapter path if not set.
-	 */
-	pythonPath?: string;
 }
 
 /** Result of {@link runMiniwobTask}. */
@@ -104,207 +92,120 @@ const DEFAULT_EPISODE_MAX_MS = 30_000;
 const DEFAULT_NAVIGATE_TIMEOUT_MS = 15_000;
 const DEFAULT_DONE_POLL_INTERVAL_MS = 200;
 const DEFAULT_DONE_POLL_TIMEOUT_MS = 10_000;
-const BRIDGE_RPC_TIMEOUT_MS = 60_000;
-
-// ─── Bridge path resolution ───────────────────────────────────────
-
-const ADAPTER_DIR = dirname(fileURLToPath(import.meta.url));
-const BRIDGE_SCRIPT = join(ADAPTER_DIR, "miniwob-driver.py");
-
-// ─── JSON-RPC client for the driver subprocess ────────────────────
-
-interface PendingRequest {
-	resolve: (value: unknown) => void;
-	reject: (reason: unknown) => void;
-	timer: ReturnType<typeof setTimeout>;
-}
-
-export class BridgeClient {
-	private _proc: ChildProcess | null = null;
-	private _reqId = 0;
-	private _pending = new Map<number, PendingRequest>();
-	private _buffer = "";
-	private _stderr = "";
-
-	constructor(
-		private readonly _pythonPath: string,
-		private readonly _bridgeScript: string,
-	) {
-		if (!existsSync(_bridgeScript)) {
-			throw new Error(`MiniWoB driver script not found: ${_bridgeScript}`);
-		}
-	}
-
-	async start(): Promise<void> {
-		await new Promise<void>((resolveStart, rejectStart) => {
-			const proc = spawn(this._pythonPath, [this._bridgeScript], {
-				stdio: ["pipe", "pipe", "pipe"],
-				env: { ...process.env, PYTHONUNBUFFERED: "1" },
-			});
-			this._proc = proc;
-
-			proc.stdout?.on("data", (chunk: Buffer) => {
-				this._buffer += chunk.toString();
-				this._flush();
-			});
-			proc.stderr?.on("data", (chunk: Buffer) => {
-				this._stderr += chunk.toString();
-			});
-			proc.on("error", rejectStart);
-			proc.on("exit", (code) => {
-				this._proc = null;
-				const pending = new Map(this._pending);
-				this._pending.clear();
-				for (const [, p] of pending) {
-					clearTimeout(p.timer);
-					p.reject(
-						new Error(
-							`MiniWoB driver exited (code=${code})${
-								this._stderr ? `\nstderr:\n${this._stderr}` : ""
-							}`,
-						),
-					);
-				}
-			});
-
-			// Ping handshake.
-			setImmediate(async () => {
-				try {
-					await this.call("ping", {}, 10_000);
-					resolveStart();
-				} catch (err) {
-					if (this._proc) this._kill();
-					rejectStart(
-						new Error(
-							`MiniWoB driver ping failed: ${
-								err instanceof Error ? err.message : String(err)
-							}${this._stderr ? `\nstderr:\n${this._stderr}` : ""}`,
-						),
-					);
-				}
-			});
-		});
-	}
-
-	call<T = unknown>(
-		method: string,
-		params: Record<string, unknown>,
-		timeoutMs: number = BRIDGE_RPC_TIMEOUT_MS,
-	): Promise<T> {
-		if (!this._proc || this._proc.killed) {
-			throw new Error("MiniWoB driver is not running");
-		}
-		return new Promise<T>((resolveCall, rejectCall) => {
-			const id = ++this._reqId;
-			const timer = setTimeout(() => {
-				this._pending.delete(id);
-				this._kill();
-				rejectCall(
-					new Error(
-						`MiniWoB driver RPC timed out after ${timeoutMs}ms: ${method}`,
-					),
-				);
-			}, timeoutMs);
-			this._pending.set(id, {
-				resolve: resolveCall as (v: unknown) => void,
-				reject: rejectCall,
-				timer,
-			});
-			const line =
-				JSON.stringify({ jsonrpc: "2.0", method, params, id }) + "\n";
-			const stdin = this._proc?.stdin;
-			if (!stdin || stdin.destroyed) {
-				clearTimeout(timer);
-				this._pending.delete(id);
-				rejectCall(new Error("MiniWoB driver stdin closed"));
-				return;
-			}
-			stdin.write(line);
-		});
-	}
-
-	async stop(): Promise<void> {
-		if (!this._proc) return;
-		this._kill();
-	}
-
-	private _flush(): void {
-		const lines = this._buffer.split("\n");
-		this._buffer = lines.pop() ?? "";
-		for (const line of lines) {
-			const trimmed = line.trim();
-			if (!trimmed) continue;
-			let resp: {
-				id?: unknown;
-				result?: unknown;
-				error?: {
-					code: number;
-					message: string;
-					data?: { traceback?: string };
-				};
-			};
-			try {
-				resp = JSON.parse(trimmed);
-			} catch {
-				continue;
-			}
-			const id = typeof resp.id === "number" ? resp.id : Number(resp.id);
-			const pending = this._pending.get(id);
-			if (!pending) continue;
-			clearTimeout(pending.timer);
-			this._pending.delete(id);
-			if (resp.error) {
-				// The MiniWoB driver sends errors as
-				//   { error: "<message string>", traceback: "<tb string>" }
-				// (top-level fields — see miniwob-driver.py). Some callers
-				// may use the JSON-RPC object shape
-				//   { error: { code, message, data: { traceback } } }.
-				// Handle both so a driver-side failure always surfaces a real
-				// message instead of being swallowed into `undefined`.
-				const errObj = resp.error as unknown;
-				const message =
-					typeof errObj === "string"
-						? errObj
-						: (errObj as { message?: string }).message ??
-							  String(errObj);
-				const tb =
-					typeof errObj === "string"
-						? (resp as { traceback?: string }).traceback
-						: (errObj as { data?: { traceback?: string } }).data?.traceback;
-				const e = new Error(
-					`${message}${tb ? `\n${tb}` : ""}`,
-				);
-				pending.reject(e);
-			} else {
-				pending.resolve(resp.result);
-			}
-		}
-	}
-
-	private _kill(): void {
-		const proc = this._proc;
-		if (!proc) return;
-		try {
-			proc.removeAllListeners("exit");
-			if (!proc.killed) proc.kill("SIGTERM");
-			setTimeout(() => {
-				try {
-					if (!proc.killed) proc.kill("SIGKILL");
-				} catch {
-					/* already dead */
-				}
-			}, 500).unref();
-		} catch {
-			/* already dead */
-		}
-		this._proc = null;
-	}
-}
 
 // ─── sleep helper ─────────────────────────────────────────────────
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((r) => setTimeout(r, ms));
+}
+
+// ─── Episode lifecycle helpers ────────────────────────────────────
+
+interface SetupResult {
+	goal: string;
+	setupFailed: boolean;
+	error?: string;
+}
+
+/**
+ * Run the MiniWoB++ episode setup lifecycle on the plugin's page.
+ *
+ * Steps:
+ *   1. `REMOVE_DISPLAY_JS` – remove the BrowserGym human display overlay.
+ *   2. `SETUP_JS(seed, episodeMaxTimeMs)` – seed RNG, set max time,
+ *      call `core.startEpisodeReal()`.
+ *   3. Poll `READY_PROBE_JS` until `WOB_TASK_READY` flips.
+ *   4. Read the utterance via `UTTERANCE_JS`.
+ */
+async function setupMiniwobEpisode(
+	plugin: BrowserPlugin,
+	taskId: string,
+	seed: number,
+	episodeMaxTimeMs: number,
+	donePollIntervalMs: number,
+	donePollTimeoutMs: number,
+): Promise<SetupResult> {
+	// 1. Remove human display overlay.
+	const rm = await plugin.evaluate(taskId, REMOVE_DISPLAY_JS);
+	if (!rm.success) {
+		return { goal: "", setupFailed: true, error: rm.error ?? "removeDisplay failed" };
+	}
+
+	// 2. Seed RNG, set max time, start episode.
+	const setup = await plugin.evaluate(taskId, SETUP_JS(seed, episodeMaxTimeMs));
+	if (!setup.success) {
+		return { goal: "", setupFailed: true, error: setup.error ?? "setup JS failed" };
+	}
+
+	// 3. Poll WOB_TASK_READY.
+	const pollStart = Date.now();
+	while (true) {
+		const probe = await plugin.evaluate(taskId, READY_PROBE_JS);
+		if (!probe.success) {
+			return {
+				goal: "",
+				setupFailed: true,
+				error: `WOB_TASK_READY probe failed: ${probe.error}`,
+			};
+		}
+		if (probe.result === true) break;
+		if (Date.now() - pollStart > donePollTimeoutMs) {
+			return {
+				goal: "",
+				setupFailed: true,
+				error: "WOB_TASK_READY never flipped within timeout",
+			};
+		}
+		await sleep(donePollIntervalMs);
+	}
+
+	// 4. Read utterance (goal).
+	const goal = await plugin.evaluate(taskId, UTTERANCE_JS);
+	if (!goal.success) {
+		return { goal: "", setupFailed: true, error: goal.error ?? "utterance read failed" };
+	}
+
+	return { goal: String(goal.result ?? ""), setupFailed: false };
+}
+
+interface ValidateResult {
+	reward: number;
+	raw_reward: number;
+	done: boolean;
+	reason: string;
+	error?: string;
+}
+
+/**
+ * Read the MiniWoB++ reward/done globals via VALIDATE_JS.
+ */
+async function validateMiniwob(
+	plugin: BrowserPlugin,
+	taskId: string,
+): Promise<ValidateResult> {
+	const result = await plugin.evaluate(taskId, VALIDATE_JS);
+	if (!result.success) {
+		const err: ValidateResult = {
+			reward: 0,
+			raw_reward: 0,
+			done: true,
+			reason: "",
+		};
+		if (result.error) err.error = result.error;
+		return err;
+	}
+	const r = result.result as {
+		reward: number;
+		raw_reward: number;
+		done: boolean;
+		reason: string;
+	};
+	return {
+		reward: r.reward ?? 0,
+		raw_reward: r.raw_reward ?? 0,
+		done: r.done ?? true,
+		reason: r.reason ?? "",
+	};
 }
 
 // ─── Public API ───────────────────────────────────────────────────
@@ -314,17 +215,11 @@ function sleep(ms: number): Promise<void> {
  *
  * Steps:
  *   1. Navigate the plugin to `${baseUrl}/miniwob/${taskName}.html`.
- *      (Launches the browser, populates the CDP endpoint.)
- *   2. Spawn the MiniWoB Python driver, connect over CDP.
- *   3. `setup({ subdomain, seed, base_url, episode_max_time_ms })` → goal.
- *   4. Take an `@e`-ref snapshot; hand it to the solver.
- *   5. Poll `validate()` until `done` or `donePollTimeoutMs`.
- *   6. Teardown, stop the driver, return the result bag.
- *
- * Attach endpoint: reads `plugin.getAttachEndpoint()` (chromium →
- * `{kind:"cdp", endpoint}`, firefox → `{kind:"firefox-ws", endpoint}`).
- * The caller must ensure the plugin has launched and the endpoint is
- * populated (e.g. via `navigate`).
+ *   2. Run the episode lifecycle via `plugin.evaluate()`: remove display
+ *      overlay, seed RNG, start episode, wait for task ready, read goal.
+ *   3. Take an `@e`-ref snapshot; hand it to the solver.
+ *   4. Poll `VALIDATE_JS` until `done` or `donePollTimeoutMs`.
+ *   5. Return the result bag.
  *
  * The caller owns the plugin lifecycle (`init` / `cleanupAll`); this
  * function calls `plugin.navigate` and (on success) `plugin.cleanup`
@@ -344,7 +239,6 @@ export async function runMiniwobTask(
 		navigateTimeoutMs = DEFAULT_NAVIGATE_TIMEOUT_MS,
 		donePollIntervalMs = DEFAULT_DONE_POLL_INTERVAL_MS,
 		donePollTimeoutMs = DEFAULT_DONE_POLL_TIMEOUT_MS,
-		pythonPath,
 	} = opts;
 
 	if (!solver) {
@@ -354,63 +248,29 @@ export async function runMiniwobTask(
 	const taskId = `miniwob-${taskName}-${seed}`;
 	const taskUrl = `${baseUrl.replace(/\/$/, "")}/miniwob/${taskName}.html`;
 
-	// 1. Navigate — launches the browser + populates the CDP endpoint.
+	// 1. Navigate — launches the browser and loads the task page.
 	const nav = await plugin.navigate(taskUrl, taskId, navigateTimeoutMs);
 	if (!nav.success) {
 		return fail(`navigate failed: ${nav.error ?? "unknown"}`);
 	}
 
-	// 2. Resolve attach endpoint (plugin-owns-browser).
-	//    The plugin exposes `getAttachEndpoint()` returning a typed
-	//    descriptor ({kind, endpoint}) — "cdp" for chromium family,
-	//    "firefox-ws" for firefox family. The driver dispatches on
-	//    `kind` to use the right Playwright client.
-	const attachFn = plugin.getAttachEndpoint;
-	if (typeof attachFn !== "function") {
+	// 2. Setup — run the episode lifecycle JS directly on the plugin's page.
+	const setup = await setupMiniwobEpisode(
+		plugin,
+		taskId,
+		seed,
+		episodeMaxTimeMs,
+		donePollIntervalMs,
+		donePollTimeoutMs,
+	);
+	if (setup.setupFailed) {
 		await plugin.cleanup(taskId).catch(() => {});
-		return fail(
-			"plugin does not expose getAttachEndpoint() — external attach unavailable.",
-		);
+		return fail(setup.error ?? "episode setup failed");
 	}
-	const attachEp: AttachEndpoint | null = attachFn.call(plugin);
-	if (!attachEp) {
-		await plugin.cleanup(taskId).catch(() => {});
-		return fail(
-			"plugin.getAttachEndpoint() returned null — browser may not have launched " +
-				"with an attach port (set CDP_PORT env for chromium as fallback, " +
-				"or ensure firefox launch_server path is active).",
-		);
-	}
-
-	// 3. Spawn the driver + connect.
-	const resolvedPython = pythonPath ?? "python3";
-	let bridge: BridgeClient;
-	try {
-		bridge = new BridgeClient(resolvedPython, BRIDGE_SCRIPT);
-		await bridge.start();
-	} catch (err) {
-		await plugin.cleanup(taskId).catch(() => {});
-		return fail(
-			`driver spawn failed: ${err instanceof Error ? err.message : String(err)}`,
-		);
-	}
+	const goal = setup.goal;
 
 	try {
-		await bridge.call("connect", {
-			endpoint: attachEp.endpoint,
-			kind: attachEp.kind,
-		});
-
-		// 4. Setup → goal.
-		const setupRes = (await bridge.call("setup", {
-			subdomain: taskName,
-			base_url: baseUrl,
-			seed,
-			episode_max_time_ms: episodeMaxTimeMs,
-		})) as { goal?: string };
-		const goal = setupRes.goal ?? "";
-
-		// 5. Snapshot + solver.
+		// 3. Snapshot + solver.
 		const snap = await plugin.snapshot(taskId);
 		const snapshotText = snap.success ? snap.snapshot : "";
 		const ctx: SolverCtx = {
@@ -440,22 +300,38 @@ export async function runMiniwobTask(
 			};
 		}
 
-		// 6. Poll validate until done. Wall-clock (`donePollTimeoutMs`) is the
+		// 4. Poll validate until done. Wall-clock (`donePollTimeoutMs`) is the
 		// primary bail; `maxSteps` is a hard safety cap. `steps` is a reported
 		// count, not a bail condition — both bails set `timedOut=true` and
 		// record a `bailReason` so callers can distinguish them.
 		const pollStart = Date.now();
 		let steps = 0;
-		let last = { reward: 0, raw_reward: 0, done: false, reason: "" } as {
-			reward: number;
-			raw_reward: number;
-			done: boolean;
-			reason: string;
+		let last: ValidateResult = {
+			reward: 0,
+			raw_reward: 0,
+			done: false,
+			reason: "",
 		};
 		let timedOut = false;
 		let bailReason: "wall-clock" | "max-steps" | null = null;
 		while (true) {
-			last = (await bridge.call("validate", {})) as typeof last;
+			last = await validateMiniwob(plugin, taskId);
+			// Propagate evaluate errors as a bail condition.
+			if (last.error) {
+				// Treat evaluate failure during validate as a hard error.
+				return {
+					goal,
+					reward: 0,
+					rawReward: 0,
+					done: false,
+					reason: "",
+					steps,
+					timedOut: false,
+					bailReason: null,
+					setupFailed: true,
+					error: `validate evaluate failed: ${last.error}`,
+				};
+			}
 			steps++;
 			if (last.done) {
 				bailReason = null;
@@ -487,10 +363,9 @@ export async function runMiniwobTask(
 		};
 	} catch (err) {
 		return fail(
-			`driver RPC failed: ${err instanceof Error ? err.message : String(err)}`,
+			`plugin call failed: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	} finally {
-		await bridge.stop().catch(() => {});
 		await plugin.cleanup(taskId).catch(() => {});
 	}
 }

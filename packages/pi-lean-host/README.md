@@ -1,17 +1,18 @@
 # pi-lean-host
 
 > MiniWoB++ evaluation harness for `BrowserPlugin` backends.
-> Adapter-driven MiniWoB++ task pipeline: Python driver via CDP
-> attach, Node-plugin `@e`-ref action layer, TypeScript
+> `plugin.evaluate`-driven MiniWoB++ episode lifecycle (setup /
+> validate), Node-plugin `@e`-ref action layer, TypeScript
 > `runMiniwobTask` / `registerMiniwobSuite` public API for
 > third-party plugin benchmarking.
 
 **pi-lean-host** is the behavioral evaluation package for
 [pi-lean-portal](https://github.com/coreyryanhanson/pi-lean-dimension/tree/main/packages/pi-lean-portal)
-`BrowserPlugin` backends. It uses a hand-rolled MiniWoB++ Python
-driver as a **task/reward source**. Our `BrowserPlugin` drives the
-page with its own `@e`-ref accessibility snapshots; the driver only
-sets up episodes and reads rewards via CDP attach.
+`BrowserPlugin` backends. The plugin is the **sole page owner**:
+its own `@e`-ref accessibility snapshots drive actions, and the
+episode lifecycle (setup + reward validation) runs as
+`plugin.evaluate()` calls on the plugin's own page. There is no
+second Playwright client and no cross-process attach.
 
 This package is **research tooling** — not a pi extension, not in the
 `pi-lean-dimension` umbrella meta-package, independently versioned.
@@ -43,36 +44,36 @@ This package is **research tooling** — not a pi extension, not in the
 │    └─► runMiniwobTask()          ┌──────────────────────┐    │
 │            │                      │ BrowserPlugin (TS,  │    │
 │            ▼                      │  e.g. ChromiumPlugin)│   │
-│  ┌─────────────────┐  CDP attach │  click/type/scroll/… │    │
-│  │ miniwob-        │◄───────────►│  snapshot → @e refs  │    │
-│  │ adapter.ts      │             └──────────────────────┘    │
-│  │ (TS wrapper)    │                                         │
-│  └────────┬────────┘                                         │
-│           │                                                  │
-│    spawns │ JSON-RPC over stdio                              │
-│           ▼                                                  │
-│  ┌──────────────────┐         ┌─────────────────────────┐   │
-│  │ miniwob-         │         │ Chromium (Node-launched) │   │
-│  │ driver.py        │◄───────►│ Single shared page       │   │
-│  │ (Python)         │  CDP    │                          │   │
-│  │                  │  attach │ Node drives actions;     │   │
-│  │ setup(page)      │         │ Python only sets up      │   │
-│  │ validate(page)   │         │ episodes & reads rewards │   │
-│  └──────────────────┘         └─────────────────────────┘   │
-│                                            ▲                 │
-│   solvers/                                │                 │
-│   parser.ts, trivial-solvers.ts,           │ @e refs        │
-│   register-suite.ts                        ▼                 │
-│                                    Accessibility tree        │
+│  ┌─────────────────┐  plugin.    │  click/type/scroll/… │    │
+│  │ miniwob-        │  evaluate() │  snapshot → @e refs  │    │
+│  │ adapter.ts      │────────────►│  sole page owner     │    │
+│  │ (TS wrapper)    │             └──────────┬───────────┘    │
+│  │                 │                        │                │
+│  │  setupMiniwob   │   REMOVE_DISPLAY_JS,   │ single page    │
+│  │  Episode():     │   SETUP_JS,            │  (no second    │
+│  │   rm + setup    │   READY_PROBE_JS,      │   Playwright   │
+│  │   + ready poll  │   UTTERANCE_JS         │   client)      │
+│  │  validateMini   │   ─────────────────►   │                │
+│  │  wob():         │   VALIDATE_JS          │                │
+│  └─────────────────┘                        │                │
+│                                            ▼                 │
+│   solvers/                                 Accessibility tree │
+│   parser.ts, trivial-solvers.ts,             via @e refs    │
+│   register-suite.ts                                         │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 **Key invariants:**
 
-- Only the Node plugin drives actions (click, type, scroll, press, goBack).
-- The Python driver only runs `setup(page)` (injects JS, calls `startEpisodeReal`) and `validate(page)` (reads `WOB_REWARD_GLOBAL`, `WOB_DONE_GLOBAL`).
+- The plugin is the sole page owner; setup and validate run as
+  `plugin.evaluate` calls on its page. There is no second Playwright
+  client and no cross-process attach.
+- Only the plugin drives actions (click, type, scroll, press, goBack).
+- The adapter only runs `setupMiniwobEpisode()` (injects
+  `REMOVE_DISPLAY_JS` + `SETUP_JS`, polls `WOB_TASK_READY`, reads the
+  utterance) and `validateMiniwob()` (reads `WOB_RAW_REWARD_GLOBAL`,
+  `WOB_DONE_GLOBAL`, `WOB_REWARD_REASON`) — all via `plugin.evaluate`.
 - No DOM marking touches the page. No vocabulary collision with our `@e`-ref model.
-- Two Playwright clients share one Chromium via CDP — a standard, supported configuration.
 
 ## Setup
 
@@ -96,11 +97,15 @@ npx playwright install chromium
 npm run setup:miniwob
 ```
 
-**Python requirement:** The MiniWoB driver (`miniwob-driver.py`) runs
-in whatever Python environment the test file's Python adapter is
-configured to use. It requires the `playwright` Python package. No
-dedicated virtualenv is needed — the driver reuses the plugin's
-Python path.
+**Python requirement:** Python is only needed to **run** the
+chromium-py / firefox-py bridge backends (each bridge is a Python
+process spawned by `PythonPluginAdapter`). It is **not** needed to
+drive MiniWoB — the episode lifecycle now runs as `plugin.evaluate`
+calls on the plugin's own page, so there is no `miniwob-driver.py`
+subprocess. The `playwright` Python package is required for the
+python bridge backends; no dedicated virtualenv is needed — each
+bridge reuses the `pythonPath` configured on its
+`PythonPluginAdapter`.
 
 ### Run the suite
 
@@ -124,7 +129,8 @@ import { runMiniwobTask } from "pi-lean-host";
 import type { BrowserPlugin } from "pi-lean-portal";
 
 // Your own BrowserPlugin drives the page via @e-ref accessibility snapshots.
-// The MiniWoB driver only reads rewards via CDP attach — it never drives actions.
+// The episode lifecycle (setup + validate) runs as plugin.evaluate calls on
+// the plugin's own page — there is no second Playwright client.
 const plugin: BrowserPlugin = new MyPlugin();
 await plugin.init({});
 
@@ -251,7 +257,6 @@ interface RunMiniwobTaskOptions {
   navigateTimeoutMs?: number;   // default 15_000
   donePollIntervalMs?: number;  // default 200
   donePollTimeoutMs?: number;   // default 10_000 — primary bail
-  pythonPath?: string;
 }
 
 interface MiniwobTaskResult {
@@ -284,51 +289,57 @@ interface MiniwobBackend {
 | `suites/miniwob-firefox.test.ts` | 125 MiniWoB tasks × firefox — 13 trivial solvers pass, 112 skip. |
 | `suites/miniwob-chromium-py.test.ts` | 125 MiniWoB tasks × chromium-py (Python bridge) — 13 trivial solvers pass, 112 skip. |
 | `suites/miniwob-firefox-py.test.ts` | 125 MiniWoB tasks × firefox-py (Python bridge) — 13 trivial solvers pass, 112 skip. |
-| `suites/adapter-smoke.test.ts` | End-to-end `runMiniwobTask(click-test)` through real Chromium + hand-rolled driver. Asserts `rawReward > 0`. |
+| `suites/adapter-smoke.test.ts` | End-to-end `runMiniwobTask(click-test)` through real Chromium + `plugin.evaluate` episode lifecycle. Asserts `rawReward > 0`. |
 
 All suites auto-skip when prerequisites (browser, MiniWoB++ content) are absent.
 
 ## Browser-ownership model
 
-`pi-lean-host` uses **Mode A — plugin-owns-browser** exclusively. The
-plugin exposes an attach endpoint through `getAttachEndpoint()`, and the
-MiniWoB Python driver attaches a second Playwright client to the same
-browser instance to read episode rewards.
+`pi-lean-host` uses **Mode A — plugin-owns-browser** exclusively, and
+now implements it **without** external attach. The plugin is the
+sole page owner: it drives actions (`click`, `type`, `scroll`,
+`press`, `goBack`) via its own `@e`-ref accessibility snapshots,
+**and** runs the episode lifecycle JS (`REMOVE_DISPLAY_JS`,
+`SETUP_JS`, `READY_PROBE_JS`, `UTTERANCE_JS`, `VALIDATE_JS`) as
+`plugin.evaluate()` calls on its own page. There is no second
+Playwright client, no `getAttachEndpoint()`, no `"cdp"` /
+`"firefox-ws"` attach kind, and no `launchServer()` / `connect()`
+hop.
 
-Two attach kinds are supported depending on the engine:
+The episode-lifecycle JS string constants live in
+[`adapter/miniwob-episode.ts`](adapter/miniwob-episode.ts); the
+adapter orchestrates them via the `setupMiniwobEpisode()` and
+`validateMiniwob()` helpers in
+[`adapter/miniwob-adapter.ts`](adapter/miniwob-adapter.ts).
 
-- **`"cdp"`** — Chrome DevTools Protocol. **Chromium** backends launch with
-  `--remote-debugging-port=0`, discover the OS-assigned port via
-  `ss -tlnp` / `CDP_PORT` env, and the driver attaches with
-  `chromium.connect_over_cdp(endpoint)`.
-- **`"firefox-ws"`** — Juggler over WebSocket. **Firefox** backends use
-  `firefox.launchServer()` + `firefox.connect(wsEndpoint)`, and the
-  driver attaches with `firefox.connect(wsEndpoint)` the same way.
-
-**Required on the plugin:** implements `getAttachEndpoint()` returning
-`AttachEndpoint | null`. The caller must guard with
-`typeof plugin.getAttachEndpoint === "function"` (a truthiness check
-would be incorrect under `exactOptionalPropertyTypes`).
-
-There is no "Mode B" (host-owns-browser) path — a `connectOverCDP`
-interface hook was considered and dropped as YAGNI; it will be
-re-added alongside a real consumer that needs it (e.g. a future
+There is no "Mode B" (host-owns-browser) path — a host-managed
+browser interface hook was considered and dropped as YAGNI; it will
+be re-added alongside a real consumer that needs it (e.g. a future
 WebArena adapter that manages its own browser lifecycle).
 
 ## Adding a new benchmark (WebArena, WorkArena, etc.)
 
-The existing CDP attach, `@e`-ref action layer, solver harness, and
-driver framework are benchmark-agnostic. Adding a new benchmark family
-would follow the pattern established by MiniWoB: a Python driver
-script + TypeScript adapter that calls setup/validate RPC methods,
-using the same JSON-RPC over stdio transport.
+The existing `plugin.evaluate` episode lifecycle, `@e`-ref action
+layer, and solver harness are benchmark-agnostic. Adding a new
+benchmark family would follow the pattern established by MiniWoB:
+a TypeScript adapter that calls `plugin.evaluate()` for setup /
+validate (no Python subprocess, no attach plumbing, no JSON-RPC
+transport). If the benchmark's setup/validate JS is non-trivial,
+factor it into a sibling `*-episode.ts` module of string constants,
+the way `miniwob-episode.ts` does.
 
 ## Attribution
 
 - **MiniWoB++** © Farama-Foundation — Apache-2.0, pinned at
   [`miniwob-plusplus@7fd85d71`](https://github.com/Farama-Foundation/miniwob-plusplus/tree/7fd85d71a4b60325c6585396ec4f48377d049838).
+- **BrowserGym** © ServiceNow — Apache-2.0. The `REMOVE_DISPLAY_JS`
+  constant in [`adapter/miniwob-episode.ts`](adapter/miniwob-episode.ts)
+  is copied verbatim from `browsergym/miniwob/base.py` (no changes);
+  see the attribution header in that file for details.
 
-See the header in [`adapter/miniwob-driver.py`](adapter/miniwob-driver.py) for full attribution.
+The episode-setup protocol is paraphrased from BrowserGym's
+`base.py`; the `removeDisplay` block is copied verbatim per the
+"no changes" commitment in the implementation plan.
 
 ## License
 

@@ -3,7 +3,8 @@
  *
  * Uses the public `registerMiniwobSuite` API from `pi-lean-host` with
  * the PythonPluginAdapter driving the chromium-py bridge.py. Proves
- * the CDP attach kind works end-to-end through the Python harness.
+ * the plugin.evaluate episode lifecycle works end-to-end through the
+ * Python bridge harness (no CDP attach, no CDP_PORT).
  *
  * ── Task breakdown ────────────────────────────────────────────────
  * Same as the Node chromium suite:

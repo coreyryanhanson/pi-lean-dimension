@@ -4,7 +4,9 @@
  * Exports the benchmarking API that any BrowserPlugin can use to run
  * against MiniWoB++ task suites.
  *
- * Phase 1: MiniWoB++ (chromium Mode A) via trivial solvers.
+ * Phase 1: MiniWoB++ via trivial solvers (all four backends — chromium,
+ * firefox, chromium-py, firefox-py — using plugin.evaluate episode
+ * lifecycle, no cross-process attach).
  *
  * @module
  */

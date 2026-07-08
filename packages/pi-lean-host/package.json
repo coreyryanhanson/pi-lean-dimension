@@ -1,7 +1,7 @@
 {
 	"name": "pi-lean-host",
 	"version": "0.0.1",
-	"description": "MiniWoB++ evaluation harness for BrowserPlugin backends. Adapter-driven task pipeline: Python driver via CDP attach, Node-plugin @e-ref action layer, TypeScript runMiniwobTask API.",
+	"description": "MiniWoB++ evaluation harness for BrowserPlugin backends. plugin.evaluate-driven episode lifecycle (setup/validate on the plugin's own page), Node-plugin @e-ref action layer, TypeScript runMiniwobTask API.",
 	"keywords": [
 		"pi-package",
 		"pi-extension",

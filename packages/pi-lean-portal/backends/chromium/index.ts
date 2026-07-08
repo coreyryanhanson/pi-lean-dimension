@@ -4,21 +4,16 @@
  * Thin subclass of PlaywrightPluginBase. All shared logic lives in
  * backends/playwright-base/playwright-plugin.ts.
  *
- * Launches Chromium with `--remote-debugging-port=0` and discovers the
- * OS-assigned CDP port via `ss -tlnp` (Linux) / `CDP_PORT` env fallback,
- * exposing it through `getAttachEndpoint()` so an external CDP client can
- * attach. The debug port is harmless for normal portal use; it simply
- * allows an external CDP client to attach.
+ * Launches Chromium directly and drives its own page; the plugin is the
+ * sole browser owner. No external-attach endpoint is exposed.
  */
 
 import { chromium } from "playwright";
 import type { Browser } from "playwright";
 import { PlaywrightPluginBase } from "../playwright-base/playwright-plugin.js";
-import { resolveCdpEndpoint } from "../../core/shared/cdp-endpoint.js";
 import {
 	DEFAULT_CAPABILITIES,
 	type PluginCapabilities,
-	type AttachEndpoint,
 } from "../../core/plugin-api.js";
 
 // ─── Capabilities ──────────────────────────────────────────────────
@@ -46,66 +41,12 @@ export class ChromiumPlugin extends PlaywrightPluginBase {
 				"--disable-setuid-sandbox",
 				"--disable-dev-shm-usage",
 				"--disable-gpu",
-				// Expose a CDP endpoint for external attach. Port 0 → OS assigns
-				// a free port; the actual port is discovered in onBrowserLaunched()
-				// via `ss -tlnp` (Linux) or `CDP_PORT` env (non-Linux fallback).
-				// Harmless for normal portal use — just opens a debug port.
-				"--remote-debugging-port=0",
-				// Bind the debug endpoint to loopback only — never expose it
-				// on a network interface. (Chrome's default for port 0 is
-				// already loopback, but be explicit for defense-in-depth.)
-				"--remote-debugging-address=127.0.0.1",
 			],
 		});
 	}
 
 	protected get installHint(): string {
 		return "Browser not installed. Run: npx playwright install chromium firefox";
-	}
-
-	/**
-	 * Post-launch: discover the CDP endpoint and cache it in
-	 * `_cdpEndpoint` so `getAttachEndpoint()` can return it synchronously.
-	 *
-	 * Both candidate process names are passed to a single
-	 * `resolveCdpEndpoint` call so one `ss` pass checks either name —
-	 * avoids up to 15s of dead polling when the process is named
-	 * `chromium` rather than `chrome-headless`.
-	 *
-	 * Swallowed errors leave `_cdpEndpoint` null — external attach is
-	 * unavailable for that session but normal browsing is unaffected.
-	 * The base class also catches and logs, but we swallow here too so
-	 * a missing `ss` binary (e.g. macOS dev) never even logs a warning
-	 * during normal browsing — only when a `CDP_PORT` isn't set AND the
-	 * caller actually tries to use `getAttachEndpoint()`.
-	 */
-	protected async onBrowserLaunched(): Promise<void> {
-		// `chrome-headless` is Playwright's bundled Chromium executable name
-		// on Linux; `chromium` covers system-Chromium. Both are checked in
-		// one `ss` pass. `resolveCdpEndpoint` tries `CDP_PORT` env first,
-		// then scans.
-		const endpoint = await resolveCdpEndpoint({
-			processNames: ["chrome-headless", "chromium"],
-		});
-		if (endpoint) {
-			this._cdpEndpoint = endpoint;
-		}
-		// No endpoint found — leave _cdpEndpoint null. getAttachEndpoint()
-		// will return null and external-attach callers will skip.
-		// Normal portal use is unaffected.
-	}
-
-	/**
-	 * Attach endpoint for external clients (CDP, chromium family).
-	 * Returns `{ kind: "cdp", endpoint: "http://127.0.0.1:<port>" }`
-	 * once the browser has launched and the port has been discovered,
-	 * or `null` before launch / on platforms where discovery failed
-	 * and no `CDP_PORT` was set.
-	 */
-	getAttachEndpoint(): AttachEndpoint | null {
-		return this._cdpEndpoint
-			? { kind: "cdp", endpoint: this._cdpEndpoint }
-			: null;
 	}
 }
 

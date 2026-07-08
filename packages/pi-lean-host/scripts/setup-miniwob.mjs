@@ -183,12 +183,26 @@ function main() {
  * Generate the `generated/subdomains.ts` file from the MiniWoB++ html
  * directory. Writes a sorted `MINIWOB_SUBDOMAINS` const array of all
  * `.html` file stem names (minus extension).
+ *
+ * Task HTML files live one level under the html root, at
+ * `html/miniwob/*.html` (matching the server's URL contract:
+ * `${url}/miniwob/<subdomain>.html`).
  */
 function generateSubdomainsFile(htmlDir) {
 	const generatedDir = resolve(import.meta.dirname, "..", "generated");
 	mkdirSync(generatedDir, { recursive: true });
 
-	const files = readdirSync(htmlDir)
+	// Task HTML lives one level under the html root, at html/miniwob/*.html
+	// (matches the server's URL contract: ${url}/miniwob/<subdomain>.html).
+	const taskDir = join(htmlDir, "miniwob");
+	if (!existsSync(taskDir)) {
+		die(
+			`Task HTML directory not found: ${taskDir}. ` +
+				`Expected the clone to contain miniwob/html/miniwob/*.html.`,
+		);
+	}
+
+	const files = readdirSync(taskDir)
 		.filter((f) => f.endsWith(".html"))
 		.map((f) => f.replace(/\.html$/, ""))
 		.sort();

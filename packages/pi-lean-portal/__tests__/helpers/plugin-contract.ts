@@ -23,7 +23,10 @@ import {
 	beforeEach,
 	afterEach,
 } from "vitest";
-import type { BrowserPlugin, PluginCapabilities } from "../../core/plugin-api";
+import type {
+	BrowserPlugin,
+	PluginCapabilities,
+} from "../../core/plugin-api.js";
 import { startTestServer, type TestServer } from "./test-server.js";
 import {
 	REDDIT_DIALOG_HTML,
@@ -962,8 +965,10 @@ export function runContractTests(
 				expect(result.success).toBe(true);
 				expect(result.messages.length).toBeGreaterThan(0);
 
-				const texts = result.messages.map((m) => m.text);
-				expect(texts.some((t) => t.includes("hello from console"))).toBe(true);
+				const texts = result.messages.map((m: { text: string }) => m.text);
+				expect(
+					texts.some((t: string) => t.includes("hello from console")),
+				).toBe(true);
 			});
 
 			it("clears console messages", async () => {

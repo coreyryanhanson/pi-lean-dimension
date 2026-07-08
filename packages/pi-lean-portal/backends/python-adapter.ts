@@ -29,7 +29,6 @@ import { join, delimiter as pathDelimiter } from "node:path";
 
 import { sessionManager } from "../core/shared/session-manager.js";
 import { saveStorageState } from "../core/shared/storage-state.js";
-import { resolveCdpEndpoint } from "../core/shared/cdp-endpoint.js";
 import { DEFAULT_BACKENDS_ROOT } from "../core/plugin-config.js";
 
 import {
@@ -48,7 +47,6 @@ import {
 	type ClearCookiesOptions,
 	type StorageStateResult,
 	type ResultBase,
-	type AttachEndpoint,
 } from "../core/plugin-api.js";
 import type { AriaCachedNode } from "../core/shared/accessibility-tree.js";
 
@@ -183,23 +181,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	// ── Startup lock ───────────────────────────────────────────
 	private _startupPromise: Promise<void> | null = null;
 	private _started = false;
-
-	/**
-	 * Cached CDP endpoint for external attach.
-	 * Populated after a successful navigate by scanning `ss -tlnp` for
-	 * the chromium family process name. Reset to null when the bridge
-	 * subprocess exits. Synchronous after first discovery.
-	 */
-	private _cdpEndpoint: string | null = null;
-
-	/**
-	 * Cached WebSocket endpoint for external attach (firefox family).
-	 * Populated by calling the bridge's ``get_ws_endpoint``
-	 * RPC after a launch-server-backed firefox browser has started.
-	 * Reset to null when the bridge subprocess exits.
-	 * Synchronous after first discovery.
-	 */
-	private _wsEndpoint: string | null = null;
 
 	/**
 	 * Plugin config dict forwarded to the bridge via the `browser.init` RPC
@@ -337,8 +318,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			this._pending.clear();
 			this._started = false;
 			this._stderrAccumulated = "";
-			this._cdpEndpoint = null;
-			this._wsEndpoint = null;
 
 			const proc = spawn(
 				this._pythonPath,
@@ -399,8 +378,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			const onExit = (code: number | null, _signal: string | null) => {
 				this._exitCode = code;
 				this._process = null;
-				this._cdpEndpoint = null;
-				this._wsEndpoint = null;
 
 				// Build stderr guidance for error messages
 				const stderrSuffix = this._stderrAccumulated
@@ -551,8 +528,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			);
 		}
 
-		this._cdpEndpoint = null;
-		this._wsEndpoint = null;
 		this._process = null;
 		this._exitCode = 0; // Mark as dead
 		this._buffer = "";
@@ -776,33 +751,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 
 				// Populate local element cache from bridge response
 				this._populateElementCache(taskId, result.elements);
-
-				// Discover CDP endpoint if not already cached (best-effort,
-				// errors swallowed). Only runs when CDP_PORT is set to a
-				// numeric value (common in CI), which makes
-				// resolveCdpEndpoint return instantly from the env var
-				// without an expensive ss -tlnp scan.  Without CDP_PORT,
-				// the attach endpoint stays null — external CDP attach
-				// is unavailable but normal browsing is unaffected.
-				// The Node Chromium plugin always awaits the ss scan
-				// because it always launches a real browser; the Python
-				// bridge may run against a mock that doesn't.
-				if (!this._cdpEndpoint) {
-					const cdpPort = process.env.CDP_PORT;
-					if (cdpPort && /^\d+$/.test(cdpPort.trim())) {
-						await this._discoverCdpEndpoint().catch(() => {});
-					}
-				}
-
-				// Discover WebSocket endpoint (firefox family, best-effort).
-				// Fired after each successful navigate so the endpoint is
-				// available for the bridge before a task connects.  Awaited
-				// because get_ws_endpoint is a fast RPC (the bridge reads
-				// _browser_server.ws_endpoint synchronously), so blocking
-				// navigate is negligible.
-				if (!this._wsEndpoint) {
-					await this._discoverWsEndpoint().catch(() => {});
-				}
 			}
 
 			const navResult: NavigateResult = {
@@ -1236,80 +1184,8 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	}
 
 	// ═════════════════════════════════════════════════════════════════
-	//  CDP endpoint discovery (chromium family)
+	//  Result conversion helpers
 	// ═════════════════════════════════════════════════════════════════
-
-	/**
-	 * Discover the CDP endpoint for the bridge's launched Chromium.
-	 *
-	 * The bridge subprocess launches Chromium with
-	 * `--remote-debugging-port=0` (see `chromium-py/bridge.py`). The
-	 * OS assigns a free port. This method scans `ss -tlnp` for it
-	 * (matching `chrome-headless` or `chromium` process names) or
-	 * reads the `CDP_PORT` env var on non-Linux / CI, exactly like
-	 * the Chromium plugin's `onBrowserLaunched()`.
-	 *
-	 * Errors are swallowed — `getAttachEndpoint()` returns null and
-	 * Mode A attach is unavailable for that session.
-	 */
-	private async _discoverCdpEndpoint(): Promise<void> {
-		try {
-			const endpoint = await resolveCdpEndpoint({
-				processNames: ["chrome-headless", "chromium"],
-			});
-			if (endpoint) {
-				this._cdpEndpoint = endpoint;
-			}
-		} catch {
-			// Swallow — CDP attach unavailable but normal browsing unaffected
-		}
-	}
-
-	/**
-	 * Discover the WebSocket endpoint from the bridge's launched Firefox.
-	 *
-	 * When firefox-py runs with ``launch_server()``, the bridge exposes
-	 * the server's ``ws_endpoint`` via the ``get_ws_endpoint`` JSON-RPC
-	 * method. This method queries that RPC and caches the result for
-	 * external attach (firefox family).
-	 *
-	 * Silent on platforms / backends that don't support launch_server
-	 * — ``getAttachEndpoint()`` returns null and ws-mode attach is
-	 * unavailable.
-	 */
-	private async _discoverWsEndpoint(): Promise<void> {
-		try {
-			const raw = await this._rpcCall("get_ws_endpoint", {}, 5_000);
-			const result = raw as { wsEndpoint?: string | null };
-			if (result.wsEndpoint) {
-				this._wsEndpoint = result.wsEndpoint;
-			}
-		} catch {
-			// Swallow — ws attach unavailable but normal browsing unaffected
-		}
-	}
-
-	/**
-	 * Attach endpoint for external clients.
-	 *
-	 * Returns the descriptor once it has been discovered, or ``null``
-	 * before navigation / on platforms where discovery failed.
-	 *
-	 * Two kinds advertised depending on the backend:
-	 * - ``{ kind: "cdp", endpoint: "http://127.0.0.1:<port>" }`` for
-	 *   chromium-family backends (cdp endpoint from ``ss -tlnp`` / ``CDP_PORT``)
-	 * - ``{ kind: "firefox-ws", endpoint: "ws://..." }`` for firefox-family
-	 *   backends that use ``launch_server()``
-	 */
-	getAttachEndpoint(): AttachEndpoint | null {
-		if (this._cdpEndpoint) {
-			return { kind: "cdp", endpoint: this._cdpEndpoint };
-		}
-		if (this._wsEndpoint) {
-			return { kind: "firefox-ws", endpoint: this._wsEndpoint };
-		}
-		return null;
-	}
 
 	/**
 	 * Convert a raw RPC result to an InteractionResult.

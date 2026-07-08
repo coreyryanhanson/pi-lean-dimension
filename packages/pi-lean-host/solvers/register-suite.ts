@@ -1,6 +1,6 @@
 /**
  * MiniWoB++ suite harness — register one `describe` block for a
- * BrowserPlugin backend against the full 125-task MiniWoB++ suite.
+ * BrowserPlugin backend against the full 130-task MiniWoB++ suite.
  *
  * This is the public extension point for user-owned parity test files.
  * Any custom BrowserPlugin (stealth browser, WebKit, research prototype)
@@ -61,7 +61,7 @@ export const TEST_TIMEOUT = 60_000;
  * appropriate reason.
  *
  * Classification is frozen from the ported table at
- * `miniwob-plusplus@7fd85d71`. Only 35 of 125 tasks are non-element.
+ * `miniwob-plusplus@7fd85d71`. Only 35 of 130 tasks are non-element.
  *
  * Terms refer to BrowserPlugin capabilities (not the task's own
  * rendering). A `coord` task draws on a `<canvas>` with no semantic
@@ -144,35 +144,28 @@ export const SKIP_REASON_BY_REQ: Record<
  * (no shipped backend used it). If a user backend has a known parity
  * gap, wrap `registerMiniwobSuite` in a `describe.skip` or file-level
  * `describe` with `it.skip` in a custom loop.
+ *
+ * NOTE: the old `driverPythonPath` field was removed when the
+ * cross-process MiniWoB driver was eliminated — the episode lifecycle
+ * now runs via `plugin.evaluate()` on the plugin's own page. User-owned
+ * parity tests no longer need to supply a driver Python.
  */
 export interface MiniwobBackend {
 	name: string;
 	available: boolean;
 	initPlugin: () => Promise<BrowserPlugin>;
-	/**
-	 * Python interpreter path used to spawn the MiniWoB++ driver
-	 * (`miniwob-driver.py`), which requires the `playwright` Python
-	 * package. If omitted, `runMiniwobTask` defaults to `python3` —
-	 * only works when system `python3` has `playwright` installed.
-	 *
-	 * Shipped suites auto-detect the venv at
-	 * `pi-lean-portal/backends/python-base/.venv/bin/python3` via
-	 * `registerMiniwobBackend`. User-owned parity test files should
-	 * point this at whatever Python has `playwright` for their setup.
-	 */
-	driverPythonPath?: string;
 }
 
 // ─── Suite registration ──────────────────────────────────────────
 
 /**
- * Registers one `describe` block driving all 125 MiniWoB tasks through
+ * Registers one `describe` block driving all 130 MiniWoB tasks through
  * `backend`. The block `describe.skip`s when `backend.available` is
  * false. The solver registry, parsing helpers, and task loop are
  * shared across backends — only plugin lifecycle and the describe
  * label differ.
  *
- * The 125-task classification is a static set of non-element subdomains
+ * The 130-task classification is a static set of non-element subdomains
  * (35 entries). Everything else is assumed element-reachable. Within
  * element tasks, only the 13 tasks with registered solvers run; the
  * remaining 77 element tasks skip with a "needs goal-aware solver" reason.
@@ -234,18 +227,15 @@ export function registerMiniwobSuite(
 			it(
 				label,
 				async () => {
-				const result = await runMiniwobTask({
-					plugin,
-					taskName: subdomain,
-					seed: SEED,
-					baseUrl,
-					actor: "trivial",
-					solver,
-					episodeMaxTimeMs: 30_000,
-					...(backend.driverPythonPath
-						? { pythonPath: backend.driverPythonPath }
-						: {}),
-				});
+					const result = await runMiniwobTask({
+						plugin,
+						taskName: subdomain,
+						seed: SEED,
+						baseUrl,
+						actor: "trivial",
+						solver,
+						episodeMaxTimeMs: 30_000,
+					});
 
 					// The pipeline must not fail at any setup step.
 					expect(

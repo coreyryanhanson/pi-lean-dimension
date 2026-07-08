@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { webFetch, cleanupFetchTempFiles } from "../core/fetch-backend";
+import { webFetch, cleanupFetchTempFiles } from "../core/fetch-backend.js";
 
 // ─── Setup / Teardown ────────────────────────────────────────
 

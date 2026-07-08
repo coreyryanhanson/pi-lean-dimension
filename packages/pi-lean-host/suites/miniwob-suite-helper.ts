@@ -31,28 +31,6 @@ import {
 } from "../solvers/register-suite.js";
 import { startMiniwobServer } from "../scripts/miniwob-server.js";
 
-// ─── Driver Python (auto-detected) ───────────────────────────────
-
-/**
- * Path to the shared Python venv that ships with `pi-lean-portal`'s
- * Python bridge backends. The MiniWoB++ driver (`miniwob-driver.py`)
- * needs the `playwright` Python package to attach over CDP; this venv
- * is where CI installs it. Auto-detected so every shipped backend
- * suite (Node or Python) spawns the driver with a Python that has
- * `playwright`, without each suite file repeating the path.
- *
- * Resolves to `undefined` when the venv is absent — `runMiniwobTask`
- * then falls back to `python3` (system Python), which works only if
- * `playwright` is installed there.
- */
-const DRIVER_PYTHON_PATH = (() => {
-	const candidate = resolve(
-		__dirname,
-		"../../pi-lean-portal/backends/python-base/.venv/bin/python3",
-	);
-	return existsSync(candidate) ? candidate : undefined;
-})();
-
 // ─── Content availability ────────────────────────────────────────
 
 const HTML_ROOT =
@@ -84,7 +62,7 @@ afterAll(async () => {
 // ─── Backend registration ─────────────────────────────────────────
 
 /**
- * Register one shipped backend against the full 125-task MiniWoB++
+ * Register one shipped backend against the full 130-task MiniWoB++
  * suite, gated on `CONTENT_AVAILABLE && browserAvailable`.
  *
  * The caller owns the browser-availability probe (it is
@@ -103,9 +81,6 @@ export function registerMiniwobBackend(
 		name,
 		available: CONTENT_AVAILABLE && browserAvailable,
 		initPlugin,
-		...(DRIVER_PYTHON_PATH
-			? { driverPythonPath: DRIVER_PYTHON_PATH }
-			: {}),
 	};
 	registerMiniwobSuite(backend, ensureBaseUrl);
 }

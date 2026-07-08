@@ -15,7 +15,7 @@
 
 ## `BrowserPlugin` interface (`core/plugin-api.ts`)
 
-19 methods (18 required + 1 optional):
+18 methods (17 required + 1 optional):
 
 ```
 init?(config)       — optional, called once at startup
@@ -32,61 +32,29 @@ getCookies, addCookies, clearCookies  — cookie operations
 getStorageState     — profile storage for session restore
 ```
 
-The 12 registered tools map to 12 tool-facing plugin methods. The cookie/storage methods (`getCookies`, `addCookies`, `clearCookies`, `getStorageState`) are router-facing, not tool-mapped. Element cache access (`getElementCache`) is used internally by `browser-inspect`. The lifecycle methods (`init`, `cleanupAll`) are framework-facing. Total interface: 19 methods.
+The 12 registered tools map to 12 tool-facing plugin methods. The cookie/storage methods (`getCookies`, `addCookies`, `clearCookies`, `getStorageState`) are router-facing, not tool-mapped. Element cache access (`getElementCache`) is used internally by `browser-inspect`. The lifecycle methods (`init`, `cleanupAll`) are framework-facing. Total interface: 18 methods (17 required + 1 optional).
 
 Capabilities (`PluginCapabilities`) advertise quirks. The router checks them at dispatch time.
 
-## External attach (benchmarking)
+## Browser launch hook
 
-The `BrowserPlugin` interface exposes one optional method for external
-attach, used by `pi-lean-host`'s MiniWoB++ harness (Mode A —
-plugin-owns-browser):
+The portal's own backends launch their browser directly and drive
+their own page — there is **no external-attach path**. The
+`getAttachEndpoint()` interface method, the `AttachEndpoint` union,
+`core/shared/cdp-endpoint.ts`, the `launchServer()` / `connect()`
+hop, and the `_cdpEndpoint` / `_wsEndpoint` / `_browserServer` /
+`_reconnectBrowser()` scaffolding were all removed (see
+[`docs/decisions/miniwob-driver-attach-elimination.md`](../../docs/decisions/miniwob-driver-attach-elimination.md)).
 
-```ts
-getAttachEndpoint?(): AttachEndpoint | null;
-// AttachEndpoint = { kind: "cdp"; endpoint: string } | { kind: "firefox-ws"; endpoint: string }
-```
-
-Returns the attach descriptor once the browser has launched and the
-endpoint has been discovered, or `null` if the plugin doesn't expose
-one. Host-side callers must guard with
-`typeof plugin.getAttachEndpoint === "function"` (not a truthiness
-check) under `exactOptionalPropertyTypes`.
-
-Two kinds are supported:
-
-- **`"cdp"`** — Chrome DevTools Protocol. Chromium family (Node + Python)
-  launches with `--remote-debugging-port=0` and discovers the port via
-  `ss -tlnp` / `CDP_PORT` env. The external client attaches with
-  `chromium.connect_over_cdp(endpoint)`.
-- **`"firefox-ws"`** — Juggler over WebSocket. Firefox family (Node +
-  Python) uses `firefox.launchServer()` + `firefox.connect(wsEndpoint)`.
-  The external client attaches with `firefox.connect(wsEndpoint)`.
-
-`PlaywrightPluginBase` provides the discovery scaffolding:
+One post-launch hook is retained for third-party subclasses:
 
 - **`onBrowserLaunched()`** — a post-launch hook (default no-op) called
-  once after the shared browser successfully launches, before any
-  context/page is created. The chromium plugin overrides it to scan for
-  the `--remote-debugging-port=0` endpoint and cache it in
-  `protected _cdpEndpoint`. Future firefox plugins override it similarly
-  to populate `_wsEndpoint`.
-- **`_cdpEndpoint`** / **`_wsEndpoint`** — cached endpoint strings for
-  each attach kind, reset to `null` on browser disconnect so a re-launch
-  re-discovers.
-- **`_browserServer`** — `BrowserServer` handle for the launchServer path
-  (firefox family). When non-null, the `disconnected` handler calls
-  `_reconnectBrowser()` instead of clearing state, so a Browser disconnect
-  reconnects to the still-up server without relaunching.
-- **`_reconnectBrowser()`** — override (firefox plugin) that calls
-  `firefox.connect(wsEndpoint)` to recover from a Browser disconnect
-  while the BrowserServer stays up.
-- **Error swallowing**: failures from `onBrowserLaunched()` are caught
-  and logged by `_newBrowserContext`, so a port-scan glitch never blocks
-  normal browsing.
-- **`resolveCdpEndpoint()`** (`core/shared/cdp-endpoint.ts`) — shared
-  discovery utility (reads `CDP_PORT` env, falls back to scanning). Used
-  by the chromium plugin's `onBrowserLaunched()` override.
+  once after the browser successfully launches, before any
+  context/page is created. The portal's own backends no longer override
+  it (external-attach discovery has been removed), but the hook is
+  retained for third-party subclasses. Failures thrown from overrides
+  are caught and logged by `_newBrowserContext`, so a setup glitch
+  never blocks normal browsing.
 
 There is no `connectOverCDP?` interface hook — a host-owns-browser
 ("Mode B") path was considered and dropped as YAGNI; it will be

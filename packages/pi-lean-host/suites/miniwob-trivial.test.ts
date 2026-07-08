@@ -1,7 +1,8 @@
 /**
  * MiniWoB++ trivial-solver suite — Chromium (Node) backend.
  *
- * Phase 1: chromium Node backend (Mode A, plugin-owns-browser).
+ * Phase 1: chromium Node backend (plugin-owns-browser, plugin.evaluate
+ * episode lifecycle — no cross-process attach).
  * Phase 2: chromium-py, firefox-py (Python bridge backends) — see
  * miniwob-chromium-py.test.ts and miniwob-firefox-py.test.ts.
  * Phase 3: CI cross-engine setup.
@@ -16,7 +17,9 @@
  *   10 best-effort (pipeline smoke only)
  * - 77 element tasks skip with `needs goal-aware solver (Step 2 follow-up)`
  * - 35 non-element tasks skip with missing-tool reason
- * ── 13 + 77 + 35 = 125, matching the MiniWoB++ task count. ────────
+ * ── 13 + 82 + 35 = 130, matching the MiniWoB++ task count (the older
+ *     generator only picked up 125; regenerating from the pinned commit
+ *     now correctly reads all 130 task HTML files). ────────────────
  *
  * Run: npx vitest run packages/pi-lean-host/suites/miniwob-trivial.test.ts
  *
