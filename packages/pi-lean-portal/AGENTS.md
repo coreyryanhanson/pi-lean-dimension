@@ -15,7 +15,7 @@
 
 ## `BrowserPlugin` interface (`core/plugin-api.ts`)
 
-18 methods (17 required + 1 optional):
+19 methods (18 required + 1 optional):
 
 ```
 init?(config)       — optional, called once at startup
@@ -32,7 +32,7 @@ getCookies, addCookies, clearCookies  — cookie operations
 getStorageState     — profile storage for session restore
 ```
 
-The 12 registered tools map to 12 tool-facing plugin methods. The cookie/storage methods (`getCookies`, `addCookies`, `clearCookies`, `getStorageState`) are router-facing, not tool-mapped. Element cache access (`getElementCache`) is used internally by `browser-inspect`. The lifecycle methods (`init`, `cleanupAll`) are framework-facing. Total interface: 18 methods (17 required + 1 optional).
+The 12 registered tools map to 12 tool-facing plugin methods. The cookie/storage methods (`getCookies`, `addCookies`, `clearCookies`, `getStorageState`) are router-facing, not tool-mapped. Element cache access (`getElementCache`) is used internally by `browser-inspect`. The lifecycle methods (`init`, `cleanupAll`) are framework-facing. Total interface: 19 methods (18 required + 1 optional).
 
 Capabilities (`PluginCapabilities`) advertise quirks. The router checks them at dispatch time.
 

@@ -10,7 +10,7 @@
  * Same as the chromium suite:
  * - 13 trivial-solver tasks run: 3 confident (reward > 0 asserted) +
  *   10 best-effort (pipeline smoke only)
- * - 77 element tasks skip with `needs goal-aware solver`
+ * - 82 element tasks skip with `needs goal-aware solver`
  * - 35 non-element tasks skip with missing-tool reason
  *
  * Run: npx vitest run packages/pi-lean-host/suites/miniwob-firefox.test.ts

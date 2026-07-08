@@ -27,7 +27,7 @@ Three things, in dependency order:
 
 - **Cross-engine parity coverage.** All four shipped backends (chromium, firefox, chromium-py, firefox-py) are drivable by the harness via `navigate` + `evaluate`. `firefox-py` becomes runnable for the first time (the `launch_server` blocker is removed); `chromium-py` runs without a `CDP_PORT` env var.
 - **User-pluggable backends.** `registerMiniwobSuite(backend, getBaseUrl)` lets user-owned parity tests register a custom `BrowserPlugin` (e.g. a stealth backend) without editing shipped code.
-- **125-task MiniWoB++ suite per backend.** 13 trivial solvers run (3 confident asserting `reward > 0`, 10 best-effort pipeline smoke); 77 element tasks skip pending a goal-aware solver; 35 non-element tasks skip pending coordinate/drag/hover/select tools.
+- **130-task MiniWoB++ suite per backend.** 13 trivial solvers run (3 confident asserting `reward > 0`, 10 best-effort pipeline smoke); 82 element tasks skip pending a goal-aware solver; 35 non-element tasks skip pending coordinate/drag/hover/select tools.
 - **Two-job CI.** `structural` (no browser, fast) + `miniwob` (installs Chromium + Firefox + Python `playwright`, clones MiniWoB++ content, runs all 5 suite files). Per-backend suites auto-skip when their prereqs are absent, so `npm test` and `npm run test:ci` stay green in bare CI.
 
 ## What the harness continues to prove
@@ -46,5 +46,4 @@ Canvas/coordinate tasks, drag-and-drop, hover/slider/select (no tools), and any 
 ## Decision trail
 
 - [`browsergym-removal.md`](./browsergym-removal.md) — the BrowserGym Option C plan (considered, then rejected) and the decision to drop it for a hand-rolled driver.
-- [`miniwob-driver-attach-elimination.md`](./miniwob-driver-attach-elimination.md) — delete the cross-process attach; run the episode via `plugin.evaluate`.
 - [`miniwob-driver-attach-elimination.md`](./miniwob-driver-attach-elimination.md) — delete the cross-process attach; run the episode via `plugin.evaluate`.

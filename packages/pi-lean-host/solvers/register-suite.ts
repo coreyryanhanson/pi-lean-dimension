@@ -168,7 +168,7 @@ export interface MiniwobBackend {
  * The 130-task classification is a static set of non-element subdomains
  * (35 entries). Everything else is assumed element-reachable. Within
  * element tasks, only the 13 tasks with registered solvers run; the
- * remaining 77 element tasks skip with a "needs goal-aware solver" reason.
+ * remaining 82 element tasks skip with a "needs goal-aware solver" reason.
  *
  * @param backend     The backend to drive (shipped or user-installed).
  * @param getBaseUrl  Resolver returning the MiniWoB base URL (the

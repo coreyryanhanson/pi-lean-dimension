@@ -26,7 +26,7 @@ With search installed, the suite totals **13 tools + 2 commands** (portal + sear
 ```bash
 npm test                                           # vitest run — all workspace tests (may hang if browser binaries missing)
 npm run test:ci                                     # vitest run — structural tests only, excludes browser-dependent tests that may hang
-npm run test:miniwob                                # MiniWoB++ cross-engine test suite (host: 125 tasks × 4 backends + smoke, auto-skips)
+npm run test:miniwob                                # MiniWoB++ cross-engine test suite (host: 130 tasks × 4 backends + smoke, auto-skips)
 npm run setup:miniwob                               # one-time clone of MiniWoB++ content
 # (no dedicated venv needed — the driver uses the plugin's Python path)
 npx vitest run packages/pi-lean-portal/__tests__/router-dispatch.test.ts  # single test file
@@ -100,12 +100,12 @@ pi-lean-dimension/                       (monorepo root)
     │   ├── solvers/
     │   │   ├── parser.ts                @e-ref parsing, withRole, ReDoS-safe role allowlist
     │   │   ├── trivial-solvers.ts       13 trivial MiniWoB solvers (3 confident + 10 best-effort)
-    │   │   └── register-suite.ts        registerMiniwobSuite — vitest suite of 125 MiniWoB tasks
+    │   │   └── register-suite.ts        registerMiniwobSuite — vitest suite of 130 MiniWoB tasks
     │   ├── suites/
-    │   │   ├── miniwob-trivial.test.ts      125 tasks × chromium (13 run, 112 skip)
-    │   │   ├── miniwob-firefox.test.ts      125 tasks × firefox (13 run, 112 skip)
-    │   │   ├── miniwob-chromium-py.test.ts  125 tasks × chromium-py (13 run, 112 skip)
-    │   │   ├── miniwob-firefox-py.test.ts   125 tasks × firefox-py (13 run, 112 skip)
+    │   │   ├── miniwob-trivial.test.ts      130 tasks × chromium (13 run, 117 skip)
+    │   │   ├── miniwob-firefox.test.ts      130 tasks × firefox (13 run, 117 skip)
+    │   │   ├── miniwob-chromium-py.test.ts  130 tasks × chromium-py (13 run, 117 skip)
+    │   │   ├── miniwob-firefox-py.test.ts   130 tasks × firefox-py (13 run, 117 skip)
     │   │   ├── miniwob-suite-helper.ts      Shared suite infrastructure
     │   │   └── adapter-smoke.test.ts        End-to-end runMiniwobTask (click-test, rawReward > 0)
     │   ├── scripts/
@@ -134,7 +134,7 @@ pi-lean-dimension/                       (monorepo root)
 
 ## Architecture (suite-level overview)
 
-All interactive backends implement the `BrowserPlugin` interface (`packages/pi-lean-portal/core/plugin-api.ts`) — 18 methods (17 required + 1 optional). The 12 registered browser tools map to 12 tool-facing plugin methods; the cookie/storage methods are router-facing. Capabilities (`PluginCapabilities`) advertise quirks the router checks at dispatch time.
+All interactive backends implement the `BrowserPlugin` interface (`packages/pi-lean-portal/core/plugin-api.ts`) — 19 methods (18 required + 1 optional). The 12 registered browser tools map to 12 tool-facing plugin methods; the cookie/storage methods are router-facing. Capabilities (`PluginCapabilities`) advertise quirks the router checks at dispatch time.
 
 Plugin loading reads `browser.plugins` from `~/.pi/agent/settings.json` (global, merged with `.pi/settings.json` project-local). Each entry is `{name, dir, enabled, config}`; `dir` maps to `backends/<dir>/`, entry point auto-detected (`index.ts` = Node, `bridge.py` = Python). Default config: chromium + firefox enabled, chromium-py + firefox-py disabled.
 
@@ -231,7 +231,7 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 |----------|----------|-----------|-----------|-------------------|
 | Portal structural | `pi-lean-portal/__tests__/` | 19 | 650+ | No |
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 7 | varies | Per-backend (auto-skip) |
-| Host behavioral (MiniWoB) | `pi-lean-host/suites/` | 5 | 125 tasks × 4 + smoke | Chromium + Firefox + Python + MiniWoB content |
+| Host behavioral (MiniWoB) | `pi-lean-host/suites/` | 5 | 130 tasks × 4 + smoke | Chromium + Firefox + Python + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 17+ | No |
 | Dimension | `pi-lean-dimension/` | 1 | 2 | No |
 
@@ -241,10 +241,10 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 
 **Host behavioral tests (5 files):**
 
-- `miniwob-trivial.test.ts` — 125 MiniWoB++ tasks × chromium (13 run, 112 skip)
-- `miniwob-firefox.test.ts` — 125 tasks × firefox (13 run, 112 skip)
-- `miniwob-chromium-py.test.ts` — 125 tasks × chromium-py (13 run, 112 skip)
-- `miniwob-firefox-py.test.ts` — 125 tasks × firefox-py (13 run, 112 skip)
+- `miniwob-trivial.test.ts` — 130 MiniWoB++ tasks × chromium (13 run, 117 skip)
+- `miniwob-firefox.test.ts` — 130 tasks × firefox (13 run, 117 skip)
+- `miniwob-chromium-py.test.ts` — 130 tasks × chromium-py (13 run, 117 skip)
+- `miniwob-firefox-py.test.ts` — 130 tasks × firefox-py (13 run, 117 skip)
 - `adapter-smoke.test.ts` — end-to-end runMiniwobTask via real Chromium + `plugin.evaluate` episode lifecycle
 
 **Shared test utilities** (`packages/pi-lean-portal/__tests__/helpers/`):
@@ -261,7 +261,7 @@ Behavioral MiniWoB++ evaluation lives in `pi-lean-host` and uses a
 hand-rolled MiniWoB++ driver (no BrowserGym dependency).
 
 Shipped suite files under `packages/pi-lean-host/suites/` drive
-all 125 [MiniWoB++](https://miniwob.farama.org/) tasks through each
+all 130 [MiniWoB++](https://miniwob.farama.org/) tasks through each
 backend. The shared helper at `miniwob-suite-helper.ts` owns content
 availability gates and the MiniWoB static server lifecycle; each
 per-backend file supplies only the browser-availability probe and
@@ -274,7 +274,7 @@ plugin factory:
 
 - **13 tasks run** with trivial solvers — 3 confident (assert reward > 0)
   and 10 best-effort (pipeline smoke tests).
-- **77 element tasks** without a registered solver → `it.skip` with reason
+- **82 element tasks** without a registered solver → `it.skip` with reason
   `needs goal-aware solver (Step 2 follow-up)`.
 - **35 non-element tasks** (coord/drag/hover/select) → `it.skip` with
   the missing-tool reason.

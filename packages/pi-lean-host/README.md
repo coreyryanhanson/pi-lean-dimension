@@ -201,14 +201,14 @@ const backend: MiniwobBackend = {
 registerMiniwobSuite(backend, async () => process.env.MINIWOB_URL ?? "http://localhost:8080");
 ```
 
-`registerMiniwobSuite` registers one `describe` block driving all 125
+`registerMiniwobSuite` registers one `describe` block driving all 130
 MiniWoB tasks through the backend. The block `describe.skip`s when
 `backend.available` is false. Task classification is automatic:
 
 - **13 tasks** with registered trivial solvers run; the 3 in
   `CONFIDENT_TASKS` assert `rawReward > 0`, the other 10 are
   best-effort pipeline smoke tests.
-- **77 element tasks** without a registered solver skip with
+- **82 element tasks** without a registered solver skip with
   `needs goal-aware solver`.
 - **35 non-element tasks** (coord/drag/hover/select — capabilities
   `BrowserPlugin` does not expose) skip with a missing-tool reason.
@@ -222,7 +222,7 @@ The output matrix shows exactly which tasks pass, skip, or fail.
 | Export | Source | Description |
 |---|---|---|
 | `runMiniwobTask` | `adapter/miniwob-adapter.ts` | Drive one episode; accepts a `TrivialSolver`. |
-| `registerMiniwobSuite` | `solvers/register-suite.ts` | Register a vitest suite of 125 MiniWoB tasks for a backend. |
+| `registerMiniwobSuite` | `solvers/register-suite.ts` | Register a vitest suite of 130 MiniWoB tasks for a backend. |
 | `SOLVERS` | `solvers/trivial-solvers.ts` | `Map` of task name → trivial solver (13 entries across 6 solver functions). |
 | `CONFIDENT_TASKS` | `solvers/trivial-solvers.ts` | `Set` of 3 task names with confident `rawReward > 0` assertions. |
 | `clickFirstButton`, `focusFirstTextbox`, `clickButtonNamedInGoal`, `clickLinkNamedInGoal`, `typeQuotedIntoTextbox`, `loginUser` | `solvers/trivial-solvers.ts` | The 6 shipped solver functions. |
@@ -285,10 +285,10 @@ interface MiniwobBackend {
 
 | Suite file | What it tests |
 |---|---|
-| `suites/miniwob-trivial.test.ts` | 125 MiniWoB tasks × chromium — 13 trivial solvers pass, 112 skip. |
-| `suites/miniwob-firefox.test.ts` | 125 MiniWoB tasks × firefox — 13 trivial solvers pass, 112 skip. |
-| `suites/miniwob-chromium-py.test.ts` | 125 MiniWoB tasks × chromium-py (Python bridge) — 13 trivial solvers pass, 112 skip. |
-| `suites/miniwob-firefox-py.test.ts` | 125 MiniWoB tasks × firefox-py (Python bridge) — 13 trivial solvers pass, 112 skip. |
+| `suites/miniwob-trivial.test.ts` | 130 MiniWoB tasks × chromium — 13 trivial solvers pass, 117 skip. |
+| `suites/miniwob-firefox.test.ts` | 130 MiniWoB tasks × firefox — 13 trivial solvers pass, 117 skip. |
+| `suites/miniwob-chromium-py.test.ts` | 130 MiniWoB tasks × chromium-py (Python bridge) — 13 trivial solvers pass, 117 skip. |
+| `suites/miniwob-firefox-py.test.ts` | 130 MiniWoB tasks × firefox-py (Python bridge) — 13 trivial solvers pass, 117 skip. |
 | `suites/adapter-smoke.test.ts` | End-to-end `runMiniwobTask(click-test)` through real Chromium + `plugin.evaluate` episode lifecycle. Asserts `rawReward > 0`. |
 
 All suites auto-skip when prerequisites (browser, MiniWoB++ content) are absent.

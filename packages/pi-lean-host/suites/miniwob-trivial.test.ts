@@ -15,7 +15,7 @@
  * ── Task breakdown ────────────────────────────────────────────────
  * - 13 trivial-solver tasks run: 3 confident (reward > 0 asserted) +
  *   10 best-effort (pipeline smoke only)
- * - 77 element tasks skip with `needs goal-aware solver (Step 2 follow-up)`
+ * - 82 element tasks skip with `needs goal-aware solver (Step 2 follow-up)`
  * - 35 non-element tasks skip with missing-tool reason
  * ── 13 + 82 + 35 = 130, matching the MiniWoB++ task count (the older
  *     generator only picked up 125; regenerating from the pinned commit
