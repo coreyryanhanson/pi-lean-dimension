@@ -5,7 +5,7 @@
  * MiniWoB++ suite against a user-installed Camoufox backend. It is
  * **not** run by `npm run test:miniwob` (it lives under
  * `packages/pi-lean-portal/docs/`, which is excluded from the portal
- * `package.json` `files` and is not under `pi-lean-host/suites/`). It
+ * `package.json` `files` and is not under `bench/miniwob/suites/`). It
  * is also **not** in the npm tarball — the templates require the
  * source repo.
  *
@@ -23,7 +23,7 @@
  * 2. Set up MiniWoB++ content once: `npm run setup:miniwob` (clones the
  *    pinned `miniwob-plusplus` repo). Then make the content reachable:
  *    either start the static server yourself
- *    (`packages/pi-lean-host/scripts/miniwob-server.ts` — binds an
+ *    (`bench/miniwob/scripts/miniwob-server.ts` — binds an
  *    ephemeral port; or run any static file server on port 8080) and
  *    point `MINIWOB_URL` at it, or rely on the `MINIWOB_HTML_ROOT`
  *    path being present on disk. This template does **not** start its
@@ -55,15 +55,8 @@
  *    protects dev machines that do have an install).
  *
  *    The imports below are relative paths into the monorepo source
- *    (`pi-lean-portal` internals + `pi-lean-host`'s public entry) so the
- *    file typechecks cleanly from within the cloned repo. To run it from
- *    a standalone scratch project outside the repo, `npm install
- *    pi-lean-portal pi-lean-host` and rewrite the three import paths to
- *    bare specifiers (`from "pi-lean-portal"` / `from "pi-lean-host"`);
- *    note `pi-lean-host` only re-exports its public API from `src/index`,
- *    so a bare `from "pi-lean-host"` requires the package to expose an
- *    entry (add `"exports": { ".": "./src/index.ts" }` to its
- *    `package.json`, or import `from "pi-lean-host/src/index.js"`).
+ *    (`pi-lean-portal` internals + `bench/miniwob/` solvers) so the
+ *    file typechecks cleanly from within the cloned repo.
  *
  * What it proves
  * --------------
@@ -100,13 +93,11 @@ import { existsSync } from "node:fs";
 import { PythonPluginAdapter } from "../../../backends/python-adapter.js";
 import type { BrowserPlugin } from "../../../core/plugin-api.js";
 
-// Relative into the monorepo source — see the header note for running
-// this template from a standalone scratch project.
+import { probeUserBackend } from "../../../__tests__/helpers/probe-user-backend.js";
 import {
-	probeUserBackend,
 	registerMiniwobSuite,
 	type MiniwobBackend,
-} from "../../../../pi-lean-host/src/index.js";
+} from "../../../../../bench/miniwob/solvers/register-suite.js";
 
 // ─── Explicit opt-in gate ──────────────────────────────────────
 //
@@ -178,7 +169,7 @@ if (PARITY_RUN) {
 	// The caller owns the MiniWoB static server lifecycle per the
 	// `registerMiniwobSuite` doc. Honor `MINIWOB_URL` when set (a running
 	// server); otherwise fall back to `http://localhost:8080` (start the
-	// server yourself — see `packages/pi-lean-host/scripts/miniwob-server.ts`).
+	// server yourself — see `bench/miniwob/scripts/miniwob-server.ts`).
 	registerMiniwobSuite(backend, async () => {
 		return process.env.MINIWOB_URL ?? "http://localhost:8080";
 	});

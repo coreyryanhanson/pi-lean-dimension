@@ -14,7 +14,7 @@
  *   - Playwright Chromium installed (Node side)
  *   - MiniWoB++ html root present on disk (or `MINIWOB_URL` set)
  *
- * Run: npx vitest run packages/pi-lean-host/suites/adapter-smoke.test.ts
+ * Run: npx vitest run bench/miniwob/suites/adapter-smoke.test.ts
  *
  * @module
  */
@@ -24,9 +24,9 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { chromium } from "playwright";
-import { ChromiumPlugin } from "../../pi-lean-portal/backends/chromium/index.js";
-import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
-import type { TestServer } from "../../pi-lean-portal/__tests__/helpers/test-server.js";
+import { ChromiumPlugin } from "../../../packages/pi-lean-portal/backends/chromium/index.js";
+import type { BrowserPlugin } from "../../../packages/pi-lean-portal/core/plugin-api.js";
+import type { TestServer } from "../../../packages/pi-lean-portal/__tests__/helpers/test-server.js";
 import { startMiniwobServer } from "../scripts/miniwob-server.js";
 import { runMiniwobTask } from "../adapter/miniwob-adapter.js";
 import { clickFirstButton } from "../solvers/trivial-solvers.js";

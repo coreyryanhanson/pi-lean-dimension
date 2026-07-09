@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
+import type { BrowserPlugin } from "../../../packages/pi-lean-portal/core/plugin-api.js";
 
 import {
 	SETUP_JS,

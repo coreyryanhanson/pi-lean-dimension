@@ -23,8 +23,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
-import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
-import type { TestServer } from "../../pi-lean-portal/__tests__/helpers/test-server.js";
+import type { BrowserPlugin } from "../../../packages/pi-lean-portal/core/plugin-api.js";
+import type { TestServer } from "../../../packages/pi-lean-portal/__tests__/helpers/test-server.js";
 
 import {
 	registerMiniwobSuite,

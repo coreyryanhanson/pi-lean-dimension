@@ -7,9 +7,8 @@
  * path the test suite expects. No-op when the target directory already
  * exists (idempotent).
  *
- * After cloning, generates `packages/pi-lean-host/generated/subdomains.ts`
- * from the `*.html` files in the html directory (gitignored — regenerated
- * by the vitest globalSetup before test runs, or by this script).
+ * The suite discovers available tasks at runtime by scanning the html
+ * directory, so no pre-generated file is needed.
  *
  * The suite and helpers default to
  * `/tmp/miniwob-plusplus/miniwob/html` as the HTML root.  Override
@@ -18,10 +17,10 @@
  * serving the html directory).
  *
  * Usage:
- *   npm run setup:miniwob                                     # workspace default
- *   node packages/pi-lean-host/scripts/setup-miniwob.mjs      # same (direct)
- *   MINIWOB_HTML_ROOT=/opt/miniwob node …setup-miniwob.mjs   # custom path
- *   node packages/pi-lean-host/scripts/setup-miniwob.mjs /custom/path
+ *   npm run setup:miniwob                                            # workspace default
+ *   node bench/miniwob/scripts/setup-miniwob.mjs                # same (direct)
+ *   MINIWOB_HTML_ROOT=/opt/miniwob node …setup-miniwob.mjs      # custom path
+ *   node bench/miniwob/scripts/setup-miniwob.mjs /custom/path
  *
  * ── Attribution ────────────────────────────────────────────────
  *
@@ -32,7 +31,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { execSync } from "node:child_process";
-import { generateSubdomainsFile } from "./generate-subdomains-core.js";
 
 // ─── Config ──────────────────────────────────────────────────────
 
@@ -116,7 +114,6 @@ function main() {
 					`and re-run to reset.`,
 			);
 		}
-		generateSubdomainsFile(htmlDir);
 		info(
 			`MiniWoB++ already cloned at ${checkoutRoot}.\n` +
 				`  HTML root: ${htmlDir}\n` +
@@ -127,7 +124,6 @@ function main() {
 
 	// ── Guard: if HTML root exists w/o .git (e.g. user placed it manually) ──
 	if (existsSync(htmlDir)) {
-		generateSubdomainsFile(htmlDir);
 		info(
 			`HTML content already present at ${htmlDir} (no .git checkout). Nothing to do.\n` +
 				`  Set MINIWOB_HTML_ROOT=${htmlDir} or leave the default if that matches.`,
@@ -163,8 +159,6 @@ function main() {
 	if (!existsSync(htmlDir)) {
 		die(`Expected HTML root not found after clone: ${htmlDir}`);
 	}
-
-	generateSubdomainsFile(htmlDir);
 
 	info("Done. MiniWoB++ content ready at:");
 	console.log(`  HTML root: ${htmlDir}`);

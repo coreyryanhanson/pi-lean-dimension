@@ -1,8 +1,8 @@
 /**
- * MiniWoB++ trivial-solver suite — Firefox-Py (Python bridge) backend.
+ * MiniWoB++ trivial-solver suite — Chromium-Py (Python bridge) backend.
  *
- * Uses the public `registerMiniwobSuite` API from `pi-lean-host` with
- * the `PythonPluginAdapter` driving the firefox-py `bridge.py`. Proves
+ * Uses the `registerMiniwobSuite` API from `bench/miniwob/solvers/register-suite.js` with
+ * the `PythonPluginAdapter` driving the chromium-py `bridge.py`. Proves
  * the plugin.evaluate episode lifecycle works end-to-end through the
  * Python bridge harness.
  *
@@ -11,9 +11,9 @@
  *
  * Prerequisites:
  *   - Python venv at backends/python-base/.venv with playwright installed
- *   - Playwright Firefox browsers installed (playwright install firefox)
+ *   - Playwright Chromium browsers installed (playwright install chromium)
  *
- * Run: npx vitest run packages/pi-lean-host/suites/miniwob-firefox-py.test.ts
+ * Run: npx vitest run bench/miniwob/suites/miniwob-chromium-py.test.ts
  *
  * @module
  */
@@ -22,8 +22,8 @@ import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { PythonPluginAdapter } from "../../pi-lean-portal/backends/python-adapter.js";
-import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
+import { PythonPluginAdapter } from "../../../packages/pi-lean-portal/backends/python-adapter.js";
+import type { BrowserPlugin } from "../../../packages/pi-lean-portal/core/plugin-api.js";
 
 import {
 	probePythonBackend,
@@ -36,12 +36,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const BRIDGE_SCRIPT = resolve(
 	__dirname,
-	"../../pi-lean-portal/backends/firefox-py/bridge.py",
+	"../../../packages/pi-lean-portal/backends/chromium-py/bridge.py",
 );
 
 const VENV_PYTHON = resolve(
 	__dirname,
-	"../../pi-lean-portal/backends/python-base/.venv/bin/python3",
+	"../../../packages/pi-lean-portal/backends/python-base/.venv/bin/python3",
 );
 
 // ─── Environment check ───────────────────────────────────────────────
@@ -51,7 +51,7 @@ const { pythonAvailable, bridgeExists } = probePythonBackend(
 	BRIDGE_SCRIPT,
 );
 
-const firefoxAvailable = (() => {
+const chromiumAvailable = (() => {
 	try {
 		const result = spawnSync(
 			VENV_PYTHON,
@@ -59,7 +59,7 @@ const firefoxAvailable = (() => {
 				"-c",
 				"from playwright.sync_api import sync_playwright; " +
 					"p = sync_playwright().start(); " +
-					"import os; print(os.path.exists(p.firefox.executable_path)); " +
+					"import os; print(os.path.exists(p.chromium.executable_path)); " +
 					"p.stop()",
 			],
 			{ stdio: "pipe", timeout: 10_000 },
@@ -70,16 +70,16 @@ const firefoxAvailable = (() => {
 	}
 })();
 
-const FIREFOX_PY_AVAILABLE =
-	pythonAvailable && bridgeExists && firefoxAvailable;
+const CHROMIUM_PY_AVAILABLE =
+	pythonAvailable && bridgeExists && chromiumAvailable;
 
-// ─── Suite — register the firefox-py backend ──────────────────────
+// ─── Suite — register the chromium-py backend ─────────────────────
 
 registerMiniwobBackend(
-	"firefox-py",
-	FIREFOX_PY_AVAILABLE,
+	"chromium-py",
+	CHROMIUM_PY_AVAILABLE,
 	async (): Promise<BrowserPlugin> => {
-		const plugin = new PythonPluginAdapter("firefox-py", {
+		const plugin = new PythonPluginAdapter("chromium-py", {
 			bridgeScript: BRIDGE_SCRIPT,
 			pythonPath: VENV_PYTHON,
 			capabilities: {
@@ -89,7 +89,7 @@ registerMiniwobBackend(
 				supportsBotDetection: true,
 				supportsDialogAutoDismissal: true,
 				supportsAbortSignal: false,
-				engine: "firefox",
+				engine: "chromium",
 			},
 		});
 		await plugin.init({});

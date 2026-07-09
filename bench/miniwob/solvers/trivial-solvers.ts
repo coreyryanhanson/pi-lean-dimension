@@ -9,7 +9,7 @@
  * crash; confident solvers additionally assert `rawReward > 0`.
  *
  * Moved from `pi-lean-portal/__tests__/helpers/miniwob-suite.ts`. Uses the
- * `TrivialSolver` type from `pi-lean-host`'s miniwob adapter.
+ * `TrivialSolver` type from `bench/miniwob`'s MiniWoB adapter.
  *
  * ── Attribution ─────────────────────────────────────────────────
  *

@@ -6,11 +6,12 @@ elimination) into the takeaways that matter going forward.
 
 ## The setup we ended up with
 
-- **`pi-lean-host`** is a separately-versioned research package that
-  evaluates `BrowserPlugin` backends against MiniWoB++ tasks. It is **not**
-  part of the `pi-lean-dimension` umbrella meta-package. Portal framework
-  internals stay covered by mocked unit tests in `pi-lean-portal`; behavioral
-  evaluation lives in `pi-lean-host`.
+- **The MiniWoB evaluation harness** lives at `bench/miniwob/` and evaluates
+  `BrowserPlugin` backends against MiniWoB++ tasks. It is **not** part of
+  the `pi-lean-dimension` umbrella meta-package (it lives outside `packages/`
+  as a repo-level evaluation artifact). Portal framework internals stay
+  covered by mocked unit tests in `pi-lean-portal`; behavioral evaluation
+  lives under `bench/miniwob/`.
 - **The MiniWoB episode lifecycle runs through `plugin.evaluate()`** on the
   plugin's own page. `adapter/miniwob-episode.ts` holds the JS constants
   (`SETUP_JS`, `VALIDATE_JS`, `READY_PROBE_JS`, `UTTERANCE_JS`,
@@ -30,8 +31,9 @@ elimination) into the takeaways that matter going forward.
   code.
 - **CI:** `structural` job (no browser, fast) + `miniwob` job (installs
   Chromium + Firefox + Python `playwright`, clones MiniWoB++ content, runs
-  all 5 suite files). Per-backend suites auto-skip when prereqs are absent,
-  so `npm test` / `npm run test:ci` stay green in bare CI.
+  all 6 suite files under `bench/miniwob/suites/`). Per-backend suites
+  auto-skip when prereqs are absent, so `npm test` / `npm run test:ci` stay
+  green in bare CI.
 
 ## Why we dropped BrowserGym
 

@@ -26,7 +26,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
 	startTestServer,
 	type TestServer,
-} from "../../pi-lean-portal/__tests__/helpers/test-server.js";
+} from "../../../packages/pi-lean-portal/__tests__/helpers/test-server.js";
 
 // ─── MIME types ───────────────────────────────────────────────────
 
@@ -68,7 +68,7 @@ export async function startMiniwobServer(
 	if (!existsSync(root)) {
 		throw new Error(
 			`MiniWoB html root not found: ${root}. Clone miniwob-plusplus@7fd85d71 ` +
-				`by running: npm run setup:miniwob -w pi-lean-host`,
+				`by running: npm run setup:miniwob`,
 		);
 	}
 

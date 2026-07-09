@@ -27,7 +27,7 @@ import {
 } from "../core/shared/storage-state.js";
 import { sessionManager } from "../core/shared/session-manager.js";
 
-import { probeUserBackend } from "../../pi-lean-host/src/index.js";
+import { probeUserBackend } from "./helpers/probe-user-backend.js";
 
 // ─── Prerequisites check via probeUserBackend ──────────────────────
 

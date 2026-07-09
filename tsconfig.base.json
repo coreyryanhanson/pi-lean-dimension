@@ -28,6 +28,7 @@
 	},
 	"include": [
 		"packages/*/**/*.ts",
+		"bench/**/*.ts",
 		"vitest.config.ts"
 	],
 	"exclude": [

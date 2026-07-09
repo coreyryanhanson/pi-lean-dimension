@@ -6,15 +6,14 @@
  * and registers the full 130-task MiniWoB++ suite against it via the
  * public `probeUserBackend` + `registerMiniwobSuite` APIs.
  *
- * This file lives under `suites/`, which is **not** in
- * `packages/pi-lean-host/package.json` `files` — so it is a repo/dev
- * artifact, **not** in the npm tarball. It runs under
- * `npm run test:miniwob` (the only script that runs `suites/`);
- * `npm run test:ci` excludes `pi-lean-host/**` and would not exercise
- * this file.
+ * This file lives under `bench/miniwob/suites/`, which is not a
+ * published package — so it is a repo/dev artifact, **not** in any
+ * npm tarball. It runs under `npm run test:miniwob` (the only script
+ * that runs `bench/miniwob/suites/`); `npm run test:ci` excludes
+ * `bench/**` and would not exercise this file.
  *
  * Behavior:
- * - At load time, read the user-backends root via the vendored
+ * - At load time, read the user-backends root via the
  *   `userBackendsDir()` helper (honors `PI_USER_BACKENDS_DIR` else
  *   defaults to `~/.pi/agent/pi-lean-portal/user-backends/`).
  * - If the root is absent or contains no `<name>-py/` directory with a
@@ -39,18 +38,16 @@
  * (e.g. the shipped `camoufox-py/miniwob-parity.test.ts` template)
  * should set `capabilities.engine` explicitly in its own factory.
  *
- * **Why `userBackendsDir()` is imported from `pi-lean-host`'s own
- * `src/`** (not from `pi-lean-portal/core/shared/paths.js`): this file
- * lives in `suites/`, which is not shipped, so a runtime import from
- * the portal's unexported internals would technically work in the
- * monorepo. We still use the vendored helper for two reasons: (1)
- * consistency with `probeUserBackend`, which also vendors the path, and
- * (2) the `PI_USER_BACKENDS_DIR` env override that the portal constant
- * does not offer — handy for pointing this runner at a scratch tree.
+ * **Why `userBackendsDir()` is imported from `pi-lean-portal/__tests__/helpers/`**
+ * (not from `pi-lean-portal/core/shared/paths.js`): the env override
+ * (`PI_USER_BACKENDS_DIR`) that the portal constant does not offer is
+ * handy for pointing this runner at a scratch tree. The helper lives in
+ * `__tests__/helpers/` because it is only ever called from tests (and the
+ * user-backends parity template).
  *
- * Run: `npm run test:miniwob` (this file is included via `suites/`).
+ * Run: `npm run test:miniwob` (this file is collected via `bench/miniwob/suites/`).
  * Point at a non-default tree: `PI_USER_BACKENDS_DIR=/path vitest run
- * packages/pi-lean-host/suites/miniwob-user-backends.test.ts`.
+ * bench/miniwob/suites/miniwob-user-backends.test.ts`.
  *
  * @module
  */
@@ -58,13 +55,13 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { PythonPluginAdapter } from "../../pi-lean-portal/backends/python-adapter.js";
-import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
+import { PythonPluginAdapter } from "../../../packages/pi-lean-portal/backends/python-adapter.js";
+import type { BrowserPlugin } from "../../../packages/pi-lean-portal/core/plugin-api.js";
 
 import {
 	probeUserBackend,
 	userBackendsDir,
-} from "../src/probe-user-backend.js";
+} from "../../../packages/pi-lean-portal/__tests__/helpers/probe-user-backend.js";
 import {
 	registerMiniwobSuite,
 	type MiniwobBackend,
@@ -72,15 +69,13 @@ import {
 
 // ─── Content availability ────────────────────────────────────────
 //
-// Mirrors the gate in `miniwob-suite-helper.ts` so a discovered backend
-// without MiniWoB++ content still auto-skips at the describe level
-// instead of registering 130 failing tasks.
+// Unlike `miniwob-suite-helper.ts`, this runner does NOT start its own
+// static server — so it can only run when an explicit MINIWOB_URL is
+// provided. Content on disk (MINIWOB_HTML_ROOT) is not sufficient; a
+// server must be reachable. Set MINIWOB_URL when invoking this runner.
 
-const HTML_ROOT =
-	process.env.MINIWOB_HTML_ROOT ?? "/tmp/miniwob-plusplus/miniwob/html";
 const HAS_EXTERNAL_URL = Boolean(process.env.MINIWOB_URL);
-const HTML_ROOT_PRESENT = existsSync(HTML_ROOT);
-const CONTENT_AVAILABLE = HAS_EXTERNAL_URL || HTML_ROOT_PRESENT;
+const CONTENT_AVAILABLE = HAS_EXTERNAL_URL;
 
 // ─── Backend discovery ───────────────────────────────────────────
 //
@@ -183,7 +178,7 @@ if (discovered.length > 0) {
 		// helper, so it does not share its server. A dev running this file
 		// by hand should either set `MINIWOB_URL` or start the static
 		// server themselves (see
-		// `packages/pi-lean-host/scripts/miniwob-server.ts`).
+		// `bench/miniwob/scripts/miniwob-server.ts`).
 		registerMiniwobSuite(backend, async () => {
 			return process.env.MINIWOB_URL ?? "http://localhost:8080";
 		});

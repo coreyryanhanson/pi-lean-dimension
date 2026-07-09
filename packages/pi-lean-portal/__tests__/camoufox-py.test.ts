@@ -28,10 +28,7 @@ import { PythonPluginAdapter } from "../backends/python-adapter.js";
 import { runContractTests } from "./helpers/plugin-contract.js";
 import { startTestServer } from "./helpers/test-server.js";
 
-// Import the vendored probe from pi-lean-host (monorepo sibling).
-// This avoids duplicating the user-backends path resolution logic
-// while keeping the probe consistent with the rest of the toolchain.
-import { probeUserBackend } from "../../pi-lean-host/src/index.js";
+import { probeUserBackend } from "./helpers/probe-user-backend.js";
 
 // ─── Prerequisites check via probeUserBackend ──────────────────────
 

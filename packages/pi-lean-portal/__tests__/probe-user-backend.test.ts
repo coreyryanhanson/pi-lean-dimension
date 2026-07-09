@@ -26,7 +26,7 @@ import { join } from "node:path";
 import {
 	probeUserBackend,
 	userBackendsDir,
-} from "../src/probe-user-backend.js";
+} from "./helpers/probe-user-backend.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

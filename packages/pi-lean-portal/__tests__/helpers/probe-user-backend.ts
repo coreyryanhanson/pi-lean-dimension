@@ -1,6 +1,6 @@
 /**
  * `probeUserBackend` — availability probe for a user-managed stealth
- * Python backend under `~/.pi/agent/pi-lean-portal/user-backends/`.
+ * Python backend.
  *
  * Lets a user-managed stealth backend be exercised through the 130-task
  * MiniWoB++ harness (and the shipped parity-test template) without
@@ -10,7 +10,7 @@
  * template that needs a binary probe (e.g. Camoufox's
  * `python -m camoufox fetch` check) can layer that on top.
  *
- * Resolution mirrors `detectPluginType` in
+ * Resolution mirrors the user-backend discovery in `detectPluginType` in
  * `pi-lean-portal/core/plugin-config.ts` so this probe and the runtime
  * loader agree on where a backend lives:
  * - `bridgePath` defaults to `${userBackendsDir()}/${name}/bridge.py`;
@@ -21,20 +21,10 @@
  *   `PI_USER_BACKEND_<UPPERNAME>_PYTHON` so a user can point at a
  *   non-`user-backends` venv without editing the test/template.
  *
- * **Why `userBackendsDir()` is vendored here** rather than imported from
- * `pi-lean-portal/core/shared/paths.js`: `pi-lean-host` declares
- * `pi-lean-portal` as an **optional** peer dependency (host is usable
- * standalone), and the portal's `package.json` `exports` exposes only
- * `.` with no subpath for `./core/shared/paths.js`. A runtime
- * value-import would break for any consumer installing `pi-lean-host`
- * as a standalone tarball without monorepo source colocation. The
- * cross-package precedent is `import type` (erased at runtime — see
- * `adapter/miniwob-adapter.ts`) or imports in `suites/` (not in
- * `pi-lean-host` `files` → not shipped). This module duplicates one
- * stable path string (documented stable in
- * `pi-lean-portal/core/shared/paths.ts`); the env override is also
- * genuinely useful for non-standard installs, which the portal constant
- * does not offer.
+ * Lives in `__tests__/helpers/` because it is only ever called from
+ * tests (and the user-backends parity template). The env overrides
+ * (`PI_USER_BACKENDS_DIR` + per-name `PI_USER_BACKEND_<NAME>_PYTHON`)
+ * are preserved from the original vendored helper.
  *
  * @module
  */

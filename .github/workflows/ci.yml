@@ -121,6 +121,6 @@ jobs:
         with:
           name: miniwob-test-results
           path: |
-            packages/pi-lean-host/results/
+            bench/miniwob/results/
             packages/pi-lean-portal/__tests__/*.xml
           if-no-files-found: ignore

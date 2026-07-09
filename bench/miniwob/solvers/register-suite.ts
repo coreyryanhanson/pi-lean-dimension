@@ -10,7 +10,7 @@
  * ```ts
  * // my-miniwob-parity.test.ts (user-owned)
  * import { describe } from "vitest";
- * import { registerMiniwobSuite, type MiniwobBackend } from "pi-lean-host";
+ * import { registerMiniwobSuite, type MiniwobBackend } from "../../bench/miniwob/solvers/register-suite.js";
  * import { MyStealthPlugin } from "../src/index.ts";
  *
  * const backend: MiniwobBackend = {
@@ -25,7 +25,7 @@
  *
  * The suite handles task classification (element vs. non-element), solver
  * dispatch, and result assertions automatically. See the "Benchmarking your
- * own BrowserPlugin" section of `pi-lean-host/README.md` for details.
+ * own BrowserPlugin" section of `bench/README.md` for details.
  *
  * Moved from `pi-lean-portal/__tests__/helpers/miniwob-suite.ts`.
  * Changes from the original:
@@ -43,9 +43,8 @@ import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
 import { runMiniwobTask } from "../adapter/miniwob-adapter.js";
-import type { BrowserPlugin } from "../../pi-lean-portal/core/plugin-api.js";
+import type { BrowserPlugin } from "../../../packages/pi-lean-portal/core/plugin-api.js";
 import { SOLVERS, CONFIDENT_TASKS } from "./trivial-solvers.js";
-import { MINIWOB_SUBDOMAINS } from "../generated/subdomains.js";
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -55,7 +54,7 @@ export const SEED = 12345;
 /** Per-test timeout — navigate + setup + solve + done-poll can take ~20s. */
 export const TEST_TIMEOUT = 60_000;
 
-/** Default MiniWoB++ html root (matches miniwob-suite-helper.ts and generate-subdomains.ts). */
+/** Default MiniWoB++ html root (matches miniwob-suite-helper.ts). */
 const DEFAULT_HTML_ROOT = "/tmp/miniwob-plusplus/miniwob/html";
 
 /** Subdirectory under html root containing MiniWoB++ task HTML files. */
@@ -211,7 +210,7 @@ export function registerMiniwobSuite(
 		const allSubdomains = collectAllSubdomains();
 
 		// When MiniWoB++ content is absent (fresh clone without setup),
-		// the globalSetup writes a placeholder stub with an empty array.
+		// collectAllSubdomains returns an empty array.
 		// Surface a single clear skip reason instead of silent 0-test pass.
 		if (allSubdomains.length === 0) {
 			it.skip("MiniWoB++ content not available — run `npm run setup:miniwob` to download the task fixtures", () => {});
@@ -281,21 +280,11 @@ export function registerMiniwobSuite(
 // ─── Subdomain collection ────────────────────────────────────────
 
 /**
- * Collect all known MiniWoB++ subdomains.
- *
- * Uses the generated static list (`generated/subdomains.ts`) as the
- * fast path. When the generated list is empty (stale npm-publish
- * artifact, fresh monorepo clone before setup), falls back to a
- * runtime scan of the MiniWoB++ html directory — ensuring the suite
- * works without a pre-generated file.
+ * Collect all known MiniWoB++ subdomains by scanning the html directory
+ * at runtime. Returns an empty array if MiniWoB++ content isn't installed
+ * (e.g. on a fresh clone before `npm run setup:miniwob`).
  */
 function collectAllSubdomains(): string[] {
-	if (MINIWOB_SUBDOMAINS.length > 0) {
-		return [...MINIWOB_SUBDOMAINS].sort();
-	}
-	// Fallback: scan MiniWoB++ html directory at runtime.
-	// Handles stale publish artifacts where the globalSetup didn’t run
-	// and fresh clones before the generated file was created.
 	const root = process.env.MINIWOB_HTML_ROOT ?? DEFAULT_HTML_ROOT;
 	const taskDir = join(root, HTML_DIR);
 	if (existsSync(taskDir)) {
