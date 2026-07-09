@@ -124,3 +124,78 @@ jobs:
             bench/miniwob/results/
             packages/pi-lean-portal/__tests__/*.xml
           if-no-files-found: ignore
+
+  # ── Stealth backends (Camoufox, opt-in via workflow_dispatch) ──────
+  #
+  # Validates the full user-backends stealth path: Camoufox install,
+  # bridge template copy, contract tests, and MiniWoB user-backends runner.
+  #
+  # workflow_dispatch-only — does NOT run on every PR. Trigger manually
+  # from the Actions tab to validate the stealth pipeline on a branch.
+  stealth:
+    name: Stealth backends (Camoufox)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    needs: structural
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install system deps for Firefox (Camoufox needs these)
+        run: npx playwright install-deps firefox
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create user-backends hierarchy and install Camoufox
+        run: |
+          mkdir -p ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py
+          python3 -m venv ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv
+          ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv/bin/pip install --quiet "cloverlabs-camoufox[geoip]"
+          ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv/bin/python -m camoufox fetch
+
+      - name: Copy Camoufox bridge template to user-backends
+        run: |
+          cp packages/pi-lean-portal/docs/stealth-backends/camoufox-py/bridge.py \
+            ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/bridge.py
+
+      - name: Setup MiniWoB++ content
+        run: npm run setup:miniwob
+
+      - name: Start MiniWoB static server
+        run: |
+          cd /tmp/miniwob-plusplus/miniwob/html
+          python3 -m http.server 8080 &
+          sleep 2
+          echo "MINIWOB_URL=http://localhost:8080" >> "$GITHUB_ENV"
+
+      - name: Run Camoufox contract tests + user-backends runner
+        env:
+          MINIWOB_URL: http://localhost:8080
+        run: |
+          npx vitest run \
+            packages/pi-lean-portal/__tests__/camoufox-py.test.ts \
+            packages/pi-lean-portal/__tests__/camoufox-py-persistence.test.ts \
+            bench/miniwob/suites/miniwob-user-backends.test.ts
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stealth-test-results
+          path: |
+            bench/miniwob/results/
+            packages/pi-lean-portal/__tests__/*.xml
+          if-no-files-found: ignore

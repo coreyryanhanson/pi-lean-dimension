@@ -295,7 +295,8 @@ BrowserGym removal and host/MiniWoB setup decision record.
 
 The repository includes a GitHub Actions workflow at
 `.github/workflows/ci.yml` that runs on every PR and push to `main`,
-split into two parallel jobs:
+split into three jobs (two run on every PR; one is opt-in via
+`workflow_dispatch`):
 
 **`structural` job (fast, no browser):**
 
@@ -325,8 +326,28 @@ auto-skips when its browser prerequisites are absent or MiniWoB++
 content is unreachable. This keeps `npm test` and
 `npm run test:ci` green in bare CI without path-filtering logic.
 
+**`stealth` job (opt-in, Camoufox user-backends validation):**
+
+`workflow_dispatch`-only — does NOT run on every PR. Trigger manually
+from the Actions tab. Depends on `structural` passing.
+
+1. **Checkout** + **Setup Node.js 22** + `npm ci`
+2. **Install Firefox system deps** via `npx playwright install-deps firefox`
+3. **Setup Python 3.12 + user-backends venv** with `cloverlabs-camoufox[geoip]`
+   and `python -m camoufox fetch`
+4. **Copy Camoufox bridge template** from
+   `packages/pi-lean-portal/docs/stealth-backends/camoufox-py/bridge.py`
+   into the user-backends tree
+5. **Clone MiniWoB++ content** via `npm run setup:miniwob`
+6. **Start MiniWoB static server** on port 8080
+7. **Run Camoufox contract tests** (Sprint 3) + the
+   `miniwob-user-backends.test.ts` suite (Sprint 2, which discovers the
+   installed Camoufox backend)
+8. **Upload test artifacts on failure** (vitest output, Playwright traces)
+
 **Manual trigger:** The workflow also supports `workflow_dispatch`
-for re-running from the Actions tab without pushing a new commit.
+for re-running jobs from the Actions tab without pushing a new commit,
+and for triggering the `stealth` job.
 
 ## TypeScript Quirks
 
