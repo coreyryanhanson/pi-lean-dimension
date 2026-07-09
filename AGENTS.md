@@ -119,6 +119,7 @@ Plugin loading reads `browser.plugins` from `~/.pi/agent/settings.json` (global,
 - **`firefox`** — Node/Playwright (thin subclass of `PlaywrightPluginBase`), enabled by default. Same contract as chromium.
 - **`chromium-py`** — Python/Playwright (thin subclass of `PlaywrightBridge`), disabled by default. Python parity reference. Shared logic in `python-base/`.
 - **`firefox-py`** — Python/Playwright (thin subclass of `PlaywrightBridge`), disabled by default. Python parity reference. Shared logic in `python-base/`.
+- **User-installed stealth backends (not shipped)** — patched/fingerprint-managed browser binaries (e.g. Camoufox) installed by the user under `~/.pi/agent/pi-lean-portal/user-backends/<name>-py/`. Never in the npm tarball, never auto-downloaded (no plugin marketplace — trusted user code). Loaded only when explicitly listed in `browser.plugins` with an absolute `pythonPath`; never in the default fallback list. The shipped example template is Camoufox at `packages/pi-lean-portal/docs/stealth-backends/camoufox-py/` (docs-only, source repo only). See `packages/pi-lean-portal/AGENTS.md` ("Stealth backends") and `packages/pi-lean-portal/docs/stealth-backends/README.md` for the install flow and quirks schema.
 
 > For the `BrowserPlugin` method list, router dispatch responsibilities, profile/cookie persistence mechanics, snapshot cache, nav-settle, bot-detection tiers, `browser-inspect` internals, and the full constraints & debt list, see [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md).
 
@@ -204,15 +205,15 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 
 | Category | Location | Files (~) | Tests (~) | Requires browser? |
 |----------|----------|-----------|-----------|-------------------|
-| Portal structural | `pi-lean-portal/__tests__/` | 19 | 650+ | No |
-| Portal contract/backend | `pi-lean-portal/__tests__/` | 7 | varies | Per-backend (auto-skip) |
+| Portal structural | `pi-lean-portal/__tests__/` | 20 | 650+ | No |
+| Portal contract/backend | `pi-lean-portal/__tests__/` | 9 | varies | Per-backend (auto-skip) |
 | MiniWoB behavioral | `bench/miniwob/suites/` | 6 | 130 tasks × 4 + smoke* | Chromium + Firefox + Python + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 17+ | No |
 | Dimension | `pi-lean-dimension/` | 1 | 2 | No |
 
-**Portal structural (19 files):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, ship-manifest
+**Portal structural (20 files):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, probe-user-backend, ship-manifest
 
-**Portal per-backend contract tests (7 files):** reddit-dialog (errors if Chromium missing), cookie-persistence (auto-skip), chromium-py (auto-skip), chromium-py-persistence (auto-skip), firefox (auto-skip), firefox-py (auto-skip), firefox-py-persistence (auto-skip)
+**Portal per-backend contract tests (9 files):** reddit-dialog (errors if Chromium missing), cookie-persistence (auto-skip), chromium-py (auto-skip), chromium-py-persistence (auto-skip), firefox (auto-skip), firefox-py (auto-skip), firefox-py-persistence (auto-skip), camoufox-py (auto-skip, user-backends), camoufox-py-persistence (auto-skip, user-backends)
 
 **MiniWoB behavioral tests (`bench/miniwob/suites/`, 6 files):**
 

@@ -60,6 +60,125 @@ There is no `connectOverCDP?` interface hook — a host-owns-browser
 ("Mode B") path was considered and dropped as YAGNI; it will be
 re-added alongside a real consumer that needs it.
 
+## Stealth backends (user-managed)
+
+Stealth backends are **user-installed plugins** that drive
+patched/fingerprint-managed browser binaries (e.g. Camoufox) for sites
+that block the shipped Chromium/Firefox. They are never shipped in the
+npm tarball and the extension never downloads or executes them
+automatically — there is no plugin marketplace. For the install flow
+and the choosing decision, see
+[`docs/stealth-backends/README.md`](docs/stealth-backends/README.md) and
+[`docs/stealth-backends/CHOOSING.md`](docs/stealth-backends/CHOOSING.md).
+
+### Deployment: user-writable data tree, not the npm tarball
+
+Stealth backends live under the user-writable data tree:
+
+```
+~/.pi/agent/pi-lean-portal/
+├── web-guides/              (existing)
+├── browser-state/           (existing)
+└── user-backends/           ← stealth backends go here
+    └── camoufox-py/
+        ├── bridge.py        (user copies from docs/stealth-backends/)
+        └── .venv/           (user-created: engine pip pkg + playwright)
+```
+
+This is **trusted user code** — the user wrote or audited the bridge,
+created the venv, and fetched the binary. The extension spawns it as a
+subprocess; it never auto-downloads stealth backends. `user-backends/`
+is a **different tree from any in-repo test fixtures** (which live
+gitignored under `bench/miniwob/fixtures/` for the evaluation
+harness). The `~/.pi/agent/pi-lean-portal/user-backends/` tree is what
+the pi agent's production `detectPluginType` reads at runtime.
+
+Stealth backends are **never in the default fallback list**. When
+`browser.plugins` is absent, only the four shipped backends
+(`chromium`, `firefox`, `chromium-py`, `firefox-py`) are loaded. A
+fresh install must not emit validation errors for plugins the user
+never asked for. Tested in `__tests__/plugin-config-browser.test.ts`.
+
+### Discovery: multi-root, absolute short-circuit
+
+`detectPluginType(dir, roots)` (in `core/plugin-config.ts`) resolves
+`dir` in order:
+
+1. **Absolute path** — used directly (dev/power-user escape hatch).
+2. **`DEFAULT_BACKEND_ROOTS[0]`** = package `backends/` (shipped
+   backends).
+3. **`DEFAULT_BACKEND_ROOTS[1]`** = `USER_BACKENDS_DIR` (user stealth).
+
+First root with an unambiguous entry point (`index.ts` XOR `bridge.py`)
+wins. Missing from all roots throws an error naming every root
+searched. Tested in `__tests__/plugin-loading.test.ts`.
+
+The `pythonPath` in `config` must be **absolute** — a relative
+`pythonPath` is not resolved against `USER_BACKENDS_DIR` (that nicety
+is intentionally out of scope). Point it at
+`<user-backends>/<name>-py/.venv/bin/python`.
+
+### Config channel: `browser.init` RPC
+
+After the `ping` handshake, `python-adapter.ts` sends a single
+`browser.init` RPC with `{ config: <user config dict> }`. The bridge
+stores it as `self._plugin_config`; subclasses read
+`self.plugin_config.get("launch", {})`. A bridge that does not
+recognize `browser.init` rejects with a "bridge too old" message so
+upgrades fail loudly. Re-sent after crash-recovery restarts. Tested in
+`__tests__/python-adapter.test.ts` ("browser.init RPC").
+
+### Importability: `PYTHONPATH` injection
+
+`python-adapter.ts` `_buildPythonPath()` appends the package's
+`backends/python-base/` to any existing `PYTHONPATH` in the spawn env,
+so a user bridge in its own venv can
+`from pi_browser_bridge.playwright_base import PlaywrightBridge`
+without a `pip install` of `pi-browser-bridge` (which is not on PyPI).
+Append (not prepend) so the editable install in `python-base/.venv`
+keeps precedence for the shipped `chromium-py` / `firefox-py` bridges.
+Tested in `__tests__/python-adapter.test.ts` ("PYTHONPATH injection").
+
+### Quirks schema (`PlaywrightBridge` class attrs)
+
+The contract for a stealth backend is a set of class attributes on
+`PlaywrightBridge` in
+`backends/python-base/pi_browser_bridge/playwright_base.py`. Set them
+as class attributes on your subclass:
+
+| Flag | Default | Effect when set |
+|------|---------|-----------------|
+| `_fingerprint_managed_context` | `False` | `create_browser_context()` skips hardcoded `viewport`/`user_agent`; lets the fingerprint package set them. |
+| `_eval_prefix` | `""` | Prepended to every `page.evaluate` expression in `do_evaluate` (e.g. Camoufox's `"mw:"` routes writes to the main world). |
+| `_scroll_via_wheel` | `False` | `do_scroll` uses `page.mouse.wheel` instead of `page.evaluate("window.scrollBy")` (avoids eval-write under isolated-world stealth). |
+| `_skip_default_viewport` | `False` | Skips Playwright's `Browser.setDefaultViewport` CDP call (Camoufox binary rejects its `isMobile` prop). |
+| `_skip_networkidle` | `False` | Nav-settle uses `load` instead of `networkidle` (patched binaries don't fire `networkidle` reliably). |
+
+All flags default off → `chromium-py` / `firefox-py` behavior is
+bit-identical to a pre-stealth install. A dropped v2 `_context_factory`
+flag (dispatching to a `_camoufox_new_context` helper) was removed
+when `camoufox.NewContext` turned out to be broken on the current
+binary (`Protocol error (Browser.setDefaultViewport)` from the same
+`isMobile` rejection `_skip_default_viewport` handles). Camoufox
+injects the fingerprint at **browser launch** via `camoufox.NewBrowser`,
+so standard `browser.new_context()` with
+`_fingerprint_managed_context = True` is correct — do not re-attempt
+`NewContext`.
+
+### Camoufox: the shipped example template
+
+Camoufox is the **shipped, tested example** — a reference `bridge.py`
+and a MiniWoB++ parity-test template live at
+`docs/stealth-backends/camoufox-py/` (source repo only; **not in the
+npm tarball** because `docs/` is excluded from `package.json` `files`).
+Pointer:
+`packages/pi-lean-portal/docs/stealth-backends/camoufox-py/bridge.py`.
+Auto-skip contract tests live at `__tests__/camoufox-py.test.ts` and
+`__tests__/camoufox-py-persistence.test.ts` (run when a Camoufox
+install is present under `user-backends/`). The generic MiniWoB++
+runner at `bench/miniwob/suites/miniwob-user-backends.test.ts`
+discovers any `<name>-py/` user backend at runtime.
+
 ## Router (`core/router.ts`)
 
 All tool calls dispatch through the router. Key responsibilities:
@@ -111,6 +230,11 @@ All tool calls dispatch through the router. Key responsibilities:
 - **Guide staleness**: no builtin site guides shipped — entirely user-authored via `~/.pi/agent/pi-lean-portal/web-guides/*.md`. Guides carry `updated` date and `currentDate` timestamp in output.
 - **Learn mode toggle**: `/web learn` enables `web-learn` tool; `/web on` removes it. Agent never calls `web-learn` unprompted. Default is off on fresh sessions.
 - **Navigation settle** (`core/shared/nav-settle.ts`): after click or press, detects page navigation via a `framenavigated` listener and waits for `load + networkidle` (capped, errors swallowed) before reading URL/title/snapshot. Replaces the old fixed `waitForTimeout(300)` pattern that caused URL/DOM mismatches. Framework-agnostic via a lightweight `NavigationSettlePage` interface for testability.
+- **Stealth backends are user-managed, not shipped** — they live under `~/.pi/agent/pi-lean-portal/user-backends/`, are never in the npm tarball, and the extension never auto-downloads them. The user-side install burden is real: a per-engine venv, a ~100 MB patched-binary fetch, and an explicit `settings.json` entry with an **absolute** `pythonPath`. See `docs/stealth-backends/README.md` for the install flow.
+- **Fingerprint-managed context** — a stealth backend sets `_fingerprint_managed_context = True` so `create_browser_context()` skips the hardcoded `viewport`/`user_agent` and lets the fingerprint package set them. Camoufox injects the fingerprint at **browser launch** via `camoufox.NewBrowser`, so standard `browser.new_context()` is correct (a `_context_factory` / `NewContext` path was attempted and dropped — `camoufox.NewContext` is broken on the current binary).
+- **Camoufox `mw:` prefix + `main_world_eval`** — Camoufox sets `_eval_prefix = "mw:"` so `do_evaluate` writes route to the main world (isolated-world stealth otherwise blocks them), and forwards `main_world_eval=True` to `NewBrowser`. Contract tests assert `do_evaluate("() => 1 + 1")` returns `2`.
+- **`isMobile` / `_skip_default_viewport` binary quirk** — Camoufox's patched Firefox binary rejects the `isMobile` prop in Playwright's `Browser.setDefaultViewport` CDP call, so the template sets `_skip_default_viewport = True`. If a future binary version fixes the rejection, the flag degrades gracefully (default off) — re-validate on Camoufox releases.
+- **`xvfb` for `headless='virtual'`** — on Linux, Camoufox's `headless='virtual'` mode needs the `xvfb` system package; true headless (`headless=True`, the template's default) works without it.
 - **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click). Checked in both ChromiumPlugin and the Python bridge.
 
 ## Debugging

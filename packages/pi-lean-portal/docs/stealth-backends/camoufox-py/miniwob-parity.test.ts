@@ -56,7 +56,15 @@
  *
  *    The imports below are relative paths into the monorepo source
  *    (`pi-lean-portal` internals + `bench/miniwob/` solvers) so the
- *    file typechecks cleanly from within the cloned repo.
+ *    file typechecks cleanly from within the cloned repo. **These
+ *    relative imports are the permanent form of this template** — they
+ *    are not a workaround to be swapped for bare specifiers later. If
+ *    you copy this file elsewhere under the monorepo (instead of
+ *    running it in place from `docs/stealth-backends/camoufox-py/`),
+ *    adjust the relative import depths to match your placement; do not
+ *    rewrite them as package imports (`pi-lean-portal` does not export
+ *    `python-adapter.js` or `core/plugin-api.js` as subpaths, and
+ *    `bench/miniwob/` is not a published package at all).
  *
  * What it proves
  * --------------
