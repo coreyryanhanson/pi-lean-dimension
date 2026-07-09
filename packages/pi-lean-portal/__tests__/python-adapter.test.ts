@@ -725,11 +725,17 @@ describeStderr("stderr capture", () => {
 			);
 			expect(result.success).toBe(true);
 
-			const stderr = (adapter as unknown as Record<string, string>)[
-				"_stderrAccumulated"
-			];
-			expect(stderr).toContain("BOOT_ERR_ABC");
-			expect(stderr).toContain("NAV_ERR_XYZ");
+			// Startup stderr (BOOT_ERR_ABC) is written during init, so it arrives
+			// before navigate resolves — safe to assert synchronously.
+			const stderrAccessor = () =>
+				(adapter as unknown as Record<string, string>)["_stderrAccumulated"];
+			expect(stderrAccessor()).toContain("BOOT_ERR_ABC");
+
+			// Navigate stderr (NAV_ERR_XYZ) is written to a separate stream; the
+			// data event may fire after the stdout response resolves, so we poll.
+			await expect
+				.poll(stderrAccessor, { timeout: 1_000, interval: 50 })
+				.toContain("NAV_ERR_XYZ");
 		} finally {
 			await adapter.cleanupAll().catch(() => {});
 			try {

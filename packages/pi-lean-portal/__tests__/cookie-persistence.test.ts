@@ -15,6 +15,7 @@
  * Auto-skips the entire suite when Playwright Chromium is not installed.
  */
 
+import { existsSync } from "fs";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { chromium } from "playwright";
 import { ChromiumPlugin } from "../backends/chromium/index.js";
@@ -30,15 +31,15 @@ import { sessionManager } from "../core/shared/session-manager.js";
 
 // ─── Chromium availability check — skip gracefully if absent ───────
 
-let chromiumAvailable = false;
-try {
-	chromium.executablePath();
-	chromiumAvailable = true;
-} catch {
-	chromiumAvailable = false;
-}
-
-const describeIfChromium = chromiumAvailable ? describe : describe.skip;
+const describeIfChromium = (() => {
+	try {
+		const crPath = chromium.executablePath();
+		if (!existsSync(crPath)) return describe.skip;
+		return describe;
+	} catch {
+		return describe.skip;
+	}
+})();
 
 // ─── Test fixture HTML ─────────────────────────────────────────────
 
