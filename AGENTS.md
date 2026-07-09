@@ -119,7 +119,7 @@ Plugin loading reads `browser.plugins` from `~/.pi/agent/settings.json` (global,
 - **`firefox`** — Node/Playwright (thin subclass of `PlaywrightPluginBase`), enabled by default. Same contract as chromium.
 - **`chromium-py`** — Python/Playwright (thin subclass of `PlaywrightBridge`), disabled by default. Python parity reference. Shared logic in `python-base/`.
 - **`firefox-py`** — Python/Playwright (thin subclass of `PlaywrightBridge`), disabled by default. Python parity reference. Shared logic in `python-base/`.
-- **User-installed stealth backends (not shipped)** — patched/fingerprint-managed browser binaries (e.g. Camoufox) installed by the user under `~/.pi/agent/pi-lean-portal/user-backends/<name>-py/`. Never in the npm tarball, never auto-downloaded (no plugin marketplace — trusted user code). Loaded only when explicitly listed in `browser.plugins` with an absolute `pythonPath`; never in the default fallback list. The shipped example template is Camoufox at `packages/pi-lean-portal/docs/stealth-backends/camoufox-py/` (docs-only, source repo only). See `packages/pi-lean-portal/AGENTS.md` ("Stealth backends") and `packages/pi-lean-portal/docs/stealth-backends/README.md` for the install flow and quirks schema.
+- **User-installed stealth backends (not shipped)** — patched/fingerprint-managed browser binaries (e.g. Camoufox) installed by the user under `~/.pi/agent/pi-lean-portal/user-backends/<name>-py/`. Never in the npm tarball, never auto-downloaded (no plugin marketplace — trusted user code). Loaded only when explicitly listed in `browser.plugins` with an absolute `pythonPath`; never in the default fallback list. The shipped example template is Camoufox at `packages/pi-lean-portal/contributed/camoufox-py/` (docs-only, source repo only). See `packages/pi-lean-portal/AGENTS.md` ("Stealth backends") and `packages/pi-lean-portal/contributed/README.md` for the install flow and quirks schema.
 
 > For the `BrowserPlugin` method list, router dispatch responsibilities, profile/cookie persistence mechanics, snapshot cache, nav-settle, bot-detection tiers, `browser-inspect` internals, and the full constraints & debt list, see [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md).
 
@@ -326,7 +326,7 @@ auto-skips when its browser prerequisites are absent or MiniWoB++
 content is unreachable. This keeps `npm test` and
 `npm run test:ci` green in bare CI without path-filtering logic.
 
-**`stealth` job (opt-in, Camoufox user-backends validation):**
+**`contributed` job (opt-in, Camoufox user-backends validation):**
 
 `workflow_dispatch`-only — does NOT run on every PR. Trigger manually
 from the Actions tab. Depends on `structural` passing.
@@ -336,7 +336,7 @@ from the Actions tab. Depends on `structural` passing.
 3. **Setup Python 3.12 + user-backends venv** with `cloverlabs-camoufox[geoip]`
    and `python -m camoufox fetch`
 4. **Copy Camoufox bridge template** from
-   `packages/pi-lean-portal/docs/stealth-backends/camoufox-py/bridge.py`
+   `packages/pi-lean-portal/contributed/camoufox-py/bridge.py`
    into the user-backends tree
 5. **Clone MiniWoB++ content** via `npm run setup:miniwob`
 6. **Start MiniWoB static server** on port 8080
@@ -347,7 +347,7 @@ from the Actions tab. Depends on `structural` passing.
 
 **Manual trigger:** The workflow also supports `workflow_dispatch`
 for re-running jobs from the Actions tab without pushing a new commit,
-and for triggering the `stealth` job.
+and for triggering the `contributed` job.
 
 ## TypeScript Quirks
 

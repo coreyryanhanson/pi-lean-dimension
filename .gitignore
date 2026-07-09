@@ -160,3 +160,26 @@ packages/*/LICENSE
 # Scratch files (not part of the active branch)
 /.pi-subagents/
 /reports/
+
+# Contributed backend templates: ignore everything under contributed/ by
+# default; whitelist only the shipped (tracked) camoufox set. Any user-
+# dropped scratch backend (invisible-py, future engines) is ignored unless
+# explicitly re-included here. The whitelist is the single source of truth
+# for "what ships from this dir" — adding a new shipped template requires
+# adding its path here.
+packages/pi-lean-portal/contributed/*
+!packages/pi-lean-portal/contributed/README.md
+!packages/pi-lean-portal/contributed/CHOOSING.md
+!packages/pi-lean-portal/contributed/camoufox-py
+packages/pi-lean-portal/contributed/camoufox-py/*
+!packages/pi-lean-portal/contributed/camoufox-py/bridge.py
+!packages/pi-lean-portal/contributed/camoufox-py/miniwob-parity.test.ts
+
+# Contributed backend tests: same ignore-by-default + whitelist-shipped
+# logic as the templates above. Contract/persistence tests for scratch
+# backends are ignored unless explicitly re-included.
+packages/pi-lean-portal/__tests__/contributed/*
+!packages/pi-lean-portal/__tests__/contributed/camoufox-py
+packages/pi-lean-portal/__tests__/contributed/camoufox-py/*
+!packages/pi-lean-portal/__tests__/contributed/camoufox-py/camoufox-py.test.ts
+!packages/pi-lean-portal/__tests__/contributed/camoufox-py/camoufox-py-persistence.test.ts

@@ -16,18 +16,18 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
-import { PythonPluginAdapter } from "../backends/python-adapter.js";
+import { PythonPluginAdapter } from "../../../backends/python-adapter.js";
 import {
 	startTestServer,
 	COOKIE_PERSISTENCE_HTML,
-} from "./helpers/test-server.js";
+} from "../../helpers/test-server.js";
 import {
 	loadStorageState,
 	deleteStorageState,
-} from "../core/shared/storage-state.js";
-import { sessionManager } from "../core/shared/session-manager.js";
+} from "../../../core/shared/storage-state.js";
+import { sessionManager } from "../../../core/shared/session-manager.js";
 
-import { probeUserBackend } from "./helpers/probe-user-backend.js";
+import { probeUserBackend } from "../../helpers/probe-user-backend.js";
 
 // ─── Prerequisites check via probeUserBackend ──────────────────────
 

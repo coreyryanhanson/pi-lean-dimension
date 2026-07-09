@@ -14,11 +14,11 @@
  * 1. Install Camoufox under your user-backends tree:
  *      ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/bridge.py
  *      (copy from this repo's
- *       `packages/pi-lean-portal/docs/stealth-backends/camoufox-py/bridge.py`)
+ *       `packages/pi-lean-portal/contributed/camoufox-py/bridge.py`)
  *    Create a venv at `user-backends/camoufox-py/.venv/`, install
  *    `cloverlabs-camoufox[geoip]` + `playwright`, and run
  *    `python -m camoufox fetch`. See
- *    `packages/pi-lean-portal/docs/stealth-backends/README.md` for the
+ *    `packages/pi-lean-portal/contributed/README.md` for the
  *    full install flow.
  * 2. Set up MiniWoB++ content once: `npm run setup:miniwob` (clones the
  *    pinned `miniwob-plusplus` repo). Then make the content reachable:
@@ -28,18 +28,18 @@
  *    point `MINIWOB_URL` at it, or rely on the `MINIWOB_HTML_ROOT`
  *    path being present on disk. This template does **not** start its
  *    own server.
- * 3. **Opt in explicitly** by setting `CAMOUFOX_PARITY_RUN=1`, then run
+ * 3. **Opt in explicitly** by setting `CONTRIB_PARITY_RUN=1`, then run
  *    this file in-place from the cloned source repo (you need the repo
  *    to have copied the template in step 1), or copy it into your own
  *    test tree under the monorepo and run:
- *      CAMOUFOX_PARITY_RUN=1 \
+ *      CONTRIB_PARITY_RUN=1 \
  *        MINIWOB_URL=http://localhost:8080 npx vitest run <this-file>
  *    Or, if you prefer to let the runner find content on disk:
- *      CAMOUFOX_PARITY_RUN=1 \
+ *      CONTRIB_PARITY_RUN=1 \
  *        MINIWOB_HTML_ROOT=/tmp/miniwob-plusplus/miniwob/html \
  *        npx vitest run <this-file>
  *
- *    **Why the explicit `CAMOUFOX_PARITY_RUN=1` opt-in?** This file is
+ *    **Why the explicit `CONTRIB_PARITY_RUN=1` opt-in?** This file is
  *    a `.test.ts` under `packages/`, so the repo's default test sweep
  *    (`npm test` / `npm run test:ci`, whose include glob matches every
  *    `.test.ts` file anywhere under `packages/`) would otherwise load it
@@ -60,7 +60,7 @@
  *    relative imports are the permanent form of this template** — they
  *    are not a workaround to be swapped for bare specifiers later. If
  *    you copy this file elsewhere under the monorepo (instead of
- *    running it in place from `docs/stealth-backends/camoufox-py/`),
+ *    running it in place from `contributed/camoufox-py/`),
  *    adjust the relative import depths to match your placement; do not
  *    rewrite them as package imports (`pi-lean-portal` does not export
  *    `python-adapter.js` or `core/plugin-api.js` as subpaths, and
@@ -98,14 +98,14 @@
 
 import { existsSync } from "node:fs";
 
-import { PythonPluginAdapter } from "../../../backends/python-adapter.js";
-import type { BrowserPlugin } from "../../../core/plugin-api.js";
+import { PythonPluginAdapter } from "../../backends/python-adapter.js";
+import type { BrowserPlugin } from "../../core/plugin-api.js";
 
-import { probeUserBackend } from "../../../__tests__/helpers/probe-user-backend.js";
+import { probeUserBackend } from "../../__tests__/helpers/probe-user-backend.js";
 import {
 	registerMiniwobSuite,
 	type MiniwobBackend,
-} from "../../../../../bench/miniwob/solvers/register-suite.js";
+} from "../../../../bench/miniwob/solvers/register-suite.js";
 
 // ─── Explicit opt-in gate ──────────────────────────────────────
 //
@@ -114,11 +114,11 @@ import {
 // every `.test.ts` file anywhere under `packages/`) loads it on every
 // run. Without a gate, a dev machine that has Camoufox installed +
 // MiniWoB++ content on disk would fire ~13 real Camoufox tasks as a
-// side effect of `npm test` and break `npm run test:ci` (AC 2.5). `CAMOUFOX_PARITY_RUN=1` is the
+// side effect of `npm test` and break `npm run test:ci` (AC 2.5). `CONTRIB_PARITY_RUN=1` is the
 // explicit opt-in a dev sets when they actually want to run the parity
 // suite. When unset, the file registers nothing — a visible no-op
 // ("no tests") rather than 130 silent skips.
-const PARITY_RUN = process.env.CAMOUFOX_PARITY_RUN === "1";
+const PARITY_RUN = process.env.CONTRIB_PARITY_RUN === "1";
 
 if (PARITY_RUN) {
 	// ─── Availability probe ────────────────────────────────────

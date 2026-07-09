@@ -31,8 +31,8 @@ not a default.
 tested template** — there is a reference `bridge.py` and a MiniWoB++
 parity-test template under
 [`camoufox-py/`](./camoufox-py/), and auto-skip contract tests in
-`packages/pi-lean-portal/__tests__/camoufox-py.test.ts` /
-`camoufox-py-persistence.test.ts` that run when a Camoufox install is
+`packages/pi-lean-portal/__tests__/contributed/camoufox-py/camoufox-py.test.ts` /
+`packages/pi-lean-portal/__tests__/contributed/camoufox-py/camoufox-py-persistence.test.ts` that run when a Camoufox install is
 present. Properties:
 
 - **Firefox-based** — a patched Firefox binary, so it shares Firefox's
@@ -119,7 +119,7 @@ rather than failing opaquely.
   executes stealth backends automatically. `user-backends/` is trusted
   user code — you wrote or audited it.
 - **Not shipped in the npm tarball.** The templates live in the source
-  repo under `docs/stealth-backends/`; `docs/` is excluded from
+  repo under `contributed/`; `docs/` is excluded from
   `package.json` `files`. You need the git repo (or a copy of the
   files) to install a stealth backend.
 - **Not in the default fallback list.** Stealth backends are loaded

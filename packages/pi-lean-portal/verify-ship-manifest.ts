@@ -13,7 +13,14 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SKIP_DIRS = new Set(["node_modules", "docs", "__tests__"]);
+// `contributed` is portal-specific: it holds backend templates (bridge.py,
+// *.test.ts parity templates) that are tracked but deliberately NOT shipped in
+// the npm tarball (excluded by the `files` allowlist). Skipping it structurally
+// mirrors how `docs` was handled before the contributed-backends restructure,
+// so a future non-test .ts helper added under contributed/ does not surface as
+// `missing` and fail ship-manifest.test.ts. If a module under contributed/ is
+// ever intended to ship, remove this entry or add the specific file to `files`.
+const SKIP_DIRS = new Set(["node_modules", "docs", "__tests__", "contributed"]);
 const SKIP_FILES = new Set(["test-fixtures.ts"]);
 /** Entries that won't exist on disk at rest but are valid (generated at pack time, e.g. by prepack). */
 const SKIP_STALE = new Set(["LICENSE"]);
@@ -51,8 +58,26 @@ export function verifyShipManifest(
 	const packageDir = packageDirOrUrl.startsWith("file:")
 		? dirname(fileURLToPath(packageDirOrUrl))
 		: packageDirOrUrl;
-	const pkgRaw = readFileSync(resolve(packageDir, "package.json"), "utf8");
-	const pkg = JSON.parse(pkgRaw) as { files?: string[] };
+	let pkgRaw: string;
+	try {
+		pkgRaw = readFileSync(resolve(packageDir, "package.json"), "utf8");
+	} catch (err) {
+		throw new Error(
+			`verifyShipManifest: could not read package.json under "${packageDir}": ${
+				err instanceof Error ? err.message : String(err)
+			}`,
+		);
+	}
+	let pkg: { files?: string[] };
+	try {
+		pkg = JSON.parse(pkgRaw) as { files?: string[] };
+	} catch (err) {
+		throw new Error(
+			`verifyShipManifest: package.json under "${packageDir}" is not valid JSON: ${
+				err instanceof Error ? err.message : String(err)
+			}`,
+		);
+	}
 	const declared = pkg.files ?? [];
 	const exactFiles = new Set<string>();
 	const dirPrefixes: string[] = [];

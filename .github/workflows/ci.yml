@@ -125,15 +125,15 @@ jobs:
             packages/pi-lean-portal/__tests__/*.xml
           if-no-files-found: ignore
 
-  # ── Stealth backends (Camoufox, opt-in via workflow_dispatch) ──────
+  # ── Contributed backends (Camoufox, opt-in via workflow_dispatch) ───
   #
-  # Validates the full user-backends stealth path: Camoufox install,
+  # Validates the full contributed-backends path: Camoufox install,
   # bridge template copy, contract tests, and MiniWoB user-backends runner.
   #
   # workflow_dispatch-only — does NOT run on every PR. Trigger manually
-  # from the Actions tab to validate the stealth pipeline on a branch.
-  stealth:
-    name: Stealth backends (Camoufox)
+  # from the Actions tab to validate the contributed pipeline on a branch.
+  contributed:
+    name: Contributed backends (Camoufox)
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch'
     needs: structural
@@ -168,7 +168,7 @@ jobs:
 
       - name: Copy Camoufox bridge template to user-backends
         run: |
-          cp packages/pi-lean-portal/docs/stealth-backends/camoufox-py/bridge.py \
+          cp packages/pi-lean-portal/contributed/camoufox-py/bridge.py \
             ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/bridge.py
 
       - name: Setup MiniWoB++ content
@@ -184,17 +184,18 @@ jobs:
       - name: Run Camoufox contract tests + user-backends runner
         env:
           MINIWOB_URL: http://localhost:8080
+          CONTRIB_PARITY_RUN: "1"
         run: |
           npx vitest run \
-            packages/pi-lean-portal/__tests__/camoufox-py.test.ts \
-            packages/pi-lean-portal/__tests__/camoufox-py-persistence.test.ts \
+            packages/pi-lean-portal/__tests__/contributed/camoufox-py/camoufox-py.test.ts \
+            packages/pi-lean-portal/__tests__/contributed/camoufox-py/camoufox-py-persistence.test.ts \
             bench/miniwob/suites/miniwob-user-backends.test.ts
 
       - name: Upload test results on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: stealth-test-results
+          name: contributed-test-results
           path: |
             bench/miniwob/results/
             packages/pi-lean-portal/__tests__/*.xml

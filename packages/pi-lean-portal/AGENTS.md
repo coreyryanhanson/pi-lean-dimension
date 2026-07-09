@@ -68,8 +68,8 @@ that block the shipped Chromium/Firefox. They are never shipped in the
 npm tarball and the extension never downloads or executes them
 automatically — there is no plugin marketplace. For the install flow
 and the choosing decision, see
-[`docs/stealth-backends/README.md`](docs/stealth-backends/README.md) and
-[`docs/stealth-backends/CHOOSING.md`](docs/stealth-backends/CHOOSING.md).
+[`contributed/README.md`](contributed/README.md) and
+[`contributed/CHOOSING.md`](contributed/CHOOSING.md).
 
 ### Deployment: user-writable data tree, not the npm tarball
 
@@ -81,7 +81,7 @@ Stealth backends live under the user-writable data tree:
 ├── browser-state/           (existing)
 └── user-backends/           ← stealth backends go here
     └── camoufox-py/
-        ├── bridge.py        (user copies from docs/stealth-backends/)
+        ├── bridge.py        (user copies from contributed/)
         └── .venv/           (user-created: engine pip pkg + playwright)
 ```
 
@@ -169,12 +169,12 @@ so standard `browser.new_context()` with
 
 Camoufox is the **shipped, tested example** — a reference `bridge.py`
 and a MiniWoB++ parity-test template live at
-`docs/stealth-backends/camoufox-py/` (source repo only; **not in the
+`contributed/camoufox-py/` (source repo only; **not in the
 npm tarball** because `docs/` is excluded from `package.json` `files`).
 Pointer:
-`packages/pi-lean-portal/docs/stealth-backends/camoufox-py/bridge.py`.
-Auto-skip contract tests live at `__tests__/camoufox-py.test.ts` and
-`__tests__/camoufox-py-persistence.test.ts` (run when a Camoufox
+`packages/pi-lean-portal/contributed/camoufox-py/bridge.py`.
+Auto-skip contract tests live at `__tests__/contributed/camoufox-py/camoufox-py.test.ts` and
+`__tests__/contributed/camoufox-py/camoufox-py-persistence.test.ts` (run when a Camoufox
 install is present under `user-backends/`). The generic MiniWoB++
 runner at `bench/miniwob/suites/miniwob-user-backends.test.ts`
 discovers any `<name>-py/` user backend at runtime.
@@ -230,7 +230,7 @@ All tool calls dispatch through the router. Key responsibilities:
 - **Guide staleness**: no builtin site guides shipped — entirely user-authored via `~/.pi/agent/pi-lean-portal/web-guides/*.md`. Guides carry `updated` date and `currentDate` timestamp in output.
 - **Learn mode toggle**: `/web learn` enables `web-learn` tool; `/web on` removes it. Agent never calls `web-learn` unprompted. Default is off on fresh sessions.
 - **Navigation settle** (`core/shared/nav-settle.ts`): after click or press, detects page navigation via a `framenavigated` listener and waits for `load + networkidle` (capped, errors swallowed) before reading URL/title/snapshot. Replaces the old fixed `waitForTimeout(300)` pattern that caused URL/DOM mismatches. Framework-agnostic via a lightweight `NavigationSettlePage` interface for testability.
-- **Stealth backends are user-managed, not shipped** — they live under `~/.pi/agent/pi-lean-portal/user-backends/`, are never in the npm tarball, and the extension never auto-downloads them. The user-side install burden is real: a per-engine venv, a ~100 MB patched-binary fetch, and an explicit `settings.json` entry with an **absolute** `pythonPath`. See `docs/stealth-backends/README.md` for the install flow.
+- **Stealth backends are user-managed, not shipped** — they live under `~/.pi/agent/pi-lean-portal/user-backends/`, are never in the npm tarball, and the extension never auto-downloads them. The user-side install burden is real: a per-engine venv, a ~100 MB patched-binary fetch, and an explicit `settings.json` entry with an **absolute** `pythonPath`. See `contributed/README.md` for the install flow.
 - **Fingerprint-managed context** — a stealth backend sets `_fingerprint_managed_context = True` so `create_browser_context()` skips the hardcoded `viewport`/`user_agent` and lets the fingerprint package set them. Camoufox injects the fingerprint at **browser launch** via `camoufox.NewBrowser`, so standard `browser.new_context()` is correct (a `_context_factory` / `NewContext` path was attempted and dropped — `camoufox.NewContext` is broken on the current binary).
 - **Camoufox `mw:` prefix + `main_world_eval`** — Camoufox sets `_eval_prefix = "mw:"` so `do_evaluate` writes route to the main world (isolated-world stealth otherwise blocks them), and forwards `main_world_eval=True` to `NewBrowser`. Contract tests assert `do_evaluate("() => 1 + 1")` returns `2`.
 - **`isMobile` / `_skip_default_viewport` binary quirk** — Camoufox's patched Firefox binary rejects the `isMobile` prop in Playwright's `Browser.setDefaultViewport` CDP call, so the template sets `_skip_default_viewport = True`. If a future binary version fixes the rejection, the flag degrades gracefully (default off) — re-validate on Camoufox releases.

@@ -118,7 +118,7 @@ the gate fires, run `npm run setup:miniwob` to download the content.
 3. Run via `npx vitest run <your-test-file>`.
 
 See the shipped parity template at
-`packages/pi-lean-portal/docs/stealth-backends/camoufox-py/miniwob-parity.test.ts`
+`packages/pi-lean-portal/contributed/camoufox-py/miniwob-parity.test.ts`
 for a complete example.
 
 ### Attribution

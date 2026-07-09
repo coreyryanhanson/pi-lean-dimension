@@ -24,11 +24,11 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
-import { PythonPluginAdapter } from "../backends/python-adapter.js";
-import { runContractTests } from "./helpers/plugin-contract.js";
-import { startTestServer } from "./helpers/test-server.js";
+import { PythonPluginAdapter } from "../../../backends/python-adapter.js";
+import { runContractTests } from "../../helpers/plugin-contract.js";
+import { startTestServer } from "../../helpers/test-server.js";
 
-import { probeUserBackend } from "./helpers/probe-user-backend.js";
+import { probeUserBackend } from "../../helpers/probe-user-backend.js";
 
 // ─── Prerequisites check via probeUserBackend ──────────────────────
 

@@ -15,7 +15,7 @@ documented in `playwright_base.py`.
 
 > **You need the git repo, not just `npm install pi-lean-portal`.**
 > The template bridge and this README live under
-> `packages/pi-lean-portal/docs/stealth-backends/` in the source
+> `packages/pi-lean-portal/contributed/` in the source
 > repository. `docs/` is excluded from the portal `package.json`
 > `files`, so the templates are not in the published tarball. Clone the
 > repo (or obtain a copy of these files) before starting.
@@ -62,7 +62,7 @@ Copy the source-repo template into your user-backends tree:
 
 ```bash
 mkdir -p ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py
-cp packages/pi-lean-portal/docs/stealth-backends/camoufox-py/bridge.py \
+cp packages/pi-lean-portal/contributed/camoufox-py/bridge.py \
    ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/bridge.py
 ```
 
@@ -188,16 +188,16 @@ filesystem access your user account has.
 
 To run the full 130-task [MiniWoB++](https://miniwob.farama.org/) suite
 against your Camoufox install, use the parity-test template at
-`packages/pi-lean-portal/docs/stealth-backends/camoufox-py/miniwob-parity.test.ts`
+`packages/pi-lean-portal/contributed/camoufox-py/miniwob-parity.test.ts`
 (docs-only, not in the tarball, not run by `npm run test:miniwob`). It
-is opt-in via `CAMOUFOX_PARITY_RUN=1` so it does not fire as a side
+is opt-in via `CONTRIB_PARITY_RUN=1` so it does not fire as a side
 effect of the default test sweep:
 
 ```bash
 npm run setup:miniwob                       # one-time: clone MiniWoB++ content
 # start a static server on port 8080, then:
-CAMOUFOX_PARITY_RUN=1 MINIWOB_URL=http://localhost:8080 \
-  npx vitest run packages/pi-lean-portal/docs/stealth-backends/camoufox-py/miniwob-parity.test.ts
+CONTRIB_PARITY_RUN=1 MINIWOB_URL=http://localhost:8080 \
+  npx vitest run packages/pi-lean-portal/contributed/camoufox-py/miniwob-parity.test.ts
 ```
 
 The template uses the public `registerMiniwobSuite` API from
