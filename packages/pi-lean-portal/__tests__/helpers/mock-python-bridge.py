@@ -25,7 +25,7 @@ def main() -> None:
 
         try:
             request = json.loads(line)
-        except json.JSONDecodeError as _:
+        except json.JSONDecodeError:
             write_response(None, error={"code": -32700, "message": "Parse error"})
             continue
 

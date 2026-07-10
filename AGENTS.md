@@ -26,11 +26,12 @@ With search installed, the suite totals **13 tools + 2 commands** (portal + sear
 
 ```bash
 npm test                                           # vitest run — all workspace tests (may hang if browser binaries missing)
-npm run test:ci                                     # vitest run — structural tests only, excludes browser-dependent tests that may hang
+npm run test:ci                                     # Structural + contributed-backend contract tests (excludes chromium/firefox/reddit/bench). Runs contributed/* contract tests when backends are installed — expect 2-3 min on a dev machine with backends; use 300s+ timeout if wrapping.
+npm run test:py-bridge                              # Python bridge unit tests (pytest, 243 pure-logic tests under packages/pi-lean-portal/backends/python-base/tests/ — needs only `pytest>=9.0`, no browser). Uses the package-local .venv if present, else system `python3`.
 npm run test:miniwob                                # MiniWoB++ cross-engine test suite (host: 130 tasks × 4 backends + smoke, auto-skips)
 npm run setup:miniwob                               # one-time clone of MiniWoB++ content
 # (no dedicated venv needed — the driver uses the plugin's Python path)
-npx vitest run packages/pi-lean-portal/__tests__/router-dispatch.test.ts  # single test file
+npx vitest run packages/pi-lean-portal/__tests__/router-dispatch.test.ts  # single test file (fast, ~1s)
 npx vitest run packages/pi-lean-portal/__tests__/cookie-persistence.test.ts  # Chromium persistence
 npx vitest run packages/pi-lean-portal/__tests__/firefox.test.ts  # Firefox contract tests
 npx vitest run bench/miniwob/suites/                # run all MiniWoB suites (chromium, firefox, chromium-py, firefox-py, adapter-smoke)
@@ -198,6 +199,7 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 **Subject under test** determines where a test lives, not *needs a browser*.
 
 - **Portal structural tests** (`pi-lean-portal`): framework internals (router dispatch, registry, config loading, snapshot cache, nav-settle, storage state, accessibility parsing, url safety, plugin contract validation, browser toggle, fetch backend, python adapter). These are mocked unit tests — no real browser or MiniWoB content required.
+- **Python bridge unit tests** (`pi-lean-portal/backends/python-base/tests/`): pure-logic pytest tests for the shared `pi_browser_bridge` library (accessibility, bot-detection, JSON-RPC transport, chromium-py/firefox-py routing, `PlaywrightBridge` stealth-quirk flags). Use fakes/mocks; the `playwright` import is lazily guarded, so they need only `pytest>=9.0` — no Playwright wheel, no browser binaries. Run via `npm run test:py-bridge`; wired into the `structural` CI job.
 - **MiniWoB behavioral tests** (`bench/miniwob/suites/`): behavioral evaluation against real browser engines (MiniWoB tasks, browser interaction pipeline verification). These require a live browser and MiniWoB++ content.
 - **Per-backend contract tests** (in `pi-lean-portal`): verify each backend (chromium, firefox, chromium-py, firefox-py, etc.) against the `BrowserPlugin` interface contract. Require their respective browser engine.
 
@@ -206,12 +208,15 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 | Category | Location | Files (~) | Tests (~) | Requires browser? |
 |----------|----------|-----------|-----------|-------------------|
 | Portal structural | `pi-lean-portal/__tests__/` | 20 | 650+ | No |
+| Python bridge unit | `pi-lean-portal/backends/python-base/tests/` | 6 | 243 | No (pytest only) |
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 9 | varies | Per-backend (auto-skip) |
 | MiniWoB behavioral | `bench/miniwob/suites/` | 6 | 130 tasks × 4 + smoke* | Chromium + Firefox + Python + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 17+ | No |
 | Dimension | `pi-lean-dimension/` | 1 | 2 | No |
 
 **Portal structural (20 files):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, probe-user-backend, ship-manifest
+
+**Python bridge unit tests (6 files, pytest):** test_accessibility, test_bot_detection, test_transport, test_chromium_py_bridge, test_firefox_py_bridge, test_playwright_base_quirks (the stealth-quirk flags: `_fingerprint_managed_context`, `_skip_default_viewport`, `_scroll_via_wheel`, `_eval_prefix`)
 
 **Portal per-backend contract tests (9 files):** reddit-dialog (errors if Chromium missing), cookie-persistence (auto-skip), chromium-py (auto-skip), chromium-py-persistence (auto-skip), firefox (auto-skip), firefox-py (auto-skip), firefox-py-persistence (auto-skip), camoufox-py (auto-skip, user-backends), camoufox-py-persistence (auto-skip, user-backends)
 
@@ -304,6 +309,8 @@ split into three jobs (two run on every PR; one is opt-in via
 2. **Setup Node.js 22** with npm caching
 3. **Install dependencies** via `npm ci`
 4. **Run structural tests** via `npm run test:ci`
+5. **Setup Python 3.12** + install `pytest>=9.0`
+6. **Run Python bridge unit tests** via `npm run test:py-bridge` (243 pure-logic pytest tests under `packages/pi-lean-portal/backends/python-base/tests/` — no Playwright wheel or browser binaries required)
 
 **`miniwob` job (cross-engine browser tests, depends on structural):**
 

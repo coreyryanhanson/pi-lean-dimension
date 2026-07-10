@@ -219,7 +219,6 @@ class PlaywrightBridge(BrowserBridge):
                     pass
 
 
-
     # ── Debug logging ───────────────────────────────────────────
 
     @property

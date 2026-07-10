@@ -73,32 +73,34 @@ const SCROLL_HTML = `<!DOCTYPE html>
   <p id="bottom-marker">You reached the bottom!</p>
 </body></html>`;
 
-let serverUrl: string;
-let stopServer: () => Promise<void>;
+let serverUrl: string | undefined;
+let stopServer: (() => Promise<void>) | undefined;
 
-beforeAll(async () => {
-	const server = await startTestServer((req, res) => {
-		const url = new URL(req.url ?? "/", "http://localhost");
-		if (url.pathname === "/scroll") {
-			res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-			res.end(SCROLL_HTML);
-		} else if (url.pathname === "/simple") {
-			res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-			res.end(
-				"<!DOCTYPE html><html><head><title>Simple Page</title></head><body><h1>Simple</h1></body></html>",
-			);
-		} else {
-			res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-			res.end("404");
-		}
+if (camoufoxAvailable) {
+	beforeAll(async () => {
+		const server = await startTestServer((req, res) => {
+			const url = new URL(req.url ?? "/", "http://localhost");
+			if (url.pathname === "/scroll") {
+				res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+				res.end(SCROLL_HTML);
+			} else if (url.pathname === "/simple") {
+				res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+				res.end(
+					"<!DOCTYPE html><html><head><title>Simple Page</title></head><body><h1>Simple</h1></body></html>",
+				);
+			} else {
+				res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+				res.end("404");
+			}
+		});
+		serverUrl = server.url;
+		stopServer = server.stop;
 	});
-	serverUrl = server.url;
-	stopServer = server.stop;
-});
 
-afterAll(async () => {
-	await stopServer();
-});
+	afterAll(async () => {
+		await stopServer!();
+	});
+}
 
 // ─── Run contract tests ──────────────────────────────────────────────
 
@@ -131,7 +133,7 @@ describeIfAvailable("Camoufox-Py contract tests", () => {
 
 		it("scrolls via wheel (exercises _scroll_via_wheel quirk)", async () => {
 			const nav = await plugin.navigate(
-				`${serverUrl}/scroll`,
+				`${serverUrl!}/scroll`,
 				"camoufox-scroll",
 				30_000,
 			);
@@ -162,7 +164,7 @@ describeIfAvailable("Camoufox-Py contract tests", () => {
 		});
 
 		it("evaluates arithmetic via main-world eval (exercises _eval_prefix / mw: quirk)", async () => {
-			await plugin.navigate(`${serverUrl}/simple`, "camoufox-eval", 30_000);
+			await plugin.navigate(`${serverUrl!}/simple`, "camoufox-eval", 30_000);
 
 			const result = await plugin.evaluate("camoufox-eval", "1 + 1");
 			expect(result.success).toBe(true);

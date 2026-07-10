@@ -66,16 +66,28 @@ import {
 	registerMiniwobSuite,
 	type MiniwobBackend,
 } from "../solvers/register-suite.js";
+import { createSharedMiniwobServer } from "./miniwob-suite-helper.js";
 
 // ─── Content availability ────────────────────────────────────────
 //
-// Unlike `miniwob-suite-helper.ts`, this runner does NOT start its own
-// static server — so it can only run when an explicit MINIWOB_URL is
-// provided. Content on disk (MINIWOB_HTML_ROOT) is not sufficient; a
-// server must be reachable. Set MINIWOB_URL when invoking this runner.
+// A run is content-ready when either `MINIWOB_URL` is set (a running
+// static server the caller started) or the on-disk MiniWoB++ clone is
+// reachable via `MINIWOB_HTML_ROOT` (or its default).  The static
+// server lifecycle is handled by `createSharedMiniwobServer()` below,
+// mirroring `miniwob-suite-helper.ts`.
 
+const HTML_ROOT =
+	process.env.MINIWOB_HTML_ROOT ?? "/tmp/miniwob-plusplus/miniwob/html";
 const HAS_EXTERNAL_URL = Boolean(process.env.MINIWOB_URL);
-const CONTENT_AVAILABLE = HAS_EXTERNAL_URL;
+const HTML_ROOT_PRESENT = existsSync(HTML_ROOT);
+const CONTENT_AVAILABLE = HAS_EXTERNAL_URL || HTML_ROOT_PRESENT;
+
+// ─── MiniWoB static server (ephemeral fallback) ──────────────────
+//
+// One shared server across all discovered backends, mirroring the
+// pattern in `miniwob-suite-helper.ts`. The factory registers a
+// file-level `afterAll` for teardown.
+const ensureBaseUrl: () => Promise<string> = createSharedMiniwobServer();
 
 // ─── Backend discovery ───────────────────────────────────────────
 //
@@ -168,19 +180,11 @@ if (discovered.length > 0) {
 		};
 
 		// The MiniWoB static server lifecycle is owned by the caller per
-		// the `registerMiniwobSuite` doc — but this runner does NOT start
-		// its own server. The `getBaseUrl` getter honors `MINIWOB_URL` when
-		// set (the Sprint 5 CI workflow sets this), and otherwise falls
-		// back to `http://localhost:8080` (the default the Sprint 5
-		// workflow's static server binds). The shipped per-backend suite
-		// files use the shared server from `miniwob-suite-helper.ts`; this
-		// runner is intentionally standalone and does not import that
-		// helper, so it does not share its server. A dev running this file
-		// by hand should either set `MINIWOB_URL` or start the static
-		// server themselves (see
-		// `bench/miniwob/scripts/miniwob-server.ts`).
-		registerMiniwobSuite(backend, async () => {
-			return process.env.MINIWOB_URL ?? "http://localhost:8080";
-		});
+		// the `registerMiniwobSuite` doc. `ensureBaseUrl` (defined above)
+		// honors `MINIWOB_URL` when set (the Sprint 5 CI workflow sets
+		// this); otherwise it lazily starts an ephemeral
+		// `startMiniwobServer()` and tears it down in the file-level
+		// `afterAll`. All discovered backends share the one server.
+		registerMiniwobSuite(backend, ensureBaseUrl);
 	}
 }

@@ -5,15 +5,16 @@
  * suite file:
  * - The `HTML_ROOT` default + `CONTENT_AVAILABLE` gate (external URL
  *   or cloned html root).
- * - The shared MiniWoB static server lifecycle (`ensureBaseUrl` +
- *   file-level `afterAll` teardown).
+ * - The shared MiniWoB static server lifecycle (`createSharedMiniwobServer()`
+ *   factory + file-level `afterAll` teardown).
  * - The `available` AND of content + backend-specific browser
  *   availability, and the `registerMiniwobSuite` dispatch.
  *
  * The caller supplies only the three things that actually differ per
  * backend: a name, a browser-availability flag, and a plugin factory.
  * User-owned parity test files do **not** use this helper — they own
- * their own server lifecycle per the `registerMiniwobSuite` doc.
+ * their own server lifecycle via `createSharedMiniwobServer()` per the
+ * `registerMiniwobSuite` doc.
  *
  * @module
  */
@@ -43,22 +44,50 @@ const CONTENT_AVAILABLE = HAS_EXTERNAL_URL || HTML_ROOT_PRESENT;
 
 // ─── Shared server ────────────────────────────────────────────────
 
-let sharedServer: TestServer | null = null;
+/**
+ * Create a shared MiniWoB static server that lazily starts on first
+ * call and is torn down in a file-level `afterAll` hook.
+ *
+ * Honors `MINIWOB_URL` when set (used verbatim, no server started).
+ * Otherwise lazily starts an ephemeral `startMiniwobServer()` via
+ * `listen(0, "127.0.0.1")` and caches the url. All callers in the file
+ * share the same server instance.
+ *
+ * The returned `ensureBaseUrl` function matches the signature expected
+ * by `registerMiniwobSuite`.
+ *
+ * @param htmlRoot - Filesystem path to MiniWoB++ html content.
+ *   Defaults to `MINIWOB_HTML_ROOT` env var or
+ *   `/tmp/miniwob-plusplus/miniwob/html`.
+ */
+export function createSharedMiniwobServer(
+	htmlRoot?: string,
+): () => Promise<string> {
+	const root = htmlRoot ?? HTML_ROOT;
+	let sharedServer: TestServer | null = null;
 
-async function ensureBaseUrl(): Promise<string> {
-	if (process.env.MINIWOB_URL) return process.env.MINIWOB_URL;
-	if (!sharedServer) {
-		sharedServer = await startMiniwobServer(HTML_ROOT);
-	}
-	return sharedServer.url;
+	afterAll(async () => {
+		if (sharedServer) {
+			await sharedServer.stop().catch(() => {});
+			sharedServer = null;
+		}
+	});
+
+	return async function ensureBaseUrl(): Promise<string> {
+		if (process.env.MINIWOB_URL) return process.env.MINIWOB_URL;
+		if (!sharedServer) {
+			sharedServer = await startMiniwobServer(root);
+		}
+		return sharedServer.url;
+	};
 }
 
-afterAll(async () => {
-	if (sharedServer) {
-		await sharedServer.stop().catch(() => {});
-		sharedServer = null;
-	}
-});
+/**
+ * Module-level shared server for the shipped backend suite files.
+ * User-owned parity templates that need their own server should call
+ * `createSharedMiniwobServer()` directly.
+ */
+export const ensureBaseUrl: () => Promise<string> = createSharedMiniwobServer();
 
 // ─── Backend registration ─────────────────────────────────────────
 

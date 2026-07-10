@@ -37,29 +37,31 @@ const camoufoxAvailable = probe.available;
 
 const describeIfAvailable = camoufoxAvailable ? describe : describe.skip;
 
-// ─── Test Server Setup (always runs, server is cheap to start/stop) ─
+// ─── Test Server Setup (only when Camoufox is available) ──────────
 
-let serverUrl: string;
-let stopServer: () => Promise<void>;
+let serverUrl: string | undefined;
+let stopServer: (() => Promise<void>) | undefined;
 
-beforeAll(async () => {
-	const server = await startTestServer((req, res) => {
-		const url = new URL(req.url ?? "/", "http://localhost");
-		if (url.pathname === "/") {
-			res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-			res.end(COOKIE_PERSISTENCE_HTML);
-		} else {
-			res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-			res.end("404");
-		}
+if (camoufoxAvailable) {
+	beforeAll(async () => {
+		const server = await startTestServer((req, res) => {
+			const url = new URL(req.url ?? "/", "http://localhost");
+			if (url.pathname === "/") {
+				res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+				res.end(COOKIE_PERSISTENCE_HTML);
+			} else {
+				res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+				res.end("404");
+			}
+		});
+		serverUrl = server.url;
+		stopServer = server.stop;
 	});
-	serverUrl = server.url;
-	stopServer = server.stop;
-});
 
-afterAll(async () => {
-	await stopServer();
-});
+	afterAll(async () => {
+		await stopServer!();
+	});
+}
 
 const NAV_TIMEOUT = 30_000;
 const TASK_ID = "camoufox-py-persistence";
@@ -89,7 +91,7 @@ describeIfAvailable(
 		});
 
 		it("navigates with a named profile — consent dialog is visible", async () => {
-			const nav = await plugin.navigate(serverUrl, TASK_ID, NAV_TIMEOUT, {
+			const nav = await plugin.navigate(serverUrl!, TASK_ID, NAV_TIMEOUT, {
 				profileName: TEST_PROFILE,
 				profileMode: "named",
 			});
@@ -129,7 +131,7 @@ describeIfAvailable(
 		});
 
 		it("navigates again with same profile — consent dialog does NOT reappear", async () => {
-			const nav = await plugin.navigate(serverUrl, TASK_ID, NAV_TIMEOUT, {
+			const nav = await plugin.navigate(serverUrl!, TASK_ID, NAV_TIMEOUT, {
 				profileName: TEST_PROFILE,
 				profileMode: "named",
 			});
@@ -153,7 +155,7 @@ describeIfAvailable(
 		});
 
 		it("third navigate also has no consent dialog (persistence confirmed)", async () => {
-			const nav = await plugin.navigate(serverUrl, TASK_ID, NAV_TIMEOUT, {
+			const nav = await plugin.navigate(serverUrl!, TASK_ID, NAV_TIMEOUT, {
 				profileName: TEST_PROFILE,
 				profileMode: "named",
 			});

@@ -21,23 +21,31 @@
  *    `packages/pi-lean-portal/contributed/README.md` for the
  *    full install flow.
  * 2. Set up MiniWoB++ content once: `npm run setup:miniwob` (clones the
- *    pinned `miniwob-plusplus` repo). Then make the content reachable:
- *    either start the static server yourself
- *    (`bench/miniwob/scripts/miniwob-server.ts` — binds an
- *    ephemeral port; or run any static file server on port 8080) and
- *    point `MINIWOB_URL` at it, or rely on the `MINIWOB_HTML_ROOT`
- *    path being present on disk. This template does **not** start its
- *    own server.
+ *    pinned `miniwob-plusplus` repo). The content is reached one of two
+ *    ways:
+ *    - Point `MINIWOB_URL` at a static server you started yourself
+ *      (any server — e.g. `python3 -m http.server` — the URL is used
+ *      verbatim). This is the escape hatch for a server you already
+ *      have running.
+ *    - Or just leave `MINIWOB_URL` unset and ensure the on-disk clone is
+ *      reachable via `MINIWOB_HTML_ROOT` (or its default
+ *      `/tmp/miniwob-plusplus/miniwob/html`). The template then starts
+ *      its own ephemeral static server via the shipped
+ *      `startMiniwobServer()` (binds `listen(0, "127.0.0.1")` so the OS
+ *      assigns a free port — no manual server, no fixed-port-8080
+ *      conflict, safe for parallel runs) and tears it down in a
+ *      file-level `afterAll`.
  * 3. **Opt in explicitly** by setting `CONTRIB_PARITY_RUN=1`, then run
  *    this file in-place from the cloned source repo (you need the repo
  *    to have copied the template in step 1), or copy it into your own
- *    test tree under the monorepo and run:
- *      CONTRIB_PARITY_RUN=1 \
- *        MINIWOB_URL=http://localhost:8080 npx vitest run <this-file>
- *    Or, if you prefer to let the runner find content on disk:
+ *    test tree under the monorepo and run. Simplest (ephemeral server,
+ *    no manual setup):
  *      CONTRIB_PARITY_RUN=1 \
  *        MINIWOB_HTML_ROOT=/tmp/miniwob-plusplus/miniwob/html \
  *        npx vitest run <this-file>
+ *    Or point at a server you already have running:
+ *      CONTRIB_PARITY_RUN=1 \
+ *        MINIWOB_URL=http://localhost:8080 npx vitest run <this-file>
  *
  *    **Why the explicit `CONTRIB_PARITY_RUN=1` opt-in?** This file is
  *    a `.test.ts` under `packages/`, so the repo's default test sweep
@@ -46,9 +54,10 @@
  *    on every run.
  *    On a machine that has Camoufox installed under `user-backends/`
  *    AND MiniWoB++ content on disk, a bare probe would mark the suite
- *    `available` and fire ~13 real Camoufox browser tasks as a side
- *    effect of `npm test` — with no MiniWoB static server running, they
- *    would fail and break `npm run test:ci` (Sprint 2 AC 2.5). The
+ *    `available` and fire ~13 real Camoufox browser tasks (the template
+ *    would even start its own ephemeral MiniWoB server) as a side effect
+ *    of `npm test`, breaking `npm run test:ci` (Sprint 2 AC 2.5) with
+ *    slow, real-browser work the dev never asked for. The
  *    env gate makes the template a no-op unless a dev explicitly opts
  *    in, so the default sweep stays green everywhere (bare CI sees no
  *    user-backends install and would auto-skip regardless; this gate
@@ -98,14 +107,18 @@
 
 import { existsSync } from "node:fs";
 
+import { afterAll } from "vitest";
+
 import { PythonPluginAdapter } from "../../backends/python-adapter.js";
 import type { BrowserPlugin } from "../../core/plugin-api.js";
 
 import { probeUserBackend } from "../../__tests__/helpers/probe-user-backend.js";
+import type { TestServer } from "../../__tests__/helpers/test-server.js";
 import {
 	registerMiniwobSuite,
 	type MiniwobBackend,
 } from "../../../../bench/miniwob/solvers/register-suite.js";
+import { startMiniwobServer } from "../../../../bench/miniwob/scripts/miniwob-server.js";
 
 // ─── Explicit opt-in gate ──────────────────────────────────────
 //
@@ -136,11 +149,9 @@ if (PARITY_RUN) {
 
 	// ─── Content availability ────────────────────────────────────
 	//
-	// Mirror the gate in `miniwob-suite-helper.ts` so a missing MiniWoB++
-	// install auto-skips at the describe level instead of registering 130
-	// failing tasks. A dev running this template by hand should set either
-	// `MINIWOB_URL` (a running static server) or `MINIWOB_HTML_ROOT` (the
-	// cloned `miniwob-plusplus/miniwob/html` path).
+	// Mirrors `miniwob-suite-helper.ts` — honors `MINIWOB_URL` or
+	// `MINIWOB_HTML_ROOT` (default `/tmp/miniwob-plusplus/miniwob/html`).
+	// Missing content auto-skips at the describe level.
 	const HTML_ROOT =
 		process.env.MINIWOB_HTML_ROOT ?? "/tmp/miniwob-plusplus/miniwob/html";
 	const HAS_EXTERNAL_URL = Boolean(process.env.MINIWOB_URL);
@@ -148,6 +159,28 @@ if (PARITY_RUN) {
 	const CONTENT_AVAILABLE = HAS_EXTERNAL_URL || HTML_ROOT_PRESENT;
 
 	const available = probe.available && CONTENT_AVAILABLE;
+
+	// ─── MiniWoB static server (ephemeral fallback) ─────────────
+	//
+	// Honors `MINIWOB_URL` (used verbatim); otherwise lazily starts an
+	// ephemeral `startMiniwobServer()` on a free port. Torn down in the
+	// file-level `afterAll`. Mirrors `miniwob-suite-helper.ts`.
+	let sharedServer: TestServer | null = null;
+
+	async function ensureBaseUrl(): Promise<string> {
+		if (process.env.MINIWOB_URL) return process.env.MINIWOB_URL;
+		if (!sharedServer) {
+			sharedServer = await startMiniwobServer(HTML_ROOT);
+		}
+		return sharedServer.url;
+	}
+
+	afterAll(async () => {
+		if (sharedServer) {
+			await sharedServer.stop().catch(() => {});
+			sharedServer = null;
+		}
+	});
 
 	// ─── Suite registration ─────────────────────────────────────
 	const backend: MiniwobBackend = {
@@ -175,10 +208,9 @@ if (PARITY_RUN) {
 	};
 
 	// The caller owns the MiniWoB static server lifecycle per the
-	// `registerMiniwobSuite` doc. Honor `MINIWOB_URL` when set (a running
-	// server); otherwise fall back to `http://localhost:8080` (start the
-	// server yourself — see `bench/miniwob/scripts/miniwob-server.ts`).
-	registerMiniwobSuite(backend, async () => {
-		return process.env.MINIWOB_URL ?? "http://localhost:8080";
-	});
+	// `registerMiniwobSuite` doc. `ensureBaseUrl` honors `MINIWOB_URL` when
+	// set (a running server the caller started); otherwise it lazily starts
+	// an ephemeral `startMiniwobServer()` and tears it down in the
+	// `afterAll` above.
+	registerMiniwobSuite(backend, ensureBaseUrl);
 }

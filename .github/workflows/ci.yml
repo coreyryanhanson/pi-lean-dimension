@@ -69,6 +69,27 @@ jobs:
       - name: Run structural tests (test:ci)
         run: npm run test:ci
 
+      # ── Python bridge unit tests (pure-logic, no browser) ────────
+      #
+      # The shared `pi_browser_bridge` library under
+      # `packages/pi-lean-portal/backends/python-base/` ships a pytest
+      # suite (243 tests: accessibility, bot-detection, transport, the
+      # chromium-py/firefox-py routing layers, and the PlaywrightBridge
+      # stealth-quirk flags). The tests use fakes/mocks — the `playwright`
+      # import is lazily guarded (`HAS_PLAYWRIGHT`) — so they need only
+      # `pytest` (>=9.0 per pyproject.toml), no Playwright wheel and no
+      # browser binaries. Runs on every PR alongside test:ci.
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest
+        run: python3 -m pip install --quiet "pytest>=9.0"
+
+      - name: Run Python bridge tests (test:py-bridge)
+        run: npm run test:py-bridge
+
   # ── MiniWoB browser tests (cross-engine: chromium + firefox + python) ─
   miniwob:
     name: MiniWoB browser tests

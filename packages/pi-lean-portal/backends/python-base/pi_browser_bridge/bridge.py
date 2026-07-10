@@ -390,7 +390,6 @@ class BrowserBridge:
         )
 
 
-
     def do_cleanup(self, task_id: str) -> dict[str, Any]:
         """Clean up resources for a specific task.
 
