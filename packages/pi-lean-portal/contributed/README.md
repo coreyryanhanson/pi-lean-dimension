@@ -187,24 +187,33 @@ filesystem access your user account has.
 ### 9. Benchmarking (optional)
 
 To run the full 130-task [MiniWoB++](https://miniwob.farama.org/) suite
-against your Camoufox install, use the parity-test template at
-`packages/pi-lean-portal/contributed/camoufox-py/miniwob-parity.test.ts`
-(docs-only, not in the tarball, not run by `npm run test:miniwob`). It
-is opt-in via `CONTRIB_PARITY_RUN=1` so it does not fire as a side
-effect of the default test sweep:
+against your Camoufox install (or any installed stealth backend),
+use the contributed discovery runner at
+`packages/pi-lean-portal/__tests__/run-contributed-suites.test.ts`.
+The runner discovers every backend under `user-backends/*-py/`, loads
+config from the test-local `settings.json`, and runs contract +
+persistence + parity suites for each — all forwarding your configured
+`launch` options. Opt-in via `CONTRIB_RUN=1`:
 
 ```bash
 npm run setup:miniwob                       # one-time: clone MiniWoB++ content
-# start a static server on port 8080, then:
-CONTRIB_PARITY_RUN=1 MINIWOB_URL=http://localhost:8080 \
-  npx vitest run packages/pi-lean-portal/contributed/camoufox-py/miniwob-parity.test.ts
+CONTRIB_RUN=1 npx vitest run packages/pi-lean-portal/__tests__/run-contributed-suites.test.ts
 ```
 
-The template uses the public `registerMiniwobSuite` API from
-`bench/miniwob/solvers/register-suite.ts`. See that file's header and
-the parity template's header for the full prerequisites and the
-`PythonPluginAdapter` wiring shape if you want to write your own
-benchmark against a different stealth backend.
+**Single-backend isolation:** set `PI_USER_BACKENDS_DIR` at a temp root
+containing only the backend you want to test:
+
+```bash
+ln -s ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py /tmp/one-backend/
+PI_USER_BACKENDS_DIR=/tmp/one-backend CONTRIB_RUN=1 \
+  npx vitest run packages/pi-lean-portal/__tests__/run-contributed-suites.test.ts
+```
+
+The runner uses `registerContributedParitySuite` from
+`bench/miniwob/solvers/contributed-parity.ts`. See that file and the
+[runner source](../../__tests__/run-contributed-suites.test.ts) for
+the full prerequisites and the config-forwarding wiring shape if you
+want to write your own benchmark against a different backend setup.
 
 ## Quirks schema reference
 

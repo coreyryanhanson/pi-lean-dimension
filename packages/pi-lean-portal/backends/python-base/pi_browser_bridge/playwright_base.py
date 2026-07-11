@@ -156,6 +156,25 @@ class PlaywrightBridge(BrowserBridge):
     #: settle behaviour bit-identical.
     _skip_networkidle: bool = False
 
+    #: When True, ``do_evaluate`` wraps the expression in ``eval(<json>)``
+    #: before prepending :attr:`_eval_prefix`.  This works around a bug in
+    #: Camoufox's patched Juggler main-world eval path
+    #: (``MainWorldContext.executeInGlobal`` in the binary's ``omni.ja``),
+    #: which wraps every ``mw:``-prefixed script as
+    #: ``(() => { let _s = (${script}); ... })()``.  That wrapper requires
+    #: ``${script}`` to be a single *expression*; any *statement* (``let`` /
+    #: ``var`` / multiple ``;``-separated statements) is a ``SyntaxError``
+    #: (``missing ) in parenthetical``) that surfaces through Playwright as
+    #: ``"Execution context was destroyed, most likely because of a
+    #: navigation."`` — an uncatchable-looking error that is NOT a navigation
+    #: race at all.  Rewriting the script as ``eval(<JSON-string of script>)``
+    #: makes it a single expression (valid inside ``let _s = (...)``) while
+    #: ``eval`` itself correctly handles both expressions and multi-statement
+    #: scripts, returning the completion value of the last statement.
+    #: Default ``False`` so the shipped ``chromium-py`` / ``firefox-py``
+    #: bridges (which have ``_eval_prefix = ""``) stay bit-identical.
+    _wrap_mw_eval_in_eval: bool = False
+
 
     # ── Shared Playwright state ─────────────────────────────────
 
@@ -1217,6 +1236,12 @@ class PlaywrightBridge(BrowserBridge):
         it is prepended to the expression so the script runs in the main
         world where writes work.  Reads work with the prefix too, so it is
         safe to apply unconditionally.
+
+        When :attr:`_wrap_mw_eval_in_eval` is True (Camoufox), the expression
+        is first wrapped as ``eval(<JSON-string of expression>)`` so that
+        multi-statement scripts survive Camoufox's
+        ``let _s = (${script})`` main-world wrapper (see the quirk's
+        docstring for the full rationale).
         """
         try:
             page = self._get_page(task_id)
@@ -1229,8 +1254,16 @@ class PlaywrightBridge(BrowserBridge):
             }
 
         try:
+            if self._wrap_mw_eval_in_eval:
+                # ``eval(<json>)`` is a single expression (valid inside
+                # Camoufox's ``let _s = (...)`` wrapper) that runs the script
+                # verbatim and returns its completion value.  ``json.dumps``
+                # safely escapes the script into a JS string literal.
+                inner = "eval(" + json.dumps(expression) + ")"
+            else:
+                inner = expression
             effective_expression = (
-                self._eval_prefix + expression if self._eval_prefix else expression
+                self._eval_prefix + inner if self._eval_prefix else inner
             )
             result: Any = page.evaluate(effective_expression)
             return {

@@ -3,12 +3,15 @@ Tests for ``pi_browser_bridge.playwright_base.PlaywrightBridge`` Phase 0 work:
 
 * ``plugin_config`` defaults to ``{}`` and is populated by the
   ``browser.init`` RPC handler (inherited from ``BrowserBridge``).
-* The four stealth quirks change base-class behavior:
+* The stealth quirks change base-class behavior:
     - ``_fingerprint_managed_context`` → viewport/user_agent omitted
     - ``_skip_default_viewport`` → ``no_viewport=True`` passed to avoid
       the Camoufox binary's ``setDefaultViewport`` ``isMobile`` rejection
     - ``_scroll_via_wheel`` → ``do_scroll`` uses ``page.mouse.wheel``
     - ``_eval_prefix`` → ``do_evaluate`` prepends the prefix
+    - ``_wrap_mw_eval_in_eval`` → ``do_evaluate`` wraps the script as
+      ``eval(<json>)`` so multi-statement scripts survive Camoufox's
+      ``let _s = (${script})`` main-world wrapper
 
 These are pure-logic tests — no Playwright browser required.  A small
 fake page/context mocks the few Playwright methods the code paths touch.
@@ -42,14 +45,25 @@ class _FakePage:
         self.mouse = _FakeMouse()
         self.eval_calls: list[Any] = []  # list of expressions/args evaluated
         self.eval_results: dict[str, Any] = {}
+        # Raise-once support for retry quirk tests
+        self._eval_raise_always: bool = False
+        self._eval_raise_error: str = ""
+        # wait_for_load_state recorder
+        self.wait_for_load_state_calls: list[tuple[str, int]] = []
 
     def evaluate(self, expression: str, arg: Any = None) -> Any:
         self.eval_calls.append((expression, arg))
+        # Always-raise mode: every call raises
+        if self._eval_raise_always and self._eval_raise_error:
+            raise Exception(self._eval_raise_error)
         # Echo back a canned result keyed by a substring of the expression
         for key, val in self.eval_results.items():
             if key in expression:
                 return val
         return None
+
+    def wait_for_load_state(self, state: str, timeout: int = 30_000) -> None:
+        self.wait_for_load_state_calls.append((state, timeout))
 
 
 class _FakeBrowser:
@@ -356,3 +370,193 @@ class TestQuirksDefaultOff:
         assert bridge._scroll_via_wheel == False
         assert bridge._skip_default_viewport == False
         assert bridge._skip_networkidle == False
+        assert bridge._wrap_mw_eval_in_eval == False
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  _wrap_mw_eval_in_eval
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestWrapMwEvalInEval:
+    """``_wrap_mw_eval_in_eval`` makes ``do_evaluate`` rewrite the
+    expression as ``eval(<JSON-string of expression>)`` before prepending
+    ``_eval_prefix``, so multi-statement scripts survive Camoufox's
+    ``let _s = (${script})`` main-world wrapper.
+    """
+
+    def _setup_session(self, bridge: _FakePlaywrightBridge, page: _FakePage) -> None:
+        bridge.sessions["t"] = {"page": page, "context": _FakeContext()}
+
+    def test_default_off_expression_unwrapped(self):
+        """Default off: expression is passed through unwrapped (bit-identical)."""
+        bridge = _FakePlaywrightBridge()
+        page = _FakePage()
+        self._setup_session(bridge, page)
+        bridge.do_evaluate("t", "let x = 5; x + 1")
+        assert page.eval_calls[0][0] == "let x = 5; x + 1"
+        assert len(page.eval_calls) == 1
+
+    def test_default_off_with_prefix_expression_unwrapped(self):
+        """Default off but prefix set: only the prefix is prepended, no eval wrap."""
+        bridge = _FakePlaywrightBridge()
+        bridge._eval_prefix = "mw:"
+        page = _FakePage()
+        self._setup_session(bridge, page)
+        bridge.do_evaluate("t", "let x = 5; x + 1")
+        assert page.eval_calls[0][0] == "mw:let x = 5; x + 1"
+
+    def test_flag_on_wraps_in_eval(self):
+        """Flag on: expression becomes ``eval(<json>)`` — a single expression."""
+        bridge = _FakePlaywrightBridge()
+        bridge._wrap_mw_eval_in_eval = True
+        page = _FakePage()
+        self._setup_session(bridge, page)
+        bridge.do_evaluate("t", "let x = 5; x + 1")
+        assert page.eval_calls[0][0] == 'eval("let x = 5; x + 1")'
+        assert len(page.eval_calls) == 1
+
+    def test_flag_on_with_prefix_prepends_prefix(self):
+        """Flag on + Camoufox prefix: ``mw:eval(<json>)`` — the production shape."""
+        bridge = _FakePlaywrightBridge()
+        bridge._wrap_mw_eval_in_eval = True
+        bridge._eval_prefix = "mw:"
+        page = _FakePage()
+        self._setup_session(bridge, page)
+        bridge.do_evaluate("t", "let x = 5; x + 1")
+        assert page.eval_calls[0][0] == 'mw:eval("let x = 5; x + 1")'
+
+    def test_flag_on_escapes_special_characters(self):
+        """Flag on: quotes / newlines / backslashes in the script are JSON-escaped
+        so the embedded string literal is always valid JS."""
+        bridge = _FakePlaywrightBridge()
+        bridge._wrap_mw_eval_in_eval = True
+        bridge._eval_prefix = "mw:"
+        page = _FakePage()
+        self._setup_session(bridge, page)
+        # a script with a double-quote and a newline (JSON must escape both)
+        script = "let s = 'a\"b';\n s"
+        bridge.do_evaluate("t", script)
+        sent = page.eval_calls[0][0]
+        assert sent.startswith("mw:eval(")
+        assert sent.endswith(")")
+        # The inner literal must be a valid JSON string (round-trips to script)
+        import json as _json
+        literal = sent[len("mw:eval("):-1]
+        assert _json.loads(literal) == script
+
+    def test_flag_on_preserves_expression_results(self):
+        """Flag on: a plain expression still round-trips its value."""
+        bridge = _FakePlaywrightBridge()
+        bridge._wrap_mw_eval_in_eval = True
+        bridge._eval_prefix = "mw:"
+        page = _FakePage()
+        page.eval_results = {"eval(": 7}
+        self._setup_session(bridge, page)
+        result = bridge.do_evaluate("t", "3 + 4")
+        assert result["success"] == True
+        assert result["result"] == 7
+        assert page.eval_calls[0][0] == 'mw:eval("3 + 4")'
+
+    def test_flag_on_no_retry_on_error(self):
+        """Flag on: a real eval error propagates after a SINGLE call — there is
+        no retry (the old retry quirk is gone; this guards against regressions
+        that re-introduce retry / wait_for_load_state machinery)."""
+        bridge = _FakePlaywrightBridge()
+        bridge._wrap_mw_eval_in_eval = True
+        bridge._eval_prefix = "mw:"
+        page = _FakePage()
+        page._eval_raise_always = True
+        page._eval_raise_error = "Execution context was destroyed"
+        self._setup_session(bridge, page)
+        result = bridge.do_evaluate("t", "let x = 5; x + 1")
+        assert result["success"] == False
+        assert "execution context was destroyed" in result["error"].lower()
+        assert len(page.eval_calls) == 1  # no retry
+        assert page.wait_for_load_state_calls == []  # no recovery machinery
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  browser.describeQuirks RPC handler
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestDescribeQuirks:
+    """Tests for the ``browser.describeQuirks`` introspection RPC handler
+    on ``BrowserBridge`` (``bridge.py``).
+
+    Verifies the handler returns the bridge's class-attribute quirks
+    flags correctly, and that the getattr-based defaulting handles both
+    PlaywrightBridge instances (which have the quirks attrs) and bare
+    BrowserBridge instances (which don't).
+    """
+
+    def test_playwright_bridge_returns_all_defaults(self):
+        """A default _FakePlaywrightBridge returns all-default/false."""
+        bridge = _FakePlaywrightBridge()
+        result = bridge.handle_command("browser.describeQuirks", {}, 1)
+        assert "result" in result
+        q = result["result"]
+        assert q["fingerprint_managed_context"] == False
+        assert q["eval_prefix"] == ""
+        assert q["scroll_via_wheel"] == False
+        assert q["skip_default_viewport"] == False
+        assert q["skip_networkidle"] == False
+        assert q["wrap_mw_eval_in_eval"] == False
+
+    def test_playwright_bridge_returns_overridden_quirks(self):
+        """Overridden quirks are surfaced in the response."""
+        bridge = _FakePlaywrightBridge()
+        bridge._fingerprint_managed_context = True
+        bridge._eval_prefix = "mw:"
+        bridge._scroll_via_wheel = True
+        bridge._skip_default_viewport = True
+        bridge._skip_networkidle = True
+        bridge._wrap_mw_eval_in_eval = True
+        result = bridge.handle_command("browser.describeQuirks", {}, 2)
+        assert "result" in result
+        q = result["result"]
+        assert q["fingerprint_managed_context"] == True
+        assert q["eval_prefix"] == "mw:"
+        assert q["scroll_via_wheel"] == True
+        assert q["skip_default_viewport"] == True
+        assert q["skip_networkidle"] == True
+        assert q["wrap_mw_eval_in_eval"] == True
+
+    def test_playwright_bridge_mixed_quirks(self):
+        """A partial override returns overridden + default values."""
+        bridge = _FakePlaywrightBridge()
+        bridge._scroll_via_wheel = True
+        bridge._eval_prefix = "mw:"
+        result = bridge.handle_command("browser.describeQuirks", {}, 3)
+        assert "result" in result
+        q = result["result"]
+        assert q["scroll_via_wheel"] == True
+        assert q["eval_prefix"] == "mw:"
+        assert q["fingerprint_managed_context"] == False
+        assert q["skip_default_viewport"] == False
+        assert q["skip_networkidle"] == False
+        assert q["wrap_mw_eval_in_eval"] == False
+
+    def test_bare_bridge_returns_all_defaults(self):
+        """A bare ``BrowserBridge`` (no Playwright quirks attrs) also returns
+        default values via ``getattr`` — the handler doesn't throw."""
+        from pi_browser_bridge.bridge import BrowserBridge
+
+        class _BareBridge(BrowserBridge):
+            def create_browser_session(self, task_id, config):
+                return {}
+
+            def create_browser_context(self, config):
+                return None
+
+        bare = _BareBridge()
+        result = bare.handle_command("browser.describeQuirks", {}, 4)
+        assert "result" in result
+        q = result["result"]
+        assert q["fingerprint_managed_context"] == False
+        assert q["eval_prefix"] == ""
+        assert q["scroll_via_wheel"] == False
+        assert q["skip_default_viewport"] == False
+        assert q["skip_networkidle"] == False
+        assert q["wrap_mw_eval_in_eval"] == False

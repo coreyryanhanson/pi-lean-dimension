@@ -28,12 +28,11 @@ not a default.
 ## When to use Camoufox specifically
 
 [Camoufox](https://github.com/nichochar/camoufox) is the **shipped,
-tested template** — there is a reference `bridge.py` and a MiniWoB++
-parity-test template under
-[`camoufox-py/`](./camoufox-py/), and auto-skip contract tests in
-`packages/pi-lean-portal/__tests__/contributed/camoufox-py/camoufox-py.test.ts` /
-`packages/pi-lean-portal/__tests__/contributed/camoufox-py/camoufox-py-persistence.test.ts` that run when a Camoufox install is
-present. Properties:
+tested template** — there is a reference `bridge.py` under
+[`camoufox-py/`](./camoufox-py/), and a generic discovery runner at
+`__tests__/run-contributed-suites.test.ts` auto-discovers any
+installed user backend and runs the shared contract + persistence +
+parity + quirks introspection suites against it. Properties:
 
 - **Firefox-based** — a patched Firefox binary, so it shares Firefox's
   ARIA-tree shape with the shipped `firefox` / `firefox-py` backends.

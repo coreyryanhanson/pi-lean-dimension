@@ -35,7 +35,7 @@ export interface PluginDetection {
 	entryPoint: string;
 }
 import { sanitizeProfileName } from "./shared/storage-state.js";
-import { readMergedSettings } from "./shared/settings-reader.js";
+import { readMergedSettings, readSettingsFile } from "./shared/settings-reader.js";
 
 // ─── Config types & loading ────────────────────────────────────────
 
@@ -434,4 +434,46 @@ export function loadPluginConfig(
 	roots?: readonly string[],
 ): PluginConfigLoadResult {
 	return loadFullConfig(roots).plugins;
+}
+
+/**
+ * Load and validate plugin configuration from a specific settings file path.
+ *
+ * Same parsing/validation as {@link loadPluginConfig}, but reads from a
+ * specific file path instead of the merged global + project settings.
+ * One-shot read — no caching.
+ *
+ * The file must have the same top-level shape as `settings.json`:
+ * ```json
+ * { "browser": { "plugins": [...] } }
+ * ```
+ *
+ * When the file is absent or has no `browser` section, falls back to the
+ * default plugin list (same as `loadPluginConfig()` with no settings).
+ *
+ * @param path  Absolute or relative path to a settings.json file.
+ * @param roots  Optional ordered list of backend roots to resolve
+ *               plugin `dir` values against.  Defaults to
+ *               `DEFAULT_BACKEND_ROOTS`.
+ */
+export function loadPluginConfigFromFile(
+	path: string,
+	roots?: readonly string[],
+): PluginConfigLoadResult {
+	const raw = readSettingsFile(path);
+	const browserConfig = raw["browser"];
+	const effectiveRoots = roots ?? DEFAULT_BACKEND_ROOTS;
+
+	if (
+		!browserConfig ||
+		typeof browserConfig !== "object" ||
+		Array.isArray(browserConfig)
+	) {
+		return parsePluginConfig(undefined, effectiveRoots);
+	}
+
+	return parsePluginConfig(
+		browserConfig as Record<string, unknown>,
+		effectiveRoots,
+	);
 }

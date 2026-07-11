@@ -153,6 +153,7 @@ as class attributes on your subclass:
 | `_scroll_via_wheel` | `False` | `do_scroll` uses `page.mouse.wheel` instead of `page.evaluate("window.scrollBy")` (avoids eval-write under isolated-world stealth). |
 | `_skip_default_viewport` | `False` | Skips Playwright's `Browser.setDefaultViewport` CDP call (Camoufox binary rejects its `isMobile` prop). |
 | `_skip_networkidle` | `False` | Nav-settle uses `load` instead of `networkidle` (patched binaries don't fire `networkidle` reliably). |
+| `_wrap_mw_eval_in_eval` | `False` | `do_evaluate` rewrites the expression as `eval(<JSON-string of expression>)` before prepending `_eval_prefix`, so multi-statement scripts survive Camoufox's `let _s = (${script})` main-world wrapper (see prose below). |
 
 All flags default off → `chromium-py` / `firefox-py` behavior is
 bit-identical to a pre-stealth install. A dropped v2 `_context_factory`
@@ -168,16 +169,18 @@ so standard `browser.new_context()` with
 ### Camoufox: the shipped example template
 
 Camoufox is the **shipped, tested example** — a reference `bridge.py`
-and a MiniWoB++ parity-test template live at
-`contributed/camoufox-py/` (source repo only; **not in the
+lives at `contributed/camoufox-py/` (source repo only; **not in the
 npm tarball** because `docs/` is excluded from `package.json` `files`).
 Pointer:
 `packages/pi-lean-portal/contributed/camoufox-py/bridge.py`.
-Auto-skip contract tests live at `__tests__/contributed/camoufox-py/camoufox-py.test.ts` and
-`__tests__/contributed/camoufox-py/camoufox-py-persistence.test.ts` (run when a Camoufox
-install is present under `user-backends/`). The generic MiniWoB++
-runner at `bench/miniwob/suites/miniwob-user-backends.test.ts`
-discovers any `<name>-py/` user backend at runtime.
+Generic test suites (contract + persistence + MiniWoB parity + quirks
+introspection) run via the discovery runner at
+`__tests__/run-contributed-suites.test.ts`, which auto-discovers
+any `<name>-py/` user backend at runtime. The per-backend contract
+file `__tests__/contributed/camoufox-py/camoufox-py.test.ts` has been
+folded into the runner; backend-specific behavioural tests (beyond
+the quirks flags) remain in hand-authored files under
+`__tests__/contributed/<name>-py/`.
 
 ## Router (`core/router.ts`)
 
@@ -234,6 +237,7 @@ All tool calls dispatch through the router. Key responsibilities:
 - **Fingerprint-managed context** — a stealth backend sets `_fingerprint_managed_context = True` so `create_browser_context()` skips the hardcoded `viewport`/`user_agent` and lets the fingerprint package set them. Camoufox injects the fingerprint at **browser launch** via `camoufox.NewBrowser`, so standard `browser.new_context()` is correct (a `_context_factory` / `NewContext` path was attempted and dropped — `camoufox.NewContext` is broken on the current binary).
 - **Camoufox `mw:` prefix + `main_world_eval`** — Camoufox sets `_eval_prefix = "mw:"` so `do_evaluate` writes route to the main world (isolated-world stealth otherwise blocks them), and forwards `main_world_eval=True` to `NewBrowser`. Contract tests assert `do_evaluate("() => 1 + 1")` returns `2`.
 - **`isMobile` / `_skip_default_viewport` binary quirk** — Camoufox's patched Firefox binary rejects the `isMobile` prop in Playwright's `Browser.setDefaultViewport` CDP call, so the template sets `_skip_default_viewport = True`. If a future binary version fixes the rejection, the flag degrades gracefully (default off) — re-validate on Camoufox releases.
+- **`_wrap_mw_eval_in_eval` main-world statement support** — Camoufox's patched Juggler main-world eval path (`MainWorldContext.executeInGlobal` in the binary's `omni.ja`) wraps every `mw:`-prefixed script as `(() => { let _s = (${script}); ... })()`. That wrapper requires `${script}` to be a single *expression*; any *statement* — `let` / `var` / multiple `;`-separated statements (the exact shape of the MiniWoB setup scripts `REMOVE_DISPLAY_JS` / `SETUP_JS`) — is a `SyntaxError` (`missing ) in parenthetical`) that surfaces through Playwright as `"Execution context was destroyed, most likely because of a navigation."`. That error is **not** a navigation race (the previous `_retry_eval_on_context_destroyed` quirk retried it and could never succeed — a SyntaxError is deterministic). The template sets `_wrap_mw_eval_in_eval = True`, making `do_evaluate` rewrite the script as `mw:eval(<JSON-string of script>)`: a single expression (valid inside `let _s = (...)`) where `eval` runs the script verbatim and returns its completion value, handling both expressions and multi-statement scripts. When a future Camoufox driver release fixes the wrapper, flip the flag back to `False`.
 - **`xvfb` for `headless='virtual'`** — on Linux, Camoufox's `headless='virtual'` mode needs the `xvfb` system package; true headless (`headless=True`, the template's default) works without it.
 - **`BROWSER_DEBUG=1`** — enables structured `[browser]` log lines on stderr (navigate, snapshot, click). Checked in both ChromiumPlugin and the Python bridge.
 

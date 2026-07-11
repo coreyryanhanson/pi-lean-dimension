@@ -109,6 +109,26 @@ Quirks rationale
     mismatch; the Camoufox binary's built-in viewport defaults are
     coherent with the fingerprint injected at browser launch.
 
+``_wrap_mw_eval_in_eval = True``
+    Camoufox's patched Juggler main-world eval path
+    (``MainWorldContext.executeInGlobal`` in the binary's ``omni.ja``)
+    wraps every ``mw:``-prefixed script as
+    ``(() => { let _s = (${script}); ... })()``.  That wrapper requires
+    ``${script}`` to be a single *expression*; any *statement* — ``let`` /
+    ``var`` / multiple ``;``-separated statements, which is exactly the
+    shape of the MiniWoB setup scripts (``REMOVE_DISPLAY_JS``,
+    ``SETUP_JS``) — is a ``SyntaxError`` (``missing ) in parenthetical``)
+    that surfaces through Playwright as ``"Execution context was
+    destroyed, most likely because of a navigation."``.  That error is
+    NOT a navigation race (the previous ``_retry_eval_on_context_destroyed``
+    quirk retried it and could never succeed — a SyntaxError is
+    deterministic).  This flag makes ``do_evaluate`` rewrite the script as
+    ``mw:eval(<JSON-string of script>)``: a single expression (valid
+    inside ``let _s = (...)``) where ``eval`` runs the script verbatim and
+    returns its completion value, handling both expressions and
+    multi-statement scripts.  When a future Camoufox driver release fixes
+    the wrapper, flip this flag back to ``False``.
+
 Requires
 --------
 * Python >= 3.10
@@ -183,6 +203,12 @@ class CamoufoxPyBridge(PlaywrightBridge):
     # or loiters in the Playwright sync greenlet long enough to risk deadlocking
     # the Juggler driver.  Match `do_navigate`'s load-based settle instead.
     _skip_networkidle: bool = True
+    # The patched Camoufox Juggler main-world eval path wraps every `mw:`
+    # script as `let _s = (${script})`, which is a SyntaxError for any
+    # statement (let/var/multi-statement).  Rewrite the script as
+    # `mw:eval(<json>)` so it is a single expression that `eval` runs
+    # verbatim.  See the `_wrap_mw_eval_in_eval` quirk docstring.
+    _wrap_mw_eval_in_eval: bool = True
     _install_hint: str = (
         "Camoufox browser not installed.\n"
         "Run the following commands in your camoufox-py virtual environment:\n"

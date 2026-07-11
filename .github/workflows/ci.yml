@@ -205,11 +205,10 @@ jobs:
       - name: Run Camoufox contract tests + user-backends runner
         env:
           MINIWOB_URL: http://localhost:8080
-          CONTRIB_PARITY_RUN: "1"
+          CONTRIB_RUN: "1"
         run: |
           npx vitest run \
-            packages/pi-lean-portal/__tests__/contributed/camoufox-py/camoufox-py.test.ts \
-            packages/pi-lean-portal/__tests__/contributed/camoufox-py/camoufox-py-persistence.test.ts \
+            packages/pi-lean-portal/__tests__/run-contributed-suites.test.ts \
             bench/miniwob/suites/miniwob-user-backends.test.ts
 
       - name: Upload test results on failure

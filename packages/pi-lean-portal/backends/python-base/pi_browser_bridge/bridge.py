@@ -535,6 +535,30 @@ class BrowserBridge:
                 result = self.do_cleanup(task_id)
                 return make_success_response(cmd_id, result)
 
+            if method == "browser.describeQuirks":
+                # Return the bridge's declared quirks flags.
+                # Uses getattr with defaults so a bare BrowserBridge (no
+                # Playwright quirks) returns all-defaults rather than
+                # raising AttributeError.
+                return make_success_response(cmd_id, {
+                    "fingerprint_managed_context": getattr(
+                        self, "_fingerprint_managed_context", False
+                    ),
+                    "eval_prefix": getattr(self, "_eval_prefix", ""),
+                    "scroll_via_wheel": getattr(
+                        self, "_scroll_via_wheel", False
+                    ),
+                    "skip_default_viewport": getattr(
+                        self, "_skip_default_viewport", False
+                    ),
+                    "skip_networkidle": getattr(
+                        self, "_skip_networkidle", False
+                    ),
+                    "wrap_mw_eval_in_eval": getattr(
+                        self, "_wrap_mw_eval_in_eval", False
+                    ),
+                })
+
             # Unknown method
             return make_error_response(
                 cmd_id,

@@ -37,6 +37,7 @@ import {
 	type PluginCapabilities,
 	type DialogEvent,
 	type NavigateResult,
+	type QuirksDescriptor,
 	type SnapshotResult,
 	type InteractionResult,
 	type ScreenshotResult,
@@ -923,6 +924,44 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				...(raw.error !== undefined ? { error: raw.error as string } : {}),
 			}),
 			(error) => ({ success: false, error, result: undefined }),
+		);
+	}
+
+	// ═════════════════════════════════════════════════════════════════
+	//  BrowserPlugin: Quirks introspection
+	// ═════════════════════════════════════════════════════════════════
+
+	/**
+	 * Query the bridge for its declared quirks flags via the
+	 * ``browser.describeQuirks`` introspection RPC.
+	 *
+	 * Returns the bridge's class-attribute quirks, or all-defaults on
+	 * transport error (the runner uses ``skipIf`` so tests only run for
+	 * quirks the bridge actually declares).
+	 */
+	async describeQuirks(): Promise<QuirksDescriptor> {
+		return this._rpcCallTyped<QuirksDescriptor>(
+			"browser.describeQuirks",
+			{},
+			(raw): QuirksDescriptor => ({
+				success: true,
+				fingerprint_managed_context: !!raw.fingerprint_managed_context,
+				eval_prefix: (raw.eval_prefix as string) ?? "",
+				scroll_via_wheel: !!raw.scroll_via_wheel,
+				skip_default_viewport: !!raw.skip_default_viewport,
+				skip_networkidle: !!raw.skip_networkidle,
+				wrap_mw_eval_in_eval: !!raw.wrap_mw_eval_in_eval,
+			}),
+			(error): QuirksDescriptor => ({
+				success: false,
+				fingerprint_managed_context: false,
+				eval_prefix: "",
+				scroll_via_wheel: false,
+				skip_default_viewport: false,
+				skip_networkidle: false,
+				wrap_mw_eval_in_eval: false,
+				error,
+			}),
 		);
 	}
 

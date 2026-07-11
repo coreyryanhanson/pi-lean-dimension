@@ -11,10 +11,13 @@
  * - Merged global + project settings
  */
 
+import { join } from "node:path";
+
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
 	loadBrowserConfig,
 	loadPluginConfig,
+	loadPluginConfigFromFile,
 	invalidateConfigCache,
 } from "../core/plugin-config.js";
 
@@ -178,5 +181,112 @@ describe("loadPluginConfig() default fallback", () => {
 		const names = plugins.map((p) => p.name);
 		expect(names).not.toContain("camoufox-py");
 		expect(names).not.toContain("stealth-py");
+	});
+});
+
+// ─── loadPluginConfigFromFile ─────────────────────────────────────
+
+describe("loadPluginConfigFromFile()", () => {
+	/** Set up mock to behave like one valid bridge.py exists at a root dir. */
+	function mockValidBackendRoot(dirPath: string): void {
+		mockFs.existsSync.mockImplementation((p: string) => {
+			// The settings file itself exists
+			if (p === "/tmp/settings.json") return true;
+			if (p === "/tmp/empty.json") return true;
+			if (p === "/tmp/cached.json") return true;
+			// The backend directory exists
+			if (p === join(dirPath, "example-py")) return true;
+			if (p === join(dirPath, "my-backend")) return true;
+			// bridge.py exists (Python plugin)
+			if (p === join(dirPath, "example-py", "bridge.py")) return true;
+			if (p === join(dirPath, "my-backend", "bridge.py")) return true;
+			// index.ts does NOT exist → Python plugin, unambiguous
+			// Default stub dirs that detectPluginType checks as directories
+			if (p.startsWith("/tmp/")) return false;
+			// Everything else (e.g. global settings paths from fallback) is absent
+			return false;
+		});
+		mockFs.readFileSync.mockImplementation((p: string) => {
+			if (p === "/tmp/settings.json") {
+				return JSON.stringify({
+					browser: {
+						plugins: [
+							{
+								name: "example-py",
+								dir: "example-py",
+								enabled: true,
+								config: {
+									pythonPath: "/custom/python3",
+									capabilities: { engine: "firefox" },
+									transportTimeoutMs: 30_000,
+									launch: { headless: true },
+								},
+							},
+						],
+					},
+				});
+			}
+			if (p === "/tmp/empty.json") return "{}";
+			return "{}";
+		});
+	}
+
+	it("parses a test-local settings file with browser.plugins", () => {
+		// Point at a root with a valid bridge.py so detectPluginType passes.
+		mockValidBackendRoot("/tmp/backends");
+
+		const { plugins, errors } = loadPluginConfigFromFile(
+			"/tmp/settings.json",
+			["/tmp/backends"],
+		);
+		expect(errors).toEqual([]);
+		expect(plugins).toHaveLength(1);
+		const p = plugins[0]!;
+		expect(p.name).toBe("example-py");
+		expect(p.enabled).toBe(true);
+		expect(p.config.pythonPath).toBe("/custom/python3");
+		expect(p.config.launch).toEqual({ headless: true });
+	});
+
+	it("falls back to default plugins when settings file has no browser key", () => {
+		// No browser key → falls through to parsePluginConfig(undefined) → defaults
+		mockFs.existsSync.mockReturnValue(true);
+		mockFs.readFileSync.mockImplementation((p: string) => {
+			if (p === "/tmp/no-browser.json") return JSON.stringify({ unrelated: true });
+			return "{}";
+		});
+
+		const { plugins, errors } = loadPluginConfigFromFile("/tmp/no-browser.json");
+		expect(errors).toEqual([]);
+		const names = plugins.map((p) => p.name);
+		expect(names).toEqual(["chromium", "firefox", "chromium-py", "firefox-py"]);
+	});
+
+	it("falls back to default plugins when settings file is empty", () => {
+		// Empty JSON object → no "browser" key → same fallback.
+		mockFs.existsSync.mockReturnValue(true);
+		mockFs.readFileSync.mockImplementation((p: string) => {
+			if (p === "/tmp/empty.json") return "{}";
+			return "{}";
+		});
+
+		const { plugins, errors } = loadPluginConfigFromFile("/tmp/empty.json");
+		expect(errors).toEqual([]);
+		const names = plugins.map((p) => p.name);
+		expect(names).toEqual(["chromium", "firefox", "chromium-py", "firefox-py"]);
+	});
+
+	it("is one-shot with no caching (consecutive calls read the file each time)", () => {
+		const spy = vi.fn((_: string) => JSON.stringify({ browser: { plugins: [] } }));
+		mockFs.existsSync.mockReturnValue(true);
+		mockFs.readFileSync.mockImplementation(spy);
+
+		const testPath = "/tmp/cached.json";
+		// Call twice
+		loadPluginConfigFromFile(testPath);
+		loadPluginConfigFromFile(testPath);
+
+		// Must have been called twice (no caching)
+		expect(spy).toHaveBeenCalledTimes(2);
 	});
 });

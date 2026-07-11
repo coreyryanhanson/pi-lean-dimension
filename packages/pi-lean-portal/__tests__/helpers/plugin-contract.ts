@@ -63,6 +63,15 @@ export interface ContractTestOptions {
 	 * Default: false.
 	 */
 	navigationSettle?: boolean;
+
+	/**
+	 * Vitest test timeout (ms) for every `it()` in this suite.
+	 * When set, each test gets this timeout instead of vitest's default
+	 * (15s).  Useful for real-browser plugins (e.g. Camoufox) where
+	 * the first-navigate bridge launch can exceed the default.
+	 * Default: undefined (vitest default: 15_000).
+	 */
+	testTimeout?: number;
 }
 
 // ─── HTML Fixtures ────────────────────────────────────────────────
@@ -244,8 +253,32 @@ export function runContractTests(
 		realBrowser = false,
 		navigateTimeout = 15_000,
 		navigationSettle = false,
+		testTimeout,
 	} = options;
 	const TASK_ID = "contract-test";
+
+	// Scoped test creator: when testTimeout is set, every `it()` call in this
+	// suite uses that timeout, so slow real-browser plugins (e.g. Camoufox)
+	// don't hit the default 15s vitest timeout on first-navigate bridge launch.
+	//
+	// Typed as simple callables (not vitest's TestAPI / AfterEachAPI) because
+	// arrow functions lack the chainable .only/.skip/.runIf properties that
+	// the vitest types include.  Chainable variants are never needed here —
+	// the one .runIf call in this file uses the original `it` directly.
+	const _it = testTimeout
+		? (name: string, fn: (...args: unknown[]) => unknown): void => {
+				it(name, fn, testTimeout);
+			}
+		: it;
+
+	// Scoped afterEach: when testTimeout is set, apply it to the cleanup
+	// hook too — plugin.cleanupAll() may exceed the default 10s hook timeout
+	// for real-browser plugins with expensive teardown.
+	const _afterEach = testTimeout
+		? (fn: (...args: unknown[]) => unknown): void => {
+				afterEach(fn, testTimeout);
+			}
+		: afterEach;
 
 	// ═══════════════════════════════════════════════════════════
 	// Structural tests — work with any BrowserPlugin (including MockPlugin)
@@ -258,19 +291,19 @@ export function runContractTests(
 			plugin = await createPlugin();
 		});
 
-		afterEach(async () => {
+		_afterEach(async () => {
 			await plugin.cleanupAll().catch(() => {});
 		});
 
 		// ─── Identity & Capabilities ───────────────────────────
 
 		describe("identity", () => {
-			it("has a non-empty name", () => {
+			_it("has a non-empty name", () => {
 				expect(plugin.name).toBeTruthy();
 				expect(typeof plugin.name).toBe("string");
 			});
 
-			it("has complete capabilities", () => {
+			_it("has complete capabilities", () => {
 				const caps: PluginCapabilities = plugin.capabilities;
 				expect(typeof caps.supportsFullPageScreenshot).toBe("boolean");
 				expect(typeof caps.supportsConsoleCapture).toBe("boolean");
@@ -285,7 +318,7 @@ export function runContractTests(
 		// ─── Navigate ─────────────────────────────────────────
 
 		describe("navigate()", () => {
-			it("returns a NavigateResult with required fields", async () => {
+			_it("returns a NavigateResult with required fields", async () => {
 				const result = await plugin.navigate(
 					"https://example.com/",
 					TASK_ID,
@@ -308,17 +341,20 @@ export function runContractTests(
 				}
 			});
 
-			it("returns a well-formed result for any URL (success or error)", async () => {
-				const result = await plugin.navigate("not-a-url", TASK_ID, 30_000);
+			_it(
+				"returns a well-formed result for any URL (success or error)",
+				async () => {
+					const result = await plugin.navigate("not-a-url", TASK_ID, 30_000);
 
-				expect(result).toBeDefined();
-				expect(typeof result.success).toBe("boolean");
-				if (!result.success) {
-					expect(result.error).toBeTruthy();
-				}
-			});
+					expect(result).toBeDefined();
+					expect(typeof result.success).toBe("boolean");
+					if (!result.success) {
+						expect(result.error).toBeTruthy();
+					}
+				},
+			);
 
-			it("does not set botDetected for normal pages", async () => {
+			_it("does not set botDetected for normal pages", async () => {
 				const result = await plugin.navigate(
 					"https://example.com/",
 					TASK_ID,
@@ -334,7 +370,7 @@ export function runContractTests(
 		// ─── Snapshot ─────────────────────────────────────────
 
 		describe("snapshot()", () => {
-			it("returns a SnapshotResult with required fields", async () => {
+			_it("returns a SnapshotResult with required fields", async () => {
 				// Ensure a session exists first
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
@@ -357,7 +393,7 @@ export function runContractTests(
 		// ─── Click ────────────────────────────────────────────
 
 		describe("click()", () => {
-			it("returns an InteractionResult with required fields", async () => {
+			_it("returns an InteractionResult with required fields", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				// Use a ref that might exist; structural test just checks shape
@@ -383,7 +419,7 @@ export function runContractTests(
 		// ─── Type ────────────────────────────────────────────
 
 		describe("type()", () => {
-			it("returns an InteractionResult with required fields", async () => {
+			_it("returns an InteractionResult with required fields", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				const result = await plugin.type(TASK_ID, "@e1", "hello");
@@ -407,7 +443,7 @@ export function runContractTests(
 		// ─── Scroll ──────────────────────────────────────────
 
 		describe("scroll()", () => {
-			it("returns an InteractionResult with required fields", async () => {
+			_it("returns an InteractionResult with required fields", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				const result = await plugin.scroll(TASK_ID, "down");
@@ -424,7 +460,7 @@ export function runContractTests(
 				}
 			});
 
-			it("accepts 'up' direction", async () => {
+			_it("accepts 'up' direction", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				const result = await plugin.scroll(TASK_ID, "up");
@@ -437,7 +473,7 @@ export function runContractTests(
 		// ─── GoBack ──────────────────────────────────────────
 
 		describe("goBack()", () => {
-			it("returns an InteractionResult with required fields", async () => {
+			_it("returns an InteractionResult with required fields", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				const result = await plugin.goBack(TASK_ID);
@@ -465,7 +501,7 @@ export function runContractTests(
 		// ─── Press ───────────────────────────────────────────
 
 		describe("press()", () => {
-			it("returns an InteractionResult with required fields", async () => {
+			_it("returns an InteractionResult with required fields", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				const result = await plugin.press(TASK_ID, "Enter");
@@ -486,7 +522,7 @@ export function runContractTests(
 		// ─── Screenshot ──────────────────────────────────────
 
 		describe("screenshot()", () => {
-			it("returns a ScreenshotResult with required fields", async () => {
+			_it("returns a ScreenshotResult with required fields", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				const result = await plugin.screenshot(TASK_ID);
@@ -504,7 +540,7 @@ export function runContractTests(
 				}
 			});
 
-			it("accepts fullPage option when supported", async () => {
+			_it("accepts fullPage option when supported", async () => {
 				if (!plugin.capabilities.supportsFullPageScreenshot) return;
 
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
@@ -521,7 +557,7 @@ export function runContractTests(
 		// ─── Console ─────────────────────────────────────────
 
 		describe("getConsoleMessages()", () => {
-			it("returns a ConsoleMessagesResult with required fields", async () => {
+			_it("returns a ConsoleMessagesResult with required fields", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				const result = await plugin.getConsoleMessages(TASK_ID);
@@ -544,7 +580,7 @@ export function runContractTests(
 		// ─── ClearConsole ────────────────────────────────────
 
 		describe("clearConsole()", () => {
-			it("does not throw", async () => {
+			_it("does not throw", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				// Should resolve without error
@@ -555,7 +591,7 @@ export function runContractTests(
 		// ─── Evaluate ────────────────────────────────────────
 
 		describe("evaluate()", () => {
-			it("returns an EvaluateResult with required fields", async () => {
+			_it("returns an EvaluateResult with required fields", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				if (!plugin.capabilities.supportsJavaScriptEvaluate) {
@@ -582,7 +618,7 @@ export function runContractTests(
 		// ─── Cookies & storage state ─────────────────────────
 
 		describe("getCookies()", () => {
-			it("returns a CookieResult with required fields", async () => {
+			_it("returns a CookieResult with required fields", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				const result = await plugin.getCookies(TASK_ID);
@@ -601,7 +637,7 @@ export function runContractTests(
 				}
 			});
 
-			it("accepts optional urls filter", async () => {
+			_it("accepts optional urls filter", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				const result = await plugin.getCookies(TASK_ID, [
@@ -615,7 +651,7 @@ export function runContractTests(
 		});
 
 		describe("addCookies()", () => {
-			it("returns a ResultBase with required fields", async () => {
+			_it("returns a ResultBase with required fields", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				const result = await plugin.addCookies(TASK_ID, [
@@ -634,7 +670,7 @@ export function runContractTests(
 				}
 			});
 
-			it("rejects cookies without required fields", async () => {
+			_it("rejects cookies without required fields", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				// Missing domain and path — may fail at Playwright level
@@ -649,7 +685,7 @@ export function runContractTests(
 		});
 
 		describe("clearCookies()", () => {
-			it("returns a ResultBase with required fields", async () => {
+			_it("returns a ResultBase with required fields", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				const result = await plugin.clearCookies(TASK_ID);
@@ -658,7 +694,7 @@ export function runContractTests(
 				expect(typeof result.success).toBe("boolean");
 			});
 
-			it("accepts optional filter params", async () => {
+			_it("accepts optional filter params", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				const result = await plugin.clearCookies(TASK_ID, {
@@ -671,7 +707,7 @@ export function runContractTests(
 		});
 
 		describe("getStorageState()", () => {
-			it("returns a StorageStateResult with required fields", async () => {
+			_it("returns a StorageStateResult with required fields", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				const result = await plugin.getStorageState(TASK_ID);
@@ -699,7 +735,7 @@ export function runContractTests(
 		// ─── Cleanup ────────────────────────────────────────
 
 		describe("cleanup()", () => {
-			it("does not throw for an active session", async () => {
+			_it("does not throw for an active session", async () => {
 				await plugin.navigate("https://example.com/", TASK_ID, 30_000);
 
 				await expect(plugin.cleanup(TASK_ID)).resolves.toBeUndefined();
@@ -709,7 +745,7 @@ export function runContractTests(
 		// ─── CleanupAll ──────────────────────────────────────
 
 		describe("cleanupAll()", () => {
-			it("does not throw", async () => {
+			_it("does not throw", async () => {
 				await expect(plugin.cleanupAll()).resolves.toBeUndefined();
 			});
 		});
@@ -737,14 +773,14 @@ export function runContractTests(
 			plugin = await createPlugin();
 		});
 
-		afterEach(async () => {
+		_afterEach(async () => {
 			await plugin.cleanupAll().catch(() => {});
 		});
 
 		// ─── Navigate ─────────────────────────────────────────
 
 		describe("navigate() — real pages", () => {
-			it("loads a page and returns correct title", async () => {
+			_it("loads a page and returns correct title", async () => {
 				const result = await plugin.navigate(
 					`${server.url}/simple`,
 					TASK_ID,
@@ -756,20 +792,23 @@ export function runContractTests(
 				expect(result.url).toContain("/simple");
 			});
 
-			it("returns a snapshot with @e refs for interactive elements", async () => {
-				const result = await plugin.navigate(
-					`${server.url}/interactive`,
-					TASK_ID,
-					navigateTimeout,
-				);
+			_it(
+				"returns a snapshot with @e refs for interactive elements",
+				async () => {
+					const result = await plugin.navigate(
+						`${server.url}/interactive`,
+						TASK_ID,
+						navigateTimeout,
+					);
 
-				expect(result.success).toBe(true);
-				expect(result.snapshot).toBeTruthy();
-				// Interactive page should have at least some elements
-				expect(result.elementCount).toBeGreaterThan(0);
-			});
+					expect(result.success).toBe(true);
+					expect(result.snapshot).toBeTruthy();
+					// Interactive page should have at least some elements
+					expect(result.elementCount).toBeGreaterThan(0);
+				},
+			);
 
-			it("follows redirects", async () => {
+			_it("follows redirects", async () => {
 				const result = await plugin.navigate(
 					server.url,
 					TASK_ID,
@@ -780,7 +819,7 @@ export function runContractTests(
 				expect(result.url).toContain("/simple");
 			});
 
-			it("handles 404 pages", async () => {
+			_it("handles 404 pages", async () => {
 				const result = await plugin.navigate(
 					`${server.url}/nonexistent`,
 					TASK_ID,
@@ -796,39 +835,42 @@ export function runContractTests(
 		// ─── Click ────────────────────────────────────────────
 
 		describe("click() — real interaction", () => {
-			it("clicks duplicate-named links without strict-mode violation", async () => {
-				await plugin.navigate(
-					`${server.url}/duplicates`,
-					TASK_ID,
-					navigateTimeout,
-				);
-
-				const snap = await plugin.snapshot(TASK_ID);
-				expect(snap.success).toBe(true);
-
-				// Extract all link @e refs from the snapshot
-				const linkRefs: string[] = [];
-				const linkMatches = snap.snapshot.matchAll(/@(e\d+)\s.*?link/g);
-				for (const m of linkMatches) {
-					linkRefs.push(`@${m[1]!}`);
-				}
-
-				expect(linkRefs.length).toBeGreaterThanOrEqual(3);
-
-				// Click each duplicate link in sequence — should not throw strict mode
-				// Each link with the same name "Same Link" must be clickable via its @e ref
-				for (const ref of linkRefs) {
-					const result = await plugin.click(TASK_ID, ref);
-					expect(result.success).toBe(true);
-
-					// Navigate back to duplicates page for next click
+			_it(
+				"clicks duplicate-named links without strict-mode violation",
+				async () => {
 					await plugin.navigate(
 						`${server.url}/duplicates`,
 						TASK_ID,
 						navigateTimeout,
 					);
-				}
-			});
+
+					const snap = await plugin.snapshot(TASK_ID);
+					expect(snap.success).toBe(true);
+
+					// Extract all link @e refs from the snapshot
+					const linkRefs: string[] = [];
+					const linkMatches = snap.snapshot.matchAll(/@(e\d+)\s.*?link/g);
+					for (const m of linkMatches) {
+						linkRefs.push(`@${m[1]!}`);
+					}
+
+					expect(linkRefs.length).toBeGreaterThanOrEqual(3);
+
+					// Click each duplicate link in sequence — should not throw strict mode
+					// Each link with the same name "Same Link" must be clickable via its @e ref
+					for (const ref of linkRefs) {
+						const result = await plugin.click(TASK_ID, ref);
+						expect(result.success).toBe(true);
+
+						// Navigate back to duplicates page for next click
+						await plugin.navigate(
+							`${server.url}/duplicates`,
+							TASK_ID,
+							navigateTimeout,
+						);
+					}
+				},
+			);
 		});
 
 		it.runIf(navigationSettle)(
@@ -865,7 +907,7 @@ export function runContractTests(
 		// ─── Scroll ──────────────────────────────────────────
 
 		describe("scroll() — real interaction", () => {
-			it("scrolls down on a long page", async () => {
+			_it("scrolls down on a long page", async () => {
 				await plugin.navigate(`${server.url}/scroll`, TASK_ID, navigateTimeout);
 
 				const result = await plugin.scroll(TASK_ID, "down");
@@ -873,7 +915,7 @@ export function runContractTests(
 				expect(result.success).toBe(true);
 			});
 
-			it("scrolls back up", async () => {
+			_it("scrolls back up", async () => {
 				await plugin.navigate(`${server.url}/scroll`, TASK_ID, navigateTimeout);
 
 				await plugin.scroll(TASK_ID, "down");
@@ -882,7 +924,7 @@ export function runContractTests(
 				expect(result.success).toBe(true);
 			});
 
-			it("scrolls to the bottom after repeated scrolls", async () => {
+			_it("scrolls to the bottom after repeated scrolls", async () => {
 				await plugin.navigate(`${server.url}/scroll`, TASK_ID, navigateTimeout);
 
 				let bottomReached = false;
@@ -909,7 +951,7 @@ export function runContractTests(
 		// ─── GoBack ──────────────────────────────────────────
 
 		describe("goBack() — real navigation", () => {
-			it("navigates back to the previous page", async () => {
+			_it("navigates back to the previous page", async () => {
 				// Navigate to page A
 				await plugin.navigate(`${server.url}/page-a`, TASK_ID, navigateTimeout);
 
@@ -940,7 +982,7 @@ export function runContractTests(
 		// ─── Press ───────────────────────────────────────────
 
 		describe("press() — real interaction", () => {
-			it("presses Enter key", async () => {
+			_it("presses Enter key", async () => {
 				await plugin.navigate(
 					`${server.url}/interactive`,
 					TASK_ID,
@@ -956,7 +998,7 @@ export function runContractTests(
 		// ─── Screenshot ──────────────────────────────────────
 
 		describe("screenshot() — real capture", () => {
-			it("returns a valid JPEG data URI", async () => {
+			_it("returns a valid JPEG data URI", async () => {
 				await plugin.navigate(`${server.url}/simple`, TASK_ID, navigateTimeout);
 
 				const result = await plugin.screenshot(TASK_ID);
@@ -974,7 +1016,7 @@ export function runContractTests(
 		// ─── Console ─────────────────────────────────────────
 
 		describe("console — real capture", () => {
-			it("captures console messages from the page", async () => {
+			_it("captures console messages from the page", async () => {
 				if (!plugin.capabilities.supportsConsoleCapture) return;
 
 				await plugin.navigate(
@@ -994,7 +1036,7 @@ export function runContractTests(
 				).toBe(true);
 			});
 
-			it("clears console messages", async () => {
+			_it("clears console messages", async () => {
 				if (!plugin.capabilities.supportsConsoleCapture) return;
 
 				await plugin.navigate(
@@ -1014,7 +1056,7 @@ export function runContractTests(
 		// ─── Evaluate ────────────────────────────────────────
 
 		describe("evaluate() — real execution", () => {
-			it("evaluates a JavaScript expression", async () => {
+			_it("evaluates a JavaScript expression", async () => {
 				if (!plugin.capabilities.supportsJavaScriptEvaluate) return;
 
 				await plugin.navigate(`${server.url}/simple`, TASK_ID, navigateTimeout);
@@ -1025,7 +1067,7 @@ export function runContractTests(
 				expect(result.result).toBe("Contract Test — Simple");
 			});
 
-			it("evaluates arithmetic", async () => {
+			_it("evaluates arithmetic", async () => {
 				if (!plugin.capabilities.supportsJavaScriptEvaluate) return;
 
 				await plugin.navigate(`${server.url}/simple`, TASK_ID, navigateTimeout);
@@ -1036,7 +1078,7 @@ export function runContractTests(
 				expect(result.result).toBe(5);
 			});
 
-			it("returns error for invalid expressions", async () => {
+			_it("returns error for invalid expressions", async () => {
 				if (!plugin.capabilities.supportsJavaScriptEvaluate) return;
 
 				await plugin.navigate(`${server.url}/simple`, TASK_ID, navigateTimeout);
@@ -1054,7 +1096,7 @@ export function runContractTests(
 		// ─── Lifecycle ───────────────────────────────────────
 
 		describe("lifecycle — real sessions", () => {
-			it("creates and cleans up a session", async () => {
+			_it("creates and cleans up a session", async () => {
 				await plugin.navigate(`${server.url}/simple`, TASK_ID, navigateTimeout);
 
 				// Session should be working
@@ -1069,7 +1111,7 @@ export function runContractTests(
 				expect(afterCleanup.success).toBe(false);
 			});
 
-			it("isolates sessions by taskId", async () => {
+			_it("isolates sessions by taskId", async () => {
 				const TASK_A = "task-a";
 				const TASK_B = "task-b";
 
@@ -1100,7 +1142,7 @@ export function runContractTests(
 		// ─── Reddit dialog fixtures ─────────────────────────
 
 		describe("reddit dialog fixtures", () => {
-			it("dialog appears in snapshot after navigate", async () => {
+			_it("dialog appears in snapshot after navigate", async () => {
 				const result = await plugin.navigate(
 					`${server.url}/reddit-dialog`,
 					TASK_ID,
@@ -1116,7 +1158,7 @@ export function runContractTests(
 				expect(dialogCount(snap.snapshot)).toBeGreaterThanOrEqual(1);
 			});
 
-			it("stacked dialogs close in sequence", async () => {
+			_it("stacked dialogs close in sequence", async () => {
 				const STACKED_TASK = "stacked-test";
 
 				await plugin.navigate(
@@ -1161,7 +1203,7 @@ export function runContractTests(
 				await plugin.cleanup(STACKED_TASK);
 			});
 
-			it("async dialog eventually appears", async () => {
+			_it("async dialog eventually appears", async () => {
 				const ASYNC_TASK = "async-test";
 
 				await plugin.navigate(

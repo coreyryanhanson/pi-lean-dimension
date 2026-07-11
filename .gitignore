@@ -173,13 +173,9 @@ packages/pi-lean-portal/contributed/*
 !packages/pi-lean-portal/contributed/camoufox-py
 packages/pi-lean-portal/contributed/camoufox-py/*
 !packages/pi-lean-portal/contributed/camoufox-py/bridge.py
-!packages/pi-lean-portal/contributed/camoufox-py/miniwob-parity.test.ts
 
 # Contributed backend tests: same ignore-by-default + whitelist-shipped
 # logic as the templates above. Contract/persistence tests for scratch
 # backends are ignored unless explicitly re-included.
 packages/pi-lean-portal/__tests__/contributed/*
-!packages/pi-lean-portal/__tests__/contributed/camoufox-py
-packages/pi-lean-portal/__tests__/contributed/camoufox-py/*
-!packages/pi-lean-portal/__tests__/contributed/camoufox-py/camoufox-py.test.ts
-!packages/pi-lean-portal/__tests__/contributed/camoufox-py/camoufox-py-persistence.test.ts
+
