@@ -72,6 +72,14 @@ export interface ContractTestOptions {
 	 * Default: undefined (vitest default: 15_000).
 	 */
 	testTimeout?: number;
+
+	/**
+	 * Set true to run the cache-survives-eval-failure parity test.
+	 * Used by stealth backends (Camoufox) where eval can fail on
+	 * JS-active pages but the cache path must still work.
+	 * Default: false.
+	 */
+	runCacheSurvivesEvalFailure?: boolean;
 }
 
 // ─── HTML Fixtures ────────────────────────────────────────────────
@@ -254,6 +262,7 @@ export function runContractTests(
 		navigateTimeout = 15_000,
 		navigationSettle = false,
 		testTimeout,
+		runCacheSurvivesEvalFailure = false,
 	} = options;
 	const TASK_ID = "contract-test";
 
@@ -1136,6 +1145,46 @@ export function runContractTests(
 				// Cleanup
 				await plugin.cleanup(TASK_A);
 				await plugin.cleanup(TASK_B);
+			});
+		});
+
+		// ─── Cache survives eval failure (parity invariant) ─
+
+		describe("cache survives eval failure", () => {
+			// ponytail: This test asserts a structural invariant — the cache
+			// is not invalidated by an eval call, even one that fails.  It does
+			// NOT force an actual eval failure (which is engine-dependent and
+			// not reproducible in CI without a challenge page).  A passing eval
+			// call must not invalidate the cache either — the invariant is that
+			// cache-query and eval are independent paths.
+			//
+			// Full regression guard for the eval-failure class: if navigate
+			// populated an N-element a11y tree, the cache-query path works even
+			// when the eval path fails (e.g. on Camoufox challenge pages where
+			// the main-world context is destroyed).
+			_it("cache query works after evaluate call", async () => {
+				if (!runCacheSurvivesEvalFailure) return;
+
+				await plugin.navigate(
+					`${server.url}/interactive`,
+					TASK_ID,
+					navigateTimeout,
+				);
+
+				// Snapshot → a11y tree populated
+				const snap1 = await plugin.snapshot(TASK_ID);
+				expect(snap1.success).toBe(true);
+				expect(snap1.elementCount).toBeGreaterThan(0);
+
+				// Evaluate (may succeed or fail — not forced). The
+				// invariant: an eval call does not invalidate the cache.
+				await plugin.evaluate(TASK_ID, "document.title");
+
+				// Re-run snapshot — must still succeed with same content
+				const snap2 = await plugin.snapshot(TASK_ID);
+				expect(snap2.success).toBe(true);
+				expect(snap2.elementCount).toBeGreaterThan(0);
+				expect(snap2.snapshot).toBe(snap1.snapshot);
 			});
 		});
 

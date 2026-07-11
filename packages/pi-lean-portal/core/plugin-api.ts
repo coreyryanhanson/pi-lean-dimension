@@ -311,7 +311,11 @@ export interface BrowserPlugin {
 
 	clearConsole(taskId: string): Promise<void>;
 
-	evaluate(taskId: string, expression: string): Promise<EvaluateResult>;
+	evaluate(
+		taskId: string,
+		expression: string,
+		readOnly?: boolean,
+	): Promise<EvaluateResult>;
 
 	// ── Element cache access ─────────────────────────────────
 

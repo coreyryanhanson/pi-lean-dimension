@@ -501,7 +501,8 @@ class BrowserBridge:
             if method == "browser.evaluate":
                 task_id = self._require_param(params, "taskId", str, cmd_id)
                 expression = self._require_param(params, "expression", str, cmd_id)
-                result = self.do_evaluate(task_id, expression)
+                read_only = bool(params.get("readOnly", False))
+                result = self.do_evaluate(task_id, expression, read_only=read_only)
                 return make_success_response(cmd_id, result)
 
             if method == "browser.getCookies":

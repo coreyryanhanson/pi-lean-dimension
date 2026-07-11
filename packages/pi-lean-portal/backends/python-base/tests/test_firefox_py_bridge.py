@@ -210,3 +210,47 @@ class TestConsoleCap:
         assert len(messages) == 10, f"Expected 10, got {len(messages)}"
         assert messages[0]["text"] == "msg-0"
         assert messages[-1]["text"] == "msg-9"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Test: browser.evaluate RPC dispatch with readOnly
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestEvaluateReadOnly:
+    """Verify ``browser.evaluate`` reads the ``readOnly`` param
+    and forwards it to ``do_evaluate`` as ``read_only``."""
+
+    def test_readonly_true_reaches_do_evaluate(self) -> None:
+        """readOnly: True in params reaches do_evaluate as read_only=True."""
+        bridge = FirefoxPyBridge()
+        recorded: list[bool] = []
+
+        def spy(task_id: str, expression: str, *, read_only: bool = False) -> dict:
+            recorded.append(read_only)
+            return {"success": True, "result": None}
+
+        bridge.do_evaluate = spy  # type: ignore[assignment]
+        bridge.handle_command(
+            "browser.evaluate",
+            {"taskId": "t", "expression": "1+1", "readOnly": True},
+            999,
+        )
+        assert recorded == [True]
+
+    def test_readonly_omitted_defaults_false(self) -> None:
+        """No readOnly param: defaults to False."""
+        bridge = FirefoxPyBridge()
+        recorded: list[bool] = []
+
+        def spy(task_id: str, expression: str, *, read_only: bool = False) -> dict:
+            recorded.append(read_only)
+            return {"success": True, "result": None}
+
+        bridge.do_evaluate = spy  # type: ignore[assignment]
+        bridge.handle_command(
+            "browser.evaluate",
+            {"taskId": "t", "expression": "1+1"},
+            1000,
+        )
+        assert recorded == [False]

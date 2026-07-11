@@ -197,8 +197,12 @@ export class MockPlugin implements BrowserPlugin {
 			throw new Error("clearConsole failed");
 	}
 
-	async evaluate(taskId: string, expression: string): Promise<EvaluateResult> {
-		this.record("evaluate", [taskId, expression]);
+	async evaluate(
+		taskId: string,
+		expression: string,
+		readOnly?: boolean,
+	): Promise<EvaluateResult> {
+		this.record("evaluate", [taskId, expression, readOnly]);
 		if (this.shouldThrow.has("evaluate")) throw new Error("evaluate failed");
 		return {
 			success: true,

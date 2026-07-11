@@ -168,7 +168,7 @@ so standard `browser.new_context()` with
 
 ### Camoufox: the shipped example template
 
-Camoufox is the **shipped, tested example** — a reference `bridge.py`
+Camoufox is the **shipped, tested template** — a reference `bridge.py`
 lives at `contributed/camoufox-py/` (source repo only; **not in the
 npm tarball** because `docs/` is excluded from `package.json` `files`).
 Pointer:
@@ -176,11 +176,10 @@ Pointer:
 Generic test suites (contract + persistence + MiniWoB parity + quirks
 introspection) run via the discovery runner at
 `__tests__/run-contributed-suites.test.ts`, which auto-discovers
-any `<name>-py/` user backend at runtime. The per-backend contract
-file `__tests__/contributed/camoufox-py/camoufox-py.test.ts` has been
-folded into the runner; backend-specific behavioural tests (beyond
-the quirks flags) remain in hand-authored files under
-`__tests__/contributed/<name>-py/`.
+any `<name>-py/` user backend at runtime — there is no per-backend
+contract file for Camoufox. Backend-specific behavioural tests
+(beyond the quirks flags) are optional hand-authored files under
+`__tests__/contributed/<name>-py/`
 
 ## Router (`core/router.ts`)
 

@@ -157,10 +157,15 @@ class PlaywrightBridge(BrowserBridge):
     _skip_networkidle: bool = False
 
     #: When True, ``do_evaluate`` wraps the expression in ``eval(<json>)``
-    #: before prepending :attr:`_eval_prefix`.  This works around a bug in
-    #: Camoufox's patched Juggler main-world eval path
-    #: (``MainWorldContext.executeInGlobal`` in the binary's ``omni.ja``),
-    #: which wraps every ``mw:``-prefixed script as
+    #: before prepending :attr:`_eval_prefix` **and** enables a one-retry
+    #: recovery on genuine ``Execution context was destroyed`` errors.
+    #: Default ``False`` so the shipped ``chromium-py`` / ``firefox-py``
+    #: bridges (which have ``_eval_prefix = ""``) stay bit-identical.
+    #:
+    #: **Layer 1 — SyntaxError class (``eval(<json>)`` wrap).**  Camoufox's
+    #: patched Juggler main-world eval path
+    #: (``MainWorldContext.executeInGlobal`` in the binary's ``omni.ja``)
+    #: wraps every ``mw:``-prefixed script as
     #: ``(() => { let _s = (${script}); ... })()``.  That wrapper requires
     #: ``${script}`` to be a single *expression*; any *statement* (``let`` /
     #: ``var`` / multiple ``;``-separated statements) is a ``SyntaxError``
@@ -171,8 +176,22 @@ class PlaywrightBridge(BrowserBridge):
     #: makes it a single expression (valid inside ``let _s = (...)``) while
     #: ``eval`` itself correctly handles both expressions and multi-statement
     #: scripts, returning the completion value of the last statement.
-    #: Default ``False`` so the shipped ``chromium-py`` / ``firefox-py``
-    #: bridges (which have ``_eval_prefix = ""``) stay bit-identical.
+    #: This class is **terminal** — a SyntaxError after the wrap means the
+    #: wrap itself is broken and there is no retry.
+    #:
+    #: **Layer 2 — Genuine context-destruction class (retry).**  On a
+    #: bot-detection challenge page the page may settle-navigate after
+    #: ``browser.navigate`` returns, destroying the ``mw:`` eval context
+    #: between the snapshot and a subsequent ``browser.inspect`` or
+    #: ``browser-console`` call.  The error string is identical to Layer 1
+    #: (both produce ``"Execution context was destroyed…"`` through
+    #: Playwright) but the class is **transient** — a single
+    #: ``wait_for_load_state("load")`` + one ``page.evaluate`` retry
+    #: succeeds once the challenge settles.  ``do_evaluate`` distinguishes
+    #: the two classes in its ``except`` handler: a retry is attempted
+    #: only when ``_wrap_mw_eval_in_eval`` is True (Camoufox-only; shipped
+    #: bridges never hit the ``mw:`` path) and only for the transient class.
+    #: See ``do_evaluate`` for the implementation.
     _wrap_mw_eval_in_eval: bool = False
 
 
@@ -1229,7 +1248,9 @@ class PlaywrightBridge(BrowserBridge):
                 "error": str(exc),
             }
 
-    def do_evaluate(self, task_id: str, expression: str) -> dict[str, Any]:
+    def do_evaluate(
+        self, task_id: str, expression: str, *, read_only: bool = False
+    ) -> dict[str, Any]:
         """Evaluate JavaScript in the page context.
 
         When :attr:`_eval_prefix` is non-empty (e.g. Camoufox's ``"mw:"``),
@@ -1242,6 +1263,12 @@ class PlaywrightBridge(BrowserBridge):
         multi-statement scripts survive Camoufox's
         ``let _s = (${script})`` main-world wrapper (see the quirk's
         docstring for the full rationale).
+
+        When *read_only* is True (used for the EXTRACTOR_SCRIPT), the
+        ``_eval_prefix`` and ``_wrap_mw_eval_in_eval`` are both bypassed
+        — the expression targets the isolated-world context, which survives
+        in-page JS churn on Camoufox challenge pages.  Writes still need
+        the ``mw:`` prefix; pure DOM reads don't.
         """
         try:
             page = self._get_page(task_id)
@@ -1253,18 +1280,31 @@ class PlaywrightBridge(BrowserBridge):
                 "error": str(exc),
             }
 
-        try:
-            if self._wrap_mw_eval_in_eval:
-                # ``eval(<json>)`` is a single expression (valid inside
-                # Camoufox's ``let _s = (...)`` wrapper) that runs the script
-                # verbatim and returns its completion value.  ``json.dumps``
-                # safely escapes the script into a JS string literal.
-                inner = "eval(" + json.dumps(expression) + ")"
-            else:
-                inner = expression
+        # Build effective expression before the try block so the
+        # retry path can reference it regardless of where the exception
+        # came from.
+        #
+        # Read-only evals (EXTRACTOR_SCRIPT) skip the mw: prefix and the
+        # eval() wrap entirely — they run in the isolated-world context,
+        # which survives in-page JS churn on Camoufox challenge pages.
+        # Writes still need mw:; pure DOM reads don't.
+        if read_only:
+            effective_expression = expression
+        elif self._wrap_mw_eval_in_eval:
+            # ``eval(<json>)`` is a single expression (valid inside
+            # Camoufox's ``let _s = (...)`` wrapper) that runs the script
+            # verbatim and returns its completion value.  ``json.dumps``
+            # safely escapes the script into a JS string literal.
+            inner = "eval(" + json.dumps(expression) + ")"
             effective_expression = (
                 self._eval_prefix + inner if self._eval_prefix else inner
             )
+        else:
+            effective_expression = (
+                self._eval_prefix + expression if self._eval_prefix else expression
+            )
+
+        try:
             result: Any = page.evaluate(effective_expression)
             return {
                 "success": True,
@@ -1272,9 +1312,30 @@ class PlaywrightBridge(BrowserBridge):
             }
 
         except Exception as exc:
+            err_msg = str(exc)
+            # Genuine context-destruction recovery (Camoufox mw: path only).
+            # When _wrap_mw_eval_in_eval is True (Camoufox), distinguish:
+            #   (1) "Execution context was destroyed" — a transient page
+            #       navigation/challenge-settle — recover with one
+            #       wait_for_load_state + retry.
+            #   (2) Any other error (including a SyntaxError through the eval
+            #       wrap, which means the wrap itself is broken) — terminal.
+            # ponytail: single retry, no backoff — challenge pages settle in
+            # one load cycle; add exponential backoff if a real challenge
+            # needs >1 retry.
+            if self._wrap_mw_eval_in_eval and "Execution context was destroyed" in err_msg:
+                try:
+                    page.wait_for_load_state("load")
+                except Exception:
+                    pass  # Best-effort: proceed to retry even if wait fails
+                try:
+                    result = page.evaluate(effective_expression)
+                    return {"success": True, "result": result}
+                except Exception as retry_exc:
+                    return {"success": False, "error": str(retry_exc)}
             return {
                 "success": False,
-                "error": str(exc),
+                "error": err_msg,
             }
 
     # ── Cookies & storage state ─────────────────────────────────

@@ -21,6 +21,7 @@ import {
 	queryElementCache,
 	formatElementList,
 	formatRoleCountSummary,
+	type QueryStatus,
 } from "../core/shared/dom-extractor.js";
 
 // ─── Helpers ───────────────────────────────────────────────────────
@@ -171,15 +172,16 @@ describe("runExtractor()", () => {
 			result: MOCK_EXTRACTOR_RESPONSE,
 		};
 
-		const result = await runExtractor("test-task", mockPlugin);
-		expect(result).not.toBeNull();
-		expect(result!.title).toBe("Test Page");
-		expect(result!.headings).toHaveLength(1);
-		expect(result!.headings[0]!.text).toBe("Heading One");
-		expect(result!.paragraphs).toHaveLength(1);
-		expect(result!.links).toHaveLength(1);
-		expect(result!.images).toHaveLength(1);
-		expect(result!.interactive).toHaveLength(1);
+		const outcome = await runExtractor("test-task", mockPlugin);
+		expect(outcome.ok).toBe(true);
+		if (!outcome.ok) return;
+		expect(outcome.result.title).toBe("Test Page");
+		expect(outcome.result.headings).toHaveLength(1);
+		expect(outcome.result.headings[0]!.text).toBe("Heading One");
+		expect(outcome.result.paragraphs).toHaveLength(1);
+		expect(outcome.result.links).toHaveLength(1);
+		expect(outcome.result.images).toHaveLength(1);
+		expect(outcome.result.interactive).toHaveLength(1);
 	});
 
 	it("returns null on evaluate failure", async () => {
@@ -189,8 +191,10 @@ describe("runExtractor()", () => {
 			error: "evaluate failed",
 		};
 
-		const result = await runExtractor("test-task", mockPlugin);
-		expect(result).toBeNull();
+		const outcome = await runExtractor("test-task", mockPlugin);
+		expect(outcome.ok).toBe(false);
+		if (outcome.ok) return;
+		expect(outcome.error).toContain("evaluate failed");
 	});
 
 	it("returns null on invalid JSON from evaluate", async () => {
@@ -200,8 +204,10 @@ describe("runExtractor()", () => {
 			result: "not valid json {{{",
 		};
 
-		const result = await runExtractor("test-task", mockPlugin);
-		expect(result).toBeNull();
+		const outcome = await runExtractor("test-task", mockPlugin);
+		expect(outcome.ok).toBe(false);
+		if (outcome.ok) return;
+		expect(outcome.error).toContain("invalid JSON");
 	});
 
 	it("returns null when script returns error field", async () => {
@@ -211,8 +217,26 @@ describe("runExtractor()", () => {
 			result: JSON.stringify({ error: "Something went wrong" }),
 		};
 
-		const result = await runExtractor("test-task", mockPlugin);
-		expect(result).toBeNull();
+		const outcome = await runExtractor("test-task", mockPlugin);
+		expect(outcome.ok).toBe(false);
+		if (outcome.ok) return;
+		expect(outcome.error).toBe("Something went wrong");
+	});
+
+	it("forwards readOnly: true to plugin.evaluate", async () => {
+		const mockPlugin = new MockPlugin("test");
+		mockPlugin.evalResult = {
+			success: true,
+			result: MOCK_EXTRACTOR_RESPONSE,
+		};
+
+		await runExtractor("test-task", mockPlugin);
+		const evaluateCalls = mockPlugin.calls.get("evaluate");
+		expect(evaluateCalls).toBeDefined();
+		expect(evaluateCalls!.length).toBe(1);
+		// Third arg must be true (readOnly)
+		const args = evaluateCalls![0] as unknown[];
+		expect(args[2]).toBe(true);
 	});
 });
 
@@ -491,6 +515,55 @@ describe("queryElementCache()", () => {
 		expect(results).toHaveLength(2); // Two Submit buttons
 		expect(results.every((n) => n.role === "button")).toBe(true);
 	});
+
+	describe("QueryStatus out-param", () => {
+		it("ref present + extra role filter that does not match", () => {
+			const status: QueryStatus = {};
+			const results = queryElementCache(
+				cache,
+				{ ref: "@e6", role: "button" },
+				status,
+			);
+			expect(results).toHaveLength(0);
+			expect(status.refFilteredOut).toBeDefined();
+			expect(status.refFilteredOut!.filter).toBe("role");
+			expect(status.refFilteredOut!.value).toBe("button");
+			expect(status.refFilteredOut!.node.role).toBe("dialog");
+		});
+
+		it("ref present + extra name filter that does not match", () => {
+			const status: QueryStatus = {};
+			const results = queryElementCache(
+				cache,
+				{ ref: "@e6", name: "close" },
+				status,
+			);
+			expect(results).toHaveLength(0);
+			expect(status.refFilteredOut).toBeDefined();
+			expect(status.refFilteredOut!.filter).toBe("name");
+			expect(status.refFilteredOut!.value).toBe("close");
+			expect(status.refFilteredOut!.node.name).toBe("Sign Up");
+		});
+
+		it("ref genuinely absent", () => {
+			const status: QueryStatus = {};
+			const results = queryElementCache(cache, { ref: "@e99" }, status);
+			expect(results).toHaveLength(0);
+			expect(status.refFilteredOut).toBeUndefined();
+		});
+
+		it("ref present + matching extra filter", () => {
+			const status: QueryStatus = {};
+			const results = queryElementCache(
+				cache,
+				{ ref: "@e6", role: "dialog" },
+				status,
+			);
+			expect(results).toHaveLength(1);
+			expect(results[0]!.ref).toBe("e6");
+			expect(status.refFilteredOut).toBeUndefined();
+		});
+	});
 });
 
 // ─── Router dispatch integration tests ─────────────────────────────
@@ -575,6 +648,41 @@ describe("router.browserInspect()", () => {
 		const result = await router.browserInspect("test-5", { ref: "@e1" });
 		expect(result.success).toBe(true);
 		expect(result.content).toContain("Lexical Analysis");
+	});
+
+	it("ref + role mismatch shows found-but-filtered message", async () => {
+		await router.navigate("https://example.com", { taskId: "test-5b" });
+
+		const result = await router.browserInspect("test-5b", {
+			ref: "@e6",
+			role: "button",
+		});
+		expect(result.success).toBe(true);
+		expect(result.content).toContain("found in cache");
+		expect(result.content).toContain("does not match");
+		expect(result.content).toContain('filter role="button"');
+		expect(result.content).not.toContain("not found in cache");
+	});
+
+	it("ref genuinely absent keeps not-found message", async () => {
+		await router.navigate("https://example.com", { taskId: "test-5c" });
+
+		const result = await router.browserInspect("test-5c", { ref: "@e99" });
+		expect(result.success).toBe(true);
+		expect(result.content).toContain("not found in cache");
+	});
+
+	it("ref + role match returns element normally", async () => {
+		await router.navigate("https://example.com", { taskId: "test-5d" });
+
+		const result = await router.browserInspect("test-5d", {
+			ref: "@e6",
+			role: "dialog",
+		});
+		expect(result.success).toBe(true);
+		expect(result.content).toContain("@e6");
+		expect(result.content).toContain("Sign Up");
+		expect(result.content).not.toContain("found in cache");
 	});
 
 	it("empty element cache returns 'no elements cached' message", async () => {
@@ -828,7 +936,75 @@ describe("router.browserInspect()", () => {
 
 		const result = await router.browserInspect("test-10", { text: true });
 		expect(result.success).toBe(false);
-		expect(result.error).toContain("returned no content");
+		expect(result.error).toContain(
+			"Text extraction failed: browser disconnected",
+		);
+		expect(result.error).toContain("browser-inspect with role=");
+		expect(result.error).not.toContain("browser-snapshot to inspect visually");
+		expect(result.error).toMatch(/\(8 elements\) is available/);
+	});
+
+	describe("Changes 3 & 4 — silent-empty guards", () => {
+		it("correlateElements valid-but-empty result appends notice", () => {
+			const cache = new Map<string, AriaCachedNode>();
+			const result = correlateElements(
+				{
+					title: "",
+					headings: [],
+					paragraphs: [],
+					links: [],
+					images: [],
+					interactive: [],
+				},
+				cache,
+				true,
+			);
+			expect(result.text).toContain("No extractable content");
+			expect(result.text.length).toBeGreaterThan(0);
+			expect(result.matchedRefs).toBe(0);
+			expect(result.staleCache).toBe(false);
+		});
+
+		it("text=true + empty extractor + populated cache returns notice", async () => {
+			mock.evalResult = {
+				success: true,
+				result: JSON.stringify({
+					title: "",
+					headings: [],
+					paragraphs: [],
+					links: [],
+					images: [],
+					interactive: [],
+				}),
+			};
+			await router.navigate("https://example.com", { taskId: "test-11" });
+
+			const result = await router.browserInspect("test-11", { text: true });
+			expect(result.success).toBe(true);
+			expect(result.content).toContain("No extractable content");
+		});
+
+		it("text=true + query + empty extractor input appends no-match notice", async () => {
+			mock.evalResult = {
+				success: true,
+				result: JSON.stringify({
+					title: "",
+					headings: [],
+					paragraphs: [],
+					links: [],
+					images: [],
+					interactive: [],
+				}),
+			};
+			await router.navigate("https://example.com", { taskId: "test-12" });
+
+			const result = await router.browserInspect("test-12", {
+				text: true,
+				query: "anything",
+			});
+			expect(result.success).toBe(true);
+			expect(result.content).toContain('No content matched "anything"');
+		});
 	});
 });
 

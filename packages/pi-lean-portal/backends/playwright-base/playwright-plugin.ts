@@ -1120,7 +1120,11 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		clearConsoleLog(taskId);
 	}
 
-	async evaluate(taskId: string, expression: string): Promise<EvaluateResult> {
+	async evaluate(
+		taskId: string,
+		expression: string,
+		readOnly?: boolean,
+	): Promise<EvaluateResult> {
 		const page = this.requirePage(taskId);
 		if (!page) {
 			return { success: false, error: "No active session" };

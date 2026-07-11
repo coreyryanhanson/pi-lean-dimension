@@ -914,10 +914,16 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		}
 	}
 
-	async evaluate(taskId: string, expression: string): Promise<EvaluateResult> {
+	async evaluate(
+		taskId: string,
+		expression: string,
+		readOnly?: boolean,
+	): Promise<EvaluateResult> {
 		return this._rpcCallTyped(
 			"browser.evaluate",
-			{ taskId, expression },
+			readOnly === undefined
+				? { taskId, expression }
+				: { taskId, expression, readOnly },
 			(raw) => ({
 				success: !!raw.success,
 				result: raw.result,

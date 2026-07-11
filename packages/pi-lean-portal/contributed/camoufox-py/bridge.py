@@ -282,7 +282,22 @@ class CamoufoxPyBridge(PlaywrightBridge):
         # main_world_eval must be True so the mw: prefix works
         kwargs["main_world_eval"] = launch.get("mainWorldEval", True)
 
-        return camoufox.NewBrowser(self._pw, **kwargs)
+        # Redirect third-party stdout to stderr during launch.
+        # The camoufox package print()s to stdout (utils.py:154, addons.py:92,
+        # etc.) with no file=stderr — polluting the JSON-RPC wire. Swap
+        # sys.stdout → sys.stderr around the launch call so only
+        # transport.write_response (which runs later, in the RPC loop,
+        # with real stdout restored) ever writes to the real stdout.
+        # ponytail: launch-window only. If post-launch pollution appears
+        # (addon failures mid-session, inherited subprocess stdout), escalate
+        # to a process-wide redirect with write_response holding its own
+        # real_stdout ref captured at import.
+        real_stdout = sys.stdout
+        sys.stdout = sys.stderr
+        try:
+            return camoufox.NewBrowser(self._pw, **kwargs)
+        finally:
+            sys.stdout = real_stdout
 
     # NOTE: do_go_back is intentionally NOT overridden.
     #

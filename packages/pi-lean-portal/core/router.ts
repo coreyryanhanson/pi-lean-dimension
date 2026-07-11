@@ -38,6 +38,7 @@ import {
 	formatElementList,
 	formatRoleCountSummary,
 	type ExtractResult,
+	type QueryStatus,
 } from "./shared/dom-extractor.js";
 import type {
 	DialogEvent,
@@ -992,16 +993,23 @@ export async function browserInspect(
 			};
 		}
 
-		// Run the DOM extractor
-		const extracted = await runExtractor(tid, plugin);
-		if (!extracted) {
+		// Run the DOM extractor. The !cacheExists guard above guarantees
+		// cache is non-null and non-empty here, so we always route to the
+		// live-cache query hint on failure.
+		const outcome = await runExtractor(tid, plugin);
+		if (!outcome.ok) {
 			return {
 				success: false,
 				content: "",
 				error:
-					"Text extraction returned no content. The page may be empty, blocked, or strict CSP prevents DOM access. Use browser-snapshot to inspect visually.",
+					`Text extraction failed: ${outcome.error}. ` +
+					`A live element cache (${cache!.size} elements) is available — ` +
+					"use browser-inspect with role=, name=, or ref= to query it, " +
+					"or browser-snapshot to refresh.",
 			};
 		}
+
+		const extracted = outcome.result;
 
 		// Keyword filtering — case-insensitive substring match on extracted text
 		if (params.query) {
@@ -1044,16 +1052,30 @@ export async function browserInspect(
 			};
 		}
 
-		const filtered = queryElementCache(cache!, {
-			...(params.role !== undefined ? { role: params.role } : {}),
-			...(params.name !== undefined ? { name: params.name } : {}),
-			...(params.ref !== undefined ? { ref: params.ref } : {}),
-			...(params.subtree !== undefined ? { subtree: params.subtree } : {}),
-		});
+		const status: QueryStatus = {};
+		const filtered = queryElementCache(
+			cache!,
+			{
+				...(params.role !== undefined ? { role: params.role } : {}),
+				...(params.name !== undefined ? { name: params.name } : {}),
+				...(params.ref !== undefined ? { ref: params.ref } : {}),
+				...(params.subtree !== undefined ? { subtree: params.subtree } : {}),
+			},
+			status,
+		);
 
-		const content = formatElementList(filtered, {
-			...(params.ref !== undefined ? { ref: params.ref } : {}),
-		});
+		let content: string;
+		if (filtered.length === 0 && status.refFilteredOut) {
+			const { node, filter, value } = status.refFilteredOut;
+			content =
+				`Element @${node.ref} found in cache (role=${node.role}` +
+				`${node.name ? `, name="${node.name}"` : ""}) but does not match ` +
+				`filter ${filter}="${value}". Drop the ${filter} filter or adjust it.`;
+		} else {
+			content = formatElementList(filtered, {
+				...(params.ref !== undefined ? { ref: params.ref } : {}),
+			});
+		}
 
 		return {
 			success: true,
@@ -1090,13 +1112,6 @@ export async function browserInspect(
 function applyQueryFilter(extracted: ExtractResult, query: string): void {
 	const q = query.toLowerCase();
 
-	const beforeCount =
-		extracted.headings.length +
-		extracted.paragraphs.length +
-		extracted.links.length +
-		extracted.images.length +
-		extracted.interactive.length;
-
 	extracted.headings = extracted.headings.filter((h) =>
 		h.text.toLowerCase().includes(q),
 	);
@@ -1122,7 +1137,7 @@ function applyQueryFilter(extracted: ExtractResult, query: string): void {
 		extracted.interactive.length;
 
 	// Signal empty results so the agent doesn't get a silent empty page
-	if (beforeCount > 0 && afterCount === 0) {
+	if (afterCount === 0) {
 		extracted.paragraphs.push({
 			text: `⚠ No content matched "${query}". Try a different keyword or remove the query parameter.`,
 		});

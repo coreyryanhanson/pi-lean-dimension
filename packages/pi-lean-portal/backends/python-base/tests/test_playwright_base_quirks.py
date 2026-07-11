@@ -17,6 +17,7 @@ These are pure-logic tests — no Playwright browser required.  A small
 fake page/context mocks the few Playwright methods the code paths touch.
 """
 
+import sys
 from typing import Any
 
 from pi_browser_bridge.bridge import BrowserBridge
@@ -45,9 +46,12 @@ class _FakePage:
         self.mouse = _FakeMouse()
         self.eval_calls: list[Any] = []  # list of expressions/args evaluated
         self.eval_results: dict[str, Any] = {}
-        # Raise-once support for retry quirk tests
+        # Always-raise mode: every call raises
         self._eval_raise_always: bool = False
         self._eval_raise_error: str = ""
+        # Raise-once mode: raise on first call, then fall through to canned results
+        self._eval_raise_once_error: str = ""
+        self._eval_raise_once_count: int = 0
         # wait_for_load_state recorder
         self.wait_for_load_state_calls: list[tuple[str, int]] = []
 
@@ -56,6 +60,10 @@ class _FakePage:
         # Always-raise mode: every call raises
         if self._eval_raise_always and self._eval_raise_error:
             raise Exception(self._eval_raise_error)
+        # Raise-once mode: raise on the first call only, then fall through
+        if self._eval_raise_once_error and self._eval_raise_once_count == 0:
+            self._eval_raise_once_count += 1
+            raise Exception(self._eval_raise_once_error)
         # Echo back a canned result keyed by a substring of the expression
         for key, val in self.eval_results.items():
             if key in expression:
@@ -458,22 +466,41 @@ class TestWrapMwEvalInEval:
         assert result["result"] == 7
         assert page.eval_calls[0][0] == 'mw:eval("3 + 4")'
 
-    def test_flag_on_no_retry_on_error(self):
-        """Flag on: a real eval error propagates after a SINGLE call — there is
-        no retry (the old retry quirk is gone; this guards against regressions
-        that re-introduce retry / wait_for_load_state machinery)."""
+    def test_no_retry_on_syntax_error(self):
+        """A terminal eval error (e.g. a genuine SyntaxError through the
+        eval wrap) propagates after a SINGLE call — no retry, no
+        wait_for_load_state.  This guards against the old unconditional retry
+        quirk regressing."""
         bridge = _FakePlaywrightBridge()
         bridge._wrap_mw_eval_in_eval = True
         bridge._eval_prefix = "mw:"
         page = _FakePage()
         page._eval_raise_always = True
-        page._eval_raise_error = "Execution context was destroyed"
+        page._eval_raise_error = "SyntaxError: Unexpected identifier"
         self._setup_session(bridge, page)
         result = bridge.do_evaluate("t", "let x = 5; x + 1")
         assert result["success"] == False
-        assert "execution context was destroyed" in result["error"].lower()
+        assert "syntaxerror" in result["error"].lower()
         assert len(page.eval_calls) == 1  # no retry
         assert page.wait_for_load_state_calls == []  # no recovery machinery
+
+    def test_retry_once_on_context_destroyed(self):
+        """A transient "Execution context was destroyed" error triggers one
+        wait_for_load_state + retry.  After the retry succeeds, the result
+        is returned as success."""
+        bridge = _FakePlaywrightBridge()
+        bridge._wrap_mw_eval_in_eval = True
+        bridge._eval_prefix = "mw:"
+        page = _FakePage()
+        page._eval_raise_once_error = "Execution context was destroyed, most likely because of a navigation."
+        page.eval_results = {"eval(": "retry_success"}
+        self._setup_session(bridge, page)
+        result = bridge.do_evaluate("t", "let x = 5; x + 1")
+        assert result["success"] == True
+        assert result["result"] == "retry_success"
+        assert len(page.eval_calls) == 2  # first raise, retry succeeds
+        assert len(page.wait_for_load_state_calls) == 1
+        assert page.wait_for_load_state_calls[0][0] == "load"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -560,3 +587,126 @@ class TestDescribeQuirks:
         assert q["skip_default_viewport"] == False
         assert q["skip_networkidle"] == False
         assert q["wrap_mw_eval_in_eval"] == False
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  read_only eval path
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestReadOnlyEval:
+    """``do_evaluate(…, read_only=True)`` bypasses ``_eval_prefix`` and
+    the ``eval()`` wrap, routing the expression through the isolated-world
+    context instead of the main-world (``mw:``) context.
+    """
+
+    def _setup_session(
+        self, bridge: _FakePlaywrightBridge, page: _FakePage
+    ) -> None:
+        bridge.sessions["t"] = {"page": page, "context": _FakeContext()}
+
+    def test_read_only_bypasses_prefix_and_wrap(self):
+        """read_only=True: no mw: prefix, no eval() wrap — raw expression."""
+        bridge = _FakePlaywrightBridge()
+        bridge._eval_prefix = "mw:"
+        bridge._wrap_mw_eval_in_eval = True
+        page = _FakePage()
+        self._setup_session(bridge, page)
+        bridge.do_evaluate("t", "() => 1 + 1", read_only=True)
+        assert page.eval_calls[0][0] == "() => 1 + 1"
+
+    def test_read_only_noop_when_no_prefix(self):
+        """read_only=True with defaults: bit-identical to read_only=False."""
+        bridge = _FakePlaywrightBridge()
+        page = _FakePage()
+        page.eval_results = {"1 + 1": 2}
+        self._setup_session(bridge, page)
+        result = bridge.do_evaluate("t", "() => 1 + 1", read_only=True)
+        assert result["success"]
+        assert result["result"] == 2
+        assert page.eval_calls[0][0] == "() => 1 + 1"
+
+    def test_write_path_unchanged_default(self):
+        """Default (no read_only arg): wrap still applied."""
+        bridge = _FakePlaywrightBridge()
+        bridge._wrap_mw_eval_in_eval = True
+        page = _FakePage()
+        self._setup_session(bridge, page)
+        bridge.do_evaluate("t", "let x = 5; x + 1")
+        assert page.eval_calls[0][0] == 'eval("let x = 5; x + 1")'
+
+    def test_write_path_unchanged_explicit_false(self):
+        """read_only=False explicit: same as default (wrap applied)."""
+        bridge = _FakePlaywrightBridge()
+        bridge._wrap_mw_eval_in_eval = True
+        bridge._eval_prefix = "mw:"
+        page = _FakePage()
+        self._setup_session(bridge, page)
+        bridge.do_evaluate("t", "let x = 5; x + 1", read_only=False)
+        assert page.eval_calls[0][0] == 'mw:eval("let x = 5; x + 1")'
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  stdout hygiene (Change 2 — Camoufox launch pollution)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestStdoutHygiene:
+    """Verify the stdout→stderr redirect around ``_launch_browser``.
+
+    The Camoufox bridge redirects ``sys.stdout`` to ``sys.stderr`` around the
+    ``camoufox.NewBrowser`` call so third-party print() pollution doesn't
+    corrupt the JSON-RPC wire.  This test verifies the pattern works without
+    importing camoufox: a stub that prints like camoufox does, wrapped in the
+    same swap pattern, must leave the captured stdout buffer empty.
+    """
+
+    def test_stdout_pollution_redirected_to_stderr(self):
+        """print() calls inside the swap block go to stderr, not stdout."""
+        import io
+
+        real_stdout = sys.stdout
+        real_stderr = sys.stderr
+
+        captured_stdout = io.StringIO()
+        captured_stderr = io.StringIO()
+
+        sys.stdout = captured_stdout
+        sys.stderr = captured_stderr
+        try:
+            # Simulate the swap pattern from _launch_browser
+            _real_stdout = sys.stdout
+            sys.stdout = sys.stderr
+            try:
+                # Camoufox print()s like these (utils.py:154, addons.py:92)
+                print("Skipping unknown patch: X")
+                print("Applying addon: Y")
+            finally:
+                sys.stdout = _real_stdout
+        finally:
+            sys.stdout = real_stdout
+            sys.stderr = real_stderr
+
+        # stdout must be clean — pollution went to stderr
+        assert captured_stdout.getvalue() == ""
+        assert "Skipping unknown patch" in captured_stderr.getvalue()
+        assert "Applying addon" in captured_stderr.getvalue()
+
+    def test_swap_restores_stdout_on_error(self):
+        """sys.stdout is restored even when the stub raises."""
+        real_stdout = sys.stdout
+
+        class _TestError(Exception):
+            pass
+
+        try:
+            _real_stdout = sys.stdout
+            sys.stdout = sys.stderr
+            try:
+                raise _TestError("launch failed")
+            finally:
+                sys.stdout = _real_stdout
+        except _TestError:
+            pass
+
+        assert sys.stdout is real_stdout
