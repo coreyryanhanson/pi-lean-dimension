@@ -527,7 +527,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			profileMode?: "none" | "session" | "named";
 		},
 	): Promise<NavigateResult> {
-		const _start = performance.now();
 		try {
 			const ctxOpts: {
 				storageState?: unknown;
@@ -619,7 +618,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				success: true,
 				botDetected: botDetected ?? false,
 				elementCount,
-				time: Math.round(performance.now() - _start),
 			});
 
 			return {
@@ -662,7 +660,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				botDetected: botDetected ?? false,
 				elementCount: 0,
 				error: msg,
-				time: Math.round(performance.now() - _start),
 			});
 
 			return {
@@ -678,7 +675,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	}
 
 	async snapshot(taskId: string): Promise<SnapshotResult> {
-		const _start = performance.now();
 		const page = this.requirePage(taskId, "snapshot");
 		if (!page) {
 			return {
@@ -702,7 +698,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				elementCount,
 				dialogEvents: dialogEvents.length,
 				fingerprint: snapText.slice(0, 16),
-				time: Math.round(performance.now() - _start),
 			});
 
 			return {
@@ -717,7 +712,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				success: false,
 				elementCount: 0,
 				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
 			});
 
 			return {
@@ -732,8 +726,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	// ── Interaction ────────────────────────────────────────────
 
 	async click(taskId: string, ref: string): Promise<InteractionResult> {
-		const _start = performance.now();
-		const phases: Record<string, number> = {};
 		const page = this.requirePage(taskId, "click");
 		if (!page) {
 			return { success: false, error: "No active session" };
@@ -750,7 +742,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				name: "(none)",
 				result: "fail",
 				error: `Element ${ref} not found in accessibility tree`,
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
@@ -767,23 +758,19 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				name: node.name,
 				result: "fail",
 				error: `Could not build locator (role: ${node.role})`,
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
 				error: `Could not build locator for ${ref} (role: ${node.role})`,
 			};
 		}
-		phases.locate = Math.round(performance.now() - _start);
 
 		try {
 			const urlBefore = page.url();
 			await locator.click({ timeout: 5000 });
-			phases.click = Math.round(performance.now() - _start);
 
 			// Wait for potential navigation to settle (replaces fixed sleep)
 			const { navigated } = await waitForNavigationSettle(page, urlBefore);
-			phases.wait = Math.round(performance.now() - _start);
 
 			const newUrl = page.url();
 			const newTitle = await page.title();
@@ -794,7 +781,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 
 			// Auto-snapshot
 			const snapResult = await this.takeSnapshot(taskId, page);
-			phases.snapshot = Math.round(performance.now() - _start);
 
 			this._log("click", {
 				taskId,
@@ -803,8 +789,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				name: node.name,
 				result: "success",
 				navigated,
-				timings: phases,
-				time: Math.round(performance.now() - _start),
 			});
 
 			return {
@@ -823,8 +807,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				name: node.name,
 				result: "fail",
 				error: err instanceof Error ? err.message : String(err),
-				timings: phases,
-				time: Math.round(performance.now() - _start),
 			});
 
 			return {
@@ -839,7 +821,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		ref: string,
 		text: string,
 	): Promise<InteractionResult> {
-		const _start = performance.now();
 		const page = this.requirePage(taskId, "type");
 		if (!page) {
 			return { success: false, error: "No active session" };
@@ -856,7 +837,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				name: "(none)",
 				result: "fail",
 				error: `Element ${ref} not found in accessibility tree`,
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
@@ -873,7 +853,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				name: node.name,
 				result: "fail",
 				error: `Could not build locator (role: ${node.role})`,
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
@@ -895,7 +874,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				name: node.name,
 				result: "success",
 				elementCount: snapResult.elementCount,
-				time: Math.round(performance.now() - _start),
 			});
 
 			return {
@@ -912,7 +890,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				name: node.name,
 				result: "fail",
 				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
@@ -925,7 +902,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		taskId: string,
 		direction: "up" | "down",
 	): Promise<InteractionResult> {
-		const _start = performance.now();
 		const page = this.requirePage(taskId, "scroll");
 		if (!page) {
 			return { success: false, error: "No active session" };
@@ -945,7 +921,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				direction,
 				success: true,
 				elementCount: snapResult.elementCount,
-				time: Math.round(performance.now() - _start),
 			});
 
 			return {
@@ -960,7 +935,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				direction,
 				success: false,
 				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
@@ -970,7 +944,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	}
 
 	async goBack(taskId: string): Promise<InteractionResult> {
-		const _start = performance.now();
 		const page = this.requirePage(taskId, "goBack");
 		if (!page) {
 			return { success: false, error: "No active session" };
@@ -993,7 +966,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				taskId,
 				success: true,
 				elementCount: snapResult.elementCount,
-				time: Math.round(performance.now() - _start),
 			});
 
 			return {
@@ -1009,7 +981,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				taskId,
 				success: false,
 				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
@@ -1019,7 +990,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	}
 
 	async press(taskId: string, key: string): Promise<InteractionResult> {
-		const _start = performance.now();
 		const page = this.requirePage(taskId, "press");
 		if (!page) {
 			return { success: false, error: "No active session" };
@@ -1050,7 +1020,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				success: true,
 				navigated,
 				elementCount: snapResult.elementCount,
-				time: Math.round(performance.now() - _start),
 			});
 
 			return {
@@ -1067,7 +1036,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				key,
 				success: false,
 				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
@@ -1144,7 +1112,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	// ── Cookies & storage state ───────────────────────────────
 
 	async getCookies(taskId: string, urls?: string[]): Promise<CookieResult> {
-		const _start = performance.now();
 		const entry = this.requireEntry(taskId, "getCookies");
 		if (!entry) {
 			return { success: false, cookies: [], error: "No active session" };
@@ -1156,7 +1123,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				taskId,
 				success: true,
 				count: cookies.length,
-				time: Math.round(performance.now() - _start),
 			});
 			return { success: true, cookies };
 		} catch (err: unknown) {
@@ -1164,7 +1130,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				taskId,
 				success: false,
 				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
@@ -1175,7 +1140,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	}
 
 	async addCookies(taskId: string, cookies: Cookie[]): Promise<ResultBase> {
-		const _start = performance.now();
 		const entry = this.requireEntry(taskId, "addCookies");
 		if (!entry) {
 			return { success: false, error: "No active session" };
@@ -1187,7 +1151,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				taskId,
 				success: true,
 				count: cookies.length,
-				time: Math.round(performance.now() - _start),
 			});
 			return { success: true };
 		} catch (err: unknown) {
@@ -1195,7 +1158,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				taskId,
 				success: false,
 				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
@@ -1208,7 +1170,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		taskId: string,
 		options?: ClearCookiesOptions,
 	): Promise<ResultBase> {
-		const _start = performance.now();
 		const entry = this.requireEntry(taskId, "clearCookies");
 		if (!entry) {
 			return { success: false, error: "No active session" };
@@ -1223,7 +1184,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			this._log("clearCookies", {
 				taskId,
 				success: true,
-				time: Math.round(performance.now() - _start),
 			});
 			return { success: true };
 		} catch (err: unknown) {
@@ -1231,7 +1191,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				taskId,
 				success: false,
 				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
@@ -1241,7 +1200,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	}
 
 	async getStorageState(taskId: string): Promise<StorageStateResult> {
-		const _start = performance.now();
 		const entry = this.requireEntry(taskId, "getStorageState");
 		if (!entry) {
 			return {
@@ -1259,7 +1217,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				success: true,
 				cookies: state.cookies.length,
 				origins: state.origins.length,
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: true,
@@ -1271,7 +1228,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				taskId,
 				success: false,
 				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,

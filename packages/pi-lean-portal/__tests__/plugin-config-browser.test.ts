@@ -17,9 +17,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
 	loadBrowserConfig,
 	loadPluginConfig,
-	loadPluginConfigFromFile,
 	invalidateConfigCache,
 } from "../core/plugin-config.js";
+import { loadPluginConfigFromFile } from "./helpers/load-plugin-config-from-file.js";
 
 // ─── Mock fs to intercept settings.json reads ────────────────────
 
@@ -235,10 +235,9 @@ describe("loadPluginConfigFromFile()", () => {
 		// Point at a root with a valid bridge.py so detectPluginType passes.
 		mockValidBackendRoot("/tmp/backends");
 
-		const { plugins, errors } = loadPluginConfigFromFile(
-			"/tmp/settings.json",
-			["/tmp/backends"],
-		);
+		const { plugins, errors } = loadPluginConfigFromFile("/tmp/settings.json", [
+			"/tmp/backends",
+		]);
 		expect(errors).toEqual([]);
 		expect(plugins).toHaveLength(1);
 		const p = plugins[0]!;
@@ -252,11 +251,14 @@ describe("loadPluginConfigFromFile()", () => {
 		// No browser key → falls through to parsePluginConfig(undefined) → defaults
 		mockFs.existsSync.mockReturnValue(true);
 		mockFs.readFileSync.mockImplementation((p: string) => {
-			if (p === "/tmp/no-browser.json") return JSON.stringify({ unrelated: true });
+			if (p === "/tmp/no-browser.json")
+				return JSON.stringify({ unrelated: true });
 			return "{}";
 		});
 
-		const { plugins, errors } = loadPluginConfigFromFile("/tmp/no-browser.json");
+		const { plugins, errors } = loadPluginConfigFromFile(
+			"/tmp/no-browser.json",
+		);
 		expect(errors).toEqual([]);
 		const names = plugins.map((p) => p.name);
 		expect(names).toEqual(["chromium", "firefox", "chromium-py", "firefox-py"]);
@@ -277,7 +279,9 @@ describe("loadPluginConfigFromFile()", () => {
 	});
 
 	it("is one-shot with no caching (consecutive calls read the file each time)", () => {
-		const spy = vi.fn((_: string) => JSON.stringify({ browser: { plugins: [] } }));
+		const spy = vi.fn((_: string) =>
+			JSON.stringify({ browser: { plugins: [] } }),
+		);
 		mockFs.existsSync.mockReturnValue(true);
 		mockFs.readFileSync.mockImplementation(spy);
 

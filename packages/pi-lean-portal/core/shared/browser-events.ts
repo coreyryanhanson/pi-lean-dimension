@@ -10,7 +10,7 @@
 
 import type { Page } from "playwright";
 
-export interface DialogEvent {
+export interface DialogLogEntry {
 	type: "alert" | "confirm" | "prompt" | "beforeunload";
 	message: string;
 	/** Default value for prompt dialogs */
@@ -35,13 +35,13 @@ export interface ConsoleEvent {
 }
 
 /** Dialogs logged per task, for reporting to user */
-const _dialogLog = new Map<string, DialogEvent[]>();
+const _dialogLog = new Map<string, DialogLogEntry[]>();
 
 /** Console messages logged per task */
 const _consoleLog = new Map<string, ConsoleEvent[]>();
 
 /** Get logged dialogs for a task */
-export function getDialogLog(taskId: string): DialogEvent[] {
+export function getDialogLog(taskId: string): DialogLogEntry[] {
 	return _dialogLog.get(taskId) ?? [];
 }
 
@@ -61,7 +61,7 @@ export function clearConsoleLog(taskId: string): void {
  * Captures console messages (log, warn, error, info, debug) for retrieval.
  */
 export function installDialogHandlers(taskId: string, page: Page): void {
-	const dialogLog: DialogEvent[] = [];
+	const dialogLog: DialogLogEntry[] = [];
 	_dialogLog.set(taskId, dialogLog);
 
 	const consoleLog: ConsoleEvent[] = [];
@@ -69,8 +69,8 @@ export function installDialogHandlers(taskId: string, page: Page): void {
 
 	// Auto-accept JavaScript dialogs
 	page.on("dialog", async (dialog) => {
-		const entry: DialogEvent = {
-			type: dialog.type() as DialogEvent["type"],
+		const entry: DialogLogEntry = {
+			type: dialog.type() as DialogLogEntry["type"],
 			message: dialog.message(),
 			defaultValue: dialog.defaultValue(),
 			handledAs: "accepted",

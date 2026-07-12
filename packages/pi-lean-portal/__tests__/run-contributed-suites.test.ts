@@ -37,10 +37,8 @@ import type {
 	QuirksDescriptor,
 } from "../core/plugin-api.js";
 import { PythonPluginAdapter } from "../backends/python-adapter.js";
-import {
-	loadPluginConfigFromFile,
-	type PluginConfigLoadResult,
-} from "../core/plugin-config.js";
+import { loadPluginConfigFromFile } from "./helpers/load-plugin-config-from-file.js";
+import type { PluginConfigLoadResult } from "../core/plugin-config.js";
 import { runContractTests } from "./helpers/plugin-contract.js";
 import { runPersistenceSuite } from "./helpers/persistence-suite.js";
 import {

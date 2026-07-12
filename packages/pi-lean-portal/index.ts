@@ -116,8 +116,8 @@ export default function (pi: ExtensionAPI) {
 	// ── Second pass: load and register plugins ───────────────────
 	// Node plugins register asynchronously (after dynamic import resolves).
 	// Python plugins register synchronously here.
-	// The pre-seeded ordering ensures all plugins get the correct priority level
-	// regardless of when register() is called.
+	// The pre-seeded ordering ensures all plugins keep their configured
+	// position regardless of when register() is called.
 	for (const { config, detection } of validConfigs) {
 		if (detection.type === "node") {
 			// Node-based backend — dynamically import the detected plugin
@@ -243,7 +243,7 @@ export default function (pi: ExtensionAPI) {
 
 		// Clean up all registered plugins
 		const ordered = pluginRegistry.getOrdered();
-		for (const { plugin } of ordered) {
+		for (const plugin of ordered) {
 			await plugin.cleanupAll().catch(() => {});
 		}
 

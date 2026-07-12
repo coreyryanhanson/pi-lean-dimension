@@ -88,16 +88,21 @@ export function getConversationDefaultProfile(): string | undefined {
 
 // ---- Helpers ---------------------------------------------------
 
+/** Return the subset of a tool-name set that is actually registered. */
+function getRegisteredIn(pi: ExtensionAPI, names: Set<string>): string[] {
+	return pi
+		.getAllTools()
+		.map((t) => t.name)
+		.filter((n) => names.has(n));
+}
+
 /**
  * Return the subset of BROWSER_TOOL_NAMES that are actually registered.
  * (With the toggle integrated into pi-lean-portal, this is always non-empty
  *  when pi-lean-portal is loaded, but the helper remains for robustness.)
  */
 function getRegisteredBrowserTools(pi: ExtensionAPI): string[] {
-	return pi
-		.getAllTools()
-		.map((t) => t.name)
-		.filter((n) => BROWSER_TOOL_NAMES.has(n));
+	return getRegisteredIn(pi, BROWSER_TOOL_NAMES);
 }
 
 /**
@@ -265,10 +270,7 @@ function readBrowserToggleConfig(): boolean {
  * Return the subset of LEARN_TOOL_NAMES that are actually registered.
  */
 function getRegisteredLearnTools(pi: ExtensionAPI): string[] {
-	return pi
-		.getAllTools()
-		.map((t) => t.name)
-		.filter((n) => LEARN_TOOL_NAMES.has(n));
+	return getRegisteredIn(pi, LEARN_TOOL_NAMES);
 }
 
 /**
@@ -276,10 +278,7 @@ function getRegisteredLearnTools(pi: ExtensionAPI): string[] {
  * Used by applyBrowserState to include sibling tools in toggle operations.
  */
 function getRegisteredSiblingTools(pi: ExtensionAPI): string[] {
-	return pi
-		.getAllTools()
-		.map((t) => t.name)
-		.filter((n) => SIBLING_TOOL_NAMES.has(n));
+	return getRegisteredIn(pi, SIBLING_TOOL_NAMES);
 }
 
 /**

@@ -49,8 +49,6 @@ export function validatePlugin(plugin: BrowserPlugin): string[] {
 /** Internal tracking for a registered plugin */
 interface RegistryEntry {
 	plugin: BrowserPlugin;
-	/** Position in the user's plugins config array (lower = higher priority, used for LLM escalation hints) */
-	level: number;
 	/** Whether this plugin is enabled */
 	enabled: boolean;
 }
@@ -61,7 +59,7 @@ export class PluginRegistry {
 	/** Map of plugin name → registry entry */
 	private entries = new Map<string, RegistryEntry>();
 
-	/** Ordered list of plugin names from config (defines escalation priority — lower index = recommended first) */
+	/** Ordered list of plugin names from config (lower index = higher priority / recommended first) */
 	private orderedNames: string[] = [];
 
 	/**
@@ -72,8 +70,8 @@ export class PluginRegistry {
 	 * plugins loaded via dynamic `import()` vs Python plugins registered
 	 * synchronously).
 	 *
-	 * If `register()` finds its name already in the seeded order, it uses the
-	 * existing position as the priority level instead of appending.
+	 * If `register()` finds its name already in the seeded order, it keeps
+	 * that position instead of appending.
 	 *
 	 * @param names - Plugin names in the desired priority order (typically
 	 *                 the order from the user's `browser.plugins` config array).
@@ -85,9 +83,8 @@ export class PluginRegistry {
 	/**
 	 * Register a plugin with its config.
 	 *
-	 * If the plugin name was pre-seeded via `seedOrder()`, its priority level
-	 * is taken from that pre-determined position. Otherwise it is appended at
-	 * the end.
+	 * If the plugin name was pre-seeded via `seedOrder()`, it keeps that
+	 * position in the ordered list. Otherwise it is appended at the end.
 	 *
 	 * @throws if a plugin with the same name is already registered
 	 * @throws if the plugin is missing required operations
@@ -107,16 +104,13 @@ export class PluginRegistry {
 			);
 		}
 
-		// Determine the level from the pre-seeded orderedNames, or append
-		let level = this.orderedNames.indexOf(plugin.name);
-		if (level === -1) {
-			level = this.orderedNames.length;
+		// Preserve pre-seeded order (from seedOrder); otherwise append.
+		if (!this.orderedNames.includes(plugin.name)) {
 			this.orderedNames.push(plugin.name);
 		}
 
 		this.entries.set(plugin.name, {
 			plugin,
-			level,
 			enabled: config.enabled,
 		});
 	}
@@ -152,14 +146,13 @@ export class PluginRegistry {
 
 	/**
 	 * Get all enabled plugins in config order (priority order).
-	 * Each entry includes the plugin and its priority level (lower = recommended first).
 	 */
-	getOrdered(): Array<{ plugin: BrowserPlugin; level: number }> {
-		const result: Array<{ plugin: BrowserPlugin; level: number }> = [];
+	getOrdered(): BrowserPlugin[] {
+		const result: BrowserPlugin[] = [];
 		for (const name of this.orderedNames) {
 			const entry = this.entries.get(name);
 			if (entry?.enabled) {
-				result.push({ plugin: entry.plugin, level: entry.level });
+				result.push(entry.plugin);
 			}
 		}
 		return result;
@@ -169,7 +162,7 @@ export class PluginRegistry {
 	 * List all registered plugin names (enabled only).
 	 */
 	available(): string[] {
-		return this.getOrdered().map((e) => e.plugin.name);
+		return this.getOrdered().map((p) => p.name);
 	}
 
 	/**
@@ -180,26 +173,6 @@ export class PluginRegistry {
 			const entry = this.entries.get(name)!;
 			return { name, enabled: entry.enabled };
 		});
-	}
-
-	/**
-	 * Get the priority level for a plugin (lower = recommended first).
-	 * Used by the LLM to decide whether to escalate to a different backend.
-	 * Returns undefined if the plugin is not registered.
-	 */
-	getLevel(name: string): number | undefined {
-		return this.entries.get(name)?.level;
-	}
-
-	/**
-	 * Get plugins at higher priority levels (further in the backup chain) than the given level.
-	 * Used to suggest alternative backends when bot detection fires.
-	 */
-	getHigherStealth(currentLevel: number): Array<{
-		plugin: BrowserPlugin;
-		level: number;
-	}> {
-		return this.getOrdered().filter((e) => e.level > currentLevel);
 	}
 
 	/**

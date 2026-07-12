@@ -732,13 +732,16 @@ export async function snapshot(
 
 // ─── Interaction tools ──────────────────────────────────────────────
 
-export async function click(
+/** Shared shape for the 5 ref-based interaction tools (click/type/scroll/goBack/press). */
+async function wrapInteraction(
 	taskId: string | undefined,
-	ref: string,
+	run: (
+		plugin: import("./plugin-api.js").BrowserPlugin,
+		tid: string,
+	) => Promise<InteractionResult>,
 ): Promise<InteractionResult> {
 	const resolved = await resolveSession(taskId);
 	if (!resolved) return noSessionError();
-
 	return refBasedInteractionOrSnapshot(
 		resolved.tid,
 		resolved.wasAutoCreated,
@@ -746,9 +749,16 @@ export async function click(
 		async () =>
 			compactInteractionResult(
 				resolved.tid,
-				await resolved.plugin.click(resolved.tid, ref),
+				await run(resolved.plugin, resolved.tid),
 			),
 	);
+}
+
+export async function click(
+	taskId: string | undefined,
+	ref: string,
+): Promise<InteractionResult> {
+	return wrapInteraction(taskId, (plugin, tid) => plugin.click(tid, ref));
 }
 
 export async function type(
@@ -756,73 +766,27 @@ export async function type(
 	ref: string,
 	text: string,
 ): Promise<InteractionResult> {
-	const resolved = await resolveSession(taskId);
-	if (!resolved) return noSessionError();
-
-	return refBasedInteractionOrSnapshot(
-		resolved.tid,
-		resolved.wasAutoCreated,
-		resolved.plugin,
-		async () =>
-			compactInteractionResult(
-				resolved.tid,
-				await resolved.plugin.type(resolved.tid, ref, text),
-			),
-	);
+	return wrapInteraction(taskId, (plugin, tid) => plugin.type(tid, ref, text));
 }
 
 export async function scroll(
 	taskId: string | undefined,
 	direction: "up" | "down",
 ): Promise<InteractionResult> {
-	const resolved = await resolveSession(taskId);
-	if (!resolved) return noSessionError();
-
-	return refBasedInteractionOrSnapshot(
-		resolved.tid,
-		resolved.wasAutoCreated,
-		resolved.plugin,
-		async () =>
-			compactInteractionResult(
-				resolved.tid,
-				await resolved.plugin.scroll(resolved.tid, direction),
-			),
+	return wrapInteraction(taskId, (plugin, tid) =>
+		plugin.scroll(tid, direction),
 	);
 }
 
 export async function goBack(taskId?: string): Promise<InteractionResult> {
-	const resolved = await resolveSession(taskId);
-	if (!resolved) return noSessionError();
-
-	return refBasedInteractionOrSnapshot(
-		resolved.tid,
-		resolved.wasAutoCreated,
-		resolved.plugin,
-		async () =>
-			compactInteractionResult(
-				resolved.tid,
-				await resolved.plugin.goBack(resolved.tid),
-			),
-	);
+	return wrapInteraction(taskId, (plugin, tid) => plugin.goBack(tid));
 }
 
 export async function press(
 	taskId: string | undefined,
 	key: string,
 ): Promise<InteractionResult> {
-	const resolved = await resolveSession(taskId);
-	if (!resolved) return noSessionError();
-
-	return refBasedInteractionOrSnapshot(
-		resolved.tid,
-		resolved.wasAutoCreated,
-		resolved.plugin,
-		async () =>
-			compactInteractionResult(
-				resolved.tid,
-				await resolved.plugin.press(resolved.tid, key),
-			),
-	);
+	return wrapInteraction(taskId, (plugin, tid) => plugin.press(tid, key));
 }
 
 /**

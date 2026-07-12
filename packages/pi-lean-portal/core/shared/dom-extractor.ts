@@ -446,6 +446,11 @@ export function queryElementCache(
 ): AriaCachedNode[] {
 	const results: AriaCachedNode[] = [];
 
+	// Pre-compute subtree ancestry map once (shared by ref + loop paths)
+	const subtreeAncestors = filters.subtree
+		? computeSubtreeAncestors(cache, filters.subtree)
+		: null;
+
 	// ref lookup: direct map access (cache keys are "e5" not "@e5")
 	if (filters.ref) {
 		const key = filters.ref.startsWith("@")
@@ -464,7 +469,11 @@ export function queryElementCache(
 					status.refFilteredOut = { node, filter: "name", value: filters.name };
 				return [];
 			}
-			if (filters.subtree && !matchesSubtree(node, cache, filters.subtree)) {
+			if (
+				filters.subtree &&
+				subtreeAncestors &&
+				!subtreeAncestors.has(node.ref)
+			) {
 				if (status)
 					status.refFilteredOut = {
 						node,
@@ -478,17 +487,10 @@ export function queryElementCache(
 		return [];
 	}
 
-	// Pre-compute subtree ancestry map for subtree filter
-	const subtreeAncestors = filters.subtree
-		? computeSubtreeAncestors(cache, filters.subtree)
-		: null;
-
 	for (const [, node] of cache) {
 		if (filters.role && !matchesRole(node, filters.role)) continue;
 		if (filters.name && !matchesName(node, filters.name)) continue;
-		if (filters.subtree && subtreeAncestors) {
-			if (!subtreeAncestors.has(node.ref)) continue;
-		}
+		if (subtreeAncestors && !subtreeAncestors.has(node.ref)) continue;
 		results.push(node);
 	}
 
@@ -544,15 +546,6 @@ function computeSubtreeAncestors(
 	}
 
 	return insideRefs;
-}
-
-function matchesSubtree(
-	node: AriaCachedNode,
-	cache: Map<string, AriaCachedNode>,
-	containerRole: string,
-): boolean {
-	const ancestors = computeSubtreeAncestors(cache, containerRole);
-	return ancestors.has(node.ref);
 }
 
 // ─── Output formatting ────────────────────────────────────────────
