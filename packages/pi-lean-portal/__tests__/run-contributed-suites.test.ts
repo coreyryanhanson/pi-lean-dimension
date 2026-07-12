@@ -26,7 +26,7 @@
  * @module
  */
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -43,6 +43,7 @@ import { runContractTests } from "./helpers/plugin-contract.js";
 import { runPersistenceSuite } from "./helpers/persistence-suite.js";
 import {
 	probeUserBackend,
+	discoverUserBackends,
 	userBackendsDir,
 } from "./helpers/probe-user-backend.js";
 import {
@@ -62,43 +63,8 @@ const SETTINGS_PATH =
 	join(__dirname, "contributed", "settings.json");
 
 // ─── Backend discovery ──────────────────────────────────────────────
-//
-// Scan the user-backends root for `<name>-py/` directories that contain
-// a `bridge.py`.  Mirrors the discovery in
-// `bench/miniwob/suites/miniwob-user-backends.test.ts`.
-
-/**
- * Discover user-managed Python backends under the user-backends root.
- *
- * Returns the list of `<name>` such that `${root}/<name>/bridge.py`
- * exists and `${root}/<name>` is a directory whose basename ends with
- * `-py`.  Sorted for deterministic registration order.  Empty when the
- * root is missing or contains no matching directory (the normal
- * bare-CI state — the caller treats this as a no-op).
- */
-function discoverUserBackends(root: string): string[] {
-	if (!existsSync(root) || !statSync(root).isDirectory()) return [];
-	let entries: string[];
-	try {
-		entries = readdirSync(root);
-	} catch {
-		return [];
-	}
-	const found: string[] = [];
-	for (const entry of entries) {
-		if (!entry.endsWith("-py")) continue;
-		const dir = join(root, entry);
-		try {
-			if (!statSync(dir).isDirectory()) continue;
-		} catch {
-			continue;
-		}
-		if (existsSync(join(dir, "bridge.py"))) {
-			found.push(entry);
-		}
-	}
-	return found.sort((a, b) => a.localeCompare(b));
-}
+// `discoverUserBackends` (imported from the shared probe helper) scans
+// the user-backends root for `<name>-py/` dirs containing a `bridge.py`.
 
 // ─── Capabilities merge helper ──────────────────────────────────────
 

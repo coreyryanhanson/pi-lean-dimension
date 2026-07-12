@@ -32,6 +32,7 @@ import {
 	deleteStorageState,
 } from "../core/shared/storage-state.js";
 import { DEFAULT_BACKENDS_ROOT } from "../core/plugin-config.js";
+import { EXTRACTOR_SCRIPT } from "../core/shared/dom-extractor.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -975,7 +976,14 @@ describeBrowserInit("browser.init RPC (Phase 0)", () => {
 			const cfgLine = stderr.split("\n").find((l) => l.startsWith("CFG:"));
 			expect(cfgLine).toBeDefined();
 			const parsed = JSON.parse(cfgLine!.slice("CFG:".length));
-			expect(parsed).toEqual(launchConfig);
+			// The adapter merges the read-only extractor script into the config
+			// so stealth backends that opt into the CSP-safe eval quirk can
+			// register it as an init script. The original launch config is
+			// preserved verbatim; only the plumbing key is added.
+			expect(parsed).toEqual({
+				...launchConfig,
+				readOnlyExtractorScript: EXTRACTOR_SCRIPT,
+			});
 		} finally {
 			await adapter.cleanupAll().catch(() => {});
 			try {

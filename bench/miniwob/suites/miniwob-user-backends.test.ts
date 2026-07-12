@@ -52,14 +52,14 @@
  * @module
  */
 
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
 
 import { PythonPluginAdapter } from "../../../packages/pi-lean-portal/backends/python-adapter.js";
 import type { BrowserPlugin } from "../../../packages/pi-lean-portal/core/plugin-api.js";
 
 import {
 	probeUserBackend,
+	discoverUserBackends,
 	userBackendsDir,
 } from "../../../packages/pi-lean-portal/__tests__/helpers/probe-user-backend.js";
 import {
@@ -91,45 +91,13 @@ const ensureBaseUrl: () => Promise<string> = createSharedMiniwobServer();
 
 // ─── Backend discovery ───────────────────────────────────────────
 //
-// Scan the user-backends root for `<name>-py/` directories that contain
-// a `bridge.py`. `<name>-py` is the conventional suffix for Python
-// bridge backends (mirrors the shipped `chromium-py` / `firefox-py`
-// naming); we match it loosely so a future non-`-py` user backend
-// doesn't get picked up by accident (it would need its own runner —
-// this one assumes the PythonPluginAdapter JSON-RPC shape).
-
-/**
- * Discover user-managed Python backends under the user-backends root.
- *
- * Returns the list of `<name>` such that `${root}/<name>/bridge.py`
- * exists and `${root}/<name>` is a directory whose basename ends with
- * `-py`. Sorted for deterministic registration order. Empty when the
- * root is missing or contains no matching directory (the normal
- * bare-CI state — the caller treats this as a no-op).
- */
-function discoverUserBackends(root: string): string[] {
-	if (!existsSync(root) || !statSync(root).isDirectory()) return [];
-	let entries: string[];
-	try {
-		entries = readdirSync(root);
-	} catch {
-		return [];
-	}
-	const found: string[] = [];
-	for (const entry of entries) {
-		if (!entry.endsWith("-py")) continue;
-		const dir = join(root, entry);
-		try {
-			if (!statSync(dir).isDirectory()) continue;
-		} catch {
-			continue;
-		}
-		if (existsSync(join(dir, "bridge.py"))) {
-			found.push(entry);
-		}
-	}
-	return found.sort();
-}
+// `discoverUserBackends` (imported from the shared probe helper) scans
+// the user-backends root for `<name>-py/` dirs containing a `bridge.py`.
+// `<name>-py` is the conventional suffix for Python bridge backends
+// (mirrors the shipped `chromium-py` / `firefox-py` naming); we match
+// it loosely so a future non-`-py` user backend doesn't get picked up
+// by accident (it would need its own runner — this one assumes the
+// PythonPluginAdapter JSON-RPC shape).
 
 // ─── Registration ────────────────────────────────────────────────
 

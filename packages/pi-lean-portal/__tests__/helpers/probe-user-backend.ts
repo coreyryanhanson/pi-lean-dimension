@@ -30,7 +30,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
@@ -50,6 +50,44 @@ export function userBackendsDir(): string {
 	const env = process.env.PI_USER_BACKENDS_DIR;
 	if (env !== undefined && env.trim() !== "") return env;
 	return join(homedir(), ".pi", "agent", "pi-lean-portal", "user-backends");
+}
+
+// ─── Backend discovery ──────────────────────────────────────────
+
+/**
+ * Discover user-managed Python backends under a user-backends root.
+ *
+ * Returns the list of `<name>` such that `${root}/<name>/bridge.py`
+ * exists and `${root}/<name>` is a directory whose basename ends with
+ * `-py` (the conventional suffix for Python bridge backends, mirroring
+ * the shipped `chromium-py` / `firefox-py` naming). Sorted for
+ * deterministic registration order. Empty when the root is missing or
+ * contains no matching directory (the normal bare-CI state — the
+ * caller treats this as a no-op).
+ *
+ * Used by the generic `bench/miniwob/suites/` runners that exercise
+ * whatever stealth backend the user has installed, without naming any.
+ */
+export function discoverUserBackends(root: string): string[] {
+	if (!existsSync(root) || !statSync(root).isDirectory()) return [];
+	let entries: string[];
+	try {
+		entries = readdirSync(root);
+	} catch {
+		return [];
+	}
+	const found: string[] = [];
+	for (const entry of entries) {
+		if (!entry.endsWith("-py")) continue;
+		const dir = join(root, entry);
+		try {
+			if (!statSync(dir).isDirectory()) continue;
+		} catch {
+			continue;
+		}
+		if (existsSync(join(dir, "bridge.py"))) found.push(entry);
+	}
+	return found.sort();
 }
 
 // ─── Types ────────────────────────────────────────────────────────

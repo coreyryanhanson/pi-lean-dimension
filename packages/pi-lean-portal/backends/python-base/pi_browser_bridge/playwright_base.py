@@ -21,6 +21,7 @@ import re
 import sys
 import time
 from typing import Any, Optional
+from urllib.parse import unquote as _urlunquote
 
 from .bridge import BrowserBridge, SessionNotFoundError
 from .bot_detection import check_bot_detection
@@ -194,6 +195,40 @@ class PlaywrightBridge(BrowserBridge):
     #: See ``do_evaluate`` for the implementation.
     _wrap_mw_eval_in_eval: bool = False
 
+    #: When True, read-only evals (``do_evaluate(read_only=True)``, used
+    #: only for the EXTRACTOR_SCRIPT) bypass ``page.evaluate`` entirely and
+    #: read a result that an ``add_init_script`` stashed in the DOM.
+    #:
+    #: **Why this exists.** Some patched-Firefox stealth binaries route
+    #: ``page.evaluate`` through ``eval()`` in the page's *main* world (a
+    #: stealth measure that kills Juggler's isolated-world debugger
+    #: signature).  The page's CSP then applies, so on CSP-strict sites
+    #: (e.g. Reddit, which forbids ``unsafe-eval``) every ``page.evaluate``
+    #: fails with ``"call to eval() blocked by CSP"``.  Camoufox is NOT
+    #: affected — its binary keeps Juggler's CSP-free isolated-world and
+    #: ``MainWorldContext.executeInGlobal`` paths; other patched-Firefox
+    #: stealth binaries are affected.
+    #:
+    #: **How it works.** ``create_browser_context`` calls
+    #: :meth:`_register_readonly_extractor_init_script`, which wraps the
+    #: EXTRACTOR_SCRIPT (plumbed from the TypeScript side via the
+    #: ``browser.init`` config key ``readOnlyExtractorScript``) in a
+    #: ``DOMContentLoaded``-deferred IIFE that writes its JSON result to
+    #: ``<meta id="__pi-extract" content="<urlencoded JSON>">``.  The init
+    #: script runs in the isolated world, which is CSP-free.
+    #: ``do_evaluate(read_only=True)`` then reads that meta via
+    #: ``page.query_selector`` + ``get_attribute`` — both native Juggler
+    #: element commands, also CSP-free — instead of calling
+    #: ``page.evaluate``.
+    #:
+    #: **Limitation.** The meta is repopulated only on a full document
+    #: load (``page.goto``); SPA-style in-page route changes do NOT re-run
+    #: the init script, so the stashed result goes stale until the next
+    #: ``browser-navigate``.  For the navigate→inspect agent flow this is
+    #: fine; document with a ``ponytail:`` note if you lift it.
+    #: Default ``False`` so shipped bridges stay bit-identical.
+    _csp_safe_readonly_via_init_script: bool = False
+
 
     # ── Shared Playwright state ─────────────────────────────────
 
@@ -205,6 +240,13 @@ class PlaywrightBridge(BrowserBridge):
         self._pw = None
         self._browser = None
         self._cached_ua: str = ""
+        # The read-only extractor script plumbed from the TypeScript side
+        # via the ``browser.init`` config key ``readOnlyExtractorScript``.
+        # Populated lazily by _register_readonly_extractor_init_script;
+        # used by do_evaluate to gate the CSP-free meta handoff so a
+        # non-extractor read_only eval (none today) can't silently receive
+        # the extractor's stale result.
+        self._readonly_extractor_script: str = ""
 
     # ── Subclass extension point ───────────────────────────────
 
@@ -378,7 +420,93 @@ class PlaywrightBridge(BrowserBridge):
             except Exception:
                 pass  # Best-effort
 
+        # CSP-safe read-only eval path (see _csp_safe_readonly_via_init_script).
+        # Registers an init script that stashes the EXTRACTOR_SCRIPT result in
+        # the DOM so do_evaluate(read_only=True) can read it without
+        # page.evaluate (which is CSP-blocked on some patched binaries).
+        if self._csp_safe_readonly_via_init_script:
+            self._register_readonly_extractor_init_script(context)
+
         return context
+
+    def _register_readonly_extractor_init_script(self, context: Any) -> None:
+        """Register a CSP-free init script that stashes the read-only
+        extractor's JSON result in the DOM.
+
+        Reads the EXTRACTOR_SCRIPT from ``self.plugin_config[
+        "readOnlyExtractorScript"]`` (plumbed from the TypeScript adapter via
+        the ``browser.init`` RPC).  Wraps it in a ``DOMContentLoaded``-deferred
+        IIFE that runs in the isolated world (CSP-free) and writes its JSON
+        return value to ``<meta id="__pi-extract" content="<urlencoded JSON>">``
+        once the DOM is parsed.
+
+        No-op (with a debug log) when the script is absent — e.g. an older
+        adapter that doesn't forward ``readOnlyExtractorScript``.  In that
+        case ``do_evaluate(read_only=True)`` falls back to ``page.evaluate``,
+        which is the pre-fix behaviour (CSP-fails on strict sites, works on
+        lax sites).  Idempotent: re-registering on a fresh context is fine
+        (init scripts are per-context, not global).
+        """
+        script = (self.plugin_config or {}).get("readOnlyExtractorScript")
+        if not script:
+            self._log(
+                "registerReadonlyExtractor",
+                taskId="shared",
+                success=False,
+                reason="readOnlyExtractorScript not present in plugin config",
+            )
+            return
+        self._readonly_extractor_script = script
+        # The EXTRACTOR_SCRIPT is a self-contained IIFE that returns a JSON
+        # string.  It ends with a trailing ``;``; strip it so the assignment
+        # ``__r = <script>`` is a single expression statement (wrapping it as
+        # ``__r = (<script>);`` would put the script's ``;`` *inside* parens
+        # → ``__r = (...})(););`` → SyntaxError, and the whole init script
+        # then silently no-ops at document-start).
+        script_body = script
+        while script_body.endswith(";"):
+            script_body = script_body[:-1]
+        # Run the extractor at ``DOMContentLoaded`` (NOT ``load``) and write
+        # its JSON result to a meta tag.  Two reasons specific to the
+        # affected patched-Firefox binaries force this shape:
+        #   1. ``document.head`` is null at document-start, so a synchronous
+        #      write at init time would throw — defer until DCL when the head
+        #      exists and the DOM is parsed.
+        #   2. A ``window.addEventListener('load', ...)`` listener registered
+        #      from the isolated world does NOT fire on this patched binary
+        #      (the isolated world's window doesn't receive the page's load
+        #      event), while ``document.addEventListener('DOMContentLoaded'
+        #      , ...)`` does fire.  DCL is also early enough that the
+        #      extractor's offsetParent / getClientRects / computed-visibility
+        #      checks are accurate for text elements (layout is done at DCL;
+        #      only images are still loading, and they don't affect text
+        #      element layout).
+        # The init script runs in the isolated world, so it is NOT subject to
+        # the page's CSP (the whole reason this path exists).
+        # encodeURIComponent keeps the JSON safe inside an HTML attribute.
+        wrapper = (
+            "(() => {\n"
+            "  const __piRun = () => {\n"
+            "    let __r;\n"
+            "    try { __r = " + script_body + "; }\n"
+            "    catch (e) { __r = JSON.stringify({ error: (e && e.message) || String(e) }); }\n"
+            "    let __m = document.getElementById('__pi-extract');\n"
+            "    if (!__m) { __m = document.createElement('meta'); __m.id = '__pi-extract'; document.head.appendChild(__m); }\n"
+            "    __m.setAttribute('content', encodeURIComponent(__r));\n"
+            "  };\n"
+            "  if (document.readyState !== 'loading') { __piRun(); }\n"
+            "  else { document.addEventListener('DOMContentLoaded', __piRun, { once: true }); }\n"
+            "})();"
+        )
+        try:
+            context.add_init_script(wrapper)
+        except Exception as exc:
+            self._log(
+                "registerReadonlyExtractor",
+                taskId="shared",
+                success=False,
+                error=str(exc),
+            )
 
     def _setup_page_session(self, page: Any) -> dict[str, Any]:
         """Attach console capture and dialog handlers to a new page.
@@ -1279,6 +1407,41 @@ class PlaywrightBridge(BrowserBridge):
                 "success": False,
                 "error": str(exc),
             }
+
+        # CSP-safe read-only handoff (patched-Firefox stealth binaries).
+        # On binaries that route page.evaluate through eval() in the main
+        # world, the EXTRACTOR_SCRIPT is CSP-blocked on strict sites.  An init
+        # script stashed the result in <meta id="__pi-extract"> at load; read
+        # it via native query_selector + get_attribute (both CSP-free).  Only
+        # honored when the expression is exactly the registered extractor — a
+        # future non-extractor read_only eval falls through to page.evaluate.
+        # ponytail: result is stale across SPA route changes (no new load);
+        # fine for navigate→inspect. Re-run on demand if SPA freshness matters.
+        if (
+            read_only
+            and self._csp_safe_readonly_via_init_script
+            and self._readonly_extractor_script
+            and expression == self._readonly_extractor_script
+        ):
+            try:
+                meta = page.query_selector("meta#__pi-extract")
+                if meta is not None:
+                    raw = meta.get_attribute("content")
+                    if raw:
+                        return {"success": True, "result": _urlunquote(raw)}
+            except Exception as exc:
+                # Fall through to page.evaluate below — on CSP-strict pages
+                # that will also fail, but the error message is then the
+                # truthful CSP one rather than a meta-read exception.
+                self._log(
+                    "evaluate",
+                    taskId=task_id,
+                    success=False,
+                    via="csp_safe_meta",
+                    error=str(exc),
+                )
+            # Meta missing (page navigated before load fired, or init script
+            # not registered). Fall through to page.evaluate as best-effort.
 
         # Build effective expression before the try block so the
         # retry path can reference it regardless of where the exception

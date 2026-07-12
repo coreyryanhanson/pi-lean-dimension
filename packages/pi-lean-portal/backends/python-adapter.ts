@@ -50,6 +50,7 @@ import {
 	type ResultBase,
 } from "../core/plugin-api.js";
 import type { AriaCachedNode } from "../core/shared/accessibility-tree.js";
+import { EXTRACTOR_SCRIPT } from "../core/shared/dom-extractor.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────
 
@@ -432,7 +433,21 @@ export class PythonPluginAdapter implements BrowserPlugin {
 					// returns METHOD_NOT_FOUND, which we surface as a clear error.
 					await this._directRpcCall(
 						"browser.init",
-						{ config: this._pluginInitConfig ?? {} },
+						{
+							config: {
+								...(this._pluginInitConfig ?? {}),
+								// Plumbing for the CSP-safe read-only eval path (see
+								// PlaywrightBridge._csp_safe_readonly_via_init_script).
+								// Backends that don't opt into the quirk ignore this key;
+								// a stealth backend that flips the quirk registers it as
+								// an add_init_script so its EXTRACTOR_SCRIPT result can
+								// be read without page.evaluate (CSP-blocked on patched-
+								// Firefox binaries that route eval through the main
+								// world). Sent for every Python backend so any stealth
+								// backend can opt in by flipping the quirk.
+								readOnlyExtractorScript: EXTRACTOR_SCRIPT,
+							},
+						},
 						PING_TIMEOUT_MS,
 					);
 

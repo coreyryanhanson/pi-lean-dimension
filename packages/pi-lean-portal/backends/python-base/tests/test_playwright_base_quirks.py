@@ -710,3 +710,146 @@ class TestStdoutHygiene:
             pass
 
         assert sys.stdout is real_stdout
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  CSP-safe read-only eval (_csp_safe_readonly_via_init_script)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class _RecordingContext(_FakeContext):
+    """``_FakeContext`` that records the init script passed to ``add_init_script``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.init_scripts: list[str] = []
+
+    def add_init_script(self, script: str) -> None:
+        self.init_scripts.append(script)
+
+
+class _FakeMeta:
+    """Stand-in for the ``<meta id="__pi-extract">`` ElementHandle."""
+
+    def __init__(self, content: str) -> None:
+        self._content = content
+
+    def get_attribute(self, name: str) -> str | None:
+        if name == "content":
+            return self._content
+        return None
+
+
+class _CspFakePage(_FakePage):
+    """``_FakePage`` whose ``query_selector`` returns a canned meta element."""
+
+    def __init__(self, meta_content: str | None) -> None:
+        super().__init__()
+        self._meta_content = meta_content
+        self.query_calls: list[str] = []
+
+    def query_selector(self, selector: str) -> _FakeMeta | None:
+        self.query_calls.append(selector)
+        if self._meta_content is None:
+            return None
+        return _FakeMeta(self._meta_content)
+
+
+class TestCspSafeReadonlyViaInitScript:
+    """Tests for the CSP-safe read-only eval quirk (patched-Firefox stealth
+    binaries whose page.evaluate is CSP-blocked on strict sites)."""
+
+    def test_default_off(self):
+        """Shipped bridges keep the quirk off (bit-identical behaviour)."""
+        assert not PlaywrightBridge._csp_safe_readonly_via_init_script
+
+    def test_register_noops_without_script(self):
+        """No ``readOnlyExtractorScript`` in config → no init script registered."""
+        bridge = _FakePlaywrightBridge()
+        bridge._plugin_config = {}
+        ctx = _RecordingContext()
+        bridge._register_readonly_extractor_init_script(ctx)
+        assert ctx.init_scripts == []
+        assert bridge._readonly_extractor_script == ""
+
+    def test_register_strips_trailing_semicolon_and_uses_dcl(self):
+        """The wrapper assigns the script directly (no wrapping parens that
+        would put the script's trailing ``;`` inside parens → SyntaxError),
+        and defers to ``DOMContentLoaded`` (not ``load``)."""
+        bridge = _FakePlaywrightBridge()
+        # A self-contained IIFE ending with a trailing ';' — the real
+        # EXTRACTOR_SCRIPT shape.
+        script = "(() => { return JSON.stringify({a:1}); })();"
+        bridge._plugin_config = {"readOnlyExtractorScript": script}
+        ctx = _RecordingContext()
+        bridge._register_readonly_extractor_init_script(ctx)
+        assert bridge._readonly_extractor_script == script
+        assert len(ctx.init_scripts) == 1
+        wrapper = ctx.init_scripts[0]
+        # Direct assignment of the IIFE's return value — the script is
+        # ``(() => {...})()`` so ``__r = (() =>`` is the correct shape.
+        assert "__r = (() =>" in wrapper
+        # The bug shape was ``__r = (<script>);`` which, with the script's
+        # trailing ``;``, produced ``__r = (...})(););`` (a ``;`` inside
+        # parens → SyntaxError → the whole init script silently no-ops).
+        assert "})(););" not in wrapper
+        # Defers to DOMContentLoaded, not the window load event (which does
+        # not fire from the isolated world on the affected binary).
+        assert "DOMContentLoaded" in wrapper
+        assert "addEventListener('load'" not in wrapper
+        assert "addEventListener(\"load\"" not in wrapper
+        # Writes to the known meta tag.
+        assert "__pi-extract" in wrapper
+
+    def test_do_evaluate_read_only_serves_from_meta(self):
+        """``do_evaluate(read_only=True)`` with the matching expression reads
+        the stashed meta and returns the urldecoded JSON — no ``page.evaluate``."""
+        from urllib.parse import quote
+        bridge = _FakePlaywrightBridge()
+        bridge._csp_safe_readonly_via_init_script = True
+        script = "(() => { return JSON.stringify({title: 'x'}); })();"
+        bridge._plugin_config = {"readOnlyExtractorScript": script}
+        # Populate the registered-script gate.
+        bridge._register_readonly_extractor_init_script(_RecordingContext())
+        payload = '{"title": "Reddit Clone"}'
+        page = _CspFakePage(meta_content=quote(payload))
+        bridge.sessions["t"] = {"page": page, "context": _FakeContext()}
+        res = bridge.do_evaluate("t", script, read_only=True)
+        assert res["success"] == True
+        assert res["result"] == payload
+        # The meta was read via the native query_selector (CSP-free).
+        assert page.query_calls == ["meta#__pi-extract"]
+        # page.evaluate was NOT called (CSP would block it).
+        assert page.eval_calls == []
+
+    def test_do_evaluate_read_only_non_matching_expression_falls_through(self):
+        """A read_only eval whose expression is NOT the registered extractor
+        falls through to ``page.evaluate`` (no silent stale-meta return)."""
+        bridge = _FakePlaywrightBridge()
+        bridge._csp_safe_readonly_via_init_script = True
+        bridge._plugin_config = {"readOnlyExtractorScript": "REAL_EXTRACTOR;"}
+        bridge._register_readonly_extractor_init_script(_RecordingContext())
+        page = _CspFakePage(meta_content=None)
+        page.eval_results["other"] = "ok"
+        bridge.sessions["t"] = {"page": page, "context": _FakeContext()}
+        res = bridge.do_evaluate("t", "other expression", read_only=True)
+        # Fell through to page.evaluate (returned the canned "ok").
+        assert res["success"] == True
+        assert res["result"] == "ok"
+        # query_selector was NOT called (expression didn't match the gate).
+        assert page.query_calls == []
+
+    def test_do_evaluate_read_only_missing_meta_falls_through(self):
+        """When the meta is absent (page navigated before DCL, or init script
+        not registered), fall through to ``page.evaluate`` as best-effort."""
+        bridge = _FakePlaywrightBridge()
+        bridge._csp_safe_readonly_via_init_script = True
+        script = "(() => { return JSON.stringify({a:1}); })();"
+        bridge._plugin_config = {"readOnlyExtractorScript": script}
+        bridge._register_readonly_extractor_init_script(_RecordingContext())
+        page = _CspFakePage(meta_content=None)
+        page.eval_results[script] = "fallback"
+        bridge.sessions["t"] = {"page": page, "context": _FakeContext()}
+        res = bridge.do_evaluate("t", script, read_only=True)
+        assert res["success"] == True
+        assert res["result"] == "fallback"
