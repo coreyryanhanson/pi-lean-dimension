@@ -187,6 +187,36 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	// --- Register tools ---------------------------------------------
+	// Patch the browser-navigate strategy description with the actually
+	// configured plugin names so the agent doesn't second-guess which
+	// strategies exist (matches what /web status reports).
+	const strategyPlugins =
+		validConfigs.length > 0
+			? validConfigs.map(({ config }) => ({
+					name: config.name,
+					enabled: config.enabled,
+				}))
+			: [{ name: "chromium", enabled: true }]; // fallback path
+	const enabledNames = strategyPlugins
+		.filter((p) => p.enabled)
+		.map((p) => p.name);
+	const disabledNames = strategyPlugins
+		.filter((p) => !p.enabled)
+		.map((p) => p.name);
+	const availList =
+		enabledNames.length > 0 ? enabledNames.join(", ") : "(none)";
+	const disabledClause =
+		disabledNames.length > 0 ? ` Disabled: ${disabledNames.join(", ")}.` : "";
+	(
+		browserNavigateTool as unknown as {
+			parameters: { properties: { strategy: { description: string } } };
+		}
+	).parameters.properties.strategy.description =
+		`Backend strategy: "auto" (default) uses the first available plugin; ` +
+		`specify a registered plugin name to use that backend. ` +
+		`Available: ${availList}.${disabledClause} ` +
+		`For stateless HTTP fetches, use web-fetch instead.`;
+
 	pi.registerTool(webFetchTool);
 	pi.registerTool(browserNavigateTool);
 	pi.registerTool(browserSnapshotTool);
