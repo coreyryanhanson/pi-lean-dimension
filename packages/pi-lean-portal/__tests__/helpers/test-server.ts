@@ -34,6 +34,20 @@ export const COOKIE_PERSISTENCE_HTML = `<!DOCTYPE html>
   </script>
 </body></html>`;
 
+/** Convenience: start a test server serving COOKIE_PERSISTENCE_HTML at "/". */
+export async function startCookiePersistenceServer(): Promise<TestServer> {
+	return startTestServer((req, res) => {
+		const url = new URL(req.url ?? "/", "http://localhost");
+		if (url.pathname === "/") {
+			res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+			res.end(COOKIE_PERSISTENCE_HTML);
+		} else {
+			res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+			res.end("404");
+		}
+	});
+}
+
 export async function startTestServer(
 	handler: (req: IncomingMessage, res: ServerResponse) => void,
 ): Promise<TestServer> {

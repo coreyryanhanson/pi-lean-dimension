@@ -64,7 +64,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	/** Unique stable identifier (e.g. "chromium", "firefox") */
 	abstract readonly name: string;
 
-	/** Advertised capabilities */
 	abstract readonly capabilities: PluginCapabilities;
 
 	/**
@@ -95,10 +94,8 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	 */
 	protected readonly captureUserAgent: boolean = false;
 
-	/** Enable structured debug logging via BROWSER_DEBUG env var */
 	private readonly _debug = process.env.BROWSER_DEBUG === "1";
 
-	/** Log a structured debug line to stderr when BROWSER_DEBUG=1 */
 	private _log(event: string, data: Record<string, unknown>): void {
 		if (this._debug) {
 			process.stderr.write(`[browser] ${event}: ${JSON.stringify(data)}\n`);
@@ -447,7 +444,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		}
 	}
 
-	/** Take an accessibility snapshot and update the element cache. */
 	private async takeSnapshot(
 		taskId: string,
 		page: Page,

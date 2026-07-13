@@ -69,16 +69,11 @@ export interface PluginConfigLoadResult {
 	errors: string[];
 }
 
-/**
- * Unified full configuration result — includes both browser and plugin config.
- */
-export interface FullConfig {
+/** Internal cache for loadFullConfig() — invalidated via invalidateConfigCache() */
+let _fullConfigCache: {
 	browser: BrowserConfig;
 	plugins: PluginConfigLoadResult;
-}
-
-/** Internal cache for loadFullConfig() — invalidated via invalidateConfigCache() */
-let _fullConfigCache: FullConfig | null = null;
+} | null = null;
 
 /**
  * Parse the browser config section from settings JSON.
@@ -227,10 +222,12 @@ function readBrowserConfigRaw(): Record<string, unknown> | undefined {
  * Load and cache the full browser configuration from settings.json.
  *
  * Reads settings.json once on first call and caches the result for
- * subsequent calls. Both `loadBrowserConfig()` and `loadPluginConfig()`
- * delegate to this function.
+ * subsequent calls.
  */
-export function loadFullConfig(roots?: readonly string[]): FullConfig {
+export function loadFullConfig(roots?: readonly string[]): {
+	browser: BrowserConfig;
+	plugins: PluginConfigLoadResult;
+} {
 	if (_fullConfigCache) return _fullConfigCache;
 
 	const raw = readBrowserConfigRaw();
@@ -250,19 +247,6 @@ export function loadFullConfig(roots?: readonly string[]): FullConfig {
  */
 export function invalidateConfigCache(): void {
 	_fullConfigCache = null;
-}
-
-/**
- * Convenience wrapper — returns the `defaultProfile` setting from the
- * cached browser configuration. Delegates to `loadFullConfig()` which
- * reads `settings.json` once and caches the result.
- *
- * The `browser.defaultProfile` field controls what happens when
- * `browser-navigate` is called without an explicit `profile` parameter.
- * See `BrowserConfig` for valid values.
- */
-export function loadBrowserConfig(): BrowserConfig {
-	return loadFullConfig().browser;
 }
 
 // ─── Validation ───────────────────────────────────────────────────
@@ -419,20 +403,3 @@ export const DEFAULT_BACKEND_ROOTS: readonly string[] = [
 	DEFAULT_BACKENDS_ROOT,
 	USER_BACKENDS_DIR,
 ];
-
-/**
- * Load and validate the plugin configuration.
- *
- * If no `browser.plugins` config exists, returns the default fallback
- * (chromium + firefox enabled, chromium-py + firefox-py disabled).
- *
- * @param roots  Optional ordered list of backend roots to resolve
- *               plugin `dir` values against.  Defaults to
- *               `DEFAULT_BACKEND_ROOTS` (shipped backends, then
- *               `user-backends/`).
- */
-export function loadPluginConfig(
-	roots?: readonly string[],
-): PluginConfigLoadResult {
-	return loadFullConfig(roots).plugins;
-}

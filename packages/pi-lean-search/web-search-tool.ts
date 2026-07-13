@@ -1,16 +1,6 @@
 /**
- * web-search tool definition for pi-lean-search.
- *
- * Searches the web via a SearXNG instance. Degrades gracefully when
- * no SearXNG URL is configured — returns a setup message on first call.
- *
- * Adapted from the prototype at:
- *   /root/lab/startup_scripts/firecracker/config/pi/extensions/searxng-search/index.ts
- *
- * Changes from prototype:
- *   - Config read from Pi settings.json (searxng.url) instead of env vars
- *   - No injectUnavailabilityNotice (graceful degradation via tool output only)
- *   - Health state management lives in index.ts, not in the tool
+ * web-search tool for pi-lean-search — SearXNG web search with graceful degradation.
+ * Config read from Pi settings.json; health state managed in index.ts.
  */
 
 import { defineTool } from "@earendil-works/pi-coding-agent";

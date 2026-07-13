@@ -1,39 +1,6 @@
 #!/usr/bin/env python3
 """
-Idempotent Playwright coreBundle.js patcher — guard pageError.location.
-
-The Camoufox patched Firefox binary (v135.0.1-beta.24) emits Juggler
-``Page.uncaughtError`` events where the ``location`` field is undefined.
-Playwright's Node driver (``coreBundle.js``) builds the wire payload
-unconditionally inside ``BrowserContext.Events.PageError``::
-
-    location: { url: pageError.location.url, ... }
-
-and crashes with ``TypeError: Cannot read properties of undefined``
-when ``pageError.location`` is missing.  The crash happens in the Node
-driver **before** the event reaches any Python ``page.on('pageerror')``
-listener, so a pure-Python workaround is impossible.
-
-This module applies a one-line idempotent guard::
-
-    location: pageError.location
-      ? { url: ..., line: ..., column: ... }
-      : { url: "", line: 0, column: 0 }
-
-The fallback **must** be an object — the wire serializer rejects
-``undefined`` with ``ValidationError: location: expected object``.
-
-Usage
------
-
-As a Python ``-m`` module::
-
-    python -m pi_browser_bridge.patch_playwright
-
-From code::
-
-    from pi_browser_bridge.patch_playwright import patch_playwright
-    patch_playwright(loud=True)
+Idempotent Playwright coreBundle.js patcher — guards pageError.location for Camoufox.
 """
 
 import sys
@@ -317,11 +284,11 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.check:
-        driver = (
-            Path(args.driver).resolve()
-            if args.driver
-            else _default_driver_path()
-        )
+        driver: Path | None
+        if args.driver:
+            driver = Path(args.driver).resolve()
+        else:
+            driver = _default_driver_path()
         if driver is None or not driver.is_file():
             print("coreBundle.js not found — cannot check", file=sys.stderr)
             sys.exit(1)

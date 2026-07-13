@@ -4,7 +4,7 @@ import * as router from "./core/router.js";
 import { cleanupFetchTempFiles } from "./core/fetch-backend.js";
 import { pluginRegistry } from "./core/plugin-registry.js";
 import {
-	loadPluginConfig,
+	loadFullConfig,
 	detectPluginType,
 	DEFAULT_BACKEND_ROOTS,
 	invalidateConfigCache,
@@ -54,9 +54,9 @@ export default function (pi: ExtensionAPI) {
 	// Resolve plugin `dir` values against the shipped backends root first,
 	// then the user-writable `~/.pi/agent/pi-lean-portal/user-backends/`
 	// tree (Phase 0b).  An absolute `dir` short-circuits both roots.
-	const { plugins: pluginConfigs, errors: configErrors } = loadPluginConfig(
+	const { plugins: pluginConfigs, errors: configErrors } = loadFullConfig(
 		DEFAULT_BACKEND_ROOTS,
-	);
+	).plugins;
 
 	// Log config errors
 	for (const err of configErrors) {

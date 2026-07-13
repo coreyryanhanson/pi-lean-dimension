@@ -1,14 +1,6 @@
 /**
  * Plugin Router — registry-based dispatch for interactive browser operations.
- *
- * All dispatch goes through the PluginRegistry, which resolves
- * the correct plugin based on the `strategy` parameter.
- *
- * Cross-cutting concerns handled here (not in plugins):
- * - Snapshot truncation (compactSnapshot)
- * - URL safety validation
- * - Session lifecycle (via sessionManager)
- * - Auto-recovery from crashed sessions (via lastNav)
+ * Handles snapshot truncation, URL safety, session lifecycle, and crash recovery.
  */
 
 import { writeFileSync } from "node:fs";
@@ -30,7 +22,7 @@ import {
 	sanitizeProfileName,
 	sessionProfileName,
 } from "./shared/storage-state.js";
-import { loadBrowserConfig } from "./plugin-config.js";
+import { loadFullConfig } from "./plugin-config.js";
 import {
 	runExtractor,
 	correlateElements,
@@ -454,7 +446,7 @@ export async function navigate(
 	let resolvedProfileName: string | undefined;
 	let profileMode: "none" | "session" | "named" | undefined;
 
-	const browserConfig = loadBrowserConfig();
+	const browserConfig = loadFullConfig().browser;
 	const profileInput = options.profile ?? browserConfig.defaultProfile;
 
 	if (profileInput === "none") {

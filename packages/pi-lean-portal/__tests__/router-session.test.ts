@@ -46,7 +46,10 @@ const mockConfig = vi.hoisted(() => ({
 }));
 
 vi.mock("../core/plugin-config.js", () => ({
-	loadBrowserConfig: () => mockConfig,
+	loadFullConfig: () => ({
+		browser: mockConfig,
+		plugins: { plugins: [], errors: [] },
+	}),
 }));
 
 // Must import router AFTER the mock is set up

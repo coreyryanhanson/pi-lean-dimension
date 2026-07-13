@@ -1,25 +1,6 @@
 /**
  * PythonPluginAdapter — TypeScript side of the Python bridge protocol.
- *
- * Implements `BrowserPlugin` by spawning a Python subprocess and
- * communicating via JSON-RPC 2.0 over stdin/stdout with newline-delimited
- * framing.
- *
- * Lifecycle
- * ---------
- * 1. Constructed with a plugin name and `PythonBridgeConfig`.
- * 2. `init()` validates paths — no spawn yet (lazy start).
- * 3. First operation triggers `ensureRunning()`, which spawns the Python
- *    process and waits for a `ping` handshake.
- * 4. Operations send JSON-RPC requests, the Python bridge handles them.
- * 5. `cleanupAll()` sends `shutdown`, waits for graceful exit, force-kills
- *    if unresponsive.
- * 6. Process crashes are detected and auto-restart on the next call.
- *
- * Thread safety: operations are serialised through the single stdin/stdout
- * channel.  The Python bridge processes one request at a time.
- *
- * @module
+ * Implements BrowserPlugin via JSON-RPC 2.0 over stdin/stdout.
  */
 
 import { spawn, spawnSync } from "node:child_process";

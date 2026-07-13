@@ -13,7 +13,7 @@ import {
 import { readSettingsFile } from "../../core/shared/settings-reader.js";
 
 /**
- * Same parsing/validation as {@link import("../../core/plugin-config.js").loadPluginConfig},
+ * Same parsing/validation as {@link import("../../core/plugin-config.js").parsePluginConfig},
  * but reads from a specific file path instead of the merged global + project
  * settings. One-shot read — no caching.
  *
@@ -23,7 +23,7 @@ import { readSettingsFile } from "../../core/shared/settings-reader.js";
  * ```
  *
  * When the file is absent or has no `browser` section, falls back to the
- * default plugin list (same as `loadPluginConfig()` with no settings).
+ * default plugin list (same as `parsePluginConfig(undefined, …)` with no settings).
  *
  * @param path  Absolute or relative path to a settings.json file.
  * @param roots  Optional ordered list of backend roots to resolve

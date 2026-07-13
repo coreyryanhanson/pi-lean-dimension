@@ -7,6 +7,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { webFetch } from "../core/fetch-backend.js";
 import { taskId } from "../core/shared/task-id.js";
+import { renderExpandedText } from "./utils.js";
 
 export const webFetchTool = defineTool({
 	name: "web-fetch",
@@ -135,10 +136,8 @@ export const webFetchTool = defineTool({
 
 		const content = (result.content?.[0] as any)?.text ?? "";
 		if (expanded) {
-			const preview = content.replace(/\n{3,}/g, "\n\n").slice(0, 500);
-			text += `\n\n${theme.fg("dim", preview)}`;
-			if (content.length > 500)
-				text += `\n${theme.fg("muted", `… ${content.length - 500} more chars`)}`;
+			text += "\n";
+			text = renderExpandedText(text, theme, content, 500);
 		} else {
 			text += `\n${theme.fg("muted", `${content.length} chars (expand)`)}`;
 		}

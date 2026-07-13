@@ -115,9 +115,6 @@ export class PluginRegistry {
 		});
 	}
 
-	/**
-	 * Get a plugin by name. Returns undefined if not registered or disabled.
-	 */
 	get(name: string): BrowserPlugin | undefined {
 		const entry = this.entries.get(name);
 		if (!entry || !entry.enabled) return undefined;
@@ -225,5 +222,4 @@ export class PluginRegistry {
 
 // ─── Singleton ────────────────────────────────────────────────────
 
-/** Global plugin registry instance */
 export const pluginRegistry = new PluginRegistry();

@@ -1,17 +1,6 @@
 /**
- * Navigation settle detection for the browser extension.
- *
- * After a user interaction (click, press) that may or may not trigger
- * a page navigation, this module provides a reliable way to wait for
- * the page to settle before reading URL / title / snapshot.
- *
- * The core insight: instead of a fixed sleep (e.g. `waitForTimeout(300)`)
- * that races against navigation commit, we listen for the actual
- * `framenavigated` event and wait for page readiness (load + networkidle)
- * only when navigation has actually started.
- *
- * This eliminates the URL / DOM mismatch that causes stale-@e-ref and
- * mismatched URL/content bugs.
+ * Navigation settle detection — waits for framenavigated event or DOM
+ * stabilisation after interactions, eliminating stale-@e-ref bugs from fixed sleeps.
  */
 
 // ─── Public types ───────────────────────────────────────────────────

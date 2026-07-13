@@ -12,7 +12,11 @@ import { getConversationDefaultProfile } from "../browser-toggle.js";
 import { sessionManager } from "../core/shared/session-manager.js";
 import { removeSnapshotFiles } from "../core/shared/snapshot-cache.js";
 import { taskId } from "../core/shared/task-id.js";
-import { updateFooterStatus, profileLine } from "./utils.js";
+import {
+	updateFooterStatus,
+	profileLine,
+	renderExpandedText,
+} from "./utils.js";
 
 export const browserNavigateTool = defineTool({
 	name: "browser-navigate",
@@ -242,10 +246,8 @@ export const browserNavigateTool = defineTool({
 
 		const content = (result.content?.[0] as any)?.text ?? "";
 		if (expanded) {
-			const preview = content.replace(/\n{3,}/g, "\n\n").slice(0, 500);
-			text += `\n\n${theme.fg("dim", preview)}`;
-			if (content.length > 500)
-				text += `\n${theme.fg("muted", `… ${content.length - 500} more chars`)}`;
+			text += "\n";
+			text = renderExpandedText(text, theme, content, 500);
 		} else {
 			text += `\n${theme.fg("muted", `${content.length} chars (expand)`)}`;
 		}

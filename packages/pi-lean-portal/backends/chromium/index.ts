@@ -11,22 +11,11 @@
 import { chromium } from "playwright";
 import type { Browser } from "playwright";
 import { PlaywrightPluginBase } from "../playwright-base/playwright-plugin.js";
-import {
-	DEFAULT_CAPABILITIES,
-	type PluginCapabilities,
-} from "../../core/plugin-api.js";
-
-// ─── Capabilities ──────────────────────────────────────────────────
-
-const CHROMIUM_CAPABILITIES: PluginCapabilities = {
-	...DEFAULT_CAPABILITIES,
-};
-
-// ─── ChromiumPlugin ───────────────────────────────────────────────
+import { DEFAULT_CAPABILITIES } from "../../core/plugin-api.js";
 
 export class ChromiumPlugin extends PlaywrightPluginBase {
 	readonly name = "chromium";
-	readonly capabilities = CHROMIUM_CAPABILITIES;
+	readonly capabilities = DEFAULT_CAPABILITIES;
 
 	/** Hardcoded Chrome user-agent — no dynamic capture needed. */
 	protected get userAgent(): string {

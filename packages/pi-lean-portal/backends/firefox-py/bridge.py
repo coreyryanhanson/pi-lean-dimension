@@ -26,8 +26,6 @@ Requires
 * Playwright Firefox browsers installed (``playwright install firefox``)
 """
 
-import sys
-
 from pi_browser_bridge.playwright_base import PlaywrightBridge, check_playwright_or_exit
 
 

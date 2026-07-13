@@ -2,7 +2,7 @@
  * Tests for the browser configuration parsing in plugin-config.ts.
  *
  * Covers:
- * - loadBrowserConfig() defaults when no config exists
+ * - loadFullConfig().browser defaults when no config exists
  * - defaultProfile validation ("none", "session", or a named profile)
  * - defaultProfile validation
  * - maxStorageStateSize validation
@@ -15,8 +15,7 @@ import { join } from "node:path";
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
-	loadBrowserConfig,
-	loadPluginConfig,
+	loadFullConfig,
 	invalidateConfigCache,
 } from "../core/plugin-config.js";
 import { loadPluginConfigFromFile } from "./helpers/load-plugin-config-from-file.js";
@@ -76,22 +75,22 @@ beforeEach(() => {
 
 // ─── Tests ───────────────────────────────────────────────────────
 
-describe("loadBrowserConfig()", () => {
+describe("loadFullConfig().browser", () => {
 	it("returns defaults when no settings.json exists", () => {
 		mockNoSettings();
-		const config = loadBrowserConfig();
+		const config = loadFullConfig().browser;
 		expect(config.defaultProfile).toBe("session");
 	});
 
 	it("returns defaults when browser section is missing", () => {
 		mockGlobalSettings({});
-		const config = loadBrowserConfig();
+		const config = loadFullConfig().browser;
 		expect(config.defaultProfile).toBe("session");
 	});
 
 	it("returns defaults when browser section has no config keys", () => {
 		mockGlobalSettings({ unrelated: true });
-		const config = loadBrowserConfig();
+		const config = loadFullConfig().browser;
 		expect(config.defaultProfile).toBe("session");
 	});
 
@@ -100,36 +99,36 @@ describe("loadBrowserConfig()", () => {
 	describe("defaultProfile", () => {
 		it("accepts a valid profile name", () => {
 			mockGlobalSettings({ defaultProfile: "work" });
-			expect(loadBrowserConfig().defaultProfile).toBe("work");
+			expect(loadFullConfig().browser.defaultProfile).toBe("work");
 		});
 
 		it("accepts hyphens and underscores", () => {
 			mockGlobalSettings({ defaultProfile: "my-work-profile" });
-			expect(loadBrowserConfig().defaultProfile).toBe("my-work-profile");
+			expect(loadFullConfig().browser.defaultProfile).toBe("my-work-profile");
 		});
 
 		it("rejects reserved names and falls back to default", () => {
 			mockGlobalSettings({ defaultProfile: "none" });
 			// "none" is reserved as a profile name but valid as a defaultProfile mode
-			const config = loadBrowserConfig();
+			const config = loadFullConfig().browser;
 			expect(config.defaultProfile).toBe("none");
 		});
 
 		it("rejects 'session' as a profile name for named profiles", () => {
 			mockGlobalSettings({ defaultProfile: "session" });
 			// "session" is reserved as a profile name but valid as a defaultProfile mode
-			const config = loadBrowserConfig();
+			const config = loadFullConfig().browser;
 			expect(config.defaultProfile).toBe("session");
 		});
 
 		it("rejects empty string", () => {
 			mockGlobalSettings({ defaultProfile: "" });
-			expect(loadBrowserConfig().defaultProfile).toBe("session");
+			expect(loadFullConfig().browser.defaultProfile).toBe("session");
 		});
 
 		it("rejects names with path traversal", () => {
 			mockGlobalSettings({ defaultProfile: "../../evil" });
-			expect(loadBrowserConfig().defaultProfile).toBe("session");
+			expect(loadFullConfig().browser.defaultProfile).toBe("session");
 		});
 	});
 
@@ -141,7 +140,7 @@ describe("loadBrowserConfig()", () => {
 				{ browser: { defaultProfile: "none" } },
 				{ browser: { defaultProfile: "work" } },
 			);
-			expect(loadBrowserConfig().defaultProfile).toBe("work");
+			expect(loadFullConfig().browser.defaultProfile).toBe("work");
 		});
 
 		it("project settings entirely replace global browser config (shallow merge)", () => {
@@ -157,7 +156,7 @@ describe("loadBrowserConfig()", () => {
 					},
 				},
 			);
-			const config = loadBrowserConfig();
+			const config = loadFullConfig().browser;
 			expect(config.defaultProfile).toBe("session");
 		});
 	});
@@ -165,11 +164,11 @@ describe("loadBrowserConfig()", () => {
 
 // ─── Default plugin fallback (Phase 0b) ─────────────────────────
 
-describe("loadPluginConfig() default fallback", () => {
+describe("loadFullConfig().plugins default fallback", () => {
 	it("returns the four shipped backends when browser.plugins is absent", () => {
 		// No settings files → default fallback branch in parsePluginConfig fires.
 		mockNoSettings();
-		const { plugins, errors } = loadPluginConfig();
+		const { plugins, errors } = loadFullConfig().plugins;
 		expect(errors).toEqual([]);
 		const names = plugins.map((p) => p.name);
 		expect(names).toEqual(["chromium", "firefox", "chromium-py", "firefox-py"]);
@@ -177,7 +176,7 @@ describe("loadPluginConfig() default fallback", () => {
 
 	it("does NOT include stealth backends (camoufox-py / stealth-py) in the default fallback", () => {
 		mockNoSettings();
-		const { plugins } = loadPluginConfig();
+		const { plugins } = loadFullConfig().plugins;
 		const names = plugins.map((p) => p.name);
 		expect(names).not.toContain("camoufox-py");
 		expect(names).not.toContain("stealth-py");
