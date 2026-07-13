@@ -85,7 +85,6 @@ pi-lean-dimension/                       (monorepo root)
     │   │   ├── guides.ts                Guide types, builtin guides, file loader
     │   │   ├── fetch-backend.ts         Stateless HTTP → Markdown
     │   │   └── shared/                  nav-settle, paths, task-id, accessibility-tree, etc.
-    │   ├── verify-ship-manifest.ts      Ship-manifest test helper (production .ts coverage checker)
     │   ├── tools/                       Tool definitions — one file per tool (12 files) + index.ts + utils.ts
     │   ├── __tests__/                   Test files + helpers/
     │   ├── AGENTS.md                    (portal internals — additive to this file)
@@ -102,8 +101,6 @@ pi-lean-dimension/                       (monorepo root)
     │   └── README.md                    Package docs
     └── pi-lean-dimension/               ← Umbrella meta-package (codeless)
         ├── package.json                 (name: pi-lean-dimension, bundledDependencies)
-        ├── verify-ship-manifest.ts      Ship-manifest test helper
-        ├── ship-manifest.test.ts        Manifest coverage test
         ├── AGENTS.md                    (stub — points here)
         └── README.md                    Package docs
 ```
@@ -212,7 +209,6 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 9 | varies | Per-backend (auto-skip) |
 | MiniWoB behavioral | `bench/miniwob/suites/` | 6 | 130 tasks × 4 + smoke* | Chromium + Firefox + Python + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 17+ | No |
-| Dimension | `pi-lean-dimension/` | 1 | 2 | No |
 
 **Portal structural (20 files):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, probe-user-backend, ship-manifest
 

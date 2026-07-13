@@ -23,16 +23,8 @@ import type { AriaCachedNode } from "./shared/accessibility-tree.js";
 export interface PluginCapabilities {
 	/** Can take full-page screenshots */
 	supportsFullPageScreenshot: boolean;
-	/** Can capture console messages via CDP or equivalent */
-	supportsConsoleCapture: boolean;
 	/** Can evaluate arbitrary JavaScript in the page */
 	supportsJavaScriptEvaluate: boolean;
-	/** Can detect bot/anti-automation signals (Cloudflare, CAPTCHA, etc.) */
-	supportsBotDetection: boolean;
-	/** Can auto-dismiss JS dialogs (alert/confirm/prompt) */
-	supportsDialogAutoDismissal: boolean;
-	/** Can accept an AbortSignal for long-running navigations */
-	supportsAbortSignal: boolean;
 	/** Browser engine (used for display/debugging only) */
 	engine: "chromium" | "firefox" | "webkit" | string;
 }
@@ -40,11 +32,7 @@ export interface PluginCapabilities {
 /** Default capabilities matching a full-featured Chromium backend. */
 export const DEFAULT_CAPABILITIES: PluginCapabilities = {
 	supportsFullPageScreenshot: true,
-	supportsConsoleCapture: true,
 	supportsJavaScriptEvaluate: true,
-	supportsBotDetection: true,
-	supportsDialogAutoDismissal: true,
-	supportsAbortSignal: true,
 	engine: "chromium",
 };
 
@@ -134,35 +122,6 @@ export interface ConsoleMessagesResult extends ResultBase {
 /** Result from evaluate (browser-console JS eval) */
 export interface EvaluateResult extends ResultBase {
 	result?: unknown;
-}
-
-// ─── Quirks Descriptor ────────────────────────────────────────────
-
-/**
- * Quirks flags declared by a Python bridge at runtime, read via the
- * ``browser.describeQuirks`` introspection RPC.
- *
- * Each field corresponds to a class attribute on
- * ``PlaywrightBridge`` (defaults shown).  Subclasses override these
- * to signal engine-specific behavior to the TypeScript runner, which
- * uses ``skipIf`` to only run tests that apply to the declared quirks.
- *
- * Also extends ResultBase so the TypeScript adapter method can use
- * ``_rpcCallTyped`` (which requires ``{ success: boolean }``).
- */
-export interface QuirksDescriptor extends ResultBase {
-	/** Bridge owns fingerprint management (viewport, UA). */
-	fingerprint_managed_context: boolean;
-	/** Prefix prepended to ``page.evaluate`` expressions (e.g. ``"mw:"``). */
-	eval_prefix: string;
-	/** ``scroll()`` uses ``page.mouse.wheel`` instead of ``window.scrollBy``. */
-	scroll_via_wheel: boolean;
-	/** ``create_browser_context`` passes ``no_viewport=True``. */
-	skip_default_viewport: boolean;
-	/** Navigation uses ``load`` instead of ``networkidle``. */
-	skip_networkidle: boolean;
-	/** ``do_evaluate`` wraps the script in ``eval(<json>)`` to survive main-world wrapper. */
-	wrap_mw_eval_in_eval: boolean;
 }
 
 // ─── Cookie & Storage State Types ─────────────────────────────────

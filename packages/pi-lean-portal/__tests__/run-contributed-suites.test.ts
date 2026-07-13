@@ -31,12 +31,14 @@ import { join } from "node:path";
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 
-import { SYNTHETIC_CAPABILITIES } from "./helpers/synthetic-capabilities.js";
-import type {
-	PluginCapabilities,
-	QuirksDescriptor,
+import {
+	DEFAULT_CAPABILITIES,
+	type PluginCapabilities,
 } from "../core/plugin-api.js";
-import { PythonPluginAdapter } from "../backends/python-adapter.js";
+import {
+	PythonPluginAdapter,
+	type QuirksDescriptor,
+} from "../backends/python-adapter.js";
 import { loadPluginConfigFromFile } from "./helpers/load-plugin-config-from-file.js";
 import type { PluginConfigLoadResult } from "../core/plugin-config.js";
 import { runContractTests } from "./helpers/plugin-contract.js";
@@ -69,7 +71,7 @@ const SETTINGS_PATH =
 // ─── Capabilities merge helper ──────────────────────────────────────
 
 /**
- * Merge a user-authored capabilities override onto SYNTHETIC_CAPABILITIES.
+ * Merge a user-authored capabilities override onto DEFAULT_CAPABILITIES.
  *
  * User entries in the test-local settings file may omit fields;
  * PluginCapabilities is non-optional. This helper fills in the gaps.
@@ -77,13 +79,13 @@ const SETTINGS_PATH =
  * the full synthetic set — the same fallback as the pre-enhancement
  * runner.
  */
-function mergeCapabilities(override: unknown): typeof SYNTHETIC_CAPABILITIES {
+function mergeCapabilities(override: unknown): PluginCapabilities {
 	if (!override || typeof override !== "object" || Array.isArray(override)) {
-		return SYNTHETIC_CAPABILITIES;
+		return DEFAULT_CAPABILITIES;
 	}
 	return {
-		...SYNTHETIC_CAPABILITIES,
-		...(override as Partial<typeof SYNTHETIC_CAPABILITIES>),
+		...DEFAULT_CAPABILITIES,
+		...(override as Partial<PluginCapabilities>),
 	};
 }
 

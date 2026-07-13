@@ -61,11 +61,7 @@ function createChromiumPyPlugin(): PythonPluginAdapter {
 		// Chromium-Py supports everything except AbortSignal
 		capabilities: {
 			supportsFullPageScreenshot: true,
-			supportsConsoleCapture: true,
 			supportsJavaScriptEvaluate: true,
-			supportsBotDetection: true,
-			supportsDialogAutoDismissal: true,
-			supportsAbortSignal: false,
 			engine: "chromium",
 		},
 	});

@@ -315,11 +315,7 @@ export function runContractTests(
 			_it("has complete capabilities", () => {
 				const caps: PluginCapabilities = plugin.capabilities;
 				expect(typeof caps.supportsFullPageScreenshot).toBe("boolean");
-				expect(typeof caps.supportsConsoleCapture).toBe("boolean");
 				expect(typeof caps.supportsJavaScriptEvaluate).toBe("boolean");
-				expect(typeof caps.supportsBotDetection).toBe("boolean");
-				expect(typeof caps.supportsDialogAutoDismissal).toBe("boolean");
-				expect(typeof caps.supportsAbortSignal).toBe("boolean");
 				expect(typeof caps.engine).toBe("string");
 			});
 		});
@@ -1026,8 +1022,6 @@ export function runContractTests(
 
 		describe("console — real capture", () => {
 			_it("captures console messages from the page", async () => {
-				if (!plugin.capabilities.supportsConsoleCapture) return;
-
 				await plugin.navigate(
 					`${server.url}/console`,
 					TASK_ID,
@@ -1046,8 +1040,6 @@ export function runContractTests(
 			});
 
 			_it("clears console messages", async () => {
-				if (!plugin.capabilities.supportsConsoleCapture) return;
-
 				await plugin.navigate(
 					`${server.url}/console`,
 					TASK_ID,

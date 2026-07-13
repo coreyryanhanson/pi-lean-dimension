@@ -41,7 +41,6 @@
 		"!backends/python-base/**/*.egg-info/",
 		"core/",
 		"tools/",
-		"verify-ship-manifest.ts",
 		".npmrc",
 		"README.md",
 		"ship-manifest.test.ts"

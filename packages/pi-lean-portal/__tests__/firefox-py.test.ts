@@ -79,11 +79,7 @@ function createFirefoxPyPlugin(): PythonPluginAdapter {
 		// Firefox-Py supports everything except AbortSignal
 		capabilities: {
 			supportsFullPageScreenshot: true,
-			supportsConsoleCapture: true,
 			supportsJavaScriptEvaluate: true,
-			supportsBotDetection: true,
-			supportsDialogAutoDismissal: true,
-			supportsAbortSignal: false,
 			engine: "firefox",
 		},
 	});

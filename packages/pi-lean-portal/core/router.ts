@@ -229,16 +229,6 @@ async function requireInteractiveSession(taskId: string): Promise<{
 	return null;
 }
 
-/**
- * Get the plugin for a given session. Returns undefined if the session
- * doesn't exist or the plugin is not available.
- */
-function getPluginForSession(
-	session: BrowserSession,
-): import("./plugin-api.js").BrowserPlugin | undefined {
-	return pluginRegistry.get(session.pluginName);
-}
-
 interface ResolvedSession {
 	tid: string;
 	session: BrowserSession;
@@ -256,7 +246,7 @@ async function resolveSession(
 	const tid = taskId ?? "default";
 	const sr = await requireInteractiveSession(tid);
 	if (!sr) return null;
-	const plugin = getPluginForSession(sr.session);
+	const plugin = pluginRegistry.get(sr.session.pluginName);
 	if (!plugin) return null;
 	return {
 		tid,

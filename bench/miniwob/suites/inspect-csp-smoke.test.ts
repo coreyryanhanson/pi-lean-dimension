@@ -225,11 +225,7 @@ for (const name of discovered) {
 				// binary is Firefox-based doesn't need it asserted here.
 				capabilities: {
 					supportsFullPageScreenshot: true,
-					supportsConsoleCapture: true,
 					supportsJavaScriptEvaluate: true,
-					supportsBotDetection: true,
-					supportsDialogAutoDismissal: true,
-					supportsAbortSignal: false,
 				},
 			});
 			await plugin.init?.({});

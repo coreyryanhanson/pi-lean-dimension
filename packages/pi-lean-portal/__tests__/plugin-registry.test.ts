@@ -70,7 +70,6 @@ describe("PluginRegistry.register", () => {
 	it("registers a valid plugin", () => {
 		const plugin = new MockPlugin("chromium");
 		registry.register(plugin, makeConfig({ name: "chromium" }));
-		expect(registry.size).toBe(1);
 	});
 
 	it("throws on duplicate name", () => {
@@ -98,7 +97,6 @@ describe("PluginRegistry.register", () => {
 		const p2 = new MockPlugin("firefox");
 		registry.register(p1, makeConfig({ name: "chromium" }));
 		registry.register(p2, makeConfig({ name: "firefox" }));
-		expect(registry.size).toBe(2);
 	});
 });
 
@@ -333,9 +331,7 @@ describe("PluginRegistry.clear", () => {
 		const p2 = new MockPlugin("firefox");
 		registry.register(p1, makeConfig({ name: "chromium" }));
 		registry.register(p2, makeConfig({ name: "firefox" }));
-		expect(registry.size).toBe(2);
 		registry.clear();
-		expect(registry.size).toBe(0);
 		expect(registry.available()).toEqual([]);
 	});
 });

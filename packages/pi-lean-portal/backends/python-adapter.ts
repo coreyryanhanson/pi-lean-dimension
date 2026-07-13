@@ -37,7 +37,6 @@ import {
 	type PluginCapabilities,
 	type DialogEvent,
 	type NavigateResult,
-	type QuirksDescriptor,
 	type SnapshotResult,
 	type InteractionResult,
 	type ScreenshotResult,
@@ -111,8 +110,7 @@ export interface PythonBridgeConfig {
 	pythonArgs?: string[];
 
 	/**
-	 * Advertised capabilities overrides.  Defaults to a Python-capable
-	 * Chromium profile (everything except AbortSignal support).
+	 * Advertised capabilities overrides.  Defaults to DEFAULT_CAPABILITIES.
 	 */
 	capabilities?: Partial<PluginCapabilities>;
 
@@ -126,30 +124,41 @@ export interface PythonBridgeConfig {
 	transportTimeoutMs?: number;
 }
 
-// ─── Default capabilities ─────────────────────────────────────────────
-
-/**
- * Default capabilities for a Python-based Chromium bridge.
- *
- * - Full-page screenshots: yes (Playwright supports it)
- * - Console capture: yes (page.on("console"))
- * - JavaScript evaluate: yes (page.evaluate)
- * - Bot detection: yes (heuristics via checkPage logic)
- * - Dialog auto-dismissal: yes (page.on("dialog"))
- * - AbortSignal: no (JSON-RPC transport doesn't support it natively)
- * - Engine: chromium
- */
-const DEFAULT_PYTHON_CAPABILITIES: PluginCapabilities = {
-	...DEFAULT_CAPABILITIES,
-	supportsAbortSignal: false,
-};
-
 // ─── Pending request type ─────────────────────────────────────────────
 
 interface PendingRequest {
 	resolve: (value: unknown) => void;
 	reject: (reason: unknown) => void;
 	timer: ReturnType<typeof setTimeout>;
+}
+
+// ─── Quirks Descriptor ────────────────────────────────────────────────
+
+/**
+ * Quirks flags declared by a Python bridge at runtime, read via the
+ * ``browser.describeQuirks`` introspection RPC.
+ *
+ * Each field corresponds to a class attribute on
+ * ``PlaywrightBridge`` (defaults shown).  Subclasses override these
+ * to signal engine-specific behavior to the TypeScript runner, which
+ * uses ``skipIf`` to only run tests that apply to the declared quirks.
+ *
+ * Also extends ResultBase so the adapter method can use
+ * ``_rpcCallTyped`` (which requires ``{ success: boolean }``).
+ */
+export interface QuirksDescriptor extends ResultBase {
+	/** Bridge owns fingerprint management (viewport, UA). */
+	fingerprint_managed_context: boolean;
+	/** Prefix prepended to ``page.evaluate`` expressions (e.g. ``"mw:"``). */
+	eval_prefix: string;
+	/** ``scroll()`` uses ``page.mouse.wheel`` instead of ``window.scrollBy``. */
+	scroll_via_wheel: boolean;
+	/** ``create_browser_context`` passes ``no_viewport=True``. */
+	skip_default_viewport: boolean;
+	/** Navigation uses ``load`` instead of ``networkidle``. */
+	skip_networkidle: boolean;
+	/** ``do_evaluate`` wraps the script in ``eval(<json>)`` to survive main-world wrapper. */
+	wrap_mw_eval_in_eval: boolean;
 }
 
 // ─── PythonPluginAdapter ──────────────────────────────────────────────
@@ -237,7 +246,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 
 		// Merge capabilities
 		this.capabilities = {
-			...DEFAULT_PYTHON_CAPABILITIES,
+			...DEFAULT_CAPABILITIES,
 			...config.capabilities,
 		};
 	}
@@ -716,8 +725,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			profileMode?: "none" | "session" | "named";
 		},
 	): Promise<NavigateResult> {
-		// We don't use the AbortSignal directly (supportsAbortSignal: false),
-		// but we accept it for interface compatibility.
+		// AbortSignal not wired through JSON-RPC; accepted for interface compatibility.
 
 		try {
 			// Build RPC params — include storageState and profileName if provided
@@ -959,6 +967,8 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	 * Returns the bridge's class-attribute quirks, or all-defaults on
 	 * transport error (the runner uses ``skipIf`` so tests only run for
 	 * quirks the bridge actually declares).
+	 *
+	 * @internal Only used by test helpers.
 	 */
 	async describeQuirks(): Promise<QuirksDescriptor> {
 		return this._rpcCallTyped<QuirksDescriptor>(

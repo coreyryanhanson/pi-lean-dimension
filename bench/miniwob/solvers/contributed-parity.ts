@@ -17,11 +17,11 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll } from "vitest";
 
-import type {
-	BrowserPlugin,
-	PluginCapabilities,
+import {
+	DEFAULT_CAPABILITIES,
+	type BrowserPlugin,
+	type PluginCapabilities,
 } from "../../../packages/pi-lean-portal/core/plugin-api.js";
-import { SYNTHETIC_CAPABILITIES } from "../../../packages/pi-lean-portal/__tests__/helpers/synthetic-capabilities.js";
 import type { ProbeUserBackendResult } from "../../../packages/pi-lean-portal/__tests__/helpers/probe-user-backend.js";
 import type { TestServer } from "../../../packages/pi-lean-portal/__tests__/helpers/test-server.js";
 
@@ -185,7 +185,7 @@ export function registerContributedParitySuite(
 				bridgeScript: probe.bridgePath,
 				pythonPath: probe.venvPython,
 				capabilities: {
-					...SYNTHETIC_CAPABILITIES,
+					...DEFAULT_CAPABILITIES,
 					...capabilities,
 				},
 			});

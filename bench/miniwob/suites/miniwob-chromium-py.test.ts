@@ -84,11 +84,7 @@ registerMiniwobBackend(
 			pythonPath: VENV_PYTHON,
 			capabilities: {
 				supportsFullPageScreenshot: true,
-				supportsConsoleCapture: true,
 				supportsJavaScriptEvaluate: true,
-				supportsBotDetection: true,
-				supportsDialogAutoDismissal: true,
-				supportsAbortSignal: false,
 				engine: "chromium",
 			},
 		});

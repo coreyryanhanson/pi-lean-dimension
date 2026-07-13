@@ -184,7 +184,6 @@ describe("plugin startup loop integration", () => {
 		expect(errors).toHaveLength(1);
 		expect(errors[0]).toContain("nonexistent");
 		expect(errors[0]).toContain("no entry point");
-		expect(registry.size).toBe(0);
 	});
 
 	it("skips plugins with ambiguous directories and logs error", () => {
@@ -211,7 +210,6 @@ describe("plugin startup loop integration", () => {
 
 		expect(errors).toHaveLength(1);
 		expect(errors[0]).toContain("ambiguous");
-		expect(registry.size).toBe(0);
 	});
 
 	it("correctly classifies multiple plugins of different types", () => {

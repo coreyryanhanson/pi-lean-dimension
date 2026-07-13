@@ -222,11 +222,7 @@ describe("inspect-eval-smoke — firefox-py", () => {
 			pythonPath: FIREFOX_PY_VENV,
 			capabilities: {
 				supportsFullPageScreenshot: true,
-				supportsConsoleCapture: true,
 				supportsJavaScriptEvaluate: true,
-				supportsBotDetection: true,
-				supportsDialogAutoDismissal: true,
-				supportsAbortSignal: false,
 				engine: "firefox",
 			},
 		});
@@ -263,11 +259,7 @@ describe("inspect-eval-smoke — camoufox-py", () => {
 			pythonPath: CAMOUFOX_PROBE.venvPython,
 			capabilities: {
 				supportsFullPageScreenshot: true,
-				supportsConsoleCapture: true,
 				supportsJavaScriptEvaluate: true,
-				supportsBotDetection: true,
-				supportsDialogAutoDismissal: true,
-				supportsAbortSignal: false,
 				engine: "firefox",
 			},
 		});

@@ -224,11 +224,7 @@ describe("capabilities", () => {
 				bridgeScript: path,
 			});
 			expect(adapter.capabilities.supportsFullPageScreenshot).toBe(true);
-			expect(adapter.capabilities.supportsConsoleCapture).toBe(true);
 			expect(adapter.capabilities.supportsJavaScriptEvaluate).toBe(true);
-			expect(adapter.capabilities.supportsBotDetection).toBe(true);
-			expect(adapter.capabilities.supportsDialogAutoDismissal).toBe(true);
-			expect(adapter.capabilities.supportsAbortSignal).toBe(false);
 			expect(adapter.capabilities.engine).toBe("chromium");
 		} finally {
 			cleanTempBridge(path);
@@ -241,11 +237,9 @@ describe("capabilities", () => {
 			const adapter = new PythonPluginAdapter("test", {
 				bridgeScript: path,
 				capabilities: {
-					supportsAbortSignal: true,
 					engine: "firefox",
 				},
 			});
-			expect(adapter.capabilities.supportsAbortSignal).toBe(true);
 			expect(adapter.capabilities.engine).toBe("firefox");
 			// Defaults preserved
 			expect(adapter.capabilities.supportsFullPageScreenshot).toBe(true);

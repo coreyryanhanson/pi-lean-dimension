@@ -11,11 +11,7 @@
 					"capabilities": {
 						"engine": "firefox",
 						"supportsFullPageScreenshot": true,
-						"supportsConsoleCapture": true,
-						"supportsJavaScriptEvaluate": true,
-						"supportsBotDetection": true,
-						"supportsDialogAutoDismissal": true,
-						"supportsAbortSignal": false
+						"supportsJavaScriptEvaluate": true
 					},
 					"transportTimeoutMs": 60000,
 					"launch": {

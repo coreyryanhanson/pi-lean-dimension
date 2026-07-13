@@ -135,11 +135,7 @@ if (discovered.length > 0) {
 					// `camoufox-py/miniwob-parity.test.ts` template.
 					capabilities: {
 						supportsFullPageScreenshot: true,
-						supportsConsoleCapture: true,
 						supportsJavaScriptEvaluate: true,
-						supportsBotDetection: true,
-						supportsDialogAutoDismissal: true,
-						supportsAbortSignal: false,
 					},
 				});
 				await plugin.init({});

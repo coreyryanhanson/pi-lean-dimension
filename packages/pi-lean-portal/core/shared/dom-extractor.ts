@@ -7,7 +7,7 @@
  * - runExtractor() — calls the script and validates the result
  * - correlateElements() — matches extracted content against the element cache
  * - queryElementCache() — synchronous cache filtering
- * - formatCorrelatedOutput(), formatElementList(), formatRoleCountSummary()
+ * - correlateElements(), formatElementList(), formatRoleCountSummary()
  * - Boilerplate filtering constants
  */
 

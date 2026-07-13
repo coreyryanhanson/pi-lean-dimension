@@ -221,13 +221,6 @@ export class PluginRegistry {
 		this.entries.clear();
 		this.orderedNames = [];
 	}
-
-	/**
-	 * Number of registered plugins (enabled and disabled).
-	 */
-	get size(): number {
-		return this.entries.size;
-	}
 }
 
 // ─── Singleton ────────────────────────────────────────────────────
