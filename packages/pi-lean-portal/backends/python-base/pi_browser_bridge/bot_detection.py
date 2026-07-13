@@ -14,7 +14,6 @@ import re
 from typing import Any
 
 #: Block-level signals — checked against BOTH title and body text.
-#: Mirror of TypeScript bot-detection.ts BLOCK_SIGNALS.
 #: Only specific challenge phrases are included — generic single words
 #: like "captcha", "cloudflare", "recaptcha" are excluded because they
 #: cause false positives on legitimate pages mentioning them in passing.
@@ -34,14 +33,12 @@ _BLOCK_SIGNALS: tuple[str, ...] = (
 )
 
 #: Body-only string signals — high-specificity CDN patterns.
-#: Mirror of TypeScript bot-detection.ts BODY_ONLY_SIGNALS.
 _BODY_ONLY_SIGNALS: tuple[str, ...] = (
     "errors.edgesuite.net",
     "you don't have permission to access",
 )
 
 #: Body-only regex patterns — checked against raw body text.
-#: Mirror of TypeScript bot-detection.ts BODY_ONLY_PATTERNS.
 _BODY_ONLY_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"reference\s*#[a-f0-9]+(?:\.[a-f0-9]+)+", re.IGNORECASE),
 )

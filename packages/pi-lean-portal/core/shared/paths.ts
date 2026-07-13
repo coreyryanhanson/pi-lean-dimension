@@ -29,22 +29,7 @@ export const PORTAL_DATA_DIR = join(
 	"pi-lean-portal",
 );
 
-/**
- * User-installed Python backend root, sibling to `web-guides/` and
- * `browser-state/`.  Houses user-contributed stealth backends
- * (e.g. `camoufox-py/`) and any future user Python
- * backend, each as a `<name>-py/` directory containing a `bridge.py`.
- *
- * Lives outside the npm-managed `node_modules/` tree so it survives
- * `npm install` / `npm update` and is user-writable.  The plugin loader
- * (Phase 0b) resolves a plugin `dir` against this root as a fallback
- * after the package's shipped `backends/` root, and an absolute `dir`
- * short-circuits both.  See `core/plugin-config.ts` `detectPluginType`.
- *
- * Contents are **trusted user code** — the user authored or audited the
- * `bridge.py` placed here; this is not a plugin marketplace and the
- * extension never downloads backends into it automatically.
- */
+/** User-installed Python backend root; sibling of web-guides/ and browser-state/. */
 export const USER_BACKENDS_DIR = join(PORTAL_DATA_DIR, "user-backends");
 
 /**

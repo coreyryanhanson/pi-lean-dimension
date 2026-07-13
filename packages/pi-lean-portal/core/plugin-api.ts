@@ -206,9 +206,6 @@ export interface BrowserPlugin {
 
 	// ── Cookies & storage state ────────────────────────────────
 
-	/**
-	 * Get all browser cookies for the session, optionally filtered by URL.
-	 */
 	getCookies(taskId: string, urls?: string[]): Promise<CookieResult>;
 
 	/**

@@ -244,5 +244,5 @@ All tool calls dispatch through the router. Key responsibilities:
 ## Debugging
 
 ```bash
-BROWSER_DEBUG=1 npx vitest run __tests__/reddit-dialog.test.ts
+BROWSER_DEBUG=1 npx vitest run __tests__/chromium.test.ts
 ```

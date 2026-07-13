@@ -32,7 +32,7 @@ import {
 	isLearnEnabled,
 	applyLearnState,
 	type BrowserToggleState,
-} from "./helpers/toggle-test-utils.js";
+} from "../browser-toggle.js";
 
 // Mock node:fs so readBrowserToggleConfig and applyConfigDefault can be
 // tested without touching the real filesystem.

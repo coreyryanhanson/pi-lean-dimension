@@ -312,9 +312,8 @@ function applyLearnState(pi: ExtensionAPI, enable: boolean): void {
 }
 
 // ── Test-only exports ──────────────────────────────────
-// These are exported solely for unit testing via
-// __tests__/helpers/toggle-test-utils.ts. Do not import
-// them directly from production code.
+// These are exported solely for unit testing.
+// Do not import them directly from production code.
 /** @internal */
 export {
 	getRegisteredBrowserTools,

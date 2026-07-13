@@ -1,18 +1,4 @@
-/**
- * MiniWoB++ trivial-solver suite — Chromium (Node) backend.
- *
- * Uses the `registerMiniwobSuite` API from `bench/miniwob/solvers/register-suite.js` with
- * the shipped `ChromiumPlugin`. Proves the plugin.evaluate episode
- * lifecycle works end-to-end through the MiniWoB harness with the
- * Chromium engine.
- *
- * For the task breakdown (13 puzzle-solved / 82 no-solver / 35 non-element),
- * see the `registerMiniwobBackend` doc comment in `miniwob-suite-helper.ts`.
- *
- * Run: npx vitest run bench/miniwob/suites/miniwob-trivial.test.ts
- *
- * @module
- */
+/** MiniWoB++ trivial-solver suite — Chromium (Node) backend. */
 
 import { existsSync } from "node:fs";
 

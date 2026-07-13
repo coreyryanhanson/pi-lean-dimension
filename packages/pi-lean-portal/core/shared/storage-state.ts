@@ -26,7 +26,6 @@ import { PORTAL_DATA_DIR } from "./paths.js";
 
 // ─── Constants ────────────────────────────────────────────────────────
 
-/** Root directory for all browser profiles. */
 export const PROFILE_DIR = join(PORTAL_DATA_DIR, "browser-state");
 
 /** Current storage state version. Increment on breaking format changes. */
@@ -38,7 +37,6 @@ const DEFAULT_MAX_STORAGE_STATE_SIZE = 10 * 1024 * 1024;
 /** Profile name validation regex. */
 const PROFILE_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
-/** Reserved keywords that cannot be used as profile names. */
 const RESERVED_PROFILE_NAMES = new Set([
 	"none",
 	"session", // profile modes
@@ -52,7 +50,6 @@ const RESERVED_PROFILE_NAMES = new Set([
 /** Prefix for auto-generated session-scoped profiles. */
 const SESSION_PROFILE_PREFIX = "_session-";
 
-/** Directory where pi stores active session tracking files. */
 export const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
 
 // ─── Types ────────────────────────────────────────────────────────────
@@ -69,13 +66,11 @@ interface StoredCookie {
 	sameSite: "Strict" | "Lax" | "None";
 }
 
-/** A localStorage entry for a given origin. */
 interface StoredLocalStorageEntry {
 	name: string;
 	value: string;
 }
 
-/** An origin with its localStorage data. */
 interface StoredOrigin {
 	origin: string;
 	localStorage: StoredLocalStorageEntry[];
@@ -153,9 +148,6 @@ export function profileDir(profileName: string): string {
 	return join(PROFILE_DIR, safe);
 }
 
-/**
- * Get the filesystem path to a profile's storage state file.
- */
 export function profileFilePath(profileName: string): string {
 	return join(profileDir(profileName), "storage-state.json");
 }
@@ -212,7 +204,6 @@ export function loadStorageState(
 
 // ─── Private Helpers ──────────────────────────────────────────────────
 
-/** Temp file prefix for atomic writes. */
 const TEMP_FILE_PREFIX = ".storage-state.";
 const TEMP_FILE_SUFFIX = ".tmp";
 

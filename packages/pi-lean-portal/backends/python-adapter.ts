@@ -34,10 +34,8 @@ import { EXTRACTOR_SCRIPT } from "../core/shared/dom-extractor.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────
 
-/** Default timeout for the JSON-RPC transport layer (milliseconds). */
 const DEFAULT_TRANSPORT_TIMEOUT_MS = 60_000;
 
-/** Default timeout for the `ping` handshake on startup. */
 const PING_TIMEOUT_MS = 10_000;
 
 /** Grace period after sending `shutdown` before force-killing. */
@@ -634,9 +632,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		});
 	}
 
-	/**
-	 * Flush buffered stdout data and process complete lines.
-	 */
 	private _flushBuffer(): void {
 		const lines = this._buffer.split("\n");
 		// Keep the last (possibly incomplete) segment in the buffer
@@ -649,9 +644,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		}
 	}
 
-	/**
-	 * Handle a single complete JSON-RPC response line from stdout.
-	 */
 	private _handleResponseLine(line: string): void {
 		let response: {
 			id?: unknown;
@@ -1200,9 +1192,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		}
 	}
 
-	/**
-	 * Check whether the configured Python interpreter exists in PATH.
-	 */
 	private _checkPythonExists(): boolean {
 		try {
 			const result = spawnSync(this._pythonPath, ["--version"], {
@@ -1238,9 +1227,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	//  Result conversion helpers
 	// ═════════════════════════════════════════════════════════════════
 
-	/**
-	 * Convert a raw RPC result to an InteractionResult.
-	 */
 	private _toInteractionResult(raw: unknown): InteractionResult {
 		const r = raw as Record<string, unknown>;
 		const result: InteractionResult = {

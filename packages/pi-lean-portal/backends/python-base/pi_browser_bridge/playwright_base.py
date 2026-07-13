@@ -610,15 +610,10 @@ class PlaywrightBridge(BrowserBridge):
     # ── Internal helpers ───────────────────────────────────────────
 
     def _get_page(self, task_id: str) -> Any:
-        """Get the Playwright Page for a task, or raise SessionNotFoundError."""
         session = self.require_session(task_id)
         return session["page"]
 
     def _get_dialog_events(self, task_id: str) -> list[dict[str, str]]:
-        """Get up to 10 most recent auto-dismissed dialog events for a task.
-
-        Returns a list of ``{type, message, handledAs}`` dicts.
-        """
         session = self.get_session(task_id)
         if not session:
             return []
@@ -631,7 +626,6 @@ class PlaywrightBridge(BrowserBridge):
     def _take_snapshot_and_cache(
         self, task_id: str, page: Any
     ) -> tuple[str, int, dict[str, dict[str, Any]]]:
-        """Take snapshot, cache elements, return formatted text + count."""
         try:
             snap_text: str = page.aria_snapshot()
         except Exception:
@@ -930,17 +924,10 @@ class PlaywrightBridge(BrowserBridge):
             }
 
     def do_cleanup(self, task_id: str) -> dict[str, Any]:
-        """Clean up resources for a specific task.
-
-        Profile persistence is handled by the TypeScript side
-        (``python-adapter.ts`` auto-saves storage state before calling
-        cleanup), so this always calls :meth:`close_browser_session`.
-        """
         self.close_browser_session(task_id)
         return {"success": True}
 
     def do_snapshot(self, task_id: str) -> dict[str, Any]:
-        """Take a fresh accessibility snapshot and refresh element cache."""
         _t_start = time.time()
         try:
             page = self._get_page(task_id)
@@ -990,7 +977,6 @@ class PlaywrightBridge(BrowserBridge):
     # ── Interaction ─────────────────────────────────────────────────
 
     def do_click(self, task_id: str, ref: str) -> dict[str, Any]:
-        """Click an element by @e ref."""
         _t_start = time.time()
 
         # Extract role/name from element cache for debug logging
@@ -1062,7 +1048,6 @@ class PlaywrightBridge(BrowserBridge):
             }
 
     def do_type(self, task_id: str, ref: str, text: str) -> dict[str, Any]:
-        """Type text into an element by @e ref."""
         _t_start = time.time()
 
         # Extract role/name from element cache for debug logging
@@ -1124,7 +1109,6 @@ class PlaywrightBridge(BrowserBridge):
             }
 
     def do_scroll(self, task_id: str, direction: str) -> dict[str, Any]:
-        """Scroll the page up or down."""
         _t_start = time.time()
         try:
             page = self._get_page(task_id)
@@ -1179,7 +1163,6 @@ class PlaywrightBridge(BrowserBridge):
             }
 
     def do_go_back(self, task_id: str) -> dict[str, Any]:
-        """Navigate back in history."""
         _t_start = time.time()
         try:
             page = self._get_page(task_id)
@@ -1243,7 +1226,6 @@ class PlaywrightBridge(BrowserBridge):
             }
 
     def do_press(self, task_id: str, key: str) -> dict[str, Any]:
-        """Press a keyboard key."""
         _t_start = time.time()
         try:
             page = self._get_page(task_id)
@@ -1303,7 +1285,6 @@ class PlaywrightBridge(BrowserBridge):
         task_id: str,
         full_page: bool = False,
     ) -> dict[str, Any]:
-        """Take a JPEG screenshot and return as a base64 data URI."""
         try:
             page = self._get_page(task_id)
         except SessionNotFoundError:
@@ -1339,7 +1320,6 @@ class PlaywrightBridge(BrowserBridge):
     # ── Console & eval ──────────────────────────────────────────────
 
     def do_get_console_messages(self, task_id: str) -> dict[str, Any]:
-        """Return captured console messages for the task."""
         try:
             session = self.get_session(task_id)
             if session is None:
@@ -1363,7 +1343,6 @@ class PlaywrightBridge(BrowserBridge):
             }
 
     def do_clear_console(self, task_id: str) -> dict[str, Any]:
-        """Clear captured console messages for the task."""
         try:
             session = self.get_session(task_id)
             if session is not None:
@@ -1486,16 +1465,20 @@ class PlaywrightBridge(BrowserBridge):
             # ponytail: single retry, no backoff — challenge pages settle in
             # one load cycle; add exponential backoff if a real challenge
             # needs >1 retry.
-            if self._wrap_mw_eval_in_eval and "Execution context was destroyed" in err_msg:
-                try:
-                    page.wait_for_load_state("load")
-                except Exception:
-                    pass  # Best-effort: proceed to retry even if wait fails
-                try:
-                    result = page.evaluate(effective_expression)
-                    return {"success": True, "result": result}
-                except Exception as retry_exc:
-                    return {"success": False, "error": str(retry_exc)}
+            # Nested ifs (rather than
+            # `self._wrap_mw_eval_in_eval and "Execution context was destroyed" in err_msg`)
+            # keep the no-boolean-in-except lint calm; behavior is identical.
+            if self._wrap_mw_eval_in_eval:
+                if "Execution context was destroyed" in err_msg:
+                    try:
+                        page.wait_for_load_state("load")
+                    except Exception:
+                        pass  # Best-effort: proceed to retry even if wait fails
+                    try:
+                        result = page.evaluate(effective_expression)
+                        return {"success": True, "result": result}
+                    except Exception as retry_exc:
+                        return {"success": False, "error": str(retry_exc)}
             return {
                 "success": False,
                 "error": err_msg,
@@ -1506,7 +1489,6 @@ class PlaywrightBridge(BrowserBridge):
     def do_get_cookies(
         self, task_id: str, urls: Optional[list[str]] = None
     ) -> dict[str, Any]:
-        """Get cookies, optionally filtered by URL."""
         try:
             session = self.require_session(task_id)
             context: Any = session["context"]
@@ -1534,7 +1516,6 @@ class PlaywrightBridge(BrowserBridge):
     def do_add_cookies(
         self, task_id: str, cookies: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Add cookies to the browser context."""
         try:
             session = self.require_session(task_id)
             context: Any = session["context"]
@@ -1552,7 +1533,6 @@ class PlaywrightBridge(BrowserBridge):
         domain: Optional[str] = None,
         path: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Clear cookies, optionally filtered by name/domain/path."""
         try:
             session = self.require_session(task_id)
             context: Any = session["context"]
@@ -1572,7 +1552,6 @@ class PlaywrightBridge(BrowserBridge):
             return {"success": False, "error": str(exc)}
 
     def do_get_storage_state(self, task_id: str) -> dict[str, Any]:
-        """Get full storage state (cookies + localStorage + IndexedDB)."""
         try:
             session = self.require_session(task_id)
             context: Any = session["context"]
