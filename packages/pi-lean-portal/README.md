@@ -1,10 +1,14 @@
 # pi-lean-portal User Guide
 
-> **pi-lean-portal** is a plugin-based web browsing extension for the Pi coding
-> agent. It gives the AI agent the ability to fetch web pages, interact with
-> dynamic sites, inspect page structure, take screenshots, run JavaScript,
-> and save/recall navigation guides — all through a set of tools and the `/web`
-> command.
+> **pi-lean-portal** gives the Pi coding agent interactive web browsing —
+> Playwright Chromium/Firefox, accessibility-tree snapshots with `@e` element
+> refs, persistent profiles, cookies, and navigation guides that resurface by
+> domain. A `/web` toggle removes the tools from the agent's context when
+> switched off, so web browsing doesn't consume tokens on sessions that aren't
+> doing web work. If a site blocks the shipped browsers, drop in your own
+> backend (e.g. [Camoufox](https://github.com/nichochar/camoufox)) — as far as
+> we're aware, no other Pi web plugin lets you run a browser backend you wrote
+> yourself.
 >
 > Part of the [pi-lean-dimension](https://github.com/coreyryanhanson/pi-lean-dimension)
 > web-tools suite. For SearXNG search support, install
@@ -15,16 +19,17 @@
 ## Table of Contents
 
 1. [Quick Start](#quick-start)
-2. [`/web` Command — Browser Toggle & Profiles](#web-command--browser-toggle--profiles)
-3. [All 12 Tools](#all-12-tools)
-4. [Stateless Fetching (web-fetch)](#stateless-fetching-web-fetch)
-5. [Navigation Guides (web-guide & web-learn)](#navigation-guides-web-guide--web-learn)
-6. [`/web status` — Detailed Runtime Status](#web-status--detailed-runtime-status)
-7. [Profiles — Persistent Sessions](#profiles--persistent-sessions)
-8. [Cookie Management](#cookie-management)
-9. [Backend Architecture](#backend-architecture)
-10. [Configuration (settings.json)](#configuration-settingsjson)
-11. [Tips & Best Practices](#tips--best-practices)
+2. [Extending it](#extending-it)
+3. [`/web` Command — Browser Toggle & Profiles](#web-command--browser-toggle--profiles)
+4. [All 12 Tools](#all-12-tools)
+5. [Stateless Fetching (web-fetch)](#stateless-fetching-web-fetch)
+6. [Navigation Guides (web-guide & web-learn)](#navigation-guides-web-guide--web-learn)
+7. [`/web status` — Detailed Runtime Status](#web-status--detailed-runtime-status)
+8. [Profiles — Persistent Sessions](#profiles--persistent-sessions)
+9. [Cookie Management](#cookie-management)
+10. [Backend Architecture](#backend-architecture)
+11. [Configuration (settings.json)](#configuration-settingsjson)
+12. [Tips & Best Practices](#tips--best-practices)
 
 ---
 
@@ -53,6 +58,21 @@ The browser tools are **enabled by default**. You can:
 > **Playwright browser binaries are not downloaded during `npm install`.**
 > Run `npx playwright install chromium firefox` separately. On first
 > `browser-navigate` without them, you'll be prompted with the exact command.
+
+---
+
+## Extending it
+
+Beyond the toggle, two surfaces are user-extensible rather than hardcoded:
+
+- **Navigation guides** — `web-learn` saves site-specific playbooks that
+  auto-match by domain and resurface in later sessions. See
+  [Navigation Guides](#navigation-guides-web-guide--web-learn).
+- **Custom browser backends** — if a site blocks the shipped Chromium/Firefox,
+  drop a `bridge.py` subclass into `~/.pi/agent/pi-lean-portal/user-backends/`
+  and drive a patched engine like [Camoufox](https://github.com/nichochar/camoufox)
+  yourself. The full flow lives in [Backend Architecture](#backend-architecture)
+  and [`contributed/README.md`](./contributed/README.md).
 
 ---
 

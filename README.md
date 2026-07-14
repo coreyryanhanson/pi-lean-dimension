@@ -5,7 +5,7 @@
 A monorepo housing three Pi extension packages that give your AI agent the
 ability to browse the web interactively, fetch static pages as Markdown, and
 search via SearXNG — all toggled from a single `/web` command. When the toggle
-is off, the tools drop out of the agent's context entirely, so web browsing
+is off, the tools are removed from the agent's context entirely, so web browsing
 doesn't consume tokens or attention on sessions that aren't doing web work.
 The same surfaces are user-extensible: author navigation guides that resurface
 by domain, or drop in a stealth browser backend like [Camoufox](https://github.com/nichochar/camoufox)
