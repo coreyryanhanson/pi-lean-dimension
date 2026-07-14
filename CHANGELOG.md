@@ -2,6 +2,75 @@
 
 ## [Unreleased]
 
+### Stealth backends (user-managed)
+
+- **User-installed stealth backends** — patched/fingerprint-managed browser
+  binaries (e.g. Camoufox) can now be registered as plugins. They live under
+  `~/.pi/agent/pi-lean-portal/user-backends/<name>-py/`, are never shipped in
+  the npm tarball, and are never auto-downloaded — you write/audit the bridge,
+  create the venv, fetch the binary, and register it in `settings.json`.
+- **Camoufox reference template** — a tested `bridge.py` under
+  `packages/pi-lean-portal/contributed/camoufox-py/`, plus
+  `contributed/README.md` (install flow) and `contributed/CHOOSING.md` (when
+  to reach for a stealth backend at all).
+- **Quirks schema** — `PlaywrightBridge` subclasses declare engine quirks
+  (`_fingerprint_managed_context`, `_skip_default_viewport`,
+  `_scroll_via_wheel`, `_eval_prefix`) that the router and tools respect.
+- **`probeUserBackend` helper** — discovers and validates user-managed Python
+  backends for contract and parity testing.
+- Multi-root plugin discovery, `browser.init` RPC, and `PYTHONPATH` injection
+  for user backends (see `packages/pi-lean-portal/AGENTS.md`).
+
+### MiniWoB++ evaluation harness
+
+- **`bench/miniwob/`** — a `plugin.evaluate`-driven MiniWoB++ episode
+  lifecycle with a Node `@e`-ref action layer, replacing the prior
+  BrowserGym-based approach. Public API: `runMiniwobTask` and
+  `registerMiniwobSuite` (lets user-owned parity files register custom
+  backends without editing shipped code).
+- **Per-backend suites** — chromium, firefox, chromium-py, firefox-py, plus
+  adapter-smoke and a user-backends discovery suite (130 tasks × backend,
+  auto-skips when prerequisites are absent).
+- **Decision record** — `docs/decisions/miniwob-and-host-setup.md`
+  documents the BrowserGym removal and host/MiniWoB setup rationale.
+
+### Shared data & Python bridge
+
+- **Shared JSON data tables** — bot-detection and accessibility tables moved
+  to `core/shared/browser-data.json`, consumed by both Node
+  (`browser-data.ts`) and Python (`browser_data.py`).
+- **Python bridge refactor** — `playwright_base.py` rewrite with the stealth
+  quirks schema; new `patch_playwright.py`; consolidated and expanded pytest
+  suite (`test_py_bridges`, `test_playwright_base_quirks`,
+  `test_browser_data`, `conftest`) — 243 pure-logic tests, needs only
+  `pytest>=9.0`.
+
+### Search
+
+- **Pagination** — `web-search` now paginates results.
+
+### Tools
+
+- **Strategy visibility** — `browser-navigate`'s `strategy` parameter
+  description is patched at registration with the actually configured plugin
+  names (and any disabled ones), so the agent doesn't second-guess which
+  strategies exist.
+
+### CI & testing
+
+- **GitHub Actions pipeline** (`.github/workflows/ci.yml`) — three jobs:
+  `structural` (fast, no browser), `miniwob` (cross-engine browser tests), and
+  an opt-in `contributed` job (Camoufox user-backends validation, manual
+  trigger only).
+- **New npm scripts** — `test:ci` (structural + contributed contract tests),
+  `test:py-bridge` (Python bridge unit tests), `setup:miniwob`,
+  `test:miniwob`.
+- **Test infrastructure** — shared `persistence-suite`,
+  `create-py-backend-harness`, `load-plugin-config-from-file`, and
+  `probe-user-backend` helpers; an auto-discovery `run-contributed-suites`
+  runner; expanded plugin-loading, registry, config, and session-manager
+  tests.
+
 ## [0.1.0] - 2026-06-22
 
 ### Initial release — the web-tools suite

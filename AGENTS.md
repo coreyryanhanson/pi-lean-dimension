@@ -53,10 +53,7 @@ pi-lean-dimension/                       (monorepo root)
 │   ├── sync-versions.js                 (lockstep version bump)
 │   └── release.mjs                      (full release pipeline)
 ├── AGENTS.md                            (this file — monorepo-level truth)
-├── PACKAGING-PLAN.md
-├── IMPLEMENTATION-PLAN.md
 ├── README.md                            (monorepo overview with install matrix)
-├── SPIKE-REPORT.md
 ├── CHANGELOG.md
 ├── LICENSE
 ├── bench/                            ← MiniWoB++ evaluation harness
