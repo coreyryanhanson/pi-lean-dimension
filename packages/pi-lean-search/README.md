@@ -19,7 +19,7 @@ pi install npm:pi-lean-dimension # portal + search, requires SearXNG server
 
 | Command / Tool | Description |
 |---|---|
-| `web-search` tool | Search the web via your SearXNG instance. Agents use this automatically. |
+| `web-search` tool | Search the web via your SearXNG instance. Supports `count` (1–100) and `pageno` (1-indexed) for deeper result pagination. Agents use this automatically. |
 | `/searxng-status` | Test and diagnose the SearXNG connection. |
 
 The `web-search` tool is automatically included in `/web on` / `/web off` toggling

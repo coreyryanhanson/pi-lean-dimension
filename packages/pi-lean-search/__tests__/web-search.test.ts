@@ -128,6 +128,17 @@ describe("webSearchTool", () => {
 		expect(schema).toBeDefined();
 	});
 
+	it("defines pageno parameter with minimum of 1", () => {
+		const schema = webSearchTool.parameters;
+		expect(schema).toBeDefined();
+		const pageno = (
+			schema as Record<string, unknown> & {
+				properties?: Record<string, unknown>;
+			}
+		)?.properties?.pageno;
+		expect(pageno).toBeDefined();
+	});
+
 	it("has execute function", () => {
 		expect(typeof webSearchTool.execute).toBe("function");
 	});
