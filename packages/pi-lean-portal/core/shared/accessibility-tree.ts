@@ -38,14 +38,14 @@ export interface AriaParseResult {
  * Roles that get @e refs and can be used for interaction.
  * Loaded from shared browser-data.json.
  */
-export const INTERACTIVE_ROLES = new Set(ACCESSIBILITY.interactiveRoles);
+const INTERACTIVE_ROLES = new Set(ACCESSIBILITY.interactiveRoles);
 
 /**
  * Roles that are shown in the tree but DON'T get @e refs
  * (informational only, not useful click targets).
  * Loaded from shared browser-data.json.
  */
-export const INFORMATIONAL_ROLES = new Set(ACCESSIBILITY.informationalRoles);
+const INFORMATIONAL_ROLES = new Set(ACCESSIBILITY.informationalRoles);
 
 /**
  * Parse the YAML-like output of page.ariaSnapshot().

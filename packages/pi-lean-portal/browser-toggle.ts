@@ -97,21 +97,10 @@ function getRegisteredIn(pi: ExtensionAPI, names: Set<string>): string[] {
 }
 
 /**
- * Return the subset of BROWSER_TOOL_NAMES that are actually registered.
- * (With the toggle integrated into pi-lean-portal, this is always non-empty
- *  when pi-lean-portal is loaded, but the helper remains for robustness.)
- */
-function getRegisteredBrowserTools(pi: ExtensionAPI): string[] {
-	return getRegisteredIn(pi, BROWSER_TOOL_NAMES);
-}
-
-/**
  * Check whether browser tools are currently active in the system prompt.
- * Returns true when no browser tools exist (nothing to toggle).
  */
 function isBrowserEnabled(pi: ExtensionAPI): boolean {
-	const registered = getRegisteredBrowserTools(pi);
-	if (registered.length === 0) return true; // nothing registered → vacuously "enabled"
+	const registered = getRegisteredIn(pi, BROWSER_TOOL_NAMES);
 
 	const active = new Set(pi.getActiveTools());
 	return registered.some((name) => active.has(name));
@@ -126,8 +115,8 @@ function applyBrowserState(pi: ExtensionAPI, enable: boolean): void {
 	// Combine browser tools + sibling tools into one toggle set.
 	// (/web on enables both; /web off disables both.)
 	const registered = new Set([
-		...getRegisteredBrowserTools(pi),
-		...getRegisteredSiblingTools(pi),
+		...getRegisteredIn(pi, BROWSER_TOOL_NAMES),
+		...getRegisteredIn(pi, SIBLING_TOOL_NAMES),
 	]);
 	if (registered.size === 0) return;
 	_lastToggleState = enable;
@@ -154,7 +143,7 @@ function persistState(pi: ExtensionAPI, state: BrowserToggleState): void {
 // ---- Branch-aware restoration ----------------------------------
 
 function restoreFromBranch(pi: ExtensionAPI, ctx: ExtensionContext): boolean {
-	const registered = getRegisteredBrowserTools(pi);
+	const registered = getRegisteredIn(pi, BROWSER_TOOL_NAMES);
 	if (registered.length === 0) return false;
 
 	let savedState: BrowserToggleState | undefined;
@@ -267,27 +256,10 @@ function readBrowserToggleConfig(): boolean {
 }
 
 /**
- * Return the subset of LEARN_TOOL_NAMES that are actually registered.
- */
-function getRegisteredLearnTools(pi: ExtensionAPI): string[] {
-	return getRegisteredIn(pi, LEARN_TOOL_NAMES);
-}
-
-/**
- * Return the subset of SIBLING_TOOL_NAMES that are actually registered.
- * Used by applyBrowserState to include sibling tools in toggle operations.
- */
-function getRegisteredSiblingTools(pi: ExtensionAPI): string[] {
-	return getRegisteredIn(pi, SIBLING_TOOL_NAMES);
-}
-
-/**
  * Check whether learn tools are currently active.
- * Returns true when no learn tools exist (vacuously enabled).
  */
 function isLearnEnabled(pi: ExtensionAPI): boolean {
-	const registered = getRegisteredLearnTools(pi);
-	if (registered.length === 0) return true;
+	const registered = getRegisteredIn(pi, LEARN_TOOL_NAMES);
 	const active = new Set(pi.getActiveTools());
 	return registered.some((name) => active.has(name));
 }
@@ -299,7 +271,7 @@ function isLearnEnabled(pi: ExtensionAPI): boolean {
  */
 function applyLearnState(pi: ExtensionAPI, enable: boolean): void {
 	_lastLearnState = enable;
-	const registered = new Set(getRegisteredLearnTools(pi));
+	const registered = new Set(getRegisteredIn(pi, LEARN_TOOL_NAMES));
 	if (registered.size === 0) return;
 	if (enable) {
 		const current = pi.getActiveTools();
@@ -316,15 +288,13 @@ function applyLearnState(pi: ExtensionAPI, enable: boolean): void {
 // Do not import them directly from production code.
 /** @internal */
 export {
-	getRegisteredBrowserTools,
+	getRegisteredIn,
 	isBrowserEnabled,
 	applyBrowserState,
 	persistState,
 	restoreFromBranch,
 	readBrowserToggleConfig,
 	applyConfigDefault,
-	getRegisteredLearnTools,
-	getRegisteredSiblingTools,
 	isLearnEnabled,
 	applyLearnState,
 	_resetToggleStateForTest,
@@ -387,7 +357,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 			"Usage: /web on | off | learn | status",
 		handler: async (args, ctx) => {
 			const cmd = args.trim().toLowerCase();
-			const hasBrowserTools = getRegisteredBrowserTools(pi).length > 0;
+			const hasBrowserTools = getRegisteredIn(pi, BROWSER_TOOL_NAMES).length > 0;
 
 			if (!hasBrowserTools) {
 				ctx.ui.notify(
@@ -408,7 +378,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				ctx.ui.setStatus("browser", ctx.ui.theme.fg("accent", "●") + " idle");
 
 				// Clear any stale search off-glyph — sibling tools are now enabled.
-				const hasSiblingTools = getRegisteredSiblingTools(pi).length > 0;
+				const hasSiblingTools = getRegisteredIn(pi, SIBLING_TOOL_NAMES).length > 0;
 				if (hasSiblingTools) {
 					ctx.ui.setStatus(
 						"search",
@@ -431,7 +401,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				ctx.ui.setStatus("browser", ctx.ui.theme.fg("success", "●") + " idle");
 
 				// Clear any stale search off-glyph — sibling tools are now enabled.
-				const hasSiblingTools = getRegisteredSiblingTools(pi).length > 0;
+				const hasSiblingTools = getRegisteredIn(pi, SIBLING_TOOL_NAMES).length > 0;
 				if (hasSiblingTools) {
 					ctx.ui.setStatus(
 						"search",
@@ -456,7 +426,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				// Set the search tool status to off if sibling apps are present.
 				// Search owns the colored glyph for on states; portal only writes
 				// the off state when tools are explicitly disabled.
-				const hasSiblingTools = getRegisteredSiblingTools(pi).length > 0;
+				const hasSiblingTools = getRegisteredIn(pi, SIBLING_TOOL_NAMES).length > 0;
 				if (hasSiblingTools) {
 					ctx.ui.setStatus("search", "○ searxng");
 				}
@@ -513,7 +483,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 		// toggle state.  Without this, a race between portal's session_start
 		// (async — restores/applies state) and search's session_start (probes
 		// health) can leave the search glyph showing blue when tools are off.
-		const hasSiblingTools = getRegisteredSiblingTools(pi).length > 0;
+		const hasSiblingTools = getRegisteredIn(pi, SIBLING_TOOL_NAMES).length > 0;
 		if (hasSiblingTools && !isBrowserEnabled(pi)) {
 			ctx.ui.setStatus("search", "○ searxng");
 		}

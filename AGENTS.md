@@ -26,7 +26,7 @@ With search installed, the suite totals **13 tools + 2 commands** (portal + sear
 
 ```bash
 npm test                                           # vitest run — all workspace tests (may hang if browser binaries missing)
-npm run test:ci                                     # Structural + contributed-backend contract tests (excludes chromium/firefox/reddit/bench). Runs contributed/* contract tests when backends are installed — expect 2-3 min on a dev machine with backends; use 300s+ timeout if wrapping.
+npm run test:ci                                     # Structural + contributed-backend contract tests (excludes chromium/firefox/bench). Runs contributed/* contract tests when backends are installed — expect 2-3 min on a dev machine with backends; use 300s+ timeout if wrapping.
 npm run test:py-bridge                              # Python bridge unit tests (pytest, 243 pure-logic tests under packages/pi-lean-portal/backends/python-base/tests/ — needs only `pytest>=9.0`, no browser). Uses the package-local .venv if present, else system `python3`.
 npm run test:miniwob                                # MiniWoB++ cross-engine test suite (host: 130 tasks × 4 backends + smoke, auto-skips)
 npm run setup:miniwob                               # one-time clone of MiniWoB++ content
@@ -214,7 +214,7 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 
 **Python bridge unit tests (6 files, pytest):** test_accessibility, test_bot_detection, test_transport, test_chromium_py_bridge, test_firefox_py_bridge, test_playwright_base_quirks (the stealth-quirk flags: `_fingerprint_managed_context`, `_skip_default_viewport`, `_scroll_via_wheel`, `_eval_prefix`)
 
-**Portal per-backend contract tests (9 files):** reddit-dialog (errors if Chromium missing), cookie-persistence (auto-skip), chromium-py (auto-skip), chromium-py-persistence (auto-skip), firefox (auto-skip), firefox-py (auto-skip), firefox-py-persistence (auto-skip), camoufox-py (auto-skip, user-backends), camoufox-py-persistence (auto-skip, user-backends)
+**Portal per-backend contract tests (8 files):** cookie-persistence (auto-skip), chromium-py (auto-skip), chromium-py-persistence (auto-skip), firefox (auto-skip), firefox-py (auto-skip), firefox-py-persistence (auto-skip), camoufox-py (auto-skip, user-backends), camoufox-py-persistence (auto-skip, user-backends)
 
 **MiniWoB behavioral tests (`bench/miniwob/suites/`, 6 files):**
 
@@ -229,7 +229,6 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 
 - `plugin-contract.ts` — `runContractTests(name, factory, opts?)` validates any BrowserPlugin
 - `mock-plugin.ts` — MockPlugin for structural contract validation
-- `reddit-fixture.ts` — HTML fixtures for Reddit dialog scenarios (4 variants)
 - `test-server.ts` — `startTestServer()` returns a local HTTP server for integration tests
 - `mock-python-bridge.py` — Python bridge stub used by python-adapter tests
 

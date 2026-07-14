@@ -16,10 +16,6 @@ import { BOT_SIGNALS } from "./browser-data.js";
 export interface BotDetectionResult {
 	/** True if the page appears to be a bot block/challenge page */
 	isBlocked: boolean;
-	/** Confidence score 0-1 */
-	confidence: number;
-	/** Signal that triggered the detection */
-	signal?: string;
 }
 
 /**
@@ -47,21 +43,17 @@ const HTML_SIGNALS = BOT_SIGNALS.htmlSignals;
 /**
  * Check if page text content suggests a bot block.
  */
-export function checkBodyText(bodyText: string): BotDetectionResult {
-	if (!bodyText) return { isBlocked: false, confidence: 0 };
+function checkBodyText(bodyText: string): BotDetectionResult {
+	if (!bodyText) return { isBlocked: false };
 
 	const lower = bodyText.toLowerCase();
 	for (const signal of BLOCK_SIGNALS) {
 		if (lower.includes(signal)) {
-			return {
-				isBlocked: true,
-				confidence: signal.length > 20 ? 0.9 : 0.7,
-				signal,
-			};
+			return { isBlocked: true };
 		}
 	}
 
-	return { isBlocked: false, confidence: 0 };
+	return { isBlocked: false };
 }
 
 /**
@@ -71,14 +63,14 @@ export function checkBodyText(bodyText: string): BotDetectionResult {
  * (for Akamai reference codes, etc.).
  */
 function checkBodyOnlyText(bodyText: string): BotDetectionResult {
-	if (!bodyText) return { isBlocked: false, confidence: 0 };
+	if (!bodyText) return { isBlocked: false };
 
 	const lower = bodyText.toLowerCase();
 
 	// Check string signals first
 	for (const signal of BODY_ONLY_SIGNALS) {
 		if (lower.includes(signal)) {
-			return { isBlocked: true, confidence: 0.85, signal };
+			return { isBlocked: true };
 		}
 	}
 
@@ -86,15 +78,11 @@ function checkBodyOnlyText(bodyText: string): BotDetectionResult {
 	for (const pattern of BODY_ONLY_PATTERNS) {
 		const match = bodyText.match(pattern);
 		if (match) {
-			return {
-				isBlocked: true,
-				confidence: 0.9,
-				signal: `regex: ${match[0].slice(0, 50)}`,
-			};
+			return { isBlocked: true };
 		}
 	}
 
-	return { isBlocked: false, confidence: 0 };
+	return { isBlocked: false };
 }
 
 /**
@@ -105,21 +93,17 @@ function checkBodyOnlyText(bodyText: string): BotDetectionResult {
  * loaded from the shared ``browser-data.json`` so TypeScript and Python
  * bridge implementations share a single source of truth.
  */
-export function checkHtmlContent(html: string): BotDetectionResult {
-	if (!html) return { isBlocked: false, confidence: 0 };
+function checkHtmlContent(html: string): BotDetectionResult {
+	if (!html) return { isBlocked: false };
 
 	const lower = html.toLowerCase();
 	for (const signal of HTML_SIGNALS) {
 		if (lower.includes(signal)) {
-			return {
-				isBlocked: true,
-				confidence: 0.85,
-				signal: `html:${signal}`,
-			};
+			return { isBlocked: true };
 		}
 	}
 
-	return { isBlocked: false, confidence: 0 };
+	return { isBlocked: false };
 }
 
 /**
@@ -153,5 +137,5 @@ export function checkPage(
 		if (htmlResult.isBlocked) return htmlResult;
 	}
 
-	return { isBlocked: false, confidence: 0 };
+	return { isBlocked: false };
 }

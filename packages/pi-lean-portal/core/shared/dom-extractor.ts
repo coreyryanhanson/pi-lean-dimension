@@ -49,7 +49,7 @@ export interface ExtractResult {
 }
 
 /** Output of the correlation step — text with @e annotations. */
-export interface CorrelatedResult {
+interface CorrelatedResult {
 	/** Formatted text output with @e annotations */
 	text: string;
 	/** Number of matched refs */
@@ -59,12 +59,12 @@ export interface CorrelatedResult {
 }
 
 /** Outcome of runExtractor — discriminated union. */
-export type ExtractorOutcome =
+type ExtractorOutcome =
 	| { ok: true; result: ExtractResult }
 	| { ok: false; error: string };
 
 /** Parameters for queryElementCache. */
-export interface ElementCacheQuery {
+interface ElementCacheQuery {
 	role?: string;
 	name?: string;
 	ref?: string;

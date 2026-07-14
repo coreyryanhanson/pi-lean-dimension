@@ -5,8 +5,8 @@
  * The sibling `inspect-eval-smoke.test.ts` runs the EXTRACTOR_SCRIPT
  * against MiniWoB++ task pages, which are benign HTML with **no
  * Content-Security-Policy**. That is why it missed this class of bug:
- * the failure only manifests on CSP-strict sites (e.g. Reddit, which
- * forbids `unsafe-eval`).
+ * the failure only manifests on CSP-strict sites (e.g. sites that
+ * forbid `unsafe-eval`).
  *
  * Root cause this test guards against: some patched-Firefox stealth
  * binaries route `page.evaluate` through `eval()` in the page's *main*
@@ -58,7 +58,7 @@ import {
 
 // ─── CSP-strict fixtures ──────────────────────────────────────────
 //
-// A Reddit-like page with a strict CSP that forbids `unsafe-eval`
+// A generic CSP-strict page that forbids `unsafe-eval`
 // (exactly the policy that blocks `page.evaluate` on the affected
 // patched binaries). Has enough content for every ExtractResult array
 // to be non-empty so the smoke assertion is meaningful.
@@ -66,11 +66,11 @@ import {
 const CSP_STRICT_HTML = `<!DOCTYPE html>
 <html><head>
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' data:;">
-<title>r/LocalLLaMA CSP Smoke</title>
+<title>CSP Smoke Forum</title>
 <style>body{display:block}h1{color:#333}</style>
 </head>
 <body>
-  <h1>r/LocalLLaMA</h1>
+  <h1>CSP Smoke Forum</h1>
   <h2>Hot Posts</h2>
   <p>First post about local models running on consumer GPUs.</p>
   <p>Second post about quantization techniques for large models.</p>
@@ -79,7 +79,7 @@ const CSP_STRICT_HTML = `<!DOCTYPE html>
   <img alt="diagram of gpu memory layout" src="data:image/svg+xml,%3Csvg/%3E">
   <button>Upvote</button>
   <button>Comments</button>
-  <input type="text" placeholder="Search the subreddit">
+  <input type="text" placeholder="Search the forum">
 </body></html>`;
 
 /** CSP-strict scroll fixture — same policy, tall enough to scroll. */
@@ -183,9 +183,7 @@ async function runCspSmoke(plugin: BrowserPlugin, url: string) {
 		);
 	}
 
-	expect(parsed.title, "ExtractResult.title missing").toBe(
-		"r/LocalLLaMA CSP Smoke",
-	);
+	expect(parsed.title, "ExtractResult.title missing").toBe("CSP Smoke Forum");
 	// Every content array should be populated — the fixture has at least
 	// one of each. A CSP-blocked eval returns success=false (asserted
 	// above); a silently-empty extraction would pass the success gate but

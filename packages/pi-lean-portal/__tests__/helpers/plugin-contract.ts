@@ -28,14 +28,6 @@ import type {
 	PluginCapabilities,
 } from "../../core/plugin-api.js";
 import { startTestServer, type TestServer } from "./test-server.js";
-import {
-	REDDIT_DIALOG_HTML,
-	REDDIT_STACKED_HTML,
-	REDDIT_ASYNC_HTML,
-	REDDIT_FEED_ONLY_HTML,
-	findRef,
-	dialogCount,
-} from "./reddit-fixture.js";
 
 // ─── Options ──────────────────────────────────────────────────────
 
@@ -216,10 +208,6 @@ function contractTestHandler(
 		"/duplicates": DUPLICATE_HTML,
 		"/slow-nav": SLOW_NAV_HTML,
 		"/slow-nav-destination": SLOW_NAV_TARGET_HTML,
-		"/reddit-dialog": REDDIT_DIALOG_HTML,
-		"/reddit-stacked": REDDIT_STACKED_HTML,
-		"/reddit-async": REDDIT_ASYNC_HTML,
-		"/reddit-feed": REDDIT_FEED_ONLY_HTML,
 	};
 
 	const html = pages[url.pathname];
@@ -1177,99 +1165,6 @@ export function runContractTests(
 				expect(snap2.success).toBe(true);
 				expect(snap2.elementCount).toBeGreaterThan(0);
 				expect(snap2.snapshot).toBe(snap1.snapshot);
-			});
-		});
-
-		// ─── Reddit dialog fixtures ─────────────────────────
-
-		describe("reddit dialog fixtures", () => {
-			_it("dialog appears in snapshot after navigate", async () => {
-				const result = await plugin.navigate(
-					`${server.url}/reddit-dialog`,
-					TASK_ID,
-					navigateTimeout,
-				);
-
-				expect(result.success).toBe(true);
-				expect(result.elementCount).toBeGreaterThan(0);
-				expect(result.snapshot).toContain("Consent");
-
-				const snap = await plugin.snapshot(TASK_ID);
-				expect(snap.success).toBe(true);
-				expect(dialogCount(snap.snapshot)).toBeGreaterThanOrEqual(1);
-			});
-
-			_it("stacked dialogs close in sequence", async () => {
-				const STACKED_TASK = "stacked-test";
-
-				await plugin.navigate(
-					`${server.url}/reddit-stacked`,
-					STACKED_TASK,
-					navigateTimeout,
-				);
-
-				// First snapshot — consent dialog should be visible
-				const snap1 = await plugin.snapshot(STACKED_TASK);
-				expect(snap1.success).toBe(true);
-				expect(dialogCount(snap1.snapshot)).toBeGreaterThanOrEqual(1);
-
-				// Click "Reject All" to dismiss consent dialog
-				const info1 = findRef(snap1.snapshot, "Reject All");
-				if (!info1) {
-					await plugin.cleanup(STACKED_TASK);
-					return;
-				}
-				const result1 = await plugin.click(STACKED_TASK, info1.ref);
-				expect(result1.success).toBe(true);
-
-				// Second snapshot — "Welcome Back" dialog should now be visible
-				const snap2 = await plugin.snapshot(STACKED_TASK);
-				expect(snap2.success).toBe(true);
-				expect(snap2.snapshot).toContain("Welcome");
-
-				// Click "Dismiss" to close the welcome dialog
-				const info2 = findRef(snap2.snapshot, "Dismiss");
-				if (!info2) {
-					await plugin.cleanup(STACKED_TASK);
-					return;
-				}
-				const result2 = await plugin.click(STACKED_TASK, info2.ref);
-				expect(result2.success).toBe(true);
-
-				// Third snapshot — no dialogs should remain
-				const snap3 = await plugin.snapshot(STACKED_TASK);
-				expect(snap3.success).toBe(true);
-				expect(dialogCount(snap3.snapshot)).toBe(0);
-
-				await plugin.cleanup(STACKED_TASK);
-			});
-
-			_it("async dialog eventually appears", async () => {
-				const ASYNC_TASK = "async-test";
-
-				await plugin.navigate(
-					`${server.url}/reddit-async`,
-					ASYNC_TASK,
-					navigateTimeout,
-				);
-
-				// Wait for the async dialog to appear (setTimeout 500ms)
-				await new Promise((r) => setTimeout(r, 1000));
-
-				const snap = await plugin.snapshot(ASYNC_TASK);
-				expect(snap.success).toBe(true);
-				expect(snap.snapshot).toContain("Consent");
-
-				const info = findRef(snap.snapshot, "Reject All");
-				if (!info) {
-					await plugin.cleanup(ASYNC_TASK);
-					return;
-				}
-
-				const result = await plugin.click(ASYNC_TASK, info.ref);
-				expect(result.success).toBe(true);
-
-				await plugin.cleanup(ASYNC_TASK);
 			});
 		});
 	});
