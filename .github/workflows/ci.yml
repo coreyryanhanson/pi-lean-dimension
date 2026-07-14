@@ -73,7 +73,7 @@ jobs:
       #
       # The shared `pi_browser_bridge` library under
       # `packages/pi-lean-portal/backends/python-base/` ships a pytest
-      # suite (243 tests: accessibility, bot-detection, transport, the
+      # suite (248 tests: accessibility, bot-detection, transport, the
       # chromium-py/firefox-py routing layers, and the PlaywrightBridge
       # stealth-quirk flags). The tests use fakes/mocks — the `playwright`
       # import is lazily guarded (`HAS_PLAYWRIGHT`) — so they need only

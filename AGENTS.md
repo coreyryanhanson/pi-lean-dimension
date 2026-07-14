@@ -27,7 +27,7 @@ With search installed, the suite totals **13 tools + 2 commands** (portal + sear
 ```bash
 npm test                                           # vitest run — all workspace tests (may hang if browser binaries missing)
 npm run test:ci                                     # Structural + contributed-backend contract tests (excludes chromium/firefox/bench). Runs contributed/* contract tests when backends are installed — expect 2-3 min on a dev machine with backends; use 300s+ timeout if wrapping.
-npm run test:py-bridge                              # Python bridge unit tests (pytest, 243 pure-logic tests under packages/pi-lean-portal/backends/python-base/tests/ — needs only `pytest>=9.0`, no browser). Uses the package-local .venv if present, else system `python3`.
+npm run test:py-bridge                              # Python bridge unit tests (pytest, 248 pure-logic tests under packages/pi-lean-portal/backends/python-base/tests/ — needs only `pytest>=9.0`, no browser). Uses the package-local .venv if present, else system `python3`.
 npm run test:miniwob                                # MiniWoB++ cross-engine test suite (host: 130 tasks × 4 backends + smoke, auto-skips)
 npm run setup:miniwob                               # one-time clone of MiniWoB++ content
 # (no dedicated venv needed — the driver uses the plugin's Python path)
@@ -201,26 +201,28 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 
 | Category | Location | Files (~) | Tests (~) | Requires browser? |
 |----------|----------|-----------|-----------|-------------------|
-| Portal structural | `pi-lean-portal/__tests__/` | 20 | 650+ | No |
-| Python bridge unit | `pi-lean-portal/backends/python-base/tests/` | 6 | 243 | No (pytest only) |
-| Portal contract/backend | `pi-lean-portal/__tests__/` | 9 | varies | Per-backend (auto-skip) |
-| MiniWoB behavioral | `bench/miniwob/suites/` | 6 | 130 tasks × 4 + smoke* | Chromium + Firefox + Python + MiniWoB content |
-| Search | `pi-lean-search/` | 2 | 17+ | No |
+| Portal structural | `pi-lean-portal/__tests__/` | 23 | 700 | No |
+| Python bridge unit | `pi-lean-portal/backends/python-base/tests/` | 6 | 248 | No (pytest only) |
+| Portal contract/backend | `pi-lean-portal/__tests__/` | 8 | varies | Per-backend (auto-skip) |
+| MiniWoB behavioral | `bench/miniwob/suites/` | 8 | 130 tasks × 4 + user-backends + smoke* | Chromium + Firefox + Python + MiniWoB content |
+| Search | `pi-lean-search/` | 2 | 18 | No |
 
-**Portal structural (20 files):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, probe-user-backend, ship-manifest
+**Portal structural (23 files):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, browser-status, session-manager, browser-data, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, probe-user-backend, ship-manifest
 
-**Python bridge unit tests (6 files, pytest):** test_accessibility, test_bot_detection, test_transport, test_chromium_py_bridge, test_firefox_py_bridge, test_playwright_base_quirks (the stealth-quirk flags: `_fingerprint_managed_context`, `_skip_default_viewport`, `_scroll_via_wheel`, `_eval_prefix`)
+**Python bridge unit tests (6 files, pytest):** test_accessibility, test_bot_detection, test_transport, test_browser_data, test_py_bridges, test_playwright_base_quirks (the stealth-quirk flags: `_fingerprint_managed_context`, `_skip_default_viewport`, `_scroll_via_wheel`, `_eval_prefix`)
 
-**Portal per-backend contract tests (8 files):** cookie-persistence (auto-skip), chromium-py (auto-skip), chromium-py-persistence (auto-skip), firefox (auto-skip), firefox-py (auto-skip), firefox-py-persistence (auto-skip), camoufox-py (auto-skip, user-backends), camoufox-py-persistence (auto-skip, user-backends)
+**Portal per-backend contract tests (8 files):** chromium (auto-skip), chromium-py (auto-skip), chromium-py-persistence (auto-skip), cookie-persistence (auto-skip), firefox (auto-skip), firefox-py (auto-skip), firefox-py-persistence (auto-skip), run-contributed-suites (auto-skip; discovers every user-managed stealth backend under `user-backends/` and runs the shared contract + persistence + parity + quirks suites against each, gated by `CONTRIB_RUN=1`)
 
-**MiniWoB behavioral tests (`bench/miniwob/suites/`, 6 files):**
+**MiniWoB behavioral tests (`bench/miniwob/suites/`, 8 files):**
 
 - `miniwob-trivial.test.ts` — 130 MiniWoB++ tasks × chromium (13 run, 117 skip)
 - `miniwob-firefox.test.ts` — 130 tasks × firefox (13 run, 117 skip)
 - `miniwob-chromium-py.test.ts` — 130 tasks × chromium-py (13 run, 117 skip)
 - `miniwob-firefox-py.test.ts` — 130 tasks × firefox-py (13 run, 117 skip)
-- `adapter-smoke.test.ts` — end-to-end runMiniwobTask via real Chromium + `plugin.evaluate` episode lifecycle
 - `miniwob-user-backends.test.ts` — discovers user-managed Python backends (no-op in bare CI; registers 130 tasks × discovered backends when installed)
+- `adapter-smoke.test.ts` — end-to-end runMiniwobTask via real Chromium + `plugin.evaluate` episode lifecycle
+- `inspect-csp-smoke.test.ts` — `browser-inspect` CSP/eval-boundary smoke against a live browser
+- `inspect-eval-smoke.test.ts` — `browser-inspect` eval-path smoke against a live browser
 
 **Shared test utilities** (`packages/pi-lean-portal/__tests__/helpers/`):
 
@@ -302,7 +304,7 @@ split into three jobs (two run on every PR; one is opt-in via
 3. **Install dependencies** via `npm ci`
 4. **Run structural tests** via `npm run test:ci`
 5. **Setup Python 3.12** + install `pytest>=9.0`
-6. **Run Python bridge unit tests** via `npm run test:py-bridge` (243 pure-logic pytest tests under `packages/pi-lean-portal/backends/python-base/tests/` — no Playwright wheel or browser binaries required)
+6. **Run Python bridge unit tests** via `npm run test:py-bridge` (248 pure-logic pytest tests under `packages/pi-lean-portal/backends/python-base/tests/` — no Playwright wheel or browser binaries required)
 
 **`miniwob` job (cross-engine browser tests, depends on structural):**
 
