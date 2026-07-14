@@ -27,7 +27,7 @@ not a default.
 
 ## When to use Camoufox specifically
 
-[Camoufox](https://github.com/nichochar/camoufox) is the **shipped,
+[Camoufox](https://github.com/daijro/camoufox) is the **shipped,
 tested template** — there is a reference `bridge.py` under
 [`camoufox-py/`](./camoufox-py/), and a generic discovery runner at
 `__tests__/run-contributed-suites.test.ts` auto-discovers any

@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Camoufox link** — corrected the upstream Camoufox URL in the root and
+  portal READMEs and the contributed docs.
+
 ## [0.2.0] - 2026-07-14
 
 ### Stealth backends (user-managed)

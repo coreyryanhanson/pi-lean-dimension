@@ -6,7 +6,7 @@
 > domain. A `/web` toggle removes the tools from the agent's context when
 > switched off, so web browsing doesn't consume tokens on sessions that aren't
 > doing web work. If a site blocks the shipped browsers, drop in your own
-> backend (e.g. [Camoufox](https://github.com/nichochar/camoufox)) — as far as
+> backend (e.g. [Camoufox](https://github.com/daijro/camoufox)) - as far as
 > we're aware, no other Pi web plugin lets you run a browser backend you wrote
 > yourself.
 >
@@ -70,7 +70,7 @@ Beyond the toggle, two surfaces are user-extensible rather than hardcoded:
   [Navigation Guides](#navigation-guides-web-guide--web-learn).
 - **Custom browser backends** — if a site blocks the shipped Chromium/Firefox,
   drop a `bridge.py` subclass into `~/.pi/agent/pi-lean-portal/user-backends/`
-  and drive a patched engine like [Camoufox](https://github.com/nichochar/camoufox)
+  and drive a patched engine like [Camoufox](https://github.com/daijro/camoufox)
   yourself. The full flow lives in [Backend Architecture](#backend-architecture)
   and [`contributed/README.md`](./contributed/README.md).
 

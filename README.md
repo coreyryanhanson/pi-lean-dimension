@@ -8,7 +8,7 @@ search via SearXNG — all toggled from a single `/web` command. When the toggle
 is off, the tools are removed from the agent's context entirely, so web browsing
 doesn't consume tokens or attention on sessions that aren't doing web work.
 The same surfaces are user-extensible: author navigation guides that resurface
-by domain, or drop in a stealth browser backend like [Camoufox](https://github.com/nichochar/camoufox)
+by domain, or drop in a stealth browser backend like [Camoufox](https://github.com/daijro/camoufox)
 when a site blocks the shipped Chromium/Firefox.
 
 ## Quick start (recommended)
@@ -100,7 +100,7 @@ When search is installed, two independent glyphs appear:
 Beyond the `/web` toggle, two surfaces are user-driven rather than hardcoded:
 
 - **Navigation guides** — `web-learn` saves site-specific playbooks that auto-match by domain and resurface in later sessions.
-- **Custom browser backends** — if a site blocks the shipped Chromium/Firefox, drop a `bridge.py` subclass into `~/.pi/agent/pi-lean-portal/user-backends/` and drive a patched engine like [Camoufox](https://github.com/nichochar/camoufox) yourself. A quirks schema declares how the engine diverges from base Playwright, and `launch` options flow from `settings.json` to the subprocess at runtime. This is user-authored, user-audited code that the extension never auto-downloads — and as far as we're aware, no other Pi web plugin lets you run a browser backend you wrote yourself. Most installs never need it; the [portal README](packages/pi-lean-portal/README.md#stealth--custom-browser-backends) and [`contributed/README.md`](packages/pi-lean-portal/contributed/README.md) cover the full flow when you do.
+- **Custom browser backends** — if a site blocks the shipped Chromium/Firefox, drop a `bridge.py` subclass into `~/.pi/agent/pi-lean-portal/user-backends/` and drive a patched engine like [Camoufox](https://github.com/daijro/camoufox) yourself. A quirks schema declares how the engine diverges from base Playwright, and `launch` options flow from `settings.json` to the subprocess at runtime. This is user-authored, user-audited code that the extension never auto-downloads — and as far as we're aware, no other Pi web plugin lets you run a browser backend you wrote yourself. Most installs never need it; the [portal README](packages/pi-lean-portal/README.md#stealth--custom-browser-backends) and [`contributed/README.md`](packages/pi-lean-portal/contributed/README.md) cover the full flow when you do.
 
 ---
 

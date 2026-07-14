@@ -8,7 +8,7 @@ automatically — you write or audit the bridge, you create the venv, you
 fetch the binary, and you register it in `settings.json`.
 
 This guide walks through the install flow with
-[**Camoufox**](https://github.com/nichochar/camoufox) as the worked
+[**Camoufox**](https://github.com/daijro/camoufox) as the worked
 example. The same shape applies to any stealth backend that subclasses
 `PlaywrightBridge` using the [quirks schema](#quirks-schema-reference)
 documented in `playwright_base.py`.
