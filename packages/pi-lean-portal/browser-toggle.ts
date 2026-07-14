@@ -1,5 +1,6 @@
 import type {
 	ExtensionAPI,
+	ExtensionCommandContext,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 // fs functions used by profile/cookies handlers are in their respective modules
@@ -59,6 +60,21 @@ const LEARN_TOOL_NAMES = new Set(["web-learn"]);
  * on third-party web-* tools).
  */
 const SIBLING_TOOL_NAMES = new Set<string>(["web-search"]);
+
+/**
+ * Update the search status bar glyph if sibling tools are installed.
+ * Used by ``/web on|learn|off`` to keep the ``search`` slot in sync.
+ */
+function setSearchSlot(
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	glyph: string,
+): void {
+	const hasSiblingTools = getRegisteredIn(pi, SIBLING_TOOL_NAMES).length > 0;
+	if (hasSiblingTools) {
+		ctx.ui.setStatus("search", glyph);
+	}
+}
 
 /** Persisted state shape — two independent booleans plus conversation-scoped default profile. */
 interface BrowserToggleState {
@@ -377,14 +393,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				});
 				ctx.ui.setStatus("browser", ctx.ui.theme.fg("accent", "●") + " idle");
 
-				// Clear any stale search off-glyph — sibling tools are now enabled.
-				const hasSiblingTools = getRegisteredIn(pi, SIBLING_TOOL_NAMES).length > 0;
-				if (hasSiblingTools) {
-					ctx.ui.setStatus(
-						"search",
-						ctx.ui.theme.fg("accent", "●") + " searxng",
-					);
-				}
+				setSearchSlot(pi, ctx, ctx.ui.theme.fg("accent", "●") + " searxng");
 
 				ctx.ui.notify(
 					"🌐 Browser tools enabled. /web learn to make web-learn available.",
@@ -400,14 +409,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				});
 				ctx.ui.setStatus("browser", ctx.ui.theme.fg("success", "●") + " idle");
 
-				// Clear any stale search off-glyph — sibling tools are now enabled.
-				const hasSiblingTools = getRegisteredIn(pi, SIBLING_TOOL_NAMES).length > 0;
-				if (hasSiblingTools) {
-					ctx.ui.setStatus(
-						"search",
-						ctx.ui.theme.fg("accent", "●") + " searxng",
-					);
-				}
+				setSearchSlot(pi, ctx, ctx.ui.theme.fg("accent", "●") + " searxng");
 
 				ctx.ui.notify(
 					"📖 web-learn tool is now available. Agent will save/update guides when asked.",
@@ -423,13 +425,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				});
 				ctx.ui.setStatus("browser", "○ web off");
 
-				// Set the search tool status to off if sibling apps are present.
-				// Search owns the colored glyph for on states; portal only writes
-				// the off state when tools are explicitly disabled.
-				const hasSiblingTools = getRegisteredIn(pi, SIBLING_TOOL_NAMES).length > 0;
-				if (hasSiblingTools) {
-					ctx.ui.setStatus("search", "○ searxng");
-				}
+				setSearchSlot(pi, ctx, "○ searxng");
 
 				ctx.ui.notify(
 					"🌐 Browser tools disabled. /web on to re-enable.",

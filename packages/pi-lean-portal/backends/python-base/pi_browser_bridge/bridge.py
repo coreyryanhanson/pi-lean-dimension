@@ -393,6 +393,9 @@ class BrowserBridge(ABC):
             "skip_default_viewport": getattr(self, "_skip_default_viewport", False),
             "skip_networkidle": getattr(self, "_skip_networkidle", False),
             "wrap_mw_eval_in_eval": getattr(self, "_wrap_mw_eval_in_eval", False),
+            "csp_safe_readonly_via_init_script": getattr(
+                self, "_csp_safe_readonly_via_init_script", False
+            ),
         })
 
     #: JSON-RPC method name → handler.  Built after the handlers are

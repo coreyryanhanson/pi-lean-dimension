@@ -629,6 +629,20 @@ class PlaywrightBridge(BrowserBridge):
         session = self.require_session(task_id)
         return session["page"]
 
+    def _get_page_or_error(
+        self, task_id: str, op: str
+    ) -> tuple[Any, dict[str, Any] | None]:
+        """Resolve the page for a task, or return an error dict for the caller to emit."""
+        try:
+            return self._get_page(task_id), None
+        except SessionNotFoundError:
+            raise
+        except Exception as exc:
+            return None, {
+                "success": False,
+                "error": f"{op[0].upper()}{op[1:]} failed: {exc}",
+            }
+
     def _get_dialog_events(self, task_id: str) -> list[dict[str, str]]:
         session = self.get_session(task_id)
         if not session:
@@ -665,6 +679,31 @@ class PlaywrightBridge(BrowserBridge):
             }
             for ref, node in parsed.elements.items()
         }
+
+    def _build_interaction_result(
+        self, task_id: str, page: Any, **extra: Any
+    ) -> dict[str, Any]:
+        snap_text, element_count, elements = self._take_snapshot_and_cache(
+            task_id, page
+        )
+        result: dict[str, Any] = {
+            "success": True,
+            "snapshot": snap_text,
+            "elementCount": element_count,
+            "elements": elements,
+            "dialogEvents": self._get_dialog_events(task_id),
+        }
+        result.update(extra)
+        return result
+
+    def _ref_debug_info(self, task_id: str, ref: str) -> tuple[str, str]:
+        key = ref[1:] if ref.startswith("@") else ref
+        cache = self.get_element_cache(task_id)
+        node = cache.elements.get(key) if cache else None
+        return (
+            getattr(node, "role", "unknown") if node else "unknown",
+            getattr(node, "name", "unknown") if node else "unknown",
+        )
 
     def _locate_element(
         self, page: Any, task_id: str, ref: str
@@ -936,17 +975,9 @@ class PlaywrightBridge(BrowserBridge):
         return {"success": True}
 
     def do_snapshot(self, task_id: str) -> dict[str, Any]:
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            return {
-                "success": False,
-                "snapshot": "",
-                "elementCount": 0,
-                "error": str(exc),
-            }
+        page, err = self._get_page_or_error(task_id, "snapshot")
+        if err:
+            return {**err, "snapshot": "", "elementCount": 0}
 
         try:
             snap_text, element_count, elements = self._take_snapshot_and_cache(
@@ -971,22 +1002,11 @@ class PlaywrightBridge(BrowserBridge):
     # ── Interaction ─────────────────────────────────────────────────
 
     def do_click(self, task_id: str, ref: str) -> dict[str, Any]:
-        # Extract role/name from element cache for debug logging
-        _key = ref[1:] if ref.startswith("@") else ref
-        _cache = self.get_element_cache(task_id)
-        _node = _cache.elements.get(_key) if _cache else None
-        _role: str = getattr(_node, "role", "unknown") if _node else "unknown"
-        _name: str = getattr(_node, "name", "unknown") if _node else "unknown"
+        _role, _name = self._ref_debug_info(task_id, ref)
 
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            return {
-                "success": False,
-                "error": f"Click failed: {exc}",
-            }
+        page, err = self._get_page_or_error(task_id, "click")
+        if err:
+            return err
 
         try:
             locator = self._locate_element(page, task_id, ref)
@@ -1006,20 +1026,9 @@ class PlaywrightBridge(BrowserBridge):
             new_url = page.url
             new_title = page.title()
 
-            snap_text, element_count, elements = self._take_snapshot_and_cache(
-                task_id, page
+            result = self._build_interaction_result(
+                task_id, page, newUrl=new_url, newTitle=new_title,
             )
-
-            dialog_events = self._get_dialog_events(task_id)
-            result: dict[str, Any] = {
-                "success": True,
-                "snapshot": snap_text,
-                "elementCount": element_count,
-                "elements": elements,
-                "dialogEvents": dialog_events,
-                "newUrl": new_url,
-                "newTitle": new_title,
-            }
         except Exception as exc:
             result = {
                 "success": False,
@@ -1028,22 +1037,11 @@ class PlaywrightBridge(BrowserBridge):
         return self._log_op("click", {"taskId": task_id, "ref": ref, "role": _role, "name": _name}, result)
 
     def do_type(self, task_id: str, ref: str, text: str) -> dict[str, Any]:
-        # Extract role/name from element cache for debug logging
-        _key = ref[1:] if ref.startswith("@") else ref
-        _cache = self.get_element_cache(task_id)
-        _node = _cache.elements.get(_key) if _cache else None
-        _role: str = getattr(_node, "role", "unknown") if _node else "unknown"
-        _name: str = getattr(_node, "name", "unknown") if _node else "unknown"
+        _role, _name = self._ref_debug_info(task_id, ref)
 
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            return {
-                "success": False,
-                "error": f"Type failed: {exc}",
-            }
+        page, err = self._get_page_or_error(task_id, "type")
+        if err:
+            return err
 
         try:
             locator = self._locate_element(page, task_id, ref)
@@ -1056,17 +1054,7 @@ class PlaywrightBridge(BrowserBridge):
             locator.click(timeout=5_000)  # Focus first
             locator.fill(text)
 
-            snap_text, element_count, elements = self._take_snapshot_and_cache(
-                task_id, page
-            )
-
-            result = {
-                "success": True,
-                "snapshot": snap_text,
-                "elementCount": element_count,
-                "elements": elements,
-                "dialogEvents": self._get_dialog_events(task_id),
-            }
+            result = self._build_interaction_result(task_id, page)
         except Exception as exc:
             result = {
                 "success": False,
@@ -1075,15 +1063,9 @@ class PlaywrightBridge(BrowserBridge):
         return self._log_op("type", {"taskId": task_id, "ref": ref, "role": _role, "name": _name}, result)
 
     def do_scroll(self, task_id: str, direction: str) -> dict[str, Any]:
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            return {
-                "success": False,
-                "error": f"Scroll failed: {exc}",
-            }
+        page, err = self._get_page_or_error(task_id, "scroll")
+        if err:
+            return err
 
         try:
             delta = 800 if direction == "down" else -800
@@ -1099,17 +1081,7 @@ class PlaywrightBridge(BrowserBridge):
                 )
             time.sleep(0.2)
 
-            snap_text, element_count, elements = self._take_snapshot_and_cache(
-                task_id, page
-            )
-
-            result = {
-                "success": True,
-                "snapshot": snap_text,
-                "elementCount": element_count,
-                "elements": elements,
-                "dialogEvents": self._get_dialog_events(task_id),
-            }
+            result = self._build_interaction_result(task_id, page)
         except Exception as exc:
             result = {
                 "success": False,
@@ -1118,15 +1090,9 @@ class PlaywrightBridge(BrowserBridge):
         return self._log_op("scroll", {"taskId": task_id, "direction": direction}, result)
 
     def do_go_back(self, task_id: str) -> dict[str, Any]:
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            return {
-                "success": False,
-                "error": f"GoBack failed: {exc}",
-            }
+        page, err = self._get_page_or_error(task_id, "goBack")
+        if err:
+            return err
 
         try:
             if self._skip_networkidle:
@@ -1147,22 +1113,12 @@ class PlaywrightBridge(BrowserBridge):
             except Exception:
                 pass
 
-            snap_text, element_count, elements = self._take_snapshot_and_cache(
-                task_id, page
-            )
-
-            dialog_events = self._get_dialog_events(task_id)
-            result: dict[str, Any] = {
-                "success": True,
-                "snapshot": snap_text,
-                "elementCount": element_count,
-                "elements": elements,
-                "dialogEvents": dialog_events,
-            }
+            extra: dict[str, Any] = {}
             if new_url is not None:
-                result["newUrl"] = new_url
+                extra["newUrl"] = new_url
             if new_title is not None:
-                result["newTitle"] = new_title
+                extra["newTitle"] = new_title
+            result = self._build_interaction_result(task_id, page, **extra)
         except Exception as exc:
             result = {
                 "success": False,
@@ -1171,15 +1127,9 @@ class PlaywrightBridge(BrowserBridge):
         return self._log_op("goBack", {"taskId": task_id}, result)
 
     def do_press(self, task_id: str, key: str) -> dict[str, Any]:
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            return {
-                "success": False,
-                "error": f"Press failed: {exc}",
-            }
+        page, err = self._get_page_or_error(task_id, "press")
+        if err:
+            return err
 
         try:
             url_before = page.url
@@ -1193,19 +1143,9 @@ class PlaywrightBridge(BrowserBridge):
             new_url = page.url
             new_title = page.title()
 
-            snap_text, element_count, elements = self._take_snapshot_and_cache(
-                task_id, page
+            result = self._build_interaction_result(
+                task_id, page, newUrl=new_url, newTitle=new_title,
             )
-
-            result: dict[str, Any] = {
-                "success": True,
-                "snapshot": snap_text,
-                "elementCount": element_count,
-                "elements": elements,
-                "dialogEvents": self._get_dialog_events(task_id),
-                "newUrl": new_url,
-                "newTitle": new_title,
-            }
         except Exception as exc:
             result = {
                 "success": False,
@@ -1220,16 +1160,9 @@ class PlaywrightBridge(BrowserBridge):
         task_id: str,
         full_page: bool = False,
     ) -> dict[str, Any]:
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            return {
-                "success": False,
-                "dataUri": "",
-                "error": str(exc),
-            }
+        page, err = self._get_page_or_error(task_id, "screenshot")
+        if err:
+            return {**err, "dataUri": ""}
 
         try:
             buffer: bytes = page.screenshot(
@@ -1312,15 +1245,9 @@ class PlaywrightBridge(BrowserBridge):
         in-page JS churn on Camoufox challenge pages.  Writes still need
         the ``mw:`` prefix; pure DOM reads don't.
         """
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            return {
-                "success": False,
-                "error": str(exc),
-            }
+        page, err = self._get_page_or_error(task_id, "evaluate")
+        if err:
+            return err
 
         # CSP-safe read-only handoff (patched-Firefox stealth binaries).
         # On binaries that route page.evaluate through eval() in the main

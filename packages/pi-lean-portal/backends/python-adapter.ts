@@ -138,6 +138,8 @@ export interface QuirksDescriptor extends ResultBase {
 	skip_networkidle: boolean;
 	/** ``do_evaluate`` wraps the script in ``eval(<json>)`` to survive main-world wrapper. */
 	wrap_mw_eval_in_eval: boolean;
+	/** CSP-safe read-only ``do_evaluate`` via init-script (patched Firefox stealth). */
+	csp_safe_readonly_via_init_script: boolean;
 }
 
 // ─── PythonPluginAdapter ──────────────────────────────────────────────
@@ -955,6 +957,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				skip_default_viewport: !!raw.skip_default_viewport,
 				skip_networkidle: !!raw.skip_networkidle,
 				wrap_mw_eval_in_eval: !!raw.wrap_mw_eval_in_eval,
+				csp_safe_readonly_via_init_script: !!raw.csp_safe_readonly_via_init_script,
 			}),
 			(error): QuirksDescriptor => ({
 				success: false,
@@ -964,6 +967,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				skip_default_viewport: false,
 				skip_networkidle: false,
 				wrap_mw_eval_in_eval: false,
+				csp_safe_readonly_via_init_script: false,
 				error,
 			}),
 		);

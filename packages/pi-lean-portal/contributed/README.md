@@ -236,3 +236,69 @@ behavior is bit-identical to a pre-stealth install. For the two
 lifecycle patterns (engine-accepts-external-Playwright vs.
 engine-owns-its-own-Playwright) and the trade-offs of writing your own,
 see [`CHOOSING.md`](./CHOOSING.md).
+
+## Test-local settings for contributed runners
+
+The contributed-backend runner (`run-contributed-suites.test.ts`) reads
+backend configuration from a local settings file at:
+
+```
+packages/pi-lean-portal/__tests__/contributed/settings.json
+```
+
+This file is gitignored — you create it locally.  Below is a sample with
+every supported field explained:
+
+```json
+{
+ "$comment": "Sample test-local settings for contributed-backend runner. Copy to packages/pi-lean-portal/__tests__/contributed/settings.json and adjust for your installed backend.",
+ "browser": {
+  "plugins": [
+   {
+    "name": "camoufox-py",
+    "dir": "camoufox-py",
+    "enabled": true,
+    "config": {
+     "pythonPath": "/absolute/path/to/camoufox-py/.venv/bin/python3",
+     "capabilities": {
+      "engine": "firefox",
+      "supportsFullPageScreenshot": true,
+      "supportsJavaScriptEvaluate": true
+     },
+     "transportTimeoutMs": 60000,
+     "launch": {
+      "headless": true,
+      "humanize": false,
+      "os": "windows",
+      "geoip": false
+     }
+    }
+   }
+  ]
+ }
+}
+```
+
+| Field | Purpose |
+|-------|---------|
+| `name` | Plugin name, must match the directory under `user-backends/` (e.g. `camoufox-py`). |
+| `dir` | Directory name, resolved against the user-backends root. A bare `"camoufox-py"` resolves to `~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/`. |
+| `enabled` | Set to `true` for the runner to pick up this backend. |
+| `pythonPath` | **Absolute** path to the venv's Python interpreter. If omitted, the runner auto-detects `probe.venvPython` from the user-backend probe. |
+| `capabilities` | Override the backend's capability flags. Fields not listed inherit defaults from `DEFAULT_CAPABILITIES`. |
+| `capabilities.engine` | Browser engine identifier: `"firefox"` or `"chromium"`. Controls capability resolution. |
+| `capabilities.supportsFullPageScreenshot` | Whether the backend can capture full-page screenshots. |
+| `capabilities.supportsJavaScriptEvaluate` | Whether the backend supports `page.evaluate`. |
+| `transportTimeoutMs` | JSON-RPC transport timeout in milliseconds. Defaults to the adapter's built-in fallback (usually 30s). |
+| `launch` | Options forwarded to the bridge as `plugin_config.launch` via the `browser.init` RPC. |
+| `launch.headless` | Run browser headless (`true`) or with a visible window (`false`). |
+| `launch.humanize` | Add human-like mouse/timing noise to evade bot detection. |
+| `launch.os` | Spoofed OS identity: `"windows"`, `"macos"`, or `"linux"`. |
+| `launch.geoip` | Enable GeoIP-based locale/language spoofing. |
+
+Override the settings path with `CONTRIB_SETTINGS`:
+
+```bash
+CONTRIB_SETTINGS=/path/to/my-settings.json CONTRIB_RUN=1 \
+  npx vitest run packages/pi-lean-portal/__tests__/run-contributed-suites.test.ts
+```

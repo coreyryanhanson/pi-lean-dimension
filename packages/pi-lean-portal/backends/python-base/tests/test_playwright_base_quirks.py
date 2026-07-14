@@ -476,15 +476,15 @@ class TestDescribeQuirks:
     @pytest.mark.parametrize("overrides,expected", [
         (
             {},
-            {"fingerprint_managed_context": False, "eval_prefix": "", "scroll_via_wheel": False, "skip_default_viewport": False, "skip_networkidle": False, "wrap_mw_eval_in_eval": False},
+            {"fingerprint_managed_context": False, "eval_prefix": "", "scroll_via_wheel": False, "skip_default_viewport": False, "skip_networkidle": False, "wrap_mw_eval_in_eval": False, "csp_safe_readonly_via_init_script": False},
         ),
         (
-            {"_fingerprint_managed_context": True, "_eval_prefix": "mw:", "_scroll_via_wheel": True, "_skip_default_viewport": True, "_skip_networkidle": True, "_wrap_mw_eval_in_eval": True},
-            {"fingerprint_managed_context": True, "eval_prefix": "mw:", "scroll_via_wheel": True, "skip_default_viewport": True, "skip_networkidle": True, "wrap_mw_eval_in_eval": True},
+            {"_fingerprint_managed_context": True, "_eval_prefix": "mw:", "_scroll_via_wheel": True, "_skip_default_viewport": True, "_skip_networkidle": True, "_wrap_mw_eval_in_eval": True, "_csp_safe_readonly_via_init_script": True},
+            {"fingerprint_managed_context": True, "eval_prefix": "mw:", "scroll_via_wheel": True, "skip_default_viewport": True, "skip_networkidle": True, "wrap_mw_eval_in_eval": True, "csp_safe_readonly_via_init_script": True},
         ),
         (
             {"_scroll_via_wheel": True, "_eval_prefix": "mw:"},
-            {"scroll_via_wheel": True, "eval_prefix": "mw:", "fingerprint_managed_context": False, "skip_default_viewport": False, "skip_networkidle": False, "wrap_mw_eval_in_eval": False},
+            {"scroll_via_wheel": True, "eval_prefix": "mw:", "fingerprint_managed_context": False, "skip_default_viewport": False, "skip_networkidle": False, "wrap_mw_eval_in_eval": False, "csp_safe_readonly_via_init_script": False},
         ),
     ])
     def test_describe_quirks_surfaces_overrides(self, overrides, expected):
@@ -509,6 +509,7 @@ class TestDescribeQuirks:
         assert q["skip_default_viewport"] == False
         assert q["skip_networkidle"] == False
         assert q["wrap_mw_eval_in_eval"] == False
+        assert q["csp_safe_readonly_via_init_script"] == False
 
 
 # ═══════════════════════════════════════════════════════════════════════
