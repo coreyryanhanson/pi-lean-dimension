@@ -45,20 +45,10 @@ their own page — there is **no external-attach path**. The
 hop, and the `_cdpEndpoint` / `_wsEndpoint` / `_browserServer` /
 `_reconnectBrowser()` scaffolding were all removed (see
 [`docs/decisions/miniwob-and-host-setup.md`](../../docs/decisions/miniwob-and-host-setup.md)).
-
-One post-launch hook is retained for third-party subclasses:
-
-- **`onBrowserLaunched()`** — a post-launch hook (default no-op) called
-  once after the browser successfully launches, before any
-  context/page is created. The portal's own backends no longer override
-  it (external-attach discovery has been removed), but the hook is
-  retained for third-party subclasses. Failures thrown from overrides
-  are caught and logged by `_newBrowserContext`, so a setup glitch
-  never blocks normal browsing.
-
-There is no `connectOverCDP?` interface hook — a host-owns-browser
-("Mode B") path was considered and dropped as YAGNI; it will be
-re-added alongside a real consumer that needs it.
+There is no post-launch hook for third-party subclasses and no
+`connectOverCDP?` interface hook — a host-owns-browser ("Mode B")
+path was considered and dropped as YAGNI; either will be re-added
+alongside a real consumer that needs it.
 
 ## Stealth backends (user-managed)
 
@@ -214,12 +204,12 @@ All tool calls dispatch through the router. Key responsibilities:
 
 ## Known Constraints & Debt
 
-- **Console capture in Python backends** — Both `chromium-py` and `firefox-py` inherit console capture (500-entry ring buffer) and dialog auto-dismissal from `PlaywrightBridge._setup_page_session()` in `python-base`. The base `BrowserBridge` does not install handlers; future Python plugins must override `_setup_page_session`.
+- **Console capture in Python backends** — Both `chromium-py` and `firefox-py` inherit console capture (500-entry ring buffer) and dialog auto-dismissal from `PlaywrightBridge._setup_page_session()` in `python-base`. The base `BrowserBridge` (an `abc.ABC`) does not define `_setup_page_session`; future Python plugins that subclass `BrowserBridge` directly must supply their own session setup (subclasses of `PlaywrightBridge` inherit it).
 - **AbortSignal not supported on Python bridge** — the router passes `signal` through unconditionally (no capability check). The Python adapter accepts and silently ignores the signal. `supportsAbortSignal` is advertised but unenforced.
 - **Sessions are per taskId** — mapped to `browser-NNN` keys via `_sessionKeys`/`_sessionCounter` in `core/shared/task-id.ts`. Created on first navigate, cleaned up on `session_shutdown`.
 - **Python shared-context machinery removed (B1)** — the `browser.newPage`/`browser.closePage` RPC routes, `_profile_contexts` ref-counting, and `ensure_profile_session`/`remove_profile_session` methods were removed from both the base `BrowserBridge` and `ChromiumPyBridge`. Named profiles now use disk persistence (load-on-navigate via `storageState`) matching the TS Chromium plugin. Both backends use `ensure_session(task_id, config)` for all sessions.
 - **Python bridge reuses BrowserContexts across navigations** — `ensure_session()` returns the existing session on re-navigate (unlike the TS Chromium plugin which creates a fresh context per navigate). This means in-process cookies survive re-navigation without explicit save, but also means `storageState` from the router is ignored on re-navigate (the context already exists). The Python adapter's `_persistState()` saves current cookies to disk before the navigate RPC for cross-process persistence.
-- **`_persistState()` helper in both backends** — extracted from `cleanup()`, this method checks `session?.persistState`, snapshots the BrowserContext's storage state, persists it to disk, and returns the raw state for optional in-memory reuse (Chromium uses the return as fallback for the new context; Python returns it for API consistency). Called both from `cleanup()` and — on re-navigate — from `getOrCreateContext()` (Chromium) or `navigate()` (Python) before the old context is closed/reused.
+- **`_persistState()` helper in both backends** — both `PlaywrightPluginBase._persistState` (direct `context.storageState()` call) and `PythonPluginAdapter._persistState` (JSON-RPC `browser.getStorageState` retrieval) delegate to the shared `persistSessionState()` helper in `core/shared/storage-state.ts`, which owns the `session?.persistState` gate, the `saveStorageState()` call, and the warn-and-swallow error path. Called both from `cleanup()` and — on re-navigate — from `getOrCreateContext()` (Chromium) or `navigate()` (Python) before the old context is closed/reused.
 - **Role-based locators only**: never XPath/CSS — always `getByRole()` via `buildLocator()` with positional `.nth()` for duplicates. The `INTERACTIVE_ROLES` set defines which roles get @e refs.
 - **All URLs go through `url-safety.ts`** — blocks localhost, private IPs (10.x, 172.16-31.x, 192.168.x, 169.254.169.254), dangerous schemes (file:, ftp:, data:, javascript:, vbscript:), and heuristically detects secrets in URLs.
 - **Screenshot**: JPEG 80% quality, viewport constrained to 1280px wide, returns data URI.

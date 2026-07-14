@@ -1,7 +1,12 @@
 /**
  * Navigation settle detection — waits for framenavigated event or DOM
  * stabilisation after interactions, eliminating stale-@e-ref bugs from fixed sleeps.
+ *
+ * Constants (timeouts, race window) are sourced from the shared
+ * ``browser-data.json`` so the TypeScript and Python sides never drift.
  */
+
+import { NAV_SETTLE } from "./browser-data.js";
 
 // ─── Public types ───────────────────────────────────────────────────
 
@@ -118,8 +123,8 @@ export async function waitForNavigationSettle(
 	urlBefore: string,
 	opts?: NavigationSettleOptions,
 ): Promise<NavigationSettleResult> {
-	const navTimeout = opts?.navTimeoutMs ?? 5000;
-	const settleTimeout = opts?.settleTimeoutMs ?? 400;
+	const navTimeout = opts?.navTimeoutMs ?? NAV_SETTLE.navTimeoutMs;
+	const settleTimeout = opts?.settleTimeoutMs ?? NAV_SETTLE.settleTimeoutMs;
 
 	let navigated = false;
 
@@ -145,7 +150,10 @@ export async function waitForNavigationSettle(
 		// Most link clicks and Enter presses trigger navigation within one
 		// event-loop tick; the race means we don't waste time when nav
 		// starts immediately.
-		await Promise.race([page.waitForTimeout(150), navStarted]);
+		await Promise.race([
+			page.waitForTimeout(NAV_SETTLE.settleRaceMs),
+			navStarted,
+		]);
 
 		let waitedForLoad = false;
 		if (navigated) {

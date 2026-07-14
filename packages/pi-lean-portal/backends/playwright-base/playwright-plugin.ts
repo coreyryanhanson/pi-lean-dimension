@@ -27,9 +27,10 @@ import {
 import { sessionManager } from "../../core/shared/session-manager.js";
 import { checkPage } from "../../core/shared/bot-detection.js";
 import { waitForNavigationSettle } from "../../core/shared/nav-settle.js";
+import { NAV_SETTLE } from "../../core/shared/browser-data.js";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
-import { saveStorageState } from "../../core/shared/storage-state.js";
+import { persistSessionState } from "../../core/shared/storage-state.js";
 import type {
 	BrowserPlugin,
 	PluginCapabilities,
@@ -100,6 +101,30 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		if (this._debug) {
 			process.stderr.write(`[browser] ${event}: ${JSON.stringify(data)}\n`);
 		}
+	}
+
+	/**
+	 * Wrap an async operation with automatic success/failure debug logging.
+	 * Runs the body, then logs based on the result. Body should catch its own
+	 * errors and return `{ success: false, error }` — an uncaught throw skips
+	 * the log (but shouldn't happen in normal operation).
+	 */
+	private async _logOp<T extends { success: boolean; error?: string }>(
+		op: string,
+		ctx: Record<string, unknown>,
+		body: () => Promise<T>,
+		getExtra?: (result: T) => Record<string, unknown>,
+	): Promise<T> {
+		const result = await body();
+		if (this._debug) {
+			this._log(op, {
+				...ctx,
+				...(getExtra ? getExtra(result) : {}),
+				success: result.success,
+				...(result.error ? { error: result.error } : {}),
+			});
+		}
+		return result;
 	}
 
 	/** Shared browser instance (lazy-initialised) */
@@ -186,23 +211,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		} finally {
 			if (page) await page.close().catch(() => {});
 		}
-	}
-
-	/**
-	 * Post-launch hook called once after the shared browser successfully
-	 * launches. Runs before any context/page is created on the new browser.
-	 *
-	 * Subclasses override this to perform once-per-launch setup. The
-	 * portal's own backends no longer override this (external-attach
-	 * discovery has been removed), but the hook is retained for
-	 * third-party subclasses.
-	 *
-	 * Default: no-op. Failures thrown from overrides are caught and
-	 * logged by the caller (`_newBrowserContext`) so a setup glitch
-	 * never blocks normal browsing.
-	 */
-	protected async onBrowserLaunched(): Promise<void> {
-		// default: no-op
 	}
 
 	// ── Context lifecycle ────────────────────────────────────
@@ -305,18 +313,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			// UA capture at first launch (Firefox opt-in)
 			if (this.captureUserAgent) {
 				await this._captureUA();
-			}
-
-			// Post-launch hook: subclasses can perform once-per-launch
-			// setup. Failures are swallowed so a setup glitch never blocks
-			// normal browsing.
-			try {
-				await this.onBrowserLaunched();
-			} catch (err) {
-				this._log("onBrowserLaunched", {
-					plugin: this.name,
-					error: err instanceof Error ? err.message : String(err),
-				});
 			}
 		}
 
@@ -426,22 +422,7 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		context: BrowserContext,
 	): Promise<{ cookies: unknown[]; origins: unknown[] } | undefined> {
 		const session = sessionManager.getSession(taskId);
-		if (!session?.persistState) return undefined;
-
-		try {
-			const state = await context.storageState();
-			const name = session.profileName ?? "default";
-			saveStorageState(name, state);
-			return state;
-		} catch (err) {
-			console.warn(
-				`[pi-lean-portal] Failed to auto-save storage state for profile ` +
-					`'${session.profileName ?? "default"}': ` +
-					`${err instanceof Error ? err.message : String(err)}. ` +
-					"Session state may be lost.",
-			);
-			return undefined;
-		}
+		return persistSessionState(session, () => context.storageState());
 	}
 
 	private async takeSnapshot(
@@ -575,15 +556,9 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 
 			// Wait for dynamic content to settle
 			try {
-				await page.waitForFunction(
-					`new Promise((resolve) => {
-						const count = document.querySelectorAll("*").length;
-						setTimeout(() => {
-							resolve(document.querySelectorAll("*").length === count || count > 5000);
-						}, 400);
-					})`,
-					{ timeout: 5000 },
-				);
+				await page.waitForFunction(NAV_SETTLE.domStabilizationJs, {
+					timeout: NAV_SETTLE.navTimeoutMs,
+				});
 			} catch {
 				// Stabilization timed out — proceed with whatever is rendered
 			}
@@ -681,42 +656,19 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			};
 		}
 
-		try {
+		return this._logOp("snapshot", { taskId }, async () => {
 			const {
 				snapshot: snapText,
 				elementCount,
 				dialogEvents,
 			} = await this.takeSnapshot(taskId, page);
-
-			this._log("snapshot", {
-				taskId,
-				success: true,
-				elementCount,
-				dialogEvents: dialogEvents.length,
-				fingerprint: snapText.slice(0, 16),
-			});
-
 			return {
 				success: true,
 				snapshot: snapText,
 				elementCount,
 				dialogEvents,
 			};
-		} catch (err: unknown) {
-			this._log("snapshot", {
-				taskId,
-				success: false,
-				elementCount: 0,
-				error: err instanceof Error ? err.message : String(err),
-			});
-
-			return {
-				success: false,
-				snapshot: "",
-				elementCount: 0,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		}, (r) => ({ elementCount: r.elementCount, dialogEvents: r.dialogEvents.length, fingerprint: r.snapshot.slice(0, 16) }));
 	}
 
 	// ── Interaction ────────────────────────────────────────────
@@ -761,55 +713,39 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			};
 		}
 
-		try {
-			const urlBefore = page.url();
-			await locator.click({ timeout: 5000 });
+		return this._logOp("click", { taskId, ref, role: node.role, name: node.name }, async () => {
+			try {
+				const urlBefore = page.url();
+				await locator.click({ timeout: 5000 });
 
-			// Wait for potential navigation to settle (replaces fixed sleep)
-			const { navigated } = await waitForNavigationSettle(page, urlBefore);
+				// Wait for potential navigation to settle (replaces fixed sleep)
+				const { navigated: _navigated } = await waitForNavigationSettle(page, urlBefore);
 
-			const newUrl = page.url();
-			const newTitle = await page.title();
-			sessionManager.updateSession(taskId, {
-				currentUrl: newUrl,
-				currentTitle: newTitle,
-			});
+				const newUrl = page.url();
+				const newTitle = await page.title();
+				sessionManager.updateSession(taskId, {
+					currentUrl: newUrl,
+					currentTitle: newTitle,
+				});
 
-			// Auto-snapshot
-			const snapResult = await this.takeSnapshot(taskId, page);
+				// Auto-snapshot
+				const snapResult = await this.takeSnapshot(taskId, page);
 
-			this._log("click", {
-				taskId,
-				ref,
-				role: node.role,
-				name: node.name,
-				result: "success",
-				navigated,
-			});
-
-			return {
-				success: true,
-				newUrl,
-				newTitle,
-				snapshot: snapResult.snapshot,
-				elementCount: snapResult.elementCount,
-				dialogEvents: snapResult.dialogEvents,
-			};
-		} catch (err: unknown) {
-			this._log("click", {
-				taskId,
-				ref,
-				role: node.role,
-				name: node.name,
-				result: "fail",
-				error: err instanceof Error ? err.message : String(err),
-			});
-
-			return {
-				success: false,
-				error: `Click failed: ${err instanceof Error ? err.message : String(err)}`,
-			};
-		}
+				return {
+					success: true,
+					newUrl,
+					newTitle,
+					snapshot: snapResult.snapshot,
+					elementCount: snapResult.elementCount,
+					dialogEvents: snapResult.dialogEvents,
+				};
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: `Click failed: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
+		});
 	}
 
 	async type(
@@ -856,42 +792,27 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			};
 		}
 
-		try {
-			await locator.click({ timeout: 5000 }); // Focus first
-			await locator.fill(text);
+		return this._logOp("type", { taskId, ref, role: node.role, name: node.name }, async () => {
+			try {
+				await locator.click({ timeout: 5000 }); // Focus first
+				await locator.fill(text);
 
-			// Auto-snapshot
-			const snapResult = await this.takeSnapshot(taskId, page);
+				// Auto-snapshot
+				const snapResult = await this.takeSnapshot(taskId, page);
 
-			this._log("type", {
-				taskId,
-				ref,
-				role: node.role,
-				name: node.name,
-				result: "success",
-				elementCount: snapResult.elementCount,
-			});
-
-			return {
-				success: true,
-				snapshot: snapResult.snapshot,
-				elementCount: snapResult.elementCount,
-				dialogEvents: snapResult.dialogEvents,
-			};
-		} catch (err: unknown) {
-			this._log("type", {
-				taskId,
-				ref,
-				role: node.role,
-				name: node.name,
-				result: "fail",
-				error: err instanceof Error ? err.message : String(err),
-			});
-			return {
-				success: false,
-				error: `Type failed: ${err instanceof Error ? err.message : String(err)}`,
-			};
-		}
+				return {
+					success: true,
+					snapshot: snapResult.snapshot,
+					elementCount: snapResult.elementCount,
+					dialogEvents: snapResult.dialogEvents,
+				};
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: `Type failed: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
+		}, (r) => ({ elementCount: r.elementCount }));
 	}
 
 	async scroll(
@@ -903,40 +824,29 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			return { success: false, error: "No active session" };
 		}
 
-		try {
-			const delta = direction === "down" ? 800 : -800;
-			await page.evaluate(
-				`window.scrollBy({ top: ${delta}, behavior: "smooth" })`,
-			);
-			await page.waitForTimeout(200);
+		return this._logOp("scroll", { taskId, direction }, async () => {
+			try {
+				const delta = direction === "down" ? 800 : -800;
+				await page.evaluate(
+					`window.scrollBy({ top: ${delta}, behavior: "smooth" })`,
+				);
+				await page.waitForTimeout(200);
 
-			const snapResult = await this.takeSnapshot(taskId, page);
+				const snapResult = await this.takeSnapshot(taskId, page);
 
-			this._log("scroll", {
-				taskId,
-				direction,
-				success: true,
-				elementCount: snapResult.elementCount,
-			});
-
-			return {
-				success: true,
-				snapshot: snapResult.snapshot,
-				elementCount: snapResult.elementCount,
-				dialogEvents: snapResult.dialogEvents,
-			};
-		} catch (err: unknown) {
-			this._log("scroll", {
-				taskId,
-				direction,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			});
-			return {
-				success: false,
-				error: `Scroll failed: ${err instanceof Error ? err.message : String(err)}`,
-			};
-		}
+				return {
+					success: true,
+					snapshot: snapResult.snapshot,
+					elementCount: snapResult.elementCount,
+					dialogEvents: snapResult.dialogEvents,
+				};
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: `Scroll failed: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
+		}, (r) => ({ elementCount: r.elementCount }));
 	}
 
 	async goBack(taskId: string): Promise<InteractionResult> {
@@ -945,44 +855,35 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			return { success: false, error: "No active session" };
 		}
 
-		try {
-			await page.goBack({ waitUntil: "networkidle" });
-			await page.waitForTimeout(300);
+		return this._logOp("goBack", { taskId }, async () => {
+			try {
+				await page.goBack({ waitUntil: "networkidle" });
+				await page.waitForTimeout(300);
 
-			const newUrl = page.url();
-			const newTitle = await page.title();
-			sessionManager.updateSession(taskId, {
-				currentUrl: newUrl,
-				currentTitle: newTitle,
-			});
+				const newUrl = page.url();
+				const newTitle = await page.title();
+				sessionManager.updateSession(taskId, {
+					currentUrl: newUrl,
+					currentTitle: newTitle,
+				});
 
-			const snapResult = await this.takeSnapshot(taskId, page);
+				const snapResult = await this.takeSnapshot(taskId, page);
 
-			this._log("goBack", {
-				taskId,
-				success: true,
-				elementCount: snapResult.elementCount,
-			});
-
-			return {
-				success: true,
-				newUrl,
-				newTitle,
-				snapshot: snapResult.snapshot,
-				elementCount: snapResult.elementCount,
-				dialogEvents: snapResult.dialogEvents,
-			};
-		} catch (err: unknown) {
-			this._log("goBack", {
-				taskId,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			});
-			return {
-				success: false,
-				error: `GoBack failed: ${err instanceof Error ? err.message : String(err)}`,
-			};
-		}
+				return {
+					success: true,
+					newUrl,
+					newTitle,
+					snapshot: snapResult.snapshot,
+					elementCount: snapResult.elementCount,
+					dialogEvents: snapResult.dialogEvents,
+				};
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: `GoBack failed: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
+		}, (r) => ({ elementCount: r.elementCount }));
 	}
 
 	async press(taskId: string, key: string): Promise<InteractionResult> {
@@ -991,53 +892,41 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			return { success: false, error: "No active session" };
 		}
 
-		try {
-			const urlBefore = page.url();
-			await page.keyboard.press(key);
+		return this._logOp("press", { taskId, key }, async () => {
+			try {
+				const urlBefore = page.url();
+				await page.keyboard.press(key);
 
-			// Wait for potential navigation to settle (replaces fixed sleep).
-			// Shorter nav timeout since Enter-on-link nav is typically fast.
-			const { navigated } = await waitForNavigationSettle(page, urlBefore, {
-				navTimeoutMs: 3000,
-			});
+				// Wait for potential navigation to settle (replaces fixed sleep).
+				// Shorter nav timeout since Enter-on-link nav is typically fast.
+				const { navigated: _navigated } = await waitForNavigationSettle(page, urlBefore, {
+					navTimeoutMs: 3000,
+				});
 
-			const newUrl = page.url();
-			const newTitle = await page.title();
-			sessionManager.updateSession(taskId, {
-				currentUrl: newUrl,
-				currentTitle: newTitle,
-			});
+				const newUrl = page.url();
+				const newTitle = await page.title();
+				sessionManager.updateSession(taskId, {
+					currentUrl: newUrl,
+					currentTitle: newTitle,
+				});
 
-			const snapResult = await this.takeSnapshot(taskId, page);
+				const snapResult = await this.takeSnapshot(taskId, page);
 
-			this._log("press", {
-				taskId,
-				key,
-				success: true,
-				navigated,
-				elementCount: snapResult.elementCount,
-			});
-
-			return {
-				success: true,
-				newUrl,
-				newTitle,
-				snapshot: snapResult.snapshot,
-				elementCount: snapResult.elementCount,
-				dialogEvents: snapResult.dialogEvents,
-			};
-		} catch (err: unknown) {
-			this._log("press", {
-				taskId,
-				key,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			});
-			return {
-				success: false,
-				error: `Press failed: ${err instanceof Error ? err.message : String(err)}`,
-			};
-		}
+				return {
+					success: true,
+					newUrl,
+					newTitle,
+					snapshot: snapResult.snapshot,
+					elementCount: snapResult.elementCount,
+					dialogEvents: snapResult.dialogEvents,
+				};
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: `Press failed: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
+		}, (r) => ({ elementCount: r.elementCount }));
 	}
 
 	// ── Media ──────────────────────────────────────────────────
@@ -1087,7 +976,7 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	async evaluate(
 		taskId: string,
 		expression: string,
-		readOnly?: boolean,
+		_readOnly?: boolean,
 	): Promise<EvaluateResult> {
 		const page = this.requirePage(taskId);
 		if (!page) {
@@ -1113,26 +1002,18 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			return { success: false, cookies: [], error: "No active session" };
 		}
 
-		try {
-			const cookies = await entry.context.cookies(urls);
-			this._log("getCookies", {
-				taskId,
-				success: true,
-				count: cookies.length,
-			});
-			return { success: true, cookies };
-		} catch (err: unknown) {
-			this._log("getCookies", {
-				taskId,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			});
-			return {
-				success: false,
-				cookies: [],
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._logOp("getCookies", { taskId }, async () => {
+			try {
+				const cookies = await entry.context.cookies(urls);
+				return { success: true, cookies };
+			} catch (err: unknown) {
+				return {
+					success: false,
+					cookies: [],
+					error: err instanceof Error ? err.message : String(err),
+				};
+			}
+		}, (r) => ({ count: r.cookies.length }));
 	}
 
 	async addCookies(taskId: string, cookies: Cookie[]): Promise<ResultBase> {
@@ -1141,25 +1022,17 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			return { success: false, error: "No active session" };
 		}
 
-		try {
-			await entry.context.addCookies(cookies);
-			this._log("addCookies", {
-				taskId,
-				success: true,
-				count: cookies.length,
-			});
-			return { success: true };
-		} catch (err: unknown) {
-			this._log("addCookies", {
-				taskId,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			});
-			return {
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._logOp("addCookies", { taskId }, async () => {
+			try {
+				await entry.context.addCookies(cookies);
+				return { success: true };
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: err instanceof Error ? err.message : String(err),
+				};
+			}
+		});
 	}
 
 	async clearCookies(
@@ -1171,28 +1044,21 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			return { success: false, error: "No active session" };
 		}
 
-		try {
-			await entry.context.clearCookies({
-				...(options?.name ? { name: options.name } : {}),
-				...(options?.domain ? { domain: options.domain } : {}),
-				...(options?.path ? { path: options.path } : {}),
-			});
-			this._log("clearCookies", {
-				taskId,
-				success: true,
-			});
-			return { success: true };
-		} catch (err: unknown) {
-			this._log("clearCookies", {
-				taskId,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			});
-			return {
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._logOp("clearCookies", { taskId }, async () => {
+			try {
+				await entry.context.clearCookies({
+					...(options?.name ? { name: options.name } : {}),
+					...(options?.domain ? { domain: options.domain } : {}),
+					...(options?.path ? { path: options.path } : {}),
+				});
+				return { success: true };
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: err instanceof Error ? err.message : String(err),
+				};
+			}
+		});
 	}
 
 	async getStorageState(taskId: string): Promise<StorageStateResult> {
@@ -1206,32 +1072,23 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			};
 		}
 
-		try {
-			const state = await entry.context.storageState();
-			this._log("getStorageState", {
-				taskId,
-				success: true,
-				cookies: state.cookies.length,
-				origins: state.origins.length,
-			});
-			return {
-				success: true,
-				cookies: state.cookies,
-				origins: state.origins,
-			};
-		} catch (err: unknown) {
-			this._log("getStorageState", {
-				taskId,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			});
-			return {
-				success: false,
-				cookies: [],
-				origins: [],
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._logOp("getStorageState", { taskId }, async () => {
+			try {
+				const state = await entry.context.storageState();
+				return {
+					success: true,
+					cookies: state.cookies,
+					origins: state.origins,
+				};
+			} catch (err: unknown) {
+				return {
+					success: false,
+					cookies: [],
+					origins: [],
+					error: err instanceof Error ? err.message : String(err),
+				};
+			}
+		}, (r) => ({ cookies: r.cookies.length, origins: r.origins.length }));
 	}
 
 	// ── Per-task cleanup ───────────────────────────────────────

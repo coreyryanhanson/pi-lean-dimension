@@ -9,7 +9,7 @@ import { existsSync } from "node:fs";
 import { join, delimiter as pathDelimiter } from "node:path";
 
 import { sessionManager } from "../core/shared/session-manager.js";
-import { saveStorageState } from "../core/shared/storage-state.js";
+import { persistSessionState } from "../core/shared/storage-state.js";
 import { DEFAULT_BACKENDS_ROOT } from "../core/plugin-config.js";
 
 import {
@@ -1098,30 +1098,21 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		taskId: string,
 	): Promise<{ cookies: unknown[]; origins: unknown[] } | undefined> {
 		const session = sessionManager.getSession(taskId);
-		if (!session?.persistState) return undefined;
-
-		try {
-			const raw = await this._rpcCall("browser.getStorageState", { taskId });
-			const result = raw as Record<string, unknown>;
-			if (result.success) {
-				const name = session.profileName ?? "default";
-				const state = {
+		return persistSessionState(
+			session,
+			async () => {
+				const raw = await this._rpcCall("browser.getStorageState", { taskId });
+				const result = raw as Record<string, unknown>;
+				if (!result.success) {
+					throw new Error("bridge.getStorageState returned failure");
+				}
+				return {
 					cookies: (result.cookies ?? []) as Record<string, unknown>[],
 					origins: (result.origins ?? []) as Record<string, unknown>[],
 				};
-				saveStorageState(name, state);
-				return state;
-			}
-			return undefined;
-		} catch (err) {
-			console.warn(
-				`[pi-lean-portal] Failed to auto-save storage state for profile ` +
-					`'${session.profileName ?? "default"}' via Python bridge: ` +
-					`${err instanceof Error ? err.message : String(err)}. ` +
-					"Session state may be lost.",
-			);
-			return undefined;
-		}
+			},
+			"via Python bridge",
+		);
 	}
 
 	/**

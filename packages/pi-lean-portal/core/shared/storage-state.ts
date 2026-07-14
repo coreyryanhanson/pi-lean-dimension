@@ -454,6 +454,46 @@ export function deleteStorageState(profileName: string): void {
 // ─── Session Profile Helpers ───────────────────────────────────────
 
 /**
+ * Persist storage state for a session if it is marked persistent.
+ *
+ * Shared by `PlaywrightPluginBase._persistState` (which reads state directly
+ * from a Playwright `BrowserContext`) and `PythonPluginAdapter._persistState`
+ * (which fetches state over JSON-RPC).  Both supply a `getStorageState`
+ * callback returning the raw `{ cookies, origins }` state; this helper owns
+ * the `persistState` gate, the `saveStorageState` call, and the
+ * warn-and-swallow error path so the two backends can't drift.
+ *
+ * @param session - The session-manager entry, or null/undefined. Only
+ *                  sessions with `persistState` true trigger a save.
+ * @param getStorageState - Callback that produces the raw storage state.
+ * @param viaLabel - Optional backend label inserted into the warning
+ *                   (e.g. `"via Python bridge"`) for diagnostic output.
+ * @returns The raw state object, or `undefined` if the session is
+ *          non-persistent or the save failed.
+ */
+export async function persistSessionState(
+	session: { persistState?: boolean; profileName?: string } | null | undefined,
+	getStorageState: () => Promise<{ cookies: unknown[]; origins: unknown[] }>,
+	viaLabel: string = "",
+): Promise<{ cookies: unknown[]; origins: unknown[] } | undefined> {
+	if (!session?.persistState) return undefined;
+	const name = session.profileName ?? "default";
+	try {
+		const state = await getStorageState();
+		saveStorageState(name, state);
+		return state;
+	} catch (err) {
+		console.warn(
+			`[pi-lean-portal] Failed to auto-save storage state for profile ` +
+				`'${name}'${viaLabel ? ` ${viaLabel}` : ""}: ` +
+				`${err instanceof Error ? err.message : String(err)}. ` +
+				"Session state may be lost.",
+		);
+		return undefined;
+	}
+}
+
+/**
  * Check whether a profile name follows the session-scoped naming convention.
  *
  * Session profiles start with `SESSION_PROFILE_PREFIX` (`_session-`) and

@@ -108,8 +108,9 @@ external client that attaches to the portal's running browser:
   browser. Never a portal feature; if it becomes one, it needs its own
   suite.
 
-`onBrowserLaunched()` is retained as a default-no-op post-launch hook for
-third-party subclasses; no portal backend overrides it.
+`onBrowserLaunched()` was retained as a default-no-op post-launch hook for
+third-party subclasses (no portal backend overrode it); it was later removed
+as dead code when no third-party consumer materialised.
 
 ## What MiniWoB does not cover
 

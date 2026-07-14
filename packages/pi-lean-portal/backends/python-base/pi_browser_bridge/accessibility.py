@@ -7,90 +7,27 @@ parsed nodes so the TypeScript adapter can map interactions back via
 get_by_role().
 
 Mirrors the logic in core/shared/accessibility-tree.ts.
+
+Role sets and icons are loaded from the shared ``browser-data.json``
+— the same file used by the TypeScript side so the two
+implementations never drift.
 """
 
 import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .browser_data import ACCESSIBILITY
+
 # ─── Role classification sets ─────────────────────────────────────────
 
-INTERACTIVE_ROLES: set[str] = {
-    "button",
-    "link",
-    "textbox",
-    "searchbox",
-    "combobox",
-    "checkbox",
-    "radio",
-    "heading",
-    "listbox",
-    "option",
-    "menuitem",
-    "menuitemcheckbox",
-    "menuitemradio",
-    "tab",
-    "treeitem",
-    "switch",
-    "slider",
-    "spinbutton",
-    "progressbar",
-    "meter",
-    "scrollbar",
-    "gridcell",
-    "cell",
-    "columnheader",
-    "rowheader",
-    "tabpanel",
-    "img",
-    "figure",
-    "listitem",
-    "dialog",
-    "alertdialog",
-    "tooltip",
-    "navigation",
-    "banner",
-    "form",
-    "search",
-    "toolbar",
-    "menu",
-    "menubar",
-    "note",
-    "alert",
-    "status",
-    "list",
-    "table",
-    "grid",
-    "treegrid",
-    "article",
-    "section",
-    "blockquote",
-    "code",
-}
+INTERACTIVE_ROLES: set[str] = set(ACCESSIBILITY["interactiveRoles"])
 
-INFORMATIONAL_ROLES: set[str] = {
-    "paragraph",
-    "text",
-    "group",
-    "region",
-    "main",
-    "complementary",
-    "contentinfo",
-    "definition",
-    "term",
-    "math",
-    "marquee",
-    "timer",
-    "log",
-    "deletion",
-    "insertion",
-    "mark",
-    "suggestion",
-    "comment",
-}
+INFORMATIONAL_ROLES: set[str] = set(ACCESSIBILITY["informationalRoles"])
 
 
 # ─── Data structures ──────────────────────────────────────────────────
+
 
 @dataclass
 class AriaCachedNode:
@@ -115,80 +52,8 @@ class AriaParseResult:
 
 # ─── Role icons ──────────────────────────────────────────────────────
 
-_ROLE_ICONS: dict[str, str] = {
-    "button": "\U0001f518 ",
-    "link": "\U0001f517 ",
-    "textbox": "\U0001f4dd ",
-    "searchbox": "\U0001f50d ",
-    "combobox": "\U0001f4cb ",
-    "checkbox": "\u2611 ",
-    "radio": "\u25cb ",
-    "heading": "\U0001f4cc ",
-    "listbox": "\U0001f4cb ",
-    "option": "\u2022 ",
-    "tab": "\U0001f4d1 ",
-    "switch": "\U0001f500 ",
-    "slider": "\U0001f527 ",
-    "spinbutton": "\U0001f522 ",
-    "img": "\U0001f5bc ",
-    "figure": "\U0001f5bc ",
-    "table": "\U0001f4ca ",
-    "grid": "\U0001f4ca ",
-    "gridcell": "\u25ab ",
-    "cell": "\u25ab ",
-    "dialog": "\U0001f4ac ",
-    "alertdialog": "\u26a0 ",
-    "navigation": "\U0001f9ed ",
-    "banner": "\U0001f4f0 ",
-    "main": "\U0001f4c4 ",
-    "complementary": "\U0001f4ce ",
-    "contentinfo": "\u2139 ",
-    "form": "\U0001f4dd ",
-    "search": "\U0001f50d ",
-    "group": "\U0001f4e6 ",
-    "toolbar": "\U0001f527 ",
-    "treeitem": "\u2022 ",
-    "menu": "\U0001f4cb ",
-    "menubar": "\U0001f4cb ",
-    "paragraph": "\U0001f4c3 ",
-    "article": "\U0001f4f0 ",
-    "section": "\U0001f4c4 ",
-    "list": "\U0001f4cb ",
-    "listitem": "\u2022 ",
-    "note": "\U0001f4dd ",
-    "alert": "\U0001f514 ",
-    "status": "\U0001f4ca ",
-    "code": "\U0001f4bb ",
-    "blockquote": "\U0001f4ac ",
-    "columnheader": "\U0001f4ca ",
-    "comment": "\U0001f4ac ",
-    "definition": "\U0001f4d6 ",
-    "deletion": "\u274c ",
-    "insertion": "\u2795 ",
-    "log": "\U0001f4cb ",
-    "mark": "\U0001f58d \ufe0f ",
-    "marquee": "\U0001f4dc ",
-    "math": "\U0001f9ee ",
-    "menuitem": "\U0001f4cb ",
-    "menuitemcheckbox": "\u2611 ",
-    "menuitemradio": "\u25cb ",
-    "meter": "\U0001f4ca ",
-    "progressbar": "\u23f3 ",
-    "region": "\U0001f4e6 ",
-    "rowheader": "\U0001f4ca ",
-    "scrollbar": "\U0001f4dc ",
-    "suggestion": "\U0001f4a1 ",
-    "tabpanel": "\U0001f4d1 ",
-    "term": "\U0001f4d6 ",
-    "text": "\U0001f4dd ",
-    "timer": "\u23f1 \ufe0f ",
-    "tooltip": "\U0001f4a1 ",
-    "treegrid": "\U0001f4ca ",
-}
-
-
 def _role_icon(role: str) -> str:
-    return _ROLE_ICONS.get(role, "")
+    return ACCESSIBILITY["roleIcons"].get(role, "")
 
 
 def _truncate(s: str, max_len: int) -> str:

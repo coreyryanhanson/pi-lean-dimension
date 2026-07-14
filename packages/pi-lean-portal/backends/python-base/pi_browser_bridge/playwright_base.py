@@ -26,6 +26,7 @@ from urllib.parse import unquote as _urlunquote
 from .bridge import BrowserBridge, SessionNotFoundError
 from .bot_detection import check_bot_detection
 from .accessibility import parse_snapshot, build_locator_args
+from .browser_data import NAV_SETTLE
 
 # ─── Playwright import (lazy, for better error messages) ──────────────
 
@@ -36,6 +37,11 @@ except ImportError:
     HAS_PLAYWRIGHT = False
     sync_playwright = None  # type: ignore[assignment]
     PlaywrightTimeout = TimeoutError  # type: ignore[misc]
+
+
+# ─── Nav-settle constants (loaded from shared browser-data.json) ──────
+
+_DOM_STABILIZE_JS: str = NAV_SETTLE["domStabilizationJs"]
 
 
 # ─── Shared helper for bridge entry points ───────────────────────────
@@ -314,6 +320,16 @@ class PlaywrightBridge(BrowserBridge):
                 file=sys.stderr,
                 flush=True,
             )
+
+    def _log_op(self, event: str, ctx: dict, result: dict) -> dict:
+        """Log result and return it. Replaces success/failure _log pairs."""
+        if self._debug:
+            log_data = dict(ctx)
+            log_data["success"] = result.get("success", False)
+            if result.get("error"):
+                log_data["error"] = result["error"]
+            self._log(event, **log_data)
+        return result
 
     # ── Shared Playwright lifecycle ────────────────────────────
 
@@ -850,16 +866,8 @@ class PlaywrightBridge(BrowserBridge):
         # ── DOM stabilization wait ──────────────────────────────
         try:
             page.wait_for_function(
-                """() => new Promise(resolve => {
-                    const count = document.querySelectorAll("*").length;
-                    setTimeout(() => {
-                        resolve(
-                            document.querySelectorAll("*").length === count
-                            || count > 5000
-                        );
-                    }, 400);
-                })""",
-                timeout=5_000,
+                _DOM_STABILIZE_JS,
+                timeout=NAV_SETTLE["navTimeoutMs"],
             )
         except Exception:
             pass  # Stabilization timed out — proceed
@@ -928,15 +936,11 @@ class PlaywrightBridge(BrowserBridge):
         return {"success": True}
 
     def do_snapshot(self, task_id: str) -> dict[str, Any]:
-        _t_start = time.time()
         try:
             page = self._get_page(task_id)
         except SessionNotFoundError:
             raise
         except Exception as exc:
-            self._log("snapshot", taskId=task_id, success=False,
-                      elementCount=0, dialogBlocks=0, fingerprint="",
-                      time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "snapshot": "",
@@ -948,15 +952,7 @@ class PlaywrightBridge(BrowserBridge):
             snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
-            session = self.get_session(task_id)
-            dialog_blocks = len(session.get("dialog_log", [])) if session else 0
-            fingerprint = snap_text[:16] if snap_text else ""
-            self._log("snapshot", taskId=task_id, success=True,
-                      elementCount=element_count,
-                      dialogBlocks=dialog_blocks,
-                      fingerprint=fingerprint,
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
@@ -964,21 +960,17 @@ class PlaywrightBridge(BrowserBridge):
                 "dialogEvents": self._get_dialog_events(task_id),
             }
         except Exception as exc:
-            self._log("snapshot", taskId=task_id, success=False,
-                      elementCount=0, dialogBlocks=0, fingerprint="",
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": False,
                 "snapshot": "",
                 "elementCount": 0,
                 "error": str(exc),
             }
+        return self._log_op("snapshot", {"taskId": task_id}, result)
 
     # ── Interaction ─────────────────────────────────────────────────
 
     def do_click(self, task_id: str, ref: str) -> dict[str, Any]:
-        _t_start = time.time()
-
         # Extract role/name from element cache for debug logging
         _key = ref[1:] if ref.startswith("@") else ref
         _cache = self.get_element_cache(task_id)
@@ -991,9 +983,6 @@ class PlaywrightBridge(BrowserBridge):
         except SessionNotFoundError:
             raise
         except Exception as exc:
-            self._log("click", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail",
-                      time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"Click failed: {exc}",
@@ -1003,8 +992,7 @@ class PlaywrightBridge(BrowserBridge):
             locator = self._locate_element(page, task_id, ref)
         except RuntimeError as exc:
             self._log("click", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail",
-                      time=round((time.time() - _t_start) * 1000))
+                      name=_name, result="fail")
             return {"success": False, "error": str(exc)}
 
         try:
@@ -1022,10 +1010,6 @@ class PlaywrightBridge(BrowserBridge):
                 task_id, page
             )
 
-            self._log("click", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="success", navigated=navigated,
-                      time=round((time.time() - _t_start) * 1000))
-
             dialog_events = self._get_dialog_events(task_id)
             result: dict[str, Any] = {
                 "success": True,
@@ -1036,20 +1020,14 @@ class PlaywrightBridge(BrowserBridge):
                 "newUrl": new_url,
                 "newTitle": new_title,
             }
-            return result
-
         except Exception as exc:
-            self._log("click", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail",
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": False,
                 "error": f"Click failed: {exc}",
             }
+        return self._log_op("click", {"taskId": task_id, "ref": ref, "role": _role, "name": _name}, result)
 
     def do_type(self, task_id: str, ref: str, text: str) -> dict[str, Any]:
-        _t_start = time.time()
-
         # Extract role/name from element cache for debug logging
         _key = ref[1:] if ref.startswith("@") else ref
         _cache = self.get_element_cache(task_id)
@@ -1062,9 +1040,6 @@ class PlaywrightBridge(BrowserBridge):
         except SessionNotFoundError:
             raise
         except Exception as exc:
-            self._log("type", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail",
-                      time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"Type failed: {exc}",
@@ -1074,8 +1049,7 @@ class PlaywrightBridge(BrowserBridge):
             locator = self._locate_element(page, task_id, ref)
         except RuntimeError as exc:
             self._log("type", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail",
-                      time=round((time.time() - _t_start) * 1000))
+                      name=_name, result="fail")
             return {"success": False, "error": str(exc)}
 
         try:
@@ -1086,38 +1060,26 @@ class PlaywrightBridge(BrowserBridge):
                 task_id, page
             )
 
-            self._log("type", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="success",
-                      elementCount=element_count,
-                      time=round((time.time() - _t_start) * 1000))
-
-            return {
+            result = {
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
                 "elements": elements,
                 "dialogEvents": self._get_dialog_events(task_id),
             }
-
         except Exception as exc:
-            self._log("type", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail",
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": False,
                 "error": f"Type failed: {exc}",
             }
+        return self._log_op("type", {"taskId": task_id, "ref": ref, "role": _role, "name": _name}, result)
 
     def do_scroll(self, task_id: str, direction: str) -> dict[str, Any]:
-        _t_start = time.time()
         try:
             page = self._get_page(task_id)
         except SessionNotFoundError:
             raise
         except Exception as exc:
-            self._log("scroll", taskId=task_id, direction=direction,
-                      success=False,
-                      time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"Scroll failed: {exc}",
@@ -1141,36 +1103,26 @@ class PlaywrightBridge(BrowserBridge):
                 task_id, page
             )
 
-            self._log("scroll", taskId=task_id, direction=direction,
-                      success=True, elementCount=element_count,
-                      time=round((time.time() - _t_start) * 1000))
-
-            return {
+            result = {
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
                 "elements": elements,
                 "dialogEvents": self._get_dialog_events(task_id),
             }
-
         except Exception as exc:
-            self._log("scroll", taskId=task_id, direction=direction,
-                      success=False,
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": False,
                 "error": f"Scroll failed: {exc}",
             }
+        return self._log_op("scroll", {"taskId": task_id, "direction": direction}, result)
 
     def do_go_back(self, task_id: str) -> dict[str, Any]:
-        _t_start = time.time()
         try:
             page = self._get_page(task_id)
         except SessionNotFoundError:
             raise
         except Exception as exc:
-            self._log("goBack", taskId=task_id, success=False,
-                      time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"GoBack failed: {exc}",
@@ -1199,10 +1151,6 @@ class PlaywrightBridge(BrowserBridge):
                 task_id, page
             )
 
-            self._log("goBack", taskId=task_id, success=True,
-                      elementCount=element_count,
-                      time=round((time.time() - _t_start) * 1000))
-
             dialog_events = self._get_dialog_events(task_id)
             result: dict[str, Any] = {
                 "success": True,
@@ -1215,25 +1163,19 @@ class PlaywrightBridge(BrowserBridge):
                 result["newUrl"] = new_url
             if new_title is not None:
                 result["newTitle"] = new_title
-            return result
-
         except Exception as exc:
-            self._log("goBack", taskId=task_id, success=False,
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": False,
                 "error": f"GoBack failed: {exc}",
             }
+        return self._log_op("goBack", {"taskId": task_id}, result)
 
     def do_press(self, task_id: str, key: str) -> dict[str, Any]:
-        _t_start = time.time()
         try:
             page = self._get_page(task_id)
         except SessionNotFoundError:
             raise
         except Exception as exc:
-            self._log("press", taskId=task_id, key=key, success=False,
-                      time=round((time.time() - _t_start) * 1000))
             return {
                 "success": False,
                 "error": f"Press failed: {exc}",
@@ -1255,10 +1197,6 @@ class PlaywrightBridge(BrowserBridge):
                 task_id, page
             )
 
-            self._log("press", taskId=task_id, key=key, success=True,
-                      navigated=navigated, elementCount=element_count,
-                      time=round((time.time() - _t_start) * 1000))
-
             result: dict[str, Any] = {
                 "success": True,
                 "snapshot": snap_text,
@@ -1268,15 +1206,12 @@ class PlaywrightBridge(BrowserBridge):
                 "newUrl": new_url,
                 "newTitle": new_title,
             }
-            return result
-
         except Exception as exc:
-            self._log("press", taskId=task_id, key=key, success=False,
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": False,
                 "error": f"Press failed: {exc}",
             }
+        return self._log_op("press", {"taskId": task_id, "key": key}, result)
 
     # ── Media ───────────────────────────────────────────────────────
 

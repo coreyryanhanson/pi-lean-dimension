@@ -4,7 +4,12 @@
  * Parses Playwright's page.ariaSnapshot() YAML-like output into an
  * LLM-friendly text format with @e1, @e2 element references. Caches
  * parsed nodes so interactions (click, type) can map back via getByRole().
+ *
+ * Role sets and icons are loaded from the shared ``browser-data.json``
+ * — the same file used by the Python bridge so the two sides never drift.
  */
+
+import { ACCESSIBILITY } from "./browser-data.js";
 
 /** A single parsed node from the aria snapshot, cached for interaction */
 export interface AriaCachedNode {
@@ -31,84 +36,16 @@ export interface AriaParseResult {
 
 /**
  * Roles that get @e refs and can be used for interaction.
+ * Loaded from shared browser-data.json.
  */
-export const INTERACTIVE_ROLES = new Set([
-	"button",
-	"link",
-	"textbox",
-	"searchbox",
-	"combobox",
-	"checkbox",
-	"radio",
-	"heading",
-	"listbox",
-	"option",
-	"menuitem",
-	"menuitemcheckbox",
-	"menuitemradio",
-	"tab",
-	"treeitem",
-	"switch",
-	"slider",
-	"spinbutton",
-	"progressbar",
-	"meter",
-	"scrollbar",
-	"gridcell",
-	"cell",
-	"columnheader",
-	"rowheader",
-	"tabpanel",
-	"img",
-	"figure",
-	"listitem",
-	"dialog",
-	"alertdialog",
-	"tooltip",
-	"navigation",
-	"banner",
-	"form",
-	"search",
-	"toolbar",
-	"menu",
-	"menubar",
-	"note",
-	"alert",
-	"status",
-	"list",
-	"table",
-	"grid",
-	"treegrid",
-	"article",
-	"section",
-	"blockquote",
-	"code",
-]);
+export const INTERACTIVE_ROLES = new Set(ACCESSIBILITY.interactiveRoles);
 
 /**
  * Roles that are shown in the tree but DON'T get @e refs
  * (informational only, not useful click targets).
+ * Loaded from shared browser-data.json.
  */
-export const INFORMATIONAL_ROLES = new Set([
-	"paragraph",
-	"text",
-	"group",
-	"region",
-	"main",
-	"complementary",
-	"contentinfo",
-	"definition",
-	"term",
-	"math",
-	"marquee",
-	"timer",
-	"log",
-	"deletion",
-	"insertion",
-	"mark",
-	"suggestion",
-	"comment",
-]);
+export const INFORMATIONAL_ROLES = new Set(ACCESSIBILITY.informationalRoles);
 
 /**
  * Parse the YAML-like output of page.ariaSnapshot().
@@ -306,77 +243,7 @@ function countLeadingSpaces(s: string): number {
 // ─── Helpers ──────────────────────────────────────────────────────────
 
 export function roleIcon(role: string): string {
-	const icons: Record<string, string> = {
-		alert: "🔔 ",
-		alertdialog: "⚠ ",
-		article: "📰 ",
-		banner: "📰 ",
-		blockquote: "💬 ",
-		button: "🔘 ",
-		cell: "▫ ",
-		checkbox: "☑ ",
-		code: "💻 ",
-		columnheader: "📊 ",
-		combobox: "📋 ",
-		comment: "💬 ",
-		complementary: "📎 ",
-		contentinfo: "ℹ ",
-		definition: "📖 ",
-		deletion: "❌ ",
-		dialog: "💬 ",
-		figure: "🖼 ",
-		form: "📝 ",
-		grid: "📊 ",
-		gridcell: "▫ ",
-		group: "📦 ",
-		heading: "📌 ",
-		img: "🖼 ",
-		insertion: "➕ ",
-		link: "🔗 ",
-		list: "📋 ",
-		listbox: "📋 ",
-		listitem: "• ",
-		log: "📋 ",
-		main: "📄 ",
-		mark: "🖍️ ",
-		marquee: "📜 ",
-		math: "🧮 ",
-		menu: "📋 ",
-		menubar: "📋 ",
-		menuitem: "📋 ",
-		menuitemcheckbox: "☑ ",
-		menuitemradio: "○ ",
-		meter: "📊 ",
-		navigation: "🧭 ",
-		note: "📝 ",
-		option: "• ",
-		paragraph: "📃 ",
-		progressbar: "⏳ ",
-		radio: "○ ",
-		region: "📦 ",
-		rowheader: "📊 ",
-		search: "🔍 ",
-		searchbox: "🔍 ",
-		scrollbar: "📜 ",
-		section: "📄 ",
-		slider: "🔧 ",
-		spinbutton: "🔢 ",
-		status: "📊 ",
-		suggestion: "💡 ",
-		switch: "🔀 ",
-		tab: "📑 ",
-		table: "📊 ",
-		tabpanel: "📑 ",
-		term: "📖 ",
-		text: "📝 ",
-		textbox: "📝 ",
-		timer: "⏱️ ",
-		toolbar: "🔧 ",
-		tooltip: "💡 ",
-		treegrid: "📊 ",
-		treeitem: "• ",
-	};
-	return icons[role] || "";
+	return ACCESSIBILITY.roleIcons[role] ?? "";
 }
 
 function truncate(s: string, max: number): string {

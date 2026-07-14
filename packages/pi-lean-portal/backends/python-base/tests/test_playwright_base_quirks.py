@@ -139,13 +139,27 @@ def _bind_session(bridge: _FakePlaywrightBridge, page: _FakePage) -> None:
 
 
 class _BareBridge(BrowserBridge):
-    """Trivial concrete ``BrowserBridge`` for base-class handler tests."""
+    """Trivial concrete ``BrowserBridge`` for base-class handler tests.
+
+    Only exercises base-class handlers (``browser.init``,
+    ``browser.describeQuirks``); the ``do_*`` stubs below are never
+    invoked but satisfy the abstract contract so the class instantiates.
+    """
 
     def create_browser_session(self, task_id, config):  # pragma: no cover
         return {}
 
     def create_browser_context(self, config):  # pragma: no cover
         return None
+
+    def _do_stub(self, *args, **kwargs):  # pragma: no cover
+        return {}
+
+    do_navigate = do_snapshot = do_click = do_type = do_scroll = _do_stub
+    do_go_back = do_press = do_screenshot = _do_stub
+    do_get_console_messages = do_clear_console = do_evaluate = _do_stub
+    do_get_cookies = do_add_cookies = do_clear_cookies = _do_stub
+    do_get_storage_state = _do_stub
 
 
 # ═══════════════════════════════════════════════════════════════════════
