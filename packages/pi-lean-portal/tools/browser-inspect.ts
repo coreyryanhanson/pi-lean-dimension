@@ -7,6 +7,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import * as router from "../core/router.js";
 import { taskId } from "../core/shared/task-id.js";
+import { renderExpandedText } from "./utils.js";
 
 export const browserInspectTool = defineTool({
 	name: "browser-inspect",
@@ -124,13 +125,8 @@ export const browserInspectTool = defineTool({
 		const staleness = d?.stalenessWarning
 			? ` ${theme.fg("warning", "(stale)")}`
 			: "";
-		const preview = content.replace(/\n{3,}/g, "\n\n").slice(0, 100);
 		let text = theme.fg("accent", `🔍 ${content.length} chars`) + staleness;
-		if (preview) {
-			text += `\n${theme.fg("dim", preview)}`;
-			if (content.length > 100)
-				text += `\n${theme.fg("muted", `… ${content.length - 100} more chars`)}`;
-		}
+		text = renderExpandedText(text, theme, content, 100);
 		return new Text(text, 0, 0);
 	},
 });

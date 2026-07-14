@@ -15,7 +15,10 @@
 		"prepublishOnly": "npm run test:ci",
 		"publish": "npm run prepublishOnly && npm publish -w packages/pi-lean-portal -w packages/pi-lean-search --access public && node scripts/publish-dimension.mjs",
 		"publish:dry": "npm run prepublishOnly && npm publish -w packages/pi-lean-portal -w packages/pi-lean-search --access public --dry-run && node scripts/publish-dimension.mjs --dry-run",
-		"test:ci": "vitest run --exclude='**/chromium*.test.ts' --exclude='**/firefox*.test.ts' --exclude='**/reddit*.test.ts'",
+		"test:ci": "vitest run --exclude='**/chromium*.test.ts' --exclude='**/firefox*.test.ts' --exclude='**/bench/**'",
+		"test:py-bridge": "node scripts/run-py-bridge-tests.mjs",
+		"setup:miniwob": "node bench/miniwob/scripts/setup-miniwob.mjs",
+		"test:miniwob": "node bench/miniwob/scripts/miniwob-preflight.mjs && vitest run bench/miniwob/suites/",
 		"release:patch": "node scripts/release.mjs patch",
 		"release:minor": "node scripts/release.mjs minor",
 		"release:major": "node scripts/release.mjs major"

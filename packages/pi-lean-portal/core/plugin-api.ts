@@ -21,18 +21,8 @@ import type { AriaCachedNode } from "./shared/accessibility-tree.js";
  * screenshot when unsupported).
  */
 export interface PluginCapabilities {
-	/** Can take full-page screenshots */
 	supportsFullPageScreenshot: boolean;
-	/** Can capture console messages via CDP or equivalent */
-	supportsConsoleCapture: boolean;
-	/** Can evaluate arbitrary JavaScript in the page */
 	supportsJavaScriptEvaluate: boolean;
-	/** Can detect bot/anti-automation signals (Cloudflare, CAPTCHA, etc.) */
-	supportsBotDetection: boolean;
-	/** Can auto-dismiss JS dialogs (alert/confirm/prompt) */
-	supportsDialogAutoDismissal: boolean;
-	/** Can accept an AbortSignal for long-running navigations */
-	supportsAbortSignal: boolean;
 	/** Browser engine (used for display/debugging only) */
 	engine: "chromium" | "firefox" | "webkit" | string;
 }
@@ -40,11 +30,7 @@ export interface PluginCapabilities {
 /** Default capabilities matching a full-featured Chromium backend. */
 export const DEFAULT_CAPABILITIES: PluginCapabilities = {
 	supportsFullPageScreenshot: true,
-	supportsConsoleCapture: true,
 	supportsJavaScriptEvaluate: true,
-	supportsBotDetection: true,
-	supportsDialogAutoDismissal: true,
-	supportsAbortSignal: true,
 	engine: "chromium",
 };
 
@@ -59,7 +45,6 @@ export const DEFAULT_CAPABILITIES: PluginCapabilities = {
 export interface DialogEvent {
 	/** Dialog type as reported by the browser */
 	type: string;
-	/** Dialog message text */
 	message: string;
 	/** How the dialog was handled (always "accepted" for auto-dismiss) */
 	handledAs: "accepted" | "dismissed";
@@ -76,13 +61,11 @@ export interface ResultBase {
 	error?: string;
 }
 
-/** Result from browser-navigate */
 export interface NavigateResult extends ResultBase {
 	url: string;
 	title: string;
 	/** Accessibility-tree text with @e refs */
 	snapshot: string;
-	/** Number of interactive elements found */
 	elementCount: number;
 	/** Plugin-internal signal: page may be blocked by bot detection */
 	botDetected?: boolean;
@@ -90,17 +73,14 @@ export interface NavigateResult extends ResultBase {
 	dialogDetected?: boolean;
 	/** Auto-dismissed JavaScript dialogs (alert/confirm/prompt) since last navigate */
 	dialogEvents?: DialogEvent[];
-	/** The active profile mode for this session. */
 	profileMode?: "none" | "session" | "named";
 	/** Which profile was loaded for this session (if any) */
 	profileName?: string;
 }
 
-/** Result from browser-snapshot */
 export interface SnapshotResult extends ResultBase {
 	/** Accessibility-tree text with @e refs */
 	snapshot: string;
-	/** Number of interactive elements found */
 	elementCount: number;
 	/** Auto-dismissed JavaScript dialogs (alert/confirm/prompt) since last snapshot */
 	dialogEvents?: DialogEvent[];
@@ -114,19 +94,16 @@ export interface InteractionResult extends ResultBase {
 	newTitle?: string;
 	/** Auto-captured snapshot after the interaction */
 	snapshot?: string;
-	/** Number of interactive elements in the auto-snapshot */
 	elementCount?: number;
 	/** Auto-dismissed JavaScript dialogs since the interaction */
 	dialogEvents?: DialogEvent[];
 }
 
-/** Result from plugin.screenshot() */
 export interface ScreenshotResult extends ResultBase {
 	/** JPEG data URI of the screenshot */
 	dataUri: string;
 }
 
-/** Result from getConsoleMessages */
 export interface ConsoleMessagesResult extends ResultBase {
 	messages: Array<{ type: string; text: string }>;
 }
@@ -157,7 +134,6 @@ export interface Cookie {
 	sameSite?: "Strict" | "Lax" | "None";
 }
 
-/** Result from browser-getCookies */
 export interface CookieResult extends ResultBase {
 	cookies: Cookie[];
 }
@@ -169,7 +145,6 @@ export interface ClearCookiesOptions {
 	path?: string;
 }
 
-/** Result from browser-getStorageState */
 export interface StorageStateResult extends ResultBase {
 	cookies: Cookie[];
 	origins: Array<{
@@ -183,7 +158,7 @@ export interface StorageStateResult extends ResultBase {
 /**
  * The contract every interactive browser backend must implement.
  *
- * The 12 required operations (plus getElementCache and cookie/storage
+ * The 18 required operations (plus getElementCache and cookie/storage
  * methods) make up the full contract. Lifecycle hooks are called by
  * the framework, not the agent.
  */
@@ -231,9 +206,6 @@ export interface BrowserPlugin {
 
 	// ── Cookies & storage state ────────────────────────────────
 
-	/**
-	 * Get all browser cookies for the session, optionally filtered by URL.
-	 */
 	getCookies(taskId: string, urls?: string[]): Promise<CookieResult>;
 
 	/**
@@ -282,7 +254,11 @@ export interface BrowserPlugin {
 
 	clearConsole(taskId: string): Promise<void>;
 
-	evaluate(taskId: string, expression: string): Promise<EvaluateResult>;
+	evaluate(
+		taskId: string,
+		expression: string,
+		readOnly?: boolean,
+	): Promise<EvaluateResult>;
 
 	// ── Element cache access ─────────────────────────────────
 
@@ -295,8 +271,5 @@ export interface BrowserPlugin {
 
 	// ── Per-task cleanup ──────────────────────────────────────
 
-	/**
-	 * Clean up resources for a specific task (browser context, page, etc.).
-	 */
 	cleanup(taskId: string): Promise<void>;
 }

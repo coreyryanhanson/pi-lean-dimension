@@ -44,8 +44,8 @@ async function checkServerReachable(
 		let res: Response;
 		try {
 			const mergedSignal = signal
-				? combineAbortSignals(signal, controller.signal)
-				: (controller.signal as AbortSignal);
+				? AbortSignal.any([signal, controller.signal])
+				: controller.signal;
 			res = await fetch(url, { signal: mergedSignal });
 		} finally {
 			clearTimeout(timeoutId);
@@ -75,8 +75,8 @@ async function checkSearchReachable(
 		let res: Response;
 		try {
 			const mergedSignal = signal
-				? combineAbortSignals(signal, controller.signal)
-				: (controller.signal as AbortSignal);
+				? AbortSignal.any([signal, controller.signal])
+				: controller.signal;
 			res = await fetch(searchUrl, {
 				signal: mergedSignal,
 				headers: { Accept: "application/json" },
@@ -93,23 +93,6 @@ async function checkSearchReachable(
 	} catch {
 		return false;
 	}
-}
-
-/**
- * Combine two AbortSignals into one that aborts when either aborts.
- */
-function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
-	const controller = new AbortController();
-	for (const sig of signals) {
-		if (sig.aborted) {
-			controller.abort(sig.reason);
-			return controller.signal;
-		}
-		sig.addEventListener("abort", () => controller.abort(sig.reason), {
-			once: true,
-		});
-	}
-	return controller.signal;
 }
 
 // ─── Status slot helpers ──────────────────────────────────────────

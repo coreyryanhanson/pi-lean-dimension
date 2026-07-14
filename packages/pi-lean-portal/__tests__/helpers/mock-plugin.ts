@@ -19,10 +19,10 @@ import type {
 	ClearCookiesOptions,
 	StorageStateResult,
 	ResultBase,
-} from "../../core/plugin-api";
-import type { PluginConfig } from "../../core/plugin-config";
-import { DEFAULT_CAPABILITIES } from "../../core/plugin-api";
-import type { AriaCachedNode } from "../../core/shared/accessibility-tree";
+} from "../../core/plugin-api.js";
+import type { PluginConfig } from "../../core/plugin-config.js";
+import { DEFAULT_CAPABILITIES } from "../../core/plugin-api.js";
+import type { AriaCachedNode } from "../../core/shared/accessibility-tree.js";
 
 export class MockPlugin implements BrowserPlugin {
 	readonly name: string;
@@ -197,8 +197,12 @@ export class MockPlugin implements BrowserPlugin {
 			throw new Error("clearConsole failed");
 	}
 
-	async evaluate(taskId: string, expression: string): Promise<EvaluateResult> {
-		this.record("evaluate", [taskId, expression]);
+	async evaluate(
+		taskId: string,
+		expression: string,
+		readOnly?: boolean,
+	): Promise<EvaluateResult> {
+		this.record("evaluate", [taskId, expression, readOnly]);
 		if (this.shouldThrow.has("evaluate")) throw new Error("evaluate failed");
 		return {
 			success: true,
@@ -239,7 +243,7 @@ export class MockPlugin implements BrowserPlugin {
 
 	async addCookies(
 		taskId: string,
-		cookies: import("../../core/plugin-api").Cookie[],
+		cookies: import("../../core/plugin-api.js").Cookie[],
 	): Promise<ResultBase> {
 		this.record("addCookies", [taskId, cookies]);
 		if (this.shouldThrow.has("addCookies"))

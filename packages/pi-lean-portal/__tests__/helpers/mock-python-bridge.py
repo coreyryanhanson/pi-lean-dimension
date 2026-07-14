@@ -36,6 +36,10 @@ def main() -> None:
         if method == "ping":
             write_response(req_id, result="pong")
 
+        elif method == "browser.init":
+            # Phase 0: accept plugin config forwarded from the adapter after ping.
+            write_response(req_id, result={"ok": True})
+
         elif method == "shutdown":
             write_response(req_id, result="shutting_down")
             sys.stdout.flush()

@@ -6,54 +6,29 @@ Mirrors the logic in ``core/shared/bot-detection.ts`` ``checkPage()``.
 The matching *must* run in the Python process because it needs
 ``page.title()`` and ``page.evaluate()`` for body/HTML — shipping the
 full HTML across JSON-RPC would be prohibitively expensive.  However,
-the signal lists are pure data and live here as a single source of
-truth for all Python-based browser backends.
+the signal lists are pure data and are loaded from the shared
+``browser-data.json`` file — the same file used by the TypeScript side
+so the two implementations never drift.
 """
 
 import re
 from typing import Any
 
+from .browser_data import BOT_SIGNALS
+
 #: Block-level signals — checked against BOTH title and body text.
-#: Mirror of TypeScript bot-detection.ts BLOCK_SIGNALS.
-#: Only specific challenge phrases are included — generic single words
-#: like "captcha", "cloudflare", "recaptcha" are excluded because they
-#: cause false positives on legitimate pages mentioning them in passing.
-_BLOCK_SIGNALS: tuple[str, ...] = (
-    "please verify you are human",
-    "attention required!",
-    "just a moment...",
-    "checking your browser",
-    "you have been blocked",
-    "sorry, you have been blocked",
-    "verify you are human",
-    "your request has been blocked",
-    "we are checking your browser",
-    "cf-challenge",
-    "_cf_chl_opt",
-    "cdn-cgi/challenge",
-)
+_BLOCK_SIGNALS: tuple[str, ...] = tuple(BOT_SIGNALS["blockSignals"])
 
 #: Body-only string signals — high-specificity CDN patterns.
-#: Mirror of TypeScript bot-detection.ts BODY_ONLY_SIGNALS.
-_BODY_ONLY_SIGNALS: tuple[str, ...] = (
-    "errors.edgesuite.net",
-    "you don't have permission to access",
+_BODY_ONLY_SIGNALS: tuple[str, ...] = tuple(BOT_SIGNALS["bodyOnlySignals"])
+
+#: Body-only regex patterns — compiled from shared source strings.
+_BODY_ONLY_PATTERNS: tuple[re.Pattern, ...] = tuple(
+    re.compile(p, re.IGNORECASE) for p in BOT_SIGNALS["bodyOnlyPatterns"]
 )
 
-#: Body-only regex patterns — checked against raw body text.
-#: Mirror of TypeScript bot-detection.ts BODY_ONLY_PATTERNS.
-_BODY_ONLY_PATTERNS: tuple[re.Pattern, ...] = (
-    re.compile(r"reference\s*#[a-f0-9]+(?:\.[a-f0-9]+)+", re.IGNORECASE),
-)
-
-#: HTML-level CAPTCHA/widget signals (Python-only enhancement).
-_HTML_SIGNALS: tuple[str, ...] = (
-    "recaptcha",
-    "hcaptcha",
-    "turnstile",
-    "g-recaptcha",
-    "data-sitekey",
-)
+#: HTML-level CAPTCHA/widget signals.
+_HTML_SIGNALS: tuple[str, ...] = tuple(BOT_SIGNALS["htmlSignals"])
 
 
 def check_bot_detection(page: Any) -> bool:

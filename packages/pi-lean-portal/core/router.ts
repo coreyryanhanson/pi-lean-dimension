@@ -1,14 +1,6 @@
 /**
  * Plugin Router — registry-based dispatch for interactive browser operations.
- *
- * All dispatch goes through the PluginRegistry, which resolves
- * the correct plugin based on the `strategy` parameter.
- *
- * Cross-cutting concerns handled here (not in plugins):
- * - Snapshot truncation (compactSnapshot)
- * - URL safety validation
- * - Session lifecycle (via sessionManager)
- * - Auto-recovery from crashed sessions (via lastNav)
+ * Handles snapshot truncation, URL safety, session lifecycle, and crash recovery.
  */
 
 import { writeFileSync } from "node:fs";
@@ -30,7 +22,7 @@ import {
 	sanitizeProfileName,
 	sessionProfileName,
 } from "./shared/storage-state.js";
-import { loadBrowserConfig } from "./plugin-config.js";
+import { loadFullConfig } from "./plugin-config.js";
 import {
 	runExtractor,
 	correlateElements,
@@ -38,6 +30,7 @@ import {
 	formatElementList,
 	formatRoleCountSummary,
 	type ExtractResult,
+	type QueryStatus,
 } from "./shared/dom-extractor.js";
 import type {
 	DialogEvent,
@@ -228,16 +221,6 @@ async function requireInteractiveSession(taskId: string): Promise<{
 	return null;
 }
 
-/**
- * Get the plugin for a given session. Returns undefined if the session
- * doesn't exist or the plugin is not available.
- */
-function getPluginForSession(
-	session: BrowserSession,
-): import("./plugin-api.js").BrowserPlugin | undefined {
-	return pluginRegistry.get(session.pluginName);
-}
-
 interface ResolvedSession {
 	tid: string;
 	session: BrowserSession;
@@ -255,7 +238,7 @@ async function resolveSession(
 	const tid = taskId ?? "default";
 	const sr = await requireInteractiveSession(tid);
 	if (!sr) return null;
-	const plugin = getPluginForSession(sr.session);
+	const plugin = pluginRegistry.get(sr.session.pluginName);
 	if (!plugin) return null;
 	return {
 		tid,
@@ -463,7 +446,7 @@ export async function navigate(
 	let resolvedProfileName: string | undefined;
 	let profileMode: "none" | "session" | "named" | undefined;
 
-	const browserConfig = loadBrowserConfig();
+	const browserConfig = loadFullConfig().browser;
 	const profileInput = options.profile ?? browserConfig.defaultProfile;
 
 	if (profileInput === "none") {
@@ -731,13 +714,16 @@ export async function snapshot(
 
 // ─── Interaction tools ──────────────────────────────────────────────
 
-export async function click(
+/** Shared shape for the 5 ref-based interaction tools (click/type/scroll/goBack/press). */
+async function wrapInteraction(
 	taskId: string | undefined,
-	ref: string,
+	run: (
+		plugin: import("./plugin-api.js").BrowserPlugin,
+		tid: string,
+	) => Promise<InteractionResult>,
 ): Promise<InteractionResult> {
 	const resolved = await resolveSession(taskId);
 	if (!resolved) return noSessionError();
-
 	return refBasedInteractionOrSnapshot(
 		resolved.tid,
 		resolved.wasAutoCreated,
@@ -745,9 +731,16 @@ export async function click(
 		async () =>
 			compactInteractionResult(
 				resolved.tid,
-				await resolved.plugin.click(resolved.tid, ref),
+				await run(resolved.plugin, resolved.tid),
 			),
 	);
+}
+
+export async function click(
+	taskId: string | undefined,
+	ref: string,
+): Promise<InteractionResult> {
+	return wrapInteraction(taskId, (plugin, tid) => plugin.click(tid, ref));
 }
 
 export async function type(
@@ -755,73 +748,27 @@ export async function type(
 	ref: string,
 	text: string,
 ): Promise<InteractionResult> {
-	const resolved = await resolveSession(taskId);
-	if (!resolved) return noSessionError();
-
-	return refBasedInteractionOrSnapshot(
-		resolved.tid,
-		resolved.wasAutoCreated,
-		resolved.plugin,
-		async () =>
-			compactInteractionResult(
-				resolved.tid,
-				await resolved.plugin.type(resolved.tid, ref, text),
-			),
-	);
+	return wrapInteraction(taskId, (plugin, tid) => plugin.type(tid, ref, text));
 }
 
 export async function scroll(
 	taskId: string | undefined,
 	direction: "up" | "down",
 ): Promise<InteractionResult> {
-	const resolved = await resolveSession(taskId);
-	if (!resolved) return noSessionError();
-
-	return refBasedInteractionOrSnapshot(
-		resolved.tid,
-		resolved.wasAutoCreated,
-		resolved.plugin,
-		async () =>
-			compactInteractionResult(
-				resolved.tid,
-				await resolved.plugin.scroll(resolved.tid, direction),
-			),
+	return wrapInteraction(taskId, (plugin, tid) =>
+		plugin.scroll(tid, direction),
 	);
 }
 
 export async function goBack(taskId?: string): Promise<InteractionResult> {
-	const resolved = await resolveSession(taskId);
-	if (!resolved) return noSessionError();
-
-	return refBasedInteractionOrSnapshot(
-		resolved.tid,
-		resolved.wasAutoCreated,
-		resolved.plugin,
-		async () =>
-			compactInteractionResult(
-				resolved.tid,
-				await resolved.plugin.goBack(resolved.tid),
-			),
-	);
+	return wrapInteraction(taskId, (plugin, tid) => plugin.goBack(tid));
 }
 
 export async function press(
 	taskId: string | undefined,
 	key: string,
 ): Promise<InteractionResult> {
-	const resolved = await resolveSession(taskId);
-	if (!resolved) return noSessionError();
-
-	return refBasedInteractionOrSnapshot(
-		resolved.tid,
-		resolved.wasAutoCreated,
-		resolved.plugin,
-		async () =>
-			compactInteractionResult(
-				resolved.tid,
-				await resolved.plugin.press(resolved.tid, key),
-			),
-	);
+	return wrapInteraction(taskId, (plugin, tid) => plugin.press(tid, key));
 }
 
 /**
@@ -992,16 +939,23 @@ export async function browserInspect(
 			};
 		}
 
-		// Run the DOM extractor
-		const extracted = await runExtractor(tid, plugin);
-		if (!extracted) {
+		// Run the DOM extractor. The !cacheExists guard above guarantees
+		// cache is non-null and non-empty here, so we always route to the
+		// live-cache query hint on failure.
+		const outcome = await runExtractor(tid, plugin);
+		if (!outcome.ok) {
 			return {
 				success: false,
 				content: "",
 				error:
-					"Text extraction returned no content. The page may be empty, blocked, or strict CSP prevents DOM access. Use browser-snapshot to inspect visually.",
+					`Text extraction failed: ${outcome.error}. ` +
+					`A live element cache (${cache!.size} elements) is available — ` +
+					"use browser-inspect with role=, name=, or ref= to query it, " +
+					"or browser-snapshot to refresh.",
 			};
 		}
+
+		const extracted = outcome.result;
 
 		// Keyword filtering — case-insensitive substring match on extracted text
 		if (params.query) {
@@ -1044,16 +998,30 @@ export async function browserInspect(
 			};
 		}
 
-		const filtered = queryElementCache(cache!, {
-			...(params.role !== undefined ? { role: params.role } : {}),
-			...(params.name !== undefined ? { name: params.name } : {}),
-			...(params.ref !== undefined ? { ref: params.ref } : {}),
-			...(params.subtree !== undefined ? { subtree: params.subtree } : {}),
-		});
+		const status: QueryStatus = {};
+		const filtered = queryElementCache(
+			cache!,
+			{
+				...(params.role !== undefined ? { role: params.role } : {}),
+				...(params.name !== undefined ? { name: params.name } : {}),
+				...(params.ref !== undefined ? { ref: params.ref } : {}),
+				...(params.subtree !== undefined ? { subtree: params.subtree } : {}),
+			},
+			status,
+		);
 
-		const content = formatElementList(filtered, {
-			...(params.ref !== undefined ? { ref: params.ref } : {}),
-		});
+		let content: string;
+		if (filtered.length === 0 && status.refFilteredOut) {
+			const { node, filter, value } = status.refFilteredOut;
+			content =
+				`Element @${node.ref} found in cache (role=${node.role}` +
+				`${node.name ? `, name="${node.name}"` : ""}) but does not match ` +
+				`filter ${filter}="${value}". Drop the ${filter} filter or adjust it.`;
+		} else {
+			content = formatElementList(filtered, {
+				...(params.ref !== undefined ? { ref: params.ref } : {}),
+			});
+		}
 
 		return {
 			success: true,
@@ -1090,13 +1058,6 @@ export async function browserInspect(
 function applyQueryFilter(extracted: ExtractResult, query: string): void {
 	const q = query.toLowerCase();
 
-	const beforeCount =
-		extracted.headings.length +
-		extracted.paragraphs.length +
-		extracted.links.length +
-		extracted.images.length +
-		extracted.interactive.length;
-
 	extracted.headings = extracted.headings.filter((h) =>
 		h.text.toLowerCase().includes(q),
 	);
@@ -1122,7 +1083,7 @@ function applyQueryFilter(extracted: ExtractResult, query: string): void {
 		extracted.interactive.length;
 
 	// Signal empty results so the agent doesn't get a silent empty page
-	if (beforeCount > 0 && afterCount === 0) {
+	if (afterCount === 0) {
 		extracted.paragraphs.push({
 			text: `⚠ No content matched "${query}". Try a different keyword or remove the query parameter.`,
 		});

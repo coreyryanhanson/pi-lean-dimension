@@ -4,9 +4,9 @@ import * as router from "./core/router.js";
 import { cleanupFetchTempFiles } from "./core/fetch-backend.js";
 import { pluginRegistry } from "./core/plugin-registry.js";
 import {
-	loadPluginConfig,
+	loadFullConfig,
 	detectPluginType,
-	DEFAULT_BACKENDS_ROOT,
+	DEFAULT_BACKEND_ROOTS,
 	invalidateConfigCache,
 } from "./core/plugin-config.js";
 import { ChromiumPlugin } from "./backends/chromium/index.js";
@@ -51,7 +51,12 @@ export default function (pi: ExtensionAPI) {
 	resetToggleModuleState();
 
 	// --- Plugin registration ----------------------------------------
-	const { plugins: pluginConfigs, errors: configErrors } = loadPluginConfig();
+	// Resolve plugin `dir` values against the shipped backends root first,
+	// then the user-writable `~/.pi/agent/pi-lean-portal/user-backends/`
+	// tree (Phase 0b).  An absolute `dir` short-circuits both roots.
+	const { plugins: pluginConfigs, errors: configErrors } = loadFullConfig(
+		DEFAULT_BACKEND_ROOTS,
+	).plugins;
 
 	// Log config errors
 	for (const err of configErrors) {
@@ -68,7 +73,7 @@ export default function (pi: ExtensionAPI) {
 	for (const config of pluginConfigs) {
 		let detection;
 		try {
-			detection = detectPluginType(config.dir, DEFAULT_BACKENDS_ROOT);
+			detection = detectPluginType(config.dir, DEFAULT_BACKEND_ROOTS);
 		} catch (err) {
 			console.error(
 				`[pi-lean-portal] Plugin '${config.name}' (dir: '${config.dir}'): ${err instanceof Error ? err.message : String(err)}`,
@@ -111,8 +116,8 @@ export default function (pi: ExtensionAPI) {
 	// ── Second pass: load and register plugins ───────────────────
 	// Node plugins register asynchronously (after dynamic import resolves).
 	// Python plugins register synchronously here.
-	// The pre-seeded ordering ensures all plugins get the correct priority level
-	// regardless of when register() is called.
+	// The pre-seeded ordering ensures all plugins keep their configured
+	// position regardless of when register() is called.
 	for (const { config, detection } of validConfigs) {
 		if (detection.type === "node") {
 			// Node-based backend — dynamically import the detected plugin
@@ -182,6 +187,36 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	// --- Register tools ---------------------------------------------
+	// Patch the browser-navigate strategy description with the actually
+	// configured plugin names so the agent doesn't second-guess which
+	// strategies exist (matches what /web status reports).
+	const strategyPlugins =
+		validConfigs.length > 0
+			? validConfigs.map(({ config }) => ({
+					name: config.name,
+					enabled: config.enabled,
+				}))
+			: [{ name: "chromium", enabled: true }]; // fallback path
+	const enabledNames = strategyPlugins
+		.filter((p) => p.enabled)
+		.map((p) => p.name);
+	const disabledNames = strategyPlugins
+		.filter((p) => !p.enabled)
+		.map((p) => p.name);
+	const availList =
+		enabledNames.length > 0 ? enabledNames.join(", ") : "(none)";
+	const disabledClause =
+		disabledNames.length > 0 ? ` Disabled: ${disabledNames.join(", ")}.` : "";
+	(
+		browserNavigateTool as unknown as {
+			parameters: { properties: { strategy: { description: string } } };
+		}
+	).parameters.properties.strategy.description =
+		`Backend strategy: "auto" (default) uses the first available plugin; ` +
+		`specify a registered plugin name to use that backend. ` +
+		`Available: ${availList}.${disabledClause} ` +
+		`For stateless HTTP fetches, use web-fetch instead.`;
+
 	pi.registerTool(webFetchTool);
 	pi.registerTool(browserNavigateTool);
 	pi.registerTool(browserSnapshotTool);
@@ -238,7 +273,7 @@ export default function (pi: ExtensionAPI) {
 
 		// Clean up all registered plugins
 		const ordered = pluginRegistry.getOrdered();
-		for (const { plugin } of ordered) {
+		for (const plugin of ordered) {
 			await plugin.cleanupAll().catch(() => {});
 		}
 

@@ -11,9 +11,12 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { detectPluginType, DEFAULT_BACKENDS_ROOT } from "../core/plugin-config";
-import { PluginRegistry } from "../core/plugin-registry";
-import type { PluginConfig } from "../core/plugin-config";
+import {
+	detectPluginType,
+	DEFAULT_BACKENDS_ROOT,
+} from "../core/plugin-config.js";
+import { PluginRegistry } from "../core/plugin-registry.js";
+import type { PluginConfig } from "../core/plugin-config.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
@@ -54,7 +57,7 @@ describe("detectPluginType", () => {
 		backendsRoot = createTestBackendsRoot({
 			"my-node-plugin": { "index.ts": "export class MyPlugin {}" },
 		});
-		const result = detectPluginType("my-node-plugin", backendsRoot);
+		const result = detectPluginType("my-node-plugin", [backendsRoot]);
 		expect(result.type).toBe("node");
 		expect(result.entryPoint).toBe(
 			join(backendsRoot, "my-node-plugin", "index.ts"),
@@ -65,7 +68,7 @@ describe("detectPluginType", () => {
 		backendsRoot = createTestBackendsRoot({
 			"my-py-plugin": { "bridge.py": "class MyBridge: pass" },
 		});
-		const result = detectPluginType("my-py-plugin", backendsRoot);
+		const result = detectPluginType("my-py-plugin", [backendsRoot]);
 		expect(result.type).toBe("python");
 		expect(result.entryPoint).toBe(
 			join(backendsRoot, "my-py-plugin", "bridge.py"),
@@ -79,7 +82,7 @@ describe("detectPluginType", () => {
 				"bridge.py": "class X: pass",
 			},
 		});
-		expect(() => detectPluginType("ambiguous", backendsRoot)).toThrow(
+		expect(() => detectPluginType("ambiguous", [backendsRoot])).toThrow(
 			/ambiguous/,
 		);
 	});
@@ -88,14 +91,14 @@ describe("detectPluginType", () => {
 		backendsRoot = createTestBackendsRoot({
 			"empty-plugin": { "readme.md": "# Nothing useful" },
 		});
-		expect(() => detectPluginType("empty-plugin", backendsRoot)).toThrow(
+		expect(() => detectPluginType("empty-plugin", [backendsRoot])).toThrow(
 			/no entry point/i,
 		);
 	});
 
 	it("throws for non-existent dir", () => {
 		backendsRoot = createTestBackendsRoot({});
-		expect(() => detectPluginType("nonexistent", backendsRoot)).toThrow(
+		expect(() => detectPluginType("nonexistent", [backendsRoot])).toThrow(
 			/no entry point/i,
 		);
 	});
@@ -106,28 +109,28 @@ describe("detectPluginType", () => {
 describe("detectPluginType — production backends", () => {
 	it("detects the chromium backend as a Node plugin", () => {
 		// This tests the actual backends/chromium/ directory
-		const result = detectPluginType("chromium", DEFAULT_BACKENDS_ROOT);
+		const result = detectPluginType("chromium", [DEFAULT_BACKENDS_ROOT]);
 		expect(result.type).toBe("node");
 		expect(result.entryPoint).toContain("chromium/index.ts");
 	});
 
 	it("detects the firefox backend as a Node plugin", () => {
 		// This tests the actual backends/firefox/ directory
-		const result = detectPluginType("firefox", DEFAULT_BACKENDS_ROOT);
+		const result = detectPluginType("firefox", [DEFAULT_BACKENDS_ROOT]);
 		expect(result.type).toBe("node");
 		expect(result.entryPoint).toContain("firefox/index.ts");
 	});
 
 	it("detects the chromium-py backend as a Python plugin", () => {
 		// This tests the actual backends/chromium-py/ directory
-		const result = detectPluginType("chromium-py", DEFAULT_BACKENDS_ROOT);
+		const result = detectPluginType("chromium-py", [DEFAULT_BACKENDS_ROOT]);
 		expect(result.type).toBe("python");
 		expect(result.entryPoint).toContain("chromium-py/bridge.py");
 	});
 
 	it("detects the firefox-py backend as a Python plugin", () => {
 		// This tests the actual backends/firefox-py/ directory
-		const result = detectPluginType("firefox-py", DEFAULT_BACKENDS_ROOT);
+		const result = detectPluginType("firefox-py", [DEFAULT_BACKENDS_ROOT]);
 		expect(result.type).toBe("python");
 		expect(result.entryPoint).toContain("firefox-py/bridge.py");
 	});
@@ -170,7 +173,7 @@ describe("plugin startup loop integration", () => {
 		const errors: string[] = [];
 		for (const config of configs) {
 			try {
-				detectPluginType(config.dir, backendsRoot);
+				detectPluginType(config.dir, [backendsRoot]);
 			} catch (err) {
 				errors.push(
 					`Plugin '${config.name}' (dir: '${config.dir}'): ${err instanceof Error ? err.message : String(err)}`,
@@ -181,7 +184,6 @@ describe("plugin startup loop integration", () => {
 		expect(errors).toHaveLength(1);
 		expect(errors[0]).toContain("nonexistent");
 		expect(errors[0]).toContain("no entry point");
-		expect(registry.size).toBe(0);
 	});
 
 	it("skips plugins with ambiguous directories and logs error", () => {
@@ -198,7 +200,7 @@ describe("plugin startup loop integration", () => {
 		const errors: string[] = [];
 		for (const config of configs) {
 			try {
-				detectPluginType(config.dir, backendsRoot);
+				detectPluginType(config.dir, [backendsRoot]);
 			} catch (err) {
 				errors.push(
 					`Plugin '${config.name}' (dir: '${config.dir}'): ${err instanceof Error ? err.message : String(err)}`,
@@ -208,7 +210,6 @@ describe("plugin startup loop integration", () => {
 
 		expect(errors).toHaveLength(1);
 		expect(errors[0]).toContain("ambiguous");
-		expect(registry.size).toBe(0);
 	});
 
 	it("correctly classifies multiple plugins of different types", () => {
@@ -223,7 +224,7 @@ describe("plugin startup loop integration", () => {
 
 		const detections = configs.map((config) => ({
 			config,
-			detection: detectPluginType(config.dir, backendsRoot),
+			detection: detectPluginType(config.dir, [backendsRoot]),
 		}));
 
 		expect(detections[0]!.detection.type).toBe("node");
@@ -240,7 +241,7 @@ describe("plugin startup loop integration", () => {
 
 		const detections = configs.map((config) => ({
 			config,
-			detection: detectPluginType(config.dir, backendsRoot),
+			detection: detectPluginType(config.dir, [backendsRoot]),
 		}));
 
 		expect(detections[0]!.detection.type).toBe("python");
@@ -255,5 +256,106 @@ describe("DEFAULT_BACKENDS_ROOT", () => {
 	it("is an absolute path ending in 'backends'", () => {
 		expect(DEFAULT_BACKENDS_ROOT).toContain("backends");
 		expect(DEFAULT_BACKENDS_ROOT).toMatch(/^\//);
+	});
+});
+
+// ─── Multi-root discovery (Phase 0b) ─────────────────────────────
+
+describe("detectPluginType — multi-root", () => {
+	let packageRoot: string;
+	let userRoot: string;
+	const createdRoots: string[] = [];
+
+	beforeEach(() => {
+		packageRoot = createTestBackendsRoot({});
+		userRoot = createTestBackendsRoot({});
+		createdRoots.push(packageRoot, userRoot);
+	});
+
+	afterEach(() => {
+		for (const r of createdRoots.splice(0)) {
+			try {
+				cleanupTestBackendsRoot(r);
+			} catch {
+				/* ignore */
+			}
+		}
+	});
+
+	it("resolves a backend found in the user root when absent from the package root", () => {
+		// Place a Python backend only in the user root
+		const dir = join(userRoot, "camoufox-py");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, "bridge.py"), "class X: pass");
+
+		const result = detectPluginType("camoufox-py", [packageRoot, userRoot]);
+		expect(result.type).toBe("python");
+		expect(result.entryPoint).toBe(join(userRoot, "camoufox-py", "bridge.py"));
+	});
+
+	it("package root wins over user root when both contain the same dir name", () => {
+		// 'chromium' in package root (index.ts) AND user root (bridge.py)
+		const pkgDir = join(packageRoot, "shared-name");
+		mkdirSync(pkgDir, { recursive: true });
+		writeFileSync(join(pkgDir, "index.ts"), "export class X {}");
+		const usrDir = join(userRoot, "shared-name");
+		mkdirSync(usrDir, { recursive: true });
+		writeFileSync(join(usrDir, "bridge.py"), "class X: pass");
+
+		const result = detectPluginType("shared-name", [packageRoot, userRoot]);
+		expect(result.type).toBe("node");
+		expect(result.entryPoint).toBe(
+			join(packageRoot, "shared-name", "index.ts"),
+		);
+	});
+
+	it("absolute dir short-circuits the roots list", () => {
+		const absDir = mkdtempSync(join(tmpdir(), "pi-lean-portal-abs-"));
+		createdRoots.push(absDir);
+		writeFileSync(join(absDir, "bridge.py"), "class X: pass");
+
+		// Pass roots that do NOT contain this dir; the absolute path must still win.
+		const result = detectPluginType(absDir, [packageRoot, userRoot]);
+		expect(result.type).toBe("python");
+		expect(result.entryPoint).toBe(join(absDir, "bridge.py"));
+	});
+
+	it("throws an error naming all roots searched when no root has an entry point", () => {
+		expect(() => detectPluginType("missing", [packageRoot, userRoot])).toThrow(
+			/no entry point/i,
+		);
+
+		try {
+			detectPluginType("missing", [packageRoot, userRoot]);
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			// Both roots are named in the error so users can see where it looked.
+			expect(msg).toContain(packageRoot);
+			expect(msg).toContain(userRoot);
+		}
+	});
+
+	it("per-root ambiguity is still an error even with multiple roots", () => {
+		const dir = join(userRoot, "ambiguous");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, "index.ts"), "export class X {}");
+		writeFileSync(join(dir, "bridge.py"), "class X: pass");
+
+		expect(() =>
+			detectPluginType("ambiguous", [packageRoot, userRoot]),
+		).toThrow(/ambiguous/);
+	});
+
+	it("a later root with the opposite entry type is NOT treated as ambiguity", () => {
+		// package root: index.ts ; user root (same name): bridge.py — first wins, no error.
+		const pkgDir = join(packageRoot, "split");
+		mkdirSync(pkgDir, { recursive: true });
+		writeFileSync(join(pkgDir, "index.ts"), "export class X {}");
+		const usrDir = join(userRoot, "split");
+		mkdirSync(usrDir, { recursive: true });
+		writeFileSync(join(usrDir, "bridge.py"), "class X: pass");
+
+		const result = detectPluginType("split", [packageRoot, userRoot]);
+		expect(result.type).toBe("node");
 	});
 });

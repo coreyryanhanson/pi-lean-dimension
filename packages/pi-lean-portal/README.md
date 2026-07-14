@@ -1,10 +1,14 @@
 # pi-lean-portal User Guide
 
-> **pi-lean-portal** is a plugin-based web browsing extension for the Pi coding
-> agent. It gives the AI agent the ability to fetch web pages, interact with
-> dynamic sites, inspect page structure, take screenshots, run JavaScript,
-> and save/recall navigation guides — all through a set of tools and the `/web`
-> command.
+> **pi-lean-portal** gives the Pi coding agent interactive web browsing —
+> Playwright Chromium/Firefox, accessibility-tree snapshots with `@e` element
+> refs, persistent profiles, cookies, and navigation guides that resurface by
+> domain. A `/web` toggle removes the tools from the agent's context when
+> switched off, so web browsing doesn't consume tokens on sessions that aren't
+> doing web work. If a site blocks the shipped browsers, drop in your own
+> backend (e.g. [Camoufox](https://github.com/nichochar/camoufox)) — as far as
+> we're aware, no other Pi web plugin lets you run a browser backend you wrote
+> yourself.
 >
 > Part of the [pi-lean-dimension](https://github.com/coreyryanhanson/pi-lean-dimension)
 > web-tools suite. For SearXNG search support, install
@@ -15,16 +19,17 @@
 ## Table of Contents
 
 1. [Quick Start](#quick-start)
-2. [`/web` Command — Browser Toggle & Profiles](#web-command--browser-toggle--profiles)
-3. [All 12 Tools](#all-12-tools)
-4. [Stateless Fetching (web-fetch)](#stateless-fetching-web-fetch)
-5. [Navigation Guides (web-guide & web-learn)](#navigation-guides-web-guide--web-learn)
-6. [`/web status` — Detailed Runtime Status](#web-status--detailed-runtime-status)
-7. [Profiles — Persistent Sessions](#profiles--persistent-sessions)
-8. [Cookie Management](#cookie-management)
-9. [Backend Architecture](#backend-architecture)
-10. [Configuration (settings.json)](#configuration-settingsjson)
-11. [Tips & Best Practices](#tips--best-practices)
+2. [Extending it](#extending-it)
+3. [`/web` Command — Browser Toggle & Profiles](#web-command--browser-toggle--profiles)
+4. [All 12 Tools](#all-12-tools)
+5. [Stateless Fetching (web-fetch)](#stateless-fetching-web-fetch)
+6. [Navigation Guides (web-guide & web-learn)](#navigation-guides-web-guide--web-learn)
+7. [`/web status` — Detailed Runtime Status](#web-status--detailed-runtime-status)
+8. [Profiles — Persistent Sessions](#profiles--persistent-sessions)
+9. [Cookie Management](#cookie-management)
+10. [Backend Architecture](#backend-architecture)
+11. [Configuration (settings.json)](#configuration-settingsjson)
+12. [Tips & Best Practices](#tips--best-practices)
 
 ---
 
@@ -53,6 +58,21 @@ The browser tools are **enabled by default**. You can:
 > **Playwright browser binaries are not downloaded during `npm install`.**
 > Run `npx playwright install chromium firefox` separately. On first
 > `browser-navigate` without them, you'll be prompted with the exact command.
+
+---
+
+## Extending it
+
+Beyond the toggle, two surfaces are user-extensible rather than hardcoded:
+
+- **Navigation guides** — `web-learn` saves site-specific playbooks that
+  auto-match by domain and resurface in later sessions. See
+  [Navigation Guides](#navigation-guides-web-guide--web-learn).
+- **Custom browser backends** — if a site blocks the shipped Chromium/Firefox,
+  drop a `bridge.py` subclass into `~/.pi/agent/pi-lean-portal/user-backends/`
+  and drive a patched engine like [Camoufox](https://github.com/nichochar/camoufox)
+  yourself. The full flow lives in [Backend Architecture](#backend-architecture)
+  and [`contributed/README.md`](./contributed/README.md).
 
 ---
 
@@ -414,39 +434,76 @@ capability advertisement:
 - The extension auto-detects whether a plugin is Node-based (`index.ts`)
   or Python-based (`bridge.py`) by inspecting the directory.
 
-### Stealth & Custom Browser Backends (Planned)
+### Stealth & Custom Browser Backends
 
 This package ships four backends — `chromium`, `firefox`, `chromium-py`,
 and `firefox-py` — all built on Playwright. Additional browser support
 (including stealth engines like **Camoufox**) is intentionally **left
 to users** to author and drop in, rather than being bundled with the
-package.
+package. The infrastructure for this is now in place: a **quirks system**
+lets a backend declare how it diverges from the base Playwright behavior,
+and a **config channel** (`browser.init` RPC) forwards launch options
+from `settings.json` to the Python bridge subprocess.
 
-Most of the building blocks are already in place: the `BrowserPlugin`
-interface, the Python bridge base class (`PlaywrightBridge`), and
-config-driven plugin loading that auto-detects `index.ts` (Node) or
-`bridge.py` (Python) entry points. Two pieces of infrastructure are still
-needed before user-authored stealth backends are practical:
+Most users will never need a stealth backend (see
+[`contributed/CHOOSING.md`](./contributed/CHOOSING.md) for when to reach
+for one at all). When you do, the flow is:
 
-1. **A quirks system** — so a backend can declare things like a custom
-   context factory (e.g. Camoufox's `NewContext` for fingerprint
-   injection), an eval-script prefix, or a fingerprint-managed viewport,
-   instead of being clobbered by the base class's hardcoded defaults.
-2. **A config channel** from the TypeScript adapter to the Python bridge
-   subprocess — so launch options like `headless`, target OS, proxy, and
-   binary path can reach the bridge.
+1. **Drop a `bridge.py` into the user-backends tree.** The convention is
+   `~/.pi/agent/pi-lean-portal/user-backends/<name>-py/bridge.py` (the
+   `-py` suffix mirrors the shipped `chromium-py` / `firefox-py`). This is
+   a separate tree from the package's own `backends/` directory, which is
+   not edited after install — exactly so custom backends survive updates.
+2. **Create a venv and fetch the engine binary** (e.g.
+   `python -m camoufox fetch`). The shared `pi_browser_bridge` library is
+   injected onto `PYTHONPATH` automatically at spawn time, so you do not
+   need to `pip install` it.
+3. **Register it in `browser.plugins`** with an **absolute** `pythonPath`
+   and a `launch` object whose keys are forwarded to the bridge.
+4. **Verify with `/web status`** and a `browser-navigate`.
 
-Once those land, the plan is for users to author additional backends the
-same way they author site guides today — by dropping files into a
-user-owned directory (e.g. `~/.pi/agent/pi-lean-portal/backends/`,
-analogous to the `web-guides/` directory) and registering them in
-`browser.plugins`. The shipped backends live inside the package's own
-`backends/` directory; that directory should not be edited after install
-(modifications would be lost on the next package update), which is exactly
-why a separate user-owned directory is the supported path for custom and
-stealth backends.
+The shipped **Camoufox template** at
+[`contributed/camoufox-py/bridge.py`](./contributed/camoufox-py/bridge.py)
+is a worked example — copy it as a starting point. The full install flow,
+the quirks schema reference, and the security model (user-backends are
+**trusted user code** — never auto-downloaded, no plugin marketplace) live
+in [`contributed/README.md`](./contributed/README.md). The decision doc at
+[`contributed/CHOOSING.md`](./contributed/CHOOSING.md) covers when to use
+a stealth backend at all and the two lifecycle patterns for implementing
+your own.
 
-The shape a custom backend's config entry will take looks like:
+#### Writing your own backend (high level)
+
+A custom Python backend is a subclass of `PlaywrightBridge`
+(`backends/python-base/pi_browser_bridge/playwright_base.py`) that sets
+the **quirks flags** its engine needs as class attributes and overrides
+the launch hook matching how the engine owns Playwright. The flags
+(`_fingerprint_managed_context`, `_eval_prefix`, `_scroll_via_wheel`,
+`_skip_default_viewport`, `_skip_networkidle`, `_wrap_mw_eval_in_eval`)
+all default off, so a subclass that sets none of them is bit-identical to
+the shipped `chromium-py` / `firefox-py`. The full table with effects is
+in [`contributed/README.md`](./contributed/README.md#quirks-schema-reference).
+
+Node-based custom backends follow the same shape via the
+`PlaywrightPluginBase` class — the auto-detection in `plugin-loading`
+picks up `index.ts` (Node) or `bridge.py` (Python) entry points from the
+user-backends directory.
+
+#### Tests are auto-discovered
+
+You usually do **not** need to write your own tests. The contributed
+runner at `__tests__/run-contributed-suites.test.ts` discovers every
+backend under `user-backends/*-py/`, loads config from the test-local
+`settings.json`, and runs the shared contract + persistence + parity +
+quirks-introspection suites against it — forwarding your configured
+`launch` options. Opt in with `CONTRIB_RUN=1`:
+
+```bash
+npm run setup:miniwob   # one-time: clone MiniWoB++ content
+CONTRIB_RUN=1 npx vitest run packages/pi-lean-portal/__tests__/run-contributed-suites.test.ts
+```
+
+A custom backend's config entry looks like:
 
 ```jsonc
 {
@@ -454,8 +511,9 @@ The shape a custom backend's config entry will take looks like:
     "plugins": [
       { "name": "chromium", "dir": "chromium", "enabled": true, "config": {} },
       { "name": "firefox", "dir": "firefox", "enabled": true, "config": {} },
-      { "name": "camoufox-py", "dir": "camoufox-py", "enabled": false, "config": {
-          "pythonPath": "/path/to/camoufox-py/.venv/bin/python"
+      { "name": "camoufox-py", "dir": "camoufox-py", "enabled": true, "config": {
+          "pythonPath": "/home/me/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv/bin/python",
+          "launch": { "headless": true, "os": "windows", "humanize": true }
         }
       }
     ]
@@ -463,8 +521,12 @@ The shape a custom backend's config entry will take looks like:
 }
 ```
 
-This support will arrive in a future update. Until then, the four shipped
-backends can be toggled via the `enabled` field below.
+`pythonPath` must be **absolute**; `dir` resolves against the user-backends
+root (multi-root discovery: package `backends/` → `USER_BACKENDS_DIR` →
+absolute). `launch` keys are forwarded to the bridge as
+`plugin_config.launch` via the `browser.init` RPC. Stealth backends are
+never in the default fallback list — a fresh install with no
+`browser.plugins` loads only the four shipped backends.
 
 ---
 
@@ -495,9 +557,9 @@ Controls which browser backends are loaded. Entries are processed in order
 
 Each entry requires only a unique name, a backend directory path, and an
 optional `config` object passed to the plugin's `init()`. For the Python
-backends, `config` carries options like `pythonPath` (the shape shown for
-`camoufox-py` above is representative of how a user-authored Python
-backend will be configured).
+backends, `config` carries `pythonPath` and a `launch` object (the shape
+shown for `camoufox-py` in the [Stealth & Custom Browser Backends](#stealth--custom-browser-backends)
+section above is the reference for a user-authored Python backend).
 
 ### `browser.defaultProfile`
 

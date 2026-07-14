@@ -3,9 +3,13 @@
 > Web browsing and search tools for [Pi](https://github.com/earendil-works/pi-coding-agent), the AI coding agent.
 
 A monorepo housing three Pi extension packages that give your AI agent the
-ability to browse the web interactively, fetch static pages as Markdown, save
-navigation guides, and search via SearXNG — all toggled from a single `/web`
-command.
+ability to browse the web interactively, fetch static pages as Markdown, and
+search via SearXNG — all toggled from a single `/web` command. When the toggle
+is off, the tools are removed from the agent's context entirely, so web browsing
+doesn't consume tokens or attention on sessions that aren't doing web work.
+The same surfaces are user-extensible: author navigation guides that resurface
+by domain, or drop in a stealth browser backend like [Camoufox](https://github.com/nichochar/camoufox)
+when a site blocks the shipped Chromium/Firefox.
 
 ## Quick start (recommended)
 
@@ -34,47 +38,16 @@ Pi settings (`~/.pi/agent/settings.json` or `.pi/settings.json`):
 | **B — Full suite** | `pi install npm:pi-lean-dimension` | 13 tools (browser + search) + `/web` | Playwright browsers + SearXNG server |
 | **B-search — Search only** | `pi install npm:pi-lean-search` | `web-search` tool only | SearXNG server |
 
-### Mode A — Browser (recommended)
+Notes the table doesn't carry:
 
-```bash
-pi install npm:pi-lean-portal
-npx playwright install chromium firefox
-```
+- **Browser binaries aren't downloaded during `npm install`** (configured via `.npmrc`). The first `browser-navigate` call prompts you to run `npx playwright install chromium firefox` if they're missing.
+- **SearXNG is optional for Mode B.** The browser works immediately without it; `web-search` returns a clear setup message on first call. When you do run it, point the suite at your instance in Pi settings:
 
-The browser works immediately. The AI agent navigates, clicks, types, scrolls,
-takes screenshots, fetches static pages as Markdown, and saves/recalls
-navigation guides. All controllable via `/web on|off|learn|profile|status`.
+  ```json
+  { "searxng": { "url": "http://localhost:8888" } }
+  ```
 
-The Playwright browser binaries are **not** downloaded during `npm install`
-(configured via `.npmrc`). The first `browser-navigate` call will prompt you
-to run `npx playwright install chromium firefox` if browsers are missing.
-
-### Mode B — Full suite (power-user)
-
-```bash
-pi install npm:pi-lean-dimension
-npx playwright install chromium firefox
-```
-
-Adds SearXNG web search alongside browsing. Requires a running SearXNG
-instance. After install, configure your SearXNG URL in Pi settings:
-
-```json
-{ "searxng": { "url": "http://localhost:8888" } }
-```
-
-The browser works immediately even without SearXNG configured. If you call
-`web-search` without setting up SearXNG, it returns a clear setup message
-pointing you to the documentation.
-
-### Mode B-search — Search only
-
-```bash
-pi install npm:pi-lean-search
-```
-
-SearXNG search without the browser. No `/web` command — a single tiny tool
-has nothing to toggle. Configure `searxng.url` in settings per Mode B above.
+- **Search-only has no `/web` command** — a single tiny tool has nothing to toggle.
 
 ---
 
@@ -119,6 +92,15 @@ When search is installed, two independent glyphs appear:
 
 - `● idle` (browser) — browser tools enabled
 - `● searxng` (search) — SearXNG health (accent=healthy, yellow=degraded, red=unreachable)
+
+---
+
+## Extending it
+
+Beyond the `/web` toggle, two surfaces are user-driven rather than hardcoded:
+
+- **Navigation guides** — `web-learn` saves site-specific playbooks that auto-match by domain and resurface in later sessions.
+- **Custom browser backends** — if a site blocks the shipped Chromium/Firefox, drop a `bridge.py` subclass into `~/.pi/agent/pi-lean-portal/user-backends/` and drive a patched engine like [Camoufox](https://github.com/nichochar/camoufox) yourself. A quirks schema declares how the engine diverges from base Playwright, and `launch` options flow from `settings.json` to the subprocess at runtime. This is user-authored, user-audited code that the extension never auto-downloads — and as far as we're aware, no other Pi web plugin lets you run a browser backend you wrote yourself. Most installs never need it; the [portal README](packages/pi-lean-portal/README.md#stealth--custom-browser-backends) and [`contributed/README.md`](packages/pi-lean-portal/contributed/README.md) cover the full flow when you do.
 
 ---
 

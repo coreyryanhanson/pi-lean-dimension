@@ -1,33 +1,16 @@
 /**
  * PythonPluginAdapter — TypeScript side of the Python bridge protocol.
- *
- * Implements `BrowserPlugin` by spawning a Python subprocess and
- * communicating via JSON-RPC 2.0 over stdin/stdout with newline-delimited
- * framing.
- *
- * Lifecycle
- * ---------
- * 1. Constructed with a plugin name and `PythonBridgeConfig`.
- * 2. `init()` validates paths — no spawn yet (lazy start).
- * 3. First operation triggers `ensureRunning()`, which spawns the Python
- *    process and waits for a `ping` handshake.
- * 4. Operations send JSON-RPC requests, the Python bridge handles them.
- * 5. `cleanupAll()` sends `shutdown`, waits for graceful exit, force-kills
- *    if unresponsive.
- * 6. Process crashes are detected and auto-restart on the next call.
- *
- * Thread safety: operations are serialised through the single stdin/stdout
- * channel.  The Python bridge processes one request at a time.
- *
- * @module
+ * Implements BrowserPlugin via JSON-RPC 2.0 over stdin/stdout.
  */
 
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
+import { join, delimiter as pathDelimiter } from "node:path";
 
 import { sessionManager } from "../core/shared/session-manager.js";
-import { saveStorageState } from "../core/shared/storage-state.js";
+import { persistSessionState } from "../core/shared/storage-state.js";
+import { DEFAULT_BACKENDS_ROOT } from "../core/plugin-config.js";
 
 import {
 	DEFAULT_CAPABILITIES,
@@ -47,13 +30,12 @@ import {
 	type ResultBase,
 } from "../core/plugin-api.js";
 import type { AriaCachedNode } from "../core/shared/accessibility-tree.js";
+import { EXTRACTOR_SCRIPT } from "../core/shared/dom-extractor.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────
 
-/** Default timeout for the JSON-RPC transport layer (milliseconds). */
 const DEFAULT_TRANSPORT_TIMEOUT_MS = 60_000;
 
-/** Default timeout for the `ping` handshake on startup. */
 const PING_TIMEOUT_MS = 10_000;
 
 /** Grace period after sending `shutdown` before force-killing. */
@@ -107,8 +89,7 @@ export interface PythonBridgeConfig {
 	pythonArgs?: string[];
 
 	/**
-	 * Advertised capabilities overrides.  Defaults to a Python-capable
-	 * Chromium profile (everything except AbortSignal support).
+	 * Advertised capabilities overrides.  Defaults to DEFAULT_CAPABILITIES.
 	 */
 	capabilities?: Partial<PluginCapabilities>;
 
@@ -122,30 +103,43 @@ export interface PythonBridgeConfig {
 	transportTimeoutMs?: number;
 }
 
-// ─── Default capabilities ─────────────────────────────────────────────
-
-/**
- * Default capabilities for a Python-based Chromium bridge.
- *
- * - Full-page screenshots: yes (Playwright supports it)
- * - Console capture: yes (page.on("console"))
- * - JavaScript evaluate: yes (page.evaluate)
- * - Bot detection: yes (heuristics via checkPage logic)
- * - Dialog auto-dismissal: yes (page.on("dialog"))
- * - AbortSignal: no (JSON-RPC transport doesn't support it natively)
- * - Engine: chromium
- */
-const DEFAULT_PYTHON_CAPABILITIES: PluginCapabilities = {
-	...DEFAULT_CAPABILITIES,
-	supportsAbortSignal: false,
-};
-
 // ─── Pending request type ─────────────────────────────────────────────
 
 interface PendingRequest {
 	resolve: (value: unknown) => void;
 	reject: (reason: unknown) => void;
 	timer: ReturnType<typeof setTimeout>;
+}
+
+// ─── Quirks Descriptor ────────────────────────────────────────────────
+
+/**
+ * Quirks flags declared by a Python bridge at runtime, read via the
+ * ``browser.describeQuirks`` introspection RPC.
+ *
+ * Each field corresponds to a class attribute on
+ * ``PlaywrightBridge`` (defaults shown).  Subclasses override these
+ * to signal engine-specific behavior to the TypeScript runner, which
+ * uses ``skipIf`` to only run tests that apply to the declared quirks.
+ *
+ * Also extends ResultBase so the adapter method can use
+ * ``_rpcCallTyped`` (which requires ``{ success: boolean }``).
+ */
+export interface QuirksDescriptor extends ResultBase {
+	/** Bridge owns fingerprint management (viewport, UA). */
+	fingerprint_managed_context: boolean;
+	/** Prefix prepended to ``page.evaluate`` expressions (e.g. ``"mw:"``). */
+	eval_prefix: string;
+	/** ``scroll()`` uses ``page.mouse.wheel`` instead of ``window.scrollBy``. */
+	scroll_via_wheel: boolean;
+	/** ``create_browser_context`` passes ``no_viewport=True``. */
+	skip_default_viewport: boolean;
+	/** Navigation uses ``load`` instead of ``networkidle``. */
+	skip_networkidle: boolean;
+	/** ``do_evaluate`` wraps the script in ``eval(<json>)`` to survive main-world wrapper. */
+	wrap_mw_eval_in_eval: boolean;
+	/** CSP-safe read-only ``do_evaluate`` via init-script (patched Firefox stealth). */
+	csp_safe_readonly_via_init_script: boolean;
 }
 
 // ─── PythonPluginAdapter ──────────────────────────────────────────────
@@ -179,6 +173,15 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	// ── Startup lock ───────────────────────────────────────────
 	private _startupPromise: Promise<void> | null = null;
 	private _started = false;
+
+	/**
+	 * Plugin config dict forwarded to the bridge via the `browser.init` RPC
+	 * immediately after the ping handshake.  Populated by `init()` from the
+	 * user's `settings.json` `config.config` object (which carries the
+	 * `launch` sub-object for stealth backends).  Empty when no config was
+	 * provided — the bridge defaults `_plugin_config` to `{}` either way.
+	 */
+	private _pluginInitConfig: Record<string, unknown> | undefined;
 
 	/**
 	 * Local element caches per task, populated from bridge responses.
@@ -224,7 +227,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 
 		// Merge capabilities
 		this.capabilities = {
-			...DEFAULT_PYTHON_CAPABILITIES,
+			...DEFAULT_CAPABILITIES,
 			...config.capabilities,
 		};
 	}
@@ -236,8 +239,17 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	/**
 	 * Initialise the adapter.  Validates that the Python path and bridge
 	 * script are available, but does NOT spawn the subprocess yet.
+	 *
+	 * Stores the supplied plugin config dict (the user's `config.config`
+	 * from `settings.json`) so it can be forwarded to the bridge via the
+	 * `browser.init` RPC immediately after the ping handshake.  This is the
+	 * channel that carries stealth launch options (`config.launch`) to the
+	 * Python-side bridge.
 	 */
-	async init(_config?: Record<string, unknown>): Promise<void> {
+	async init(config?: Record<string, unknown>): Promise<void> {
+		// Stash the plugin config for the post-ping browser.init RPC.
+		this._pluginInitConfig = config;
+
 		// Validate pythonPath exists
 		const pythonOk = this._checkPythonExists();
 		if (!pythonOk) {
@@ -307,6 +319,13 @@ export class PythonPluginAdapter implements BrowserPlugin {
 					env: {
 						...process.env,
 						PYTHONUNBUFFERED: "1",
+						// Phase 0b: make the shared `pi_browser_bridge` library
+						// importable from any venv the user points `pythonPath`
+						// at, without requiring a `pip install` of the bridge.
+						// Appended to any existing PYTHONPATH so user entries keep
+						// precedence; for the shipped chromium-py / firefox-py
+						// venvs the editable install points at the same source.
+						PYTHONPATH: this._buildPythonPath(),
 					},
 				},
 			);
@@ -395,17 +414,48 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			setImmediate(async () => {
 				try {
 					await this._directRpcCall("ping", {}, PING_TIMEOUT_MS);
+
+					// ── Forward plugin config to the bridge (Phase 0) ──
+					// Sent exactly once, immediately after the ping handshake and
+					// before any other RPC, so stealth subclasses can read launch
+					// options from `self.plugin_config.get("launch", {})` at
+					// browser-init time.  A bridge too old to know this method
+					// returns METHOD_NOT_FOUND, which we surface as a clear error.
+					await this._directRpcCall(
+						"browser.init",
+						{
+							config: {
+								...(this._pluginInitConfig ?? {}),
+								// Plumbing for the CSP-safe read-only eval path (see
+								// PlaywrightBridge._csp_safe_readonly_via_init_script).
+								// Backends that don't opt into the quirk ignore this key;
+								// a stealth backend that flips the quirk registers it as
+								// an add_init_script so its EXTRACTOR_SCRIPT result can
+								// be read without page.evaluate (CSP-blocked on patched-
+								// Firefox binaries that route eval through the main
+								// world). Sent for every Python backend so any stealth
+								// backend can opt in by flipping the quirk.
+								readOnlyExtractorScript: EXTRACTOR_SCRIPT,
+							},
+						},
+						PING_TIMEOUT_MS,
+					);
+
 					this._started = true;
 					resolve();
 				} catch (err: unknown) {
 					// If the process already exited, the exit handler will reject.
-					// Only reject here if the process is still alive but ping failed.
+					// Only reject here if the process is still alive but ping/init failed.
 					if (this._process && this._exitCode === null) {
-						// Ping failed — kill and reject
+						// Ping/init failed — kill and reject
 						this._killProcess();
+						const stage =
+							err instanceof PythonBridgeError && err.code === -32601
+								? "browser.init (bridge too old — upgrade pi-lean-portal)"
+								: "Ping handshake";
 						reject(
 							new Error(
-								`PythonPluginAdapter('${this.name}'): Ping handshake failed: ` +
+								`PythonPluginAdapter('${this.name}'): ${stage} failed: ` +
 									(err instanceof Error ? err.message : String(err)),
 							),
 						);
@@ -584,9 +634,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		});
 	}
 
-	/**
-	 * Flush buffered stdout data and process complete lines.
-	 */
 	private _flushBuffer(): void {
 		const lines = this._buffer.split("\n");
 		// Keep the last (possibly incomplete) segment in the buffer
@@ -599,9 +646,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		}
 	}
 
-	/**
-	 * Handle a single complete JSON-RPC response line from stdout.
-	 */
 	private _handleResponseLine(line: string): void {
 		let response: {
 			id?: unknown;
@@ -656,8 +700,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			profileMode?: "none" | "session" | "named";
 		},
 	): Promise<NavigateResult> {
-		// We don't use the AbortSignal directly (supportsAbortSignal: false),
-		// but we accept it for interface compatibility.
+		// AbortSignal not wired through JSON-RPC; accepted for interface compatibility.
 
 		try {
 			// Build RPC params — include storageState and profileName if provided
@@ -869,16 +912,64 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		}
 	}
 
-	async evaluate(taskId: string, expression: string): Promise<EvaluateResult> {
+	async evaluate(
+		taskId: string,
+		expression: string,
+		readOnly?: boolean,
+	): Promise<EvaluateResult> {
 		return this._rpcCallTyped(
 			"browser.evaluate",
-			{ taskId, expression },
+			readOnly === undefined
+				? { taskId, expression }
+				: { taskId, expression, readOnly },
 			(raw) => ({
 				success: !!raw.success,
 				result: raw.result,
 				...(raw.error !== undefined ? { error: raw.error as string } : {}),
 			}),
 			(error) => ({ success: false, error, result: undefined }),
+		);
+	}
+
+	// ═════════════════════════════════════════════════════════════════
+	//  BrowserPlugin: Quirks introspection
+	// ═════════════════════════════════════════════════════════════════
+
+	/**
+	 * Query the bridge for its declared quirks flags via the
+	 * ``browser.describeQuirks`` introspection RPC.
+	 *
+	 * Returns the bridge's class-attribute quirks, or all-defaults on
+	 * transport error (the runner uses ``skipIf`` so tests only run for
+	 * quirks the bridge actually declares).
+	 *
+	 * @internal Only used by test helpers.
+	 */
+	async describeQuirks(): Promise<QuirksDescriptor> {
+		return this._rpcCallTyped<QuirksDescriptor>(
+			"browser.describeQuirks",
+			{},
+			(raw): QuirksDescriptor => ({
+				success: true,
+				fingerprint_managed_context: !!raw.fingerprint_managed_context,
+				eval_prefix: (raw.eval_prefix as string) ?? "",
+				scroll_via_wheel: !!raw.scroll_via_wheel,
+				skip_default_viewport: !!raw.skip_default_viewport,
+				skip_networkidle: !!raw.skip_networkidle,
+				wrap_mw_eval_in_eval: !!raw.wrap_mw_eval_in_eval,
+				csp_safe_readonly_via_init_script: !!raw.csp_safe_readonly_via_init_script,
+			}),
+			(error): QuirksDescriptor => ({
+				success: false,
+				fingerprint_managed_context: false,
+				eval_prefix: "",
+				scroll_via_wheel: false,
+				skip_default_viewport: false,
+				skip_networkidle: false,
+				wrap_mw_eval_in_eval: false,
+				csp_safe_readonly_via_init_script: false,
+				error,
+			}),
 		);
 	}
 
@@ -1011,30 +1102,21 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		taskId: string,
 	): Promise<{ cookies: unknown[]; origins: unknown[] } | undefined> {
 		const session = sessionManager.getSession(taskId);
-		if (!session?.persistState) return undefined;
-
-		try {
-			const raw = await this._rpcCall("browser.getStorageState", { taskId });
-			const result = raw as Record<string, unknown>;
-			if (result.success) {
-				const name = session.profileName ?? "default";
-				const state = {
+		return persistSessionState(
+			session,
+			async () => {
+				const raw = await this._rpcCall("browser.getStorageState", { taskId });
+				const result = raw as Record<string, unknown>;
+				if (!result.success) {
+					throw new Error("bridge.getStorageState returned failure");
+				}
+				return {
 					cookies: (result.cookies ?? []) as Record<string, unknown>[],
 					origins: (result.origins ?? []) as Record<string, unknown>[],
 				};
-				saveStorageState(name, state);
-				return state;
-			}
-			return undefined;
-		} catch (err) {
-			console.warn(
-				`[pi-lean-portal] Failed to auto-save storage state for profile ` +
-					`'${session.profileName ?? "default"}' via Python bridge: ` +
-					`${err instanceof Error ? err.message : String(err)}. ` +
-					"Session state may be lost.",
-			);
-			return undefined;
-		}
+			},
+			"via Python bridge",
+		);
 	}
 
 	/**
@@ -1105,9 +1187,6 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		}
 	}
 
-	/**
-	 * Check whether the configured Python interpreter exists in PATH.
-	 */
 	private _checkPythonExists(): boolean {
 		try {
 			const result = spawnSync(this._pythonPath, ["--version"], {
@@ -1121,8 +1200,28 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	}
 
 	/**
-	 * Convert a raw RPC result to an InteractionResult.
+	 * Build the `PYTHONPATH` env value for the spawned bridge process.
+	 *
+	 * Appends the package's `backends/python-base/` directory (home of the
+	 * shared `pi_browser_bridge` Python library) to any existing
+	 * `PYTHONPATH` so user-installed stealth backends running in their
+	 * own venvs can `from pi_browser_bridge.playwright_base import
+	 * PlaywrightBridge` without a separate `pip install` of the bridge
+	 * library.  Appended (not prepended) so a user's own `PYTHONPATH`
+	 * entries keep precedence; for the shipped `chromium-py` / `firefox-py`
+	 * venvs the editable install resolves to the same source directory, so
+	 * ordering is moot either way.
 	 */
+	private _buildPythonPath(): string {
+		const pythonBaseDir = join(DEFAULT_BACKENDS_ROOT, "python-base");
+		const existing = process.env.PYTHONPATH;
+		return existing ? existing + pathDelimiter + pythonBaseDir : pythonBaseDir;
+	}
+
+	// ═════════════════════════════════════════════════════════════════
+	//  Result conversion helpers
+	// ═════════════════════════════════════════════════════════════════
+
 	private _toInteractionResult(raw: unknown): InteractionResult {
 		const r = raw as Record<string, unknown>;
 		const result: InteractionResult = {

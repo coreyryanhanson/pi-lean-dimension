@@ -7,7 +7,7 @@
  * - runExtractor() — calls the script and validates the result
  * - correlateElements() — matches extracted content against the element cache
  * - queryElementCache() — synchronous cache filtering
- * - formatCorrelatedOutput(), formatElementList(), formatRoleCountSummary()
+ * - correlateElements(), formatElementList(), formatRoleCountSummary()
  * - Boilerplate filtering constants
  */
 
@@ -49,7 +49,7 @@ export interface ExtractResult {
 }
 
 /** Output of the correlation step — text with @e annotations. */
-export interface CorrelatedResult {
+interface CorrelatedResult {
 	/** Formatted text output with @e annotations */
 	text: string;
 	/** Number of matched refs */
@@ -58,12 +58,31 @@ export interface CorrelatedResult {
 	staleCache: boolean;
 }
 
+/** Outcome of runExtractor — discriminated union. */
+type ExtractorOutcome =
+	| { ok: true; result: ExtractResult }
+	| { ok: false; error: string };
+
 /** Parameters for queryElementCache. */
-export interface ElementCacheQuery {
+interface ElementCacheQuery {
 	role?: string;
 	name?: string;
 	ref?: string;
 	subtree?: string;
+}
+
+/**
+ * Optional out-param for queryElementCache to signal when a ref was found
+ * but an extra role/name/subtree filter rejected it.
+ */
+export interface QueryStatus {
+	/** Set when filters.ref resolved to a cache node but an extra
+	 *  role/name/subtree filter rejected it. */
+	refFilteredOut?: {
+		node: AriaCachedNode;
+		filter: "role" | "name" | "subtree";
+		value: string;
+	};
 }
 
 // ─── EXTRACTOR_SCRIPT — runs in browser page context ──────────────
@@ -75,8 +94,14 @@ export interface ElementCacheQuery {
  * Playwright injects evaluate() at the DevTools protocol level,
  * bypassing page CSP. Sandboxed iframes without allow-scripts
  * are the only case that fails — the caller handles that.
+ *
+ * INVARIANT: EXTRACTOR_SCRIPT is pure DOM reads (no fetch/XHR/eval/
+ * writes). runExtractor() relies on this to pass read_only=true so
+ * the bridge routes it through the stable isolated-world context on
+ * Camoufox. If you add a write here, drop the `true` arg in
+ * runExtractor().
  */
-const EXTRACTOR_SCRIPT = `(() => {
+export const EXTRACTOR_SCRIPT = `(() => {
   'use strict';
   try {
     const result = {
@@ -182,18 +207,21 @@ const EXTRACTOR_SCRIPT = `(() => {
  * Run the DOM extractor in the page context via plugin.evaluate().
  *
  * The extractor runs purely on DOM properties — no fetch, no XHR, no eval.
- * Returns a parsed ExtractResult, or null on failure (including error
- * caught by the script itself, evaluate rejection, or invalid JSON).
+ * Returns an ExtractorOutcome with the parsed result on success or an
+ * error string on failure.
  */
 export async function runExtractor(
 	taskId: string,
 	plugin: BrowserPlugin,
-): Promise<ExtractResult | null> {
+): Promise<ExtractorOutcome> {
 	try {
-		const evalResult = await plugin.evaluate(taskId, EXTRACTOR_SCRIPT);
+		const evalResult = await plugin.evaluate(taskId, EXTRACTOR_SCRIPT, true);
 
 		if (!evalResult.success) {
-			return null;
+			return {
+				ok: false,
+				error: evalResult.error ?? "evaluate failed (no error detail)",
+			};
 		}
 
 		// The script returns a JSON string inside result.result
@@ -202,12 +230,23 @@ export async function runExtractor(
 				? evalResult.result
 				: JSON.stringify(evalResult.result);
 
-		const parsed = JSON.parse(rawJson) as ExtractResult;
+		let parsed: ExtractResult;
+		try {
+			parsed = JSON.parse(rawJson) as ExtractResult;
+		} catch (e: unknown) {
+			return {
+				ok: false,
+				error: `extractor returned invalid JSON: ${e instanceof Error ? e.message : String(e)}`,
+			};
+		}
 
 		// Check for script-level error
 		if (parsed.error) {
-			console.warn("[pi-lean-portal] DOM extractor script error:", parsed.error);
-			return null;
+			console.warn(
+				"[pi-lean-portal] DOM extractor script error:",
+				parsed.error,
+			);
+			return { ok: false, error: parsed.error };
 		}
 
 		// Validate shape (basic structural check)
@@ -219,12 +258,15 @@ export async function runExtractor(
 			!Array.isArray(parsed.images) ||
 			!Array.isArray(parsed.interactive)
 		) {
-			return null;
+			return { ok: false, error: "extractor returned malformed result" };
 		}
 
-		return parsed;
+		return { ok: true, result: parsed };
 	} catch {
-		return null;
+		return {
+			ok: false,
+			error: "evaluate failed (no error detail)",
+		};
 	}
 }
 
@@ -353,8 +395,18 @@ export function correlateElements(
 		);
 	}
 
+	// ── Empty-output notice ──
+	let text = lines.join("\n").trim();
+	if (text.length === 0) {
+		text =
+			"⚠ No extractable content found on the page. " +
+			"The page may be empty, render behind a challenge, or block DOM queries. " +
+			"Use browser-inspect { role/name/ref } against the element cache, " +
+			"or browser-snapshot to inspect visually.";
+	}
+
 	return {
-		text: lines.join("\n").trim(),
+		text,
 		matchedRefs: matchedRefs.size,
 		staleCache,
 	};
@@ -390,8 +442,14 @@ function annotateRefs(refs: string[], matchedRefs: Set<string>): string {
 export function queryElementCache(
 	cache: Map<string, AriaCachedNode>,
 	filters: ElementCacheQuery,
+	status?: QueryStatus,
 ): AriaCachedNode[] {
 	const results: AriaCachedNode[] = [];
+
+	// Pre-compute subtree ancestry map once (shared by ref + loop paths)
+	const subtreeAncestors = filters.subtree
+		? computeSubtreeAncestors(cache, filters.subtree)
+		: null;
 
 	// ref lookup: direct map access (cache keys are "e5" not "@e5")
 	if (filters.ref) {
@@ -401,26 +459,38 @@ export function queryElementCache(
 		const node = cache.get(key);
 		if (node) {
 			// Apply additional filters if any
-			if (filters.role && !matchesRole(node, filters.role)) return [];
-			if (filters.name && !matchesName(node, filters.name)) return [];
-			if (filters.subtree && !matchesSubtree(node, cache, filters.subtree))
+			if (filters.role && !matchesRole(node, filters.role)) {
+				if (status)
+					status.refFilteredOut = { node, filter: "role", value: filters.role };
 				return [];
+			}
+			if (filters.name && !matchesName(node, filters.name)) {
+				if (status)
+					status.refFilteredOut = { node, filter: "name", value: filters.name };
+				return [];
+			}
+			if (
+				filters.subtree &&
+				subtreeAncestors &&
+				!subtreeAncestors.has(node.ref)
+			) {
+				if (status)
+					status.refFilteredOut = {
+						node,
+						filter: "subtree",
+						value: filters.subtree,
+					};
+				return [];
+			}
 			return [node];
 		}
 		return [];
 	}
 
-	// Pre-compute subtree ancestry map for subtree filter
-	const subtreeAncestors = filters.subtree
-		? computeSubtreeAncestors(cache, filters.subtree)
-		: null;
-
 	for (const [, node] of cache) {
 		if (filters.role && !matchesRole(node, filters.role)) continue;
 		if (filters.name && !matchesName(node, filters.name)) continue;
-		if (filters.subtree && subtreeAncestors) {
-			if (!subtreeAncestors.has(node.ref)) continue;
-		}
+		if (subtreeAncestors && !subtreeAncestors.has(node.ref)) continue;
 		results.push(node);
 	}
 
@@ -476,15 +546,6 @@ function computeSubtreeAncestors(
 	}
 
 	return insideRefs;
-}
-
-function matchesSubtree(
-	node: AriaCachedNode,
-	cache: Map<string, AriaCachedNode>,
-	containerRole: string,
-): boolean {
-	const ancestors = computeSubtreeAncestors(cache, containerRole);
-	return ancestors.has(node.ref);
 }
 
 // ─── Output formatting ────────────────────────────────────────────

@@ -6,14 +6,18 @@
  */
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, isAbsolute } from "node:path";
+import { USER_BACKENDS_DIR } from "./shared/paths.js";
 // ─── Plugin Config types ──────────────────────────────────────────
 
 /** A single plugin entry from the user's settings.json */
 export interface PluginConfig {
 	/** Stable identifier used in strategy param, session tracking, errors */
 	name: string;
-	/** Directory name under backends/ containing the plugin code */
+	/** Directory name (or absolute path) containing the plugin code.
+	 * Resolved by `detectPluginType` against the configured roots: an
+	 * absolute path short-circuits; otherwise the shipped `backends/`
+	 * root is tried first, then the user `user-backends/` tree. */
 	dir: string;
 	/** Whether this plugin is active (default: true) */
 	enabled: boolean;
@@ -65,16 +69,11 @@ export interface PluginConfigLoadResult {
 	errors: string[];
 }
 
-/**
- * Unified full configuration result — includes both browser and plugin config.
- */
-export interface FullConfig {
+/** Internal cache for loadFullConfig() — invalidated via invalidateConfigCache() */
+let _fullConfigCache: {
 	browser: BrowserConfig;
 	plugins: PluginConfigLoadResult;
-}
-
-/** Internal cache for loadFullConfig() — invalidated via invalidateConfigCache() */
-let _fullConfigCache: FullConfig | null = null;
+} | null = null;
 
 /**
  * Parse the browser config section from settings JSON.
@@ -129,9 +128,10 @@ function parseBrowserConfig(
  * Extracts and validates the `browser.plugins` array.
  * If no plugins are configured, returns a single default Chromium plugin.
  */
-function parsePluginConfig(
+/** @internal */
+export function parsePluginConfig(
 	raw: Record<string, unknown> | undefined,
-	backendsRoot: string,
+	roots: readonly string[],
 ): PluginConfigLoadResult {
 	const errors: string[] = [];
 
@@ -180,7 +180,7 @@ function parsePluginConfig(
 		if (validated) {
 			// Also validate that the directory exists and is unambiguous
 			try {
-				detectPluginType(validated.dir, backendsRoot);
+				detectPluginType(validated.dir, roots);
 			} catch (err) {
 				errors.push(
 					`plugins[${i}] ('${validated.name}'): ${err instanceof Error ? err.message : String(err)}`,
@@ -222,17 +222,20 @@ function readBrowserConfigRaw(): Record<string, unknown> | undefined {
  * Load and cache the full browser configuration from settings.json.
  *
  * Reads settings.json once on first call and caches the result for
- * subsequent calls. Both `loadBrowserConfig()` and `loadPluginConfig()`
- * delegate to this function.
+ * subsequent calls.
  */
-export function loadFullConfig(backendsRoot?: string): FullConfig {
+export function loadFullConfig(roots?: readonly string[]): {
+	browser: BrowserConfig;
+	plugins: PluginConfigLoadResult;
+} {
 	if (_fullConfigCache) return _fullConfigCache;
 
 	const raw = readBrowserConfigRaw();
+	const effectiveRoots = roots ?? DEFAULT_BACKEND_ROOTS;
 
 	_fullConfigCache = {
 		browser: parseBrowserConfig(raw),
-		plugins: parsePluginConfig(raw, backendsRoot ?? DEFAULT_BACKENDS_ROOT),
+		plugins: parsePluginConfig(raw, effectiveRoots),
 	};
 
 	return _fullConfigCache;
@@ -244,19 +247,6 @@ export function loadFullConfig(backendsRoot?: string): FullConfig {
  */
 export function invalidateConfigCache(): void {
 	_fullConfigCache = null;
-}
-
-/**
- * Convenience wrapper — returns the `defaultProfile` setting from the
- * cached browser configuration. Delegates to `loadFullConfig()` which
- * reads `settings.json` once and caches the result.
- *
- * The `browser.defaultProfile` field controls what happens when
- * `browser-navigate` is called without an explicit `profile` parameter.
- * See `BrowserConfig` for valid values.
- */
-export function loadBrowserConfig(): BrowserConfig {
-	return loadFullConfig().browser;
 }
 
 // ─── Validation ───────────────────────────────────────────────────
@@ -332,38 +322,66 @@ function validateEntry(
 /**
  * Detect the plugin type from the directory contents.
  *
+ * Resolution order for `dir`:
+ *   1. **Absolute path** — if `dir` is absolute, it is used directly
+ *      (skips all roots; useful for development / power users).
+ *   2. **Each root in `roots`, in order** — `join(root, dir)`. The first
+ *      root that contains an unambiguous entry point wins.
+ *
+ * Per-root ambiguity: if a single resolved dir contains *both*
+ * `index.ts` and `bridge.py`, that is an error (the original behaviour).
+ * If the first root has `index.ts` and a later root has `bridge.py`, the
+ * first root wins — that is a legitimate multi-root layout, not ambiguity.
+ *
+ * If no resolved dir has any entry point, throws an error naming every
+ * root searched so users can see where the loader looked.
+ *
  * - `backends/<dir>/index.ts` exists → Node plugin
  * - `backends/<dir>/bridge.py` exists → Python plugin
- * - Both exist → error (ambiguous)
- * - Neither exists → error
+ * - Both exist in the same resolved dir → error (ambiguous)
+ * - Neither exists anywhere → error
  */
 export function detectPluginType(
 	dir: string,
-	backendsRoot: string,
+	roots: readonly string[],
 ): PluginDetection {
-	const dirPath = join(backendsRoot, dir);
-	const indexPath = join(dirPath, "index.ts");
-	const bridgePath = join(dirPath, "bridge.py");
-
-	const hasIndex = existsSync(indexPath);
-	const hasBridge = existsSync(bridgePath);
-
-	if (hasIndex && hasBridge) {
-		throw new Error(
-			`Plugin dir '${dir}' is ambiguous: both index.ts and bridge.py found. Remove one.`,
-		);
+	const candidatePaths: string[] = [];
+	if (isAbsolute(dir)) {
+		candidatePaths.push(dir);
+	} else {
+		for (const root of roots) {
+			candidatePaths.push(join(root, dir));
+		}
 	}
 
-	if (hasIndex) {
-		return { type: "node", entryPoint: indexPath };
+	for (const dirPath of candidatePaths) {
+		const indexPath = join(dirPath, "index.ts");
+		const bridgePath = join(dirPath, "bridge.py");
+
+		const hasIndex = existsSync(indexPath);
+		const hasBridge = existsSync(bridgePath);
+
+		if (hasIndex && hasBridge) {
+			throw new Error(
+				`Plugin dir '${dir}' is ambiguous: both index.ts and bridge.py found in ${dirPath}. Remove one.`,
+			);
+		}
+
+		if (hasIndex) {
+			return { type: "node", entryPoint: indexPath };
+		}
+
+		if (hasBridge) {
+			return { type: "python", entryPoint: bridgePath };
+		}
 	}
 
-	if (hasBridge) {
-		return { type: "python", entryPoint: bridgePath };
-	}
-
+	const searched = candidatePaths.length
+		? candidatePaths.join(", ")
+		: "(no roots provided)";
 	throw new Error(
-		`Plugin dir '${dir}' has no entry point. Expected index.ts (Node) or bridge.py (Python).`,
+		`Plugin dir '${dir}' has no entry point. Expected index.ts (Node) or bridge.py (Python). ` +
+			`Searched: ${searched}`,
 	);
 }
 
@@ -376,13 +394,12 @@ export function detectPluginType(
 export const DEFAULT_BACKENDS_ROOT = join(__dirname, "..", "backends");
 
 /**
- * Load and validate the plugin configuration.
- *
- * If no `browser.plugins` config exists, returns the default fallback
- * (chromium + firefox enabled, chromium-py + firefox-py disabled).
+ * Default root search order for plugin discovery: the shipped package
+ * `backends/` first, then the user-writable `user-backends/` tree under
+ * `~/.pi/agent/pi-lean-portal/`.  Callers may pass a custom `roots`
+ * array (e.g. tests with temp dirs); when omitted, this default is used.
  */
-export function loadPluginConfig(
-	backendsRoot: string = DEFAULT_BACKENDS_ROOT,
-): PluginConfigLoadResult {
-	return loadFullConfig(backendsRoot).plugins;
-}
+export const DEFAULT_BACKEND_ROOTS: readonly string[] = [
+	DEFAULT_BACKENDS_ROOT,
+	USER_BACKENDS_DIR,
+];

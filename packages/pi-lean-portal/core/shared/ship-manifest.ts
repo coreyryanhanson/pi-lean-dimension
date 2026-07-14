@@ -13,7 +13,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SKIP_DIRS = new Set(["node_modules", "docs", "__tests__"]);
+const DEFAULT_SKIP_DIRS = ["node_modules", "docs", "__tests__"];
 const SKIP_FILES = new Set(["test-fixtures.ts"]);
 /** Entries that won't exist on disk at rest but are valid (generated at pack time, e.g. by prepack). */
 const SKIP_STALE = new Set(["LICENSE"]);
@@ -44,15 +44,38 @@ export interface ShipManifestResult {
  * would omit; `stale` flags `files` entries that point at nothing on disk
  * (asset entries like `README.md` count as present — staleness is plain
  * existence, not the production-`.ts` walk).
+ *
+ * @param opts.skipDirs - Additional directory names to skip beyond the defaults
+ *                        (`node_modules`, `docs`, `__tests__`).
  */
 export function verifyShipManifest(
 	packageDirOrUrl: string,
+	opts?: { skipDirs?: readonly string[] },
 ): ShipManifestResult {
 	const packageDir = packageDirOrUrl.startsWith("file:")
 		? dirname(fileURLToPath(packageDirOrUrl))
 		: packageDirOrUrl;
-	const pkgRaw = readFileSync(resolve(packageDir, "package.json"), "utf8");
-	const pkg = JSON.parse(pkgRaw) as { files?: string[] };
+	const skipDirs = new Set([...DEFAULT_SKIP_DIRS, ...(opts?.skipDirs ?? [])]);
+	let pkgRaw: string;
+	try {
+		pkgRaw = readFileSync(resolve(packageDir, "package.json"), "utf8");
+	} catch (err) {
+		throw new Error(
+			`verifyShipManifest: could not read package.json under "${packageDir}": ${
+				err instanceof Error ? err.message : String(err)
+			}`,
+		);
+	}
+	let pkg: { files?: string[] };
+	try {
+		pkg = JSON.parse(pkgRaw) as { files?: string[] };
+	} catch (err) {
+		throw new Error(
+			`verifyShipManifest: package.json under "${packageDir}" is not valid JSON: ${
+				err instanceof Error ? err.message : String(err)
+			}`,
+		);
+	}
 	const declared = pkg.files ?? [];
 	const exactFiles = new Set<string>();
 	const dirPrefixes: string[] = [];
@@ -72,7 +95,7 @@ export function verifyShipManifest(
 		else exactFiles.add(entry);
 	}
 
-	const onDisk = walkProductionTs(packageDir, packageDir);
+	const onDisk = walkProductionTs(packageDir, packageDir, skipDirs);
 	const missing = onDisk.filter((f) => !isCovered(f, exactFiles, dirPrefixes));
 	// Staleness: check only non-negation entries. Negation patterns (`!foo/`)
 	// have no on-disk counterpart.
@@ -90,8 +113,6 @@ function isDirOnDisk(packageDir: string, entry: string): boolean {
 	try {
 		return statSync(resolve(packageDir, entry)).isDirectory();
 	} catch {
-		// Entry not present on disk (e.g. an asset/extraneous `files` entry) —
-		// not a directory we can recurse into; the caller treats it as an exact file.
 		return false;
 	}
 }
@@ -108,14 +129,18 @@ function isCovered(
 	return false;
 }
 
-function walkProductionTs(root: string, dir: string): string[] {
+function walkProductionTs(
+	root: string,
+	dir: string,
+	skipDirs: Set<string>,
+): string[] {
 	const out: string[] = [];
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
 		if (entry.name.startsWith(".")) continue;
-		if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
+		if (entry.isDirectory() && skipDirs.has(entry.name)) continue;
 		const abs = resolve(dir, entry.name);
 		if (entry.isDirectory()) {
-			out.push(...walkProductionTs(root, abs));
+			out.push(...walkProductionTs(root, abs, skipDirs));
 			continue;
 		}
 		if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;

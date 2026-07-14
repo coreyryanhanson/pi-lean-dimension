@@ -3,7 +3,7 @@
  * /web on | off | status commands for toggling browser automation tools.
  *
  * Tests cover:
- * - Filtering logic (getRegisteredBrowserTools)
+ * - Filtering logic (getRegisteredIn)
  * - State queries (isBrowserEnabled)
  * - State mutations (applyBrowserState, persistState)
  * - Branch-aware restoration (restoreFromBranch)
@@ -19,7 +19,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import browserToggle, { getToggleState } from "../browser-toggle.js";
 import {
-	getRegisteredBrowserTools,
+	getRegisteredIn,
 	isBrowserEnabled,
 	applyBrowserState,
 	persistState,
@@ -27,12 +27,10 @@ import {
 	_resetToggleStateForTest,
 	readBrowserToggleConfig,
 	applyConfigDefault,
-	getRegisteredLearnTools,
-	getRegisteredSiblingTools,
 	isLearnEnabled,
 	applyLearnState,
 	type BrowserToggleState,
-} from "./helpers/toggle-test-utils.js";
+} from "../browser-toggle.js";
 
 // Mock node:fs so readBrowserToggleConfig and applyConfigDefault can be
 // tested without touching the real filesystem.
@@ -119,38 +117,52 @@ function mockContext(
 }
 
 // ==================================================================
-//  getRegisteredBrowserTools
+//  getRegisteredIn
 // ==================================================================
-describe("getRegisteredBrowserTools", () => {
+describe("getRegisteredIn", () => {
+	const BROWSER_NAMES = new Set([
+		"web-fetch",
+		"browser-navigate",
+		"browser-snapshot",
+		"browser-click",
+		"browser-type",
+		"browser-scroll",
+		"browser-back",
+		"browser-press",
+		"browser-console",
+		"browser-inspect",
+		"web-guide",
+	]);
+
 	it("returns empty array when no tools are registered", () => {
 		const pi = mockPi({ tools: [] });
-		expect(getRegisteredBrowserTools(pi)).toEqual([]);
+		expect(getRegisteredIn(pi, BROWSER_NAMES)).toEqual([]);
 	});
 
-	it("returns empty array when only non-browser tools are registered", () => {
+	it("returns empty array when only non-matching tools are registered", () => {
 		const pi = mockPi({ tools: NON_BROWSER_TOOLS });
-		expect(getRegisteredBrowserTools(pi)).toEqual([]);
+		expect(getRegisteredIn(pi, BROWSER_NAMES)).toEqual([]);
 	});
 
-	it("returns only browser tools when mixed with other tools", () => {
+	it("returns only matching tools when mixed with non-matching tools", () => {
 		const pi = mockPi({
 			tools: [...ALL_BROWSER_TOOLS, ...NON_BROWSER_TOOLS],
 		});
-		expect(getRegisteredBrowserTools(pi)).toEqual(
+		expect(getRegisteredIn(pi, BROWSER_NAMES)).toEqual(
 			ALL_BROWSER_TOOLS.map((t) => t.name),
 		);
 	});
 
-	it("returns all browser tools when fully loaded", () => {
+	it("returns all matching tools when all are present", () => {
 		const pi = mockPi({ tools: ALL_BROWSER_TOOLS });
-		expect(getRegisteredBrowserTools(pi)).toEqual(
+		expect(getRegisteredIn(pi, BROWSER_NAMES)).toEqual(
 			ALL_BROWSER_TOOLS.map((t) => t.name),
 		);
 	});
 
-	it("returns a subset when only some browser tools are registered", () => {
+	it("returns a subset when only some matching tools are registered", () => {
 		const pi = mockPi({ tools: SOME_BROWSER_TOOLS });
-		expect(getRegisteredBrowserTools(pi)).toEqual(
+		expect(getRegisteredIn(pi, BROWSER_NAMES)).toEqual(
 			SOME_BROWSER_TOOLS.map((t) => t.name),
 		);
 	});
@@ -164,7 +176,7 @@ describe("getRegisteredBrowserTools", () => {
 			],
 		});
 		// Only the exact-lowercase match should be returned
-		expect(getRegisteredBrowserTools(pi)).toEqual(["web-fetch"]);
+		expect(getRegisteredIn(pi, BROWSER_NAMES)).toEqual(["web-fetch"]);
 	});
 
 	it("ignores tool metadata beyond the name field", () => {
@@ -173,7 +185,7 @@ describe("getRegisteredBrowserTools", () => {
 			{ name: "browser-scroll", description: "b", promptGuidelines: [] },
 		];
 		const pi = mockPi({ tools: tools as any });
-		expect(getRegisteredBrowserTools(pi)).toEqual([
+		expect(getRegisteredIn(pi, BROWSER_NAMES)).toEqual([
 			"web-fetch",
 			"browser-scroll",
 		]);
@@ -208,12 +220,12 @@ describe("isBrowserEnabled", () => {
 		expect(isBrowserEnabled(pi)).toBe(true);
 	});
 
-	it("returns true when no browser tools exist (vacuously enabled)", () => {
+	it("returns false when no browser tools exist", () => {
 		const pi = mockPi({
 			tools: NON_BROWSER_TOOLS,
 			activeTools: NON_BROWSER_TOOLS.map((t) => t.name),
 		});
-		expect(isBrowserEnabled(pi)).toBe(true);
+		expect(isBrowserEnabled(pi)).toBe(false);
 	});
 
 	it("returns false when active set is empty and browser tools exist", () => {
@@ -825,12 +837,14 @@ describe("command handler dispatch (via factory closure)", () => {
 });
 
 // ==================================================================
-//  getRegisteredLearnTools / isLearnEnabled / applyLearnState
+//  getRegisteredIn (learn) / isLearnEnabled / applyLearnState
 // ==================================================================
-describe("getRegisteredLearnTools", () => {
+describe("getRegisteredIn with learn tool names", () => {
+	const LEARN_NAMES = new Set(["web-learn"]);
+
 	it("returns empty array when no learn tools registered", () => {
 		const pi = mockPi({ tools: ALL_BROWSER_TOOLS });
-		expect(getRegisteredLearnTools(pi)).toEqual([]);
+		expect(getRegisteredIn(pi, LEARN_NAMES)).toEqual([]);
 	});
 
 	it("returns web-learn when it's in the tool list", () => {
@@ -839,7 +853,7 @@ describe("getRegisteredLearnTools", () => {
 			{ name: "web-learn", description: "learn" },
 		];
 		const pi = mockPi({ tools });
-		expect(getRegisteredLearnTools(pi)).toEqual(["web-learn"]);
+		expect(getRegisteredIn(pi, LEARN_NAMES)).toEqual(["web-learn"]);
 	});
 
 	it("is case-sensitive (tool names are always lowercase)", () => {
@@ -849,7 +863,7 @@ describe("getRegisteredLearnTools", () => {
 			{ name: "web-learn" },
 		];
 		const pi = mockPi({ tools });
-		expect(getRegisteredLearnTools(pi)).toEqual(["web-learn"]);
+		expect(getRegisteredIn(pi, LEARN_NAMES)).toEqual(["web-learn"]);
 	});
 });
 
@@ -878,9 +892,9 @@ describe("isLearnEnabled", () => {
 		expect(isLearnEnabled(pi)).toBe(false);
 	});
 
-	it("returns true when no learn tools exist (vacuously enabled)", () => {
+	it("returns false when no learn tools exist", () => {
 		const pi = mockPi({ tools: ALL_BROWSER_TOOLS });
-		expect(isLearnEnabled(pi)).toBe(true);
+		expect(isLearnEnabled(pi)).toBe(false);
 	});
 });
 
@@ -924,28 +938,28 @@ describe("applyLearnState", () => {
 });
 
 // ==================================================================
-//  getRegisteredSiblingTools
+//  getRegisteredIn (sibling)
 // ==================================================================
-describe("getRegisteredSiblingTools", () => {
-	it("returns web-search when it's in the tool list (Sprint 4)", () => {
+describe("getRegisteredIn with sibling tool names", () => {
+	const SIBLING_NAMES = new Set(["web-search"]);
+
+	it("returns web-search when it's in the tool list", () => {
 		const tools = [
 			...ALL_BROWSER_TOOLS,
 			{ name: "web-search", description: "SearXNG search" },
 		];
 		const pi = mockPi({ tools });
-		expect(getRegisteredSiblingTools(pi)).toEqual(["web-search"]);
+		expect(getRegisteredIn(pi, SIBLING_NAMES)).toEqual(["web-search"]);
 	});
 
 	it("uses exact-name Set.has() membership — no regex false positives", () => {
-		// A tool named "web-search-news" should NOT match the "web-search" entry,
-		// confirming exact-name membership rather than a prefix regex.
 		const tools = [
 			...ALL_BROWSER_TOOLS,
 			{ name: "web-search-news", description: "news" },
 			{ name: "web-search-images", description: "images" },
 		];
 		const pi = mockPi({ tools });
-		expect(getRegisteredSiblingTools(pi)).toEqual([]);
+		expect(getRegisteredIn(pi, SIBLING_NAMES)).toEqual([]);
 	});
 
 	it("is case-sensitive — only exact lower-case matches", () => {
@@ -955,7 +969,7 @@ describe("getRegisteredSiblingTools", () => {
 			{ name: "web-search" },
 		];
 		const pi = mockPi({ tools });
-		expect(getRegisteredSiblingTools(pi)).toEqual(["web-search"]);
+		expect(getRegisteredIn(pi, SIBLING_NAMES)).toEqual(["web-search"]);
 	});
 });
 

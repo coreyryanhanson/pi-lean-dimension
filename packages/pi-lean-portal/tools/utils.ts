@@ -5,7 +5,7 @@
  * Includes taskId resolution, status bar updates, and profile line formatting.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { getToggleState, getLearnState } from "../browser-toggle.js";
 import { sessionManager } from "../core/shared/session-manager.js";
 import { taskId } from "../core/shared/task-id.js";
@@ -21,7 +21,7 @@ import { taskId } from "../core/shared/task-id.js";
 let _lastCtx: {
 	ui: {
 		setStatus: (key: string, label: string) => void;
-		theme: { fg: (c: string, t: string) => string };
+		theme: { fg: (c: ThemeColor, t: string) => string };
 	};
 } | null = null;
 
@@ -31,7 +31,7 @@ let _lastCtx: {
 export function updateFooterStatus(ctx: {
 	ui: {
 		setStatus: (key: string, label: string) => void;
-		theme: { fg: (c: string, t: string) => string };
+		theme: { fg: (c: ThemeColor, t: string) => string };
 	};
 }): void {
 	_lastCtx = ctx;
@@ -109,7 +109,7 @@ export async function executeInteractionTool<
 	ctx: {
 		ui: {
 			setStatus: (key: string, label: string) => void;
-			theme: { fg: (c: string, t: string) => string };
+			theme: { fg: (c: ThemeColor, t: string) => string };
 		};
 		sessionManager?: { getSessionId?(): string };
 	},
@@ -152,6 +152,24 @@ export async function executeInteractionTool<
 		content: [{ type: "text", text: content }],
 		details,
 	};
+}
+
+/**
+ * Append a dim-styled content preview to an in-progress result string,
+ * with a "more chars" suffix when the content exceeds the given limit.
+ */
+export function renderExpandedText(
+	text: string,
+	theme: { fg: (c: ThemeColor, t: string) => string },
+	content: string,
+	limit: number,
+): string {
+	const preview = content.replace(/\n{3,}/g, "\n\n").slice(0, limit);
+	if (!preview) return text;
+	text += `\n${theme.fg("dim", preview)}`;
+	if (content.length > limit)
+		text += `\n${theme.fg("muted", `… ${content.length - limit} more chars`)}`;
+	return text;
 }
 
 export type { ExtensionAPI };

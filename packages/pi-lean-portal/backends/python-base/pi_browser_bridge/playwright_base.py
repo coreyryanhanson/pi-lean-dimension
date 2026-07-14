@@ -21,10 +21,12 @@ import re
 import sys
 import time
 from typing import Any, Optional
+from urllib.parse import unquote as _urlunquote
 
 from .bridge import BrowserBridge, SessionNotFoundError
 from .bot_detection import check_bot_detection
 from .accessibility import parse_snapshot, build_locator_args
+from .browser_data import NAV_SETTLE
 
 # ─── Playwright import (lazy, for better error messages) ──────────────
 
@@ -35,6 +37,11 @@ except ImportError:
     HAS_PLAYWRIGHT = False
     sync_playwright = None  # type: ignore[assignment]
     PlaywrightTimeout = TimeoutError  # type: ignore[misc]
+
+
+# ─── Nav-settle constants (loaded from shared browser-data.json) ──────
+
+_DOM_STABILIZE_JS: str = NAV_SETTLE["domStabilizationJs"]
 
 
 # ─── Shared helper for bridge entry points ───────────────────────────
@@ -102,6 +109,133 @@ class PlaywrightBridge(BrowserBridge):
     #: Engine-specific install hint (shown when browser executable missing).
     _install_hint: str = ""
 
+    # ── Stealth quirks (Phase 0) ──────────────────────────────────
+    #
+    # These opt-in flags let stealth subclasses (Camoufox and other stealth engines)
+    # disable the base's hard-coded Playwright defaults that would otherwise
+    # clobber a fingerprint-managed browser context.  All default to ``off``
+    # so the shipped ``chromium-py`` / ``firefox-py`` bridges are bit-identical.
+    #
+    # See stealth-browser-plan-v3.md "Quirks schema" for the concrete
+    # correctness problem each flag fixes.
+
+    #: When True, ``create_browser_context()`` does NOT pass ``viewport`` or
+    #: ``user_agent`` to ``new_context`` — the fingerprint package (e.g.
+    #: Camoufox at browser launch via ``NewBrowser``) generates those from
+    #: the fingerprint, and the base's hard-coded
+    #: values would override them with a detectable mismatch.
+    _fingerprint_managed_context: bool = False
+
+    #: Prefix prepended to every ``page.evaluate`` expression in ``do_evaluate``.
+    #: Camoufox runs eval in an isolated world with read-only page access by
+    #: default; ``"mw:"`` routes the script to the main world where writes work.
+    #: Reads work with the prefix too, so it's safe to apply unconditionally.
+    #: Empty string = no prefix (the shipped bridges).
+    _eval_prefix: str = ""
+
+    #: When True, ``do_scroll`` uses ``page.mouse.wheel`` instead of
+    #: ``page.evaluate("window.scrollBy")``.  The eval-based scroll is a
+    #: write that silently no-ops under Camoufox's isolated world; the wheel
+    #: event performs the scroll via input events instead.
+    _scroll_via_wheel: bool = False
+
+    #: When True, ``create_browser_context`` passes ``no_viewport=True`` to
+    #: ``browser.new_context()``, telling Playwright to skip the
+    #: ``Browser.setDefaultViewport`` CDP call.  The Camoufox patched Firefox
+    #: binary does not accept the ``isMobile`` property that Playwright Firefox
+    #: includes in ``setDefaultViewport``, which would otherwise cause a
+    #: ``Protocol error`` on context creation.  Other backends that patch
+    #: ``new_context`` do not need this flag;
+    #: only set it when the binary rejects the default viewport call.
+    #: Default ``False`` so the shipped bridges stay bit-identical.
+    _skip_default_viewport: bool = False
+
+    #: When True, navigation-settle waits skip the ``networkidle`` load state.
+    #: The patched Firefox binaries used by some stealth backends
+    #: do not fire ``networkidle`` reliably, so waiting for it either
+    #: times out (``do_go_back``'s 30s default) or loiters in the Playwright sync
+    #: greenlet's event loop long enough to deadlock the Juggler driver when a
+    #: subsequent BrowserContext's ``new_page()`` is created.  When True,
+    #: ``do_go_back`` uses ``wait_until="load"`` and ``_wait_for_page_ready``
+    #: skips its ``networkidle`` wait — matching ``do_navigate``'s load-based
+    #: settle, which works reliably on the patched binaries.  Default ``False``
+    #: so the shipped chromium-py / firefox-py bridges keep their networkidle
+    #: settle behaviour bit-identical.
+    _skip_networkidle: bool = False
+
+    #: When True, ``do_evaluate`` wraps the expression in ``eval(<json>)``
+    #: before prepending :attr:`_eval_prefix` **and** enables a one-retry
+    #: recovery on genuine ``Execution context was destroyed`` errors.
+    #: Default ``False`` so the shipped ``chromium-py`` / ``firefox-py``
+    #: bridges (which have ``_eval_prefix = ""``) stay bit-identical.
+    #:
+    #: **Layer 1 — SyntaxError class (``eval(<json>)`` wrap).**  Camoufox's
+    #: patched Juggler main-world eval path
+    #: (``MainWorldContext.executeInGlobal`` in the binary's ``omni.ja``)
+    #: wraps every ``mw:``-prefixed script as
+    #: ``(() => { let _s = (${script}); ... })()``.  That wrapper requires
+    #: ``${script}`` to be a single *expression*; any *statement* (``let`` /
+    #: ``var`` / multiple ``;``-separated statements) is a ``SyntaxError``
+    #: (``missing ) in parenthetical``) that surfaces through Playwright as
+    #: ``"Execution context was destroyed, most likely because of a
+    #: navigation."`` — an uncatchable-looking error that is NOT a navigation
+    #: race at all.  Rewriting the script as ``eval(<JSON-string of script>)``
+    #: makes it a single expression (valid inside ``let _s = (...)``) while
+    #: ``eval`` itself correctly handles both expressions and multi-statement
+    #: scripts, returning the completion value of the last statement.
+    #: This class is **terminal** — a SyntaxError after the wrap means the
+    #: wrap itself is broken and there is no retry.
+    #:
+    #: **Layer 2 — Genuine context-destruction class (retry).**  On a
+    #: bot-detection challenge page the page may settle-navigate after
+    #: ``browser.navigate`` returns, destroying the ``mw:`` eval context
+    #: between the snapshot and a subsequent ``browser.inspect`` or
+    #: ``browser-console`` call.  The error string is identical to Layer 1
+    #: (both produce ``"Execution context was destroyed…"`` through
+    #: Playwright) but the class is **transient** — a single
+    #: ``wait_for_load_state("load")`` + one ``page.evaluate`` retry
+    #: succeeds once the challenge settles.  ``do_evaluate`` distinguishes
+    #: the two classes in its ``except`` handler: a retry is attempted
+    #: only when ``_wrap_mw_eval_in_eval`` is True (Camoufox-only; shipped
+    #: bridges never hit the ``mw:`` path) and only for the transient class.
+    #: See ``do_evaluate`` for the implementation.
+    _wrap_mw_eval_in_eval: bool = False
+
+    #: When True, read-only evals (``do_evaluate(read_only=True)``, used
+    #: only for the EXTRACTOR_SCRIPT) bypass ``page.evaluate`` entirely and
+    #: read a result that an ``add_init_script`` stashed in the DOM.
+    #:
+    #: **Why this exists.** Some patched-Firefox stealth binaries route
+    #: ``page.evaluate`` through ``eval()`` in the page's *main* world (a
+    #: stealth measure that kills Juggler's isolated-world debugger
+    #: signature).  The page's CSP then applies, so on CSP-strict sites
+    #: (e.g. Reddit, which forbids ``unsafe-eval``) every ``page.evaluate``
+    #: fails with ``"call to eval() blocked by CSP"``.  Camoufox is NOT
+    #: affected — its binary keeps Juggler's CSP-free isolated-world and
+    #: ``MainWorldContext.executeInGlobal`` paths; other patched-Firefox
+    #: stealth binaries are affected.
+    #:
+    #: **How it works.** ``create_browser_context`` calls
+    #: :meth:`_register_readonly_extractor_init_script`, which wraps the
+    #: EXTRACTOR_SCRIPT (plumbed from the TypeScript side via the
+    #: ``browser.init`` config key ``readOnlyExtractorScript``) in a
+    #: ``DOMContentLoaded``-deferred IIFE that writes its JSON result to
+    #: ``<meta id="__pi-extract" content="<urlencoded JSON>">``.  The init
+    #: script runs in the isolated world, which is CSP-free.
+    #: ``do_evaluate(read_only=True)`` then reads that meta via
+    #: ``page.query_selector`` + ``get_attribute`` — both native Juggler
+    #: element commands, also CSP-free — instead of calling
+    #: ``page.evaluate``.
+    #:
+    #: **Limitation.** The meta is repopulated only on a full document
+    #: load (``page.goto``); SPA-style in-page route changes do NOT re-run
+    #: the init script, so the stashed result goes stale until the next
+    #: ``browser-navigate``.  For the navigate→inspect agent flow this is
+    #: fine; document with a ``ponytail:`` note if you lift it.
+    #: Default ``False`` so shipped bridges stay bit-identical.
+    _csp_safe_readonly_via_init_script: bool = False
+
+
     # ── Shared Playwright state ─────────────────────────────────
 
     _pw: Any  # Playwright instance (lazy, shared)
@@ -112,6 +246,13 @@ class PlaywrightBridge(BrowserBridge):
         self._pw = None
         self._browser = None
         self._cached_ua: str = ""
+        # The read-only extractor script plumbed from the TypeScript side
+        # via the ``browser.init`` config key ``readOnlyExtractorScript``.
+        # Populated lazily by _register_readonly_extractor_init_script;
+        # used by do_evaluate to gate the CSP-free meta handoff so a
+        # non-extractor read_only eval (none today) can't silently receive
+        # the extractor's stale result.
+        self._readonly_extractor_script: str = ""
 
     # ── Subclass extension point ───────────────────────────────
 
@@ -163,6 +304,7 @@ class PlaywrightBridge(BrowserBridge):
                 except Exception:
                     pass
 
+
     # ── Debug logging ───────────────────────────────────────────
 
     @property
@@ -178,6 +320,16 @@ class PlaywrightBridge(BrowserBridge):
                 file=sys.stderr,
                 flush=True,
             )
+
+    def _log_op(self, event: str, ctx: dict, result: dict) -> dict:
+        """Log result and return it. Replaces success/failure _log pairs."""
+        if self._debug:
+            log_data = dict(ctx)
+            log_data["success"] = result.get("success", False)
+            if result.get("error"):
+                log_data["error"] = result["error"]
+            self._log(event, **log_data)
+        return result
 
     # ── Shared Playwright lifecycle ────────────────────────────
 
@@ -232,17 +384,38 @@ class PlaywrightBridge(BrowserBridge):
         """Create a new isolated BrowserContext for a task session.
 
         Applies the default viewport, :attr:`effective_user_agent`, and
-        ``storageState`` from config.  Starts Playwright tracing if
-        ``BROWSER_TRACE_DIR`` is set.
+        ``storageState`` from config — **unless**
+        :attr:`_fingerprint_managed_context` is True, in which case viewport
+        and user_agent are omitted so the stealth fingerprint package can
+        generate them from the fingerprint without being clobbered.
+        (Camoufox v135.x injects the fingerprint at browser launch via
+        ``NewBrowser``; some stealth engines patch ``browser.new_context``.)
+
+        Context creation always goes through ``browser.new_context(**kwargs)``.
+        Stealth backends that need fingerprint injection at context creation
+        time can override this method; the shipped Camoufox bridge injects at
+        browser launch time and needs no override.
+
+        Starts Playwright tracing if ``BROWSER_TRACE_DIR`` is set.
 
         Returns a Playwright ``BrowserContext`` (no Page yet).
         """
         _pw, browser = self._ensure_playwright()
 
-        context_kwargs: dict[str, Any] = {
-            "viewport": {"width": 1280, "height": 720},
-            "user_agent": self.effective_user_agent,
-        }
+        context_kwargs: dict[str, Any] = {}
+        if not self._fingerprint_managed_context:
+            # Shipped bridges: hard-coded defaults.
+            context_kwargs["viewport"] = {"width": 1280, "height": 720}
+            context_kwargs["user_agent"] = self.effective_user_agent
+        elif self._skip_default_viewport:
+            # The Camoufox patched Firefox binary does not accept the
+            # ``isMobile`` property that Playwright Firefox includes in
+            # ``Browser.setDefaultViewport``.  Skip the call entirely.
+            context_kwargs["no_viewport"] = True
+        # When fingerprint-managed, ONLY pass storage_state (and let the
+        # fingerprint package set viewport/UA/screen/dpr).  proxy/geolocation
+        # are forwarded by stealth subclasses at browser launch via their
+        # ``_launch_browser`` override (e.g. ``camoufox.NewBrowser``).
         storage_state = config.get("storageState")
         if storage_state is not None:
             context_kwargs["storage_state"] = storage_state
@@ -263,7 +436,93 @@ class PlaywrightBridge(BrowserBridge):
             except Exception:
                 pass  # Best-effort
 
+        # CSP-safe read-only eval path (see _csp_safe_readonly_via_init_script).
+        # Registers an init script that stashes the EXTRACTOR_SCRIPT result in
+        # the DOM so do_evaluate(read_only=True) can read it without
+        # page.evaluate (which is CSP-blocked on some patched binaries).
+        if self._csp_safe_readonly_via_init_script:
+            self._register_readonly_extractor_init_script(context)
+
         return context
+
+    def _register_readonly_extractor_init_script(self, context: Any) -> None:
+        """Register a CSP-free init script that stashes the read-only
+        extractor's JSON result in the DOM.
+
+        Reads the EXTRACTOR_SCRIPT from ``self.plugin_config[
+        "readOnlyExtractorScript"]`` (plumbed from the TypeScript adapter via
+        the ``browser.init`` RPC).  Wraps it in a ``DOMContentLoaded``-deferred
+        IIFE that runs in the isolated world (CSP-free) and writes its JSON
+        return value to ``<meta id="__pi-extract" content="<urlencoded JSON>">``
+        once the DOM is parsed.
+
+        No-op (with a debug log) when the script is absent — e.g. an older
+        adapter that doesn't forward ``readOnlyExtractorScript``.  In that
+        case ``do_evaluate(read_only=True)`` falls back to ``page.evaluate``,
+        which is the pre-fix behaviour (CSP-fails on strict sites, works on
+        lax sites).  Idempotent: re-registering on a fresh context is fine
+        (init scripts are per-context, not global).
+        """
+        script = (self.plugin_config or {}).get("readOnlyExtractorScript")
+        if not script:
+            self._log(
+                "registerReadonlyExtractor",
+                taskId="shared",
+                success=False,
+                reason="readOnlyExtractorScript not present in plugin config",
+            )
+            return
+        self._readonly_extractor_script = script
+        # The EXTRACTOR_SCRIPT is a self-contained IIFE that returns a JSON
+        # string.  It ends with a trailing ``;``; strip it so the assignment
+        # ``__r = <script>`` is a single expression statement (wrapping it as
+        # ``__r = (<script>);`` would put the script's ``;`` *inside* parens
+        # → ``__r = (...})(););`` → SyntaxError, and the whole init script
+        # then silently no-ops at document-start).
+        script_body = script
+        while script_body.endswith(";"):
+            script_body = script_body[:-1]
+        # Run the extractor at ``DOMContentLoaded`` (NOT ``load``) and write
+        # its JSON result to a meta tag.  Two reasons specific to the
+        # affected patched-Firefox binaries force this shape:
+        #   1. ``document.head`` is null at document-start, so a synchronous
+        #      write at init time would throw — defer until DCL when the head
+        #      exists and the DOM is parsed.
+        #   2. A ``window.addEventListener('load', ...)`` listener registered
+        #      from the isolated world does NOT fire on this patched binary
+        #      (the isolated world's window doesn't receive the page's load
+        #      event), while ``document.addEventListener('DOMContentLoaded'
+        #      , ...)`` does fire.  DCL is also early enough that the
+        #      extractor's offsetParent / getClientRects / computed-visibility
+        #      checks are accurate for text elements (layout is done at DCL;
+        #      only images are still loading, and they don't affect text
+        #      element layout).
+        # The init script runs in the isolated world, so it is NOT subject to
+        # the page's CSP (the whole reason this path exists).
+        # encodeURIComponent keeps the JSON safe inside an HTML attribute.
+        wrapper = (
+            "(() => {\n"
+            "  const __piRun = () => {\n"
+            "    let __r;\n"
+            "    try { __r = " + script_body + "; }\n"
+            "    catch (e) { __r = JSON.stringify({ error: (e && e.message) || String(e) }); }\n"
+            "    let __m = document.getElementById('__pi-extract');\n"
+            "    if (!__m) { __m = document.createElement('meta'); __m.id = '__pi-extract'; document.head.appendChild(__m); }\n"
+            "    __m.setAttribute('content', encodeURIComponent(__r));\n"
+            "  };\n"
+            "  if (document.readyState !== 'loading') { __piRun(); }\n"
+            "  else { document.addEventListener('DOMContentLoaded', __piRun, { once: true }); }\n"
+            "})();"
+        )
+        try:
+            context.add_init_script(wrapper)
+        except Exception as exc:
+            self._log(
+                "registerReadonlyExtractor",
+                taskId="shared",
+                success=False,
+                error=str(exc),
+            )
 
     def _setup_page_session(self, page: Any) -> dict[str, Any]:
         """Attach console capture and dialog handlers to a new page.
@@ -367,15 +626,24 @@ class PlaywrightBridge(BrowserBridge):
     # ── Internal helpers ───────────────────────────────────────────
 
     def _get_page(self, task_id: str) -> Any:
-        """Get the Playwright Page for a task, or raise SessionNotFoundError."""
         session = self.require_session(task_id)
         return session["page"]
 
-    def _get_dialog_events(self, task_id: str) -> list[dict[str, str]]:
-        """Get up to 10 most recent auto-dismissed dialog events for a task.
+    def _get_page_or_error(
+        self, task_id: str, op: str
+    ) -> tuple[Any, dict[str, Any] | None]:
+        """Resolve the page for a task, or return an error dict for the caller to emit."""
+        try:
+            return self._get_page(task_id), None
+        except SessionNotFoundError:
+            raise
+        except Exception as exc:
+            return None, {
+                "success": False,
+                "error": f"{op[0].upper()}{op[1:]} failed: {exc}",
+            }
 
-        Returns a list of ``{type, message, handledAs}`` dicts.
-        """
+    def _get_dialog_events(self, task_id: str) -> list[dict[str, str]]:
         session = self.get_session(task_id)
         if not session:
             return []
@@ -388,7 +656,6 @@ class PlaywrightBridge(BrowserBridge):
     def _take_snapshot_and_cache(
         self, task_id: str, page: Any
     ) -> tuple[str, int, dict[str, dict[str, Any]]]:
-        """Take snapshot, cache elements, return formatted text + count."""
         try:
             snap_text: str = page.aria_snapshot()
         except Exception:
@@ -412,6 +679,31 @@ class PlaywrightBridge(BrowserBridge):
             }
             for ref, node in parsed.elements.items()
         }
+
+    def _build_interaction_result(
+        self, task_id: str, page: Any, **extra: Any
+    ) -> dict[str, Any]:
+        snap_text, element_count, elements = self._take_snapshot_and_cache(
+            task_id, page
+        )
+        result: dict[str, Any] = {
+            "success": True,
+            "snapshot": snap_text,
+            "elementCount": element_count,
+            "elements": elements,
+            "dialogEvents": self._get_dialog_events(task_id),
+        }
+        result.update(extra)
+        return result
+
+    def _ref_debug_info(self, task_id: str, ref: str) -> tuple[str, str]:
+        key = ref[1:] if ref.startswith("@") else ref
+        cache = self.get_element_cache(task_id)
+        node = cache.elements.get(key) if cache else None
+        return (
+            getattr(node, "role", "unknown") if node else "unknown",
+            getattr(node, "name", "unknown") if node else "unknown",
+        )
 
     def _locate_element(
         self, page: Any, task_id: str, ref: str
@@ -454,7 +746,7 @@ class PlaywrightBridge(BrowserBridge):
     # ── Navigation settle helpers ───────────────────────────────
 
     @staticmethod
-    def _wait_for_page_ready(page: Any, timeout_ms: int) -> None:
+    def _wait_for_page_ready(page: Any, timeout_ms: int, skip_networkidle: bool = False) -> None:
         """Wait for page readiness after a navigation.
 
         Mirrors the TypeScript ``waitForPageReady`` helper — each load
@@ -466,15 +758,19 @@ class PlaywrightBridge(BrowserBridge):
         Args:
             page: Playwright Page.
             timeout_ms: Timeout for each wait_for_load_state call.
+            skip_networkidle: When True, skip the ``networkidle`` wait —
+                stealth patched-Firefox binaries don't fire it reliably and
+                loitering for it can deadlock the Juggler driver.
         """
         try:
             page.wait_for_load_state("load", timeout=timeout_ms)
         except Exception:
             pass
-        try:
-            page.wait_for_load_state("networkidle", timeout=timeout_ms)
-        except Exception:
-            pass
+        if not skip_networkidle:
+            try:
+                page.wait_for_load_state("networkidle", timeout=timeout_ms)
+            except Exception:
+                pass
 
     @staticmethod
     def _wait_for_navigation_settle(
@@ -482,6 +778,7 @@ class PlaywrightBridge(BrowserBridge):
         url_before: str,
         nav_timeout_ms: int = 5000,
         settle_timeout_ms: int = 400,
+        skip_networkidle: bool = False,
     ) -> tuple[bool, str]:
         """Wait for navigation to settle after a user interaction.
 
@@ -517,11 +814,11 @@ class PlaywrightBridge(BrowserBridge):
 
             waited_for_load = False
             if navigated:
-                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms)
+                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms, skip_networkidle)
                 waited_for_load = True
             elif page.url != url_before:
                 # URL changed without framenavigated event
-                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms)
+                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms, skip_networkidle)
                 waited_for_load = True
             else:
                 # No navigation — settle for client-side rerenders
@@ -529,7 +826,7 @@ class PlaywrightBridge(BrowserBridge):
 
             # Late-arrival gate: catch navigations that started during settle
             if not waited_for_load and (navigated or page.url != url_before):
-                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms)
+                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms, skip_networkidle)
 
         finally:
             page.remove_listener("framenavigated", _on_nav)
@@ -591,9 +888,16 @@ class PlaywrightBridge(BrowserBridge):
                         re.IGNORECASE,
                     )
                 )
-                if is_transient and attempt == 0:
-                    time.sleep(2)
-                    last_error = msg
+                # Nested ifs (rather than `is_transient and attempt == 0`)
+                # keep the no-boolean-in-except lint calm; behavior is
+                # identical: retry once on a transient error, then give up.
+                if is_transient:
+                    if attempt == 0:
+                        time.sleep(2)
+                        last_error = msg
+                    else:
+                        last_error = msg
+                        break
                 else:
                     last_error = msg
                     break
@@ -601,16 +905,8 @@ class PlaywrightBridge(BrowserBridge):
         # ── DOM stabilization wait ──────────────────────────────
         try:
             page.wait_for_function(
-                """() => new Promise(resolve => {
-                    const count = document.querySelectorAll("*").length;
-                    setTimeout(() => {
-                        resolve(
-                            document.querySelectorAll("*").length === count
-                            || count > 5000
-                        );
-                    }, 400);
-                })""",
-                timeout=5_000,
+                _DOM_STABILIZE_JS,
+                timeout=NAV_SETTLE["navTimeoutMs"],
             )
         except Exception:
             pass  # Stabilization timed out — proceed
@@ -675,46 +971,19 @@ class PlaywrightBridge(BrowserBridge):
             }
 
     def do_cleanup(self, task_id: str) -> dict[str, Any]:
-        """Clean up resources for a specific task.
-
-        Profile persistence is handled by the TypeScript side
-        (``python-adapter.ts`` auto-saves storage state before calling
-        cleanup), so this always calls :meth:`close_browser_session`.
-        """
         self.close_browser_session(task_id)
         return {"success": True}
 
     def do_snapshot(self, task_id: str) -> dict[str, Any]:
-        """Take a fresh accessibility snapshot and refresh element cache."""
-        _t_start = time.time()
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            self._log("snapshot", taskId=task_id, success=False,
-                      elementCount=0, dialogBlocks=0, fingerprint="",
-                      time=round((time.time() - _t_start) * 1000))
-            return {
-                "success": False,
-                "snapshot": "",
-                "elementCount": 0,
-                "error": str(exc),
-            }
+        page, err = self._get_page_or_error(task_id, "snapshot")
+        if err:
+            return {**err, "snapshot": "", "elementCount": 0}
 
         try:
             snap_text, element_count, elements = self._take_snapshot_and_cache(
                 task_id, page
             )
-            session = self.get_session(task_id)
-            dialog_blocks = len(session.get("dialog_log", [])) if session else 0
-            fingerprint = snap_text[:16] if snap_text else ""
-            self._log("snapshot", taskId=task_id, success=True,
-                      elementCount=element_count,
-                      dialogBlocks=dialog_blocks,
-                      fingerprint=fingerprint,
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": True,
                 "snapshot": snap_text,
                 "elementCount": element_count,
@@ -722,216 +991,118 @@ class PlaywrightBridge(BrowserBridge):
                 "dialogEvents": self._get_dialog_events(task_id),
             }
         except Exception as exc:
-            self._log("snapshot", taskId=task_id, success=False,
-                      elementCount=0, dialogBlocks=0, fingerprint="",
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": False,
                 "snapshot": "",
                 "elementCount": 0,
                 "error": str(exc),
             }
+        return self._log_op("snapshot", {"taskId": task_id}, result)
 
     # ── Interaction ─────────────────────────────────────────────────
 
     def do_click(self, task_id: str, ref: str) -> dict[str, Any]:
-        """Click an element by @e ref."""
-        _t_start = time.time()
+        _role, _name = self._ref_debug_info(task_id, ref)
 
-        # Extract role/name from element cache for debug logging
-        _key = ref[1:] if ref.startswith("@") else ref
-        _cache = self.get_element_cache(task_id)
-        _node = _cache.elements.get(_key) if _cache else None
-        _role: str = getattr(_node, "role", "unknown") if _node else "unknown"
-        _name: str = getattr(_node, "name", "unknown") if _node else "unknown"
-
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            self._log("click", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail",
-                      time=round((time.time() - _t_start) * 1000))
-            return {
-                "success": False,
-                "error": f"Click failed: {exc}",
-            }
+        page, err = self._get_page_or_error(task_id, "click")
+        if err:
+            return err
 
         try:
             locator = self._locate_element(page, task_id, ref)
         except RuntimeError as exc:
             self._log("click", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail",
-                      time=round((time.time() - _t_start) * 1000))
+                      name=_name, result="fail")
             return {"success": False, "error": str(exc)}
 
         try:
             url_before = page.url
             locator.click(timeout=5_000)
 
-            navigated, _ = self._wait_for_navigation_settle(page, url_before)
+            navigated, _ = self._wait_for_navigation_settle(
+                page, url_before, skip_networkidle=self._skip_networkidle,
+            )
 
             new_url = page.url
             new_title = page.title()
 
-            snap_text, element_count, elements = self._take_snapshot_and_cache(
-                task_id, page
+            result = self._build_interaction_result(
+                task_id, page, newUrl=new_url, newTitle=new_title,
             )
-
-            self._log("click", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="success", navigated=navigated,
-                      time=round((time.time() - _t_start) * 1000))
-
-            dialog_events = self._get_dialog_events(task_id)
-            result: dict[str, Any] = {
-                "success": True,
-                "snapshot": snap_text,
-                "elementCount": element_count,
-                "elements": elements,
-                "dialogEvents": dialog_events,
-                "newUrl": new_url,
-                "newTitle": new_title,
-            }
-            return result
-
         except Exception as exc:
-            self._log("click", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail",
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": False,
                 "error": f"Click failed: {exc}",
             }
+        return self._log_op("click", {"taskId": task_id, "ref": ref, "role": _role, "name": _name}, result)
 
     def do_type(self, task_id: str, ref: str, text: str) -> dict[str, Any]:
-        """Type text into an element by @e ref."""
-        _t_start = time.time()
+        _role, _name = self._ref_debug_info(task_id, ref)
 
-        # Extract role/name from element cache for debug logging
-        _key = ref[1:] if ref.startswith("@") else ref
-        _cache = self.get_element_cache(task_id)
-        _node = _cache.elements.get(_key) if _cache else None
-        _role: str = getattr(_node, "role", "unknown") if _node else "unknown"
-        _name: str = getattr(_node, "name", "unknown") if _node else "unknown"
-
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            self._log("type", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail",
-                      time=round((time.time() - _t_start) * 1000))
-            return {
-                "success": False,
-                "error": f"Type failed: {exc}",
-            }
+        page, err = self._get_page_or_error(task_id, "type")
+        if err:
+            return err
 
         try:
             locator = self._locate_element(page, task_id, ref)
         except RuntimeError as exc:
             self._log("type", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail",
-                      time=round((time.time() - _t_start) * 1000))
+                      name=_name, result="fail")
             return {"success": False, "error": str(exc)}
 
         try:
             locator.click(timeout=5_000)  # Focus first
             locator.fill(text)
 
-            snap_text, element_count, elements = self._take_snapshot_and_cache(
-                task_id, page
-            )
-
-            self._log("type", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="success",
-                      elementCount=element_count,
-                      time=round((time.time() - _t_start) * 1000))
-
-            return {
-                "success": True,
-                "snapshot": snap_text,
-                "elementCount": element_count,
-                "elements": elements,
-                "dialogEvents": self._get_dialog_events(task_id),
-            }
-
+            result = self._build_interaction_result(task_id, page)
         except Exception as exc:
-            self._log("type", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail",
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": False,
                 "error": f"Type failed: {exc}",
             }
+        return self._log_op("type", {"taskId": task_id, "ref": ref, "role": _role, "name": _name}, result)
 
     def do_scroll(self, task_id: str, direction: str) -> dict[str, Any]:
-        """Scroll the page up or down."""
-        _t_start = time.time()
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            self._log("scroll", taskId=task_id, direction=direction,
-                      success=False,
-                      time=round((time.time() - _t_start) * 1000))
-            return {
-                "success": False,
-                "error": f"Scroll failed: {exc}",
-            }
+        page, err = self._get_page_or_error(task_id, "scroll")
+        if err:
+            return err
 
         try:
             delta = 800 if direction == "down" else -800
-            page.evaluate(
-                """(d) => window.scrollBy({ top: d, behavior: 'smooth' })""",
-                delta,
-            )
+            if self._scroll_via_wheel:
+                # Camoufox runs page.evaluate in an isolated world where
+                # the eval-write window.scrollBy silently no-ops; drive the
+                # scroll via input events instead.
+                page.mouse.wheel(0, delta)
+            else:
+                page.evaluate(
+                    """(d) => window.scrollBy({ top: d, behavior: 'smooth' })""",
+                    delta,
+                )
             time.sleep(0.2)
 
-            snap_text, element_count, elements = self._take_snapshot_and_cache(
-                task_id, page
-            )
-
-            self._log("scroll", taskId=task_id, direction=direction,
-                      success=True, elementCount=element_count,
-                      time=round((time.time() - _t_start) * 1000))
-
-            return {
-                "success": True,
-                "snapshot": snap_text,
-                "elementCount": element_count,
-                "elements": elements,
-                "dialogEvents": self._get_dialog_events(task_id),
-            }
-
+            result = self._build_interaction_result(task_id, page)
         except Exception as exc:
-            self._log("scroll", taskId=task_id, direction=direction,
-                      success=False,
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": False,
                 "error": f"Scroll failed: {exc}",
             }
+        return self._log_op("scroll", {"taskId": task_id, "direction": direction}, result)
 
     def do_go_back(self, task_id: str) -> dict[str, Any]:
-        """Navigate back in history."""
-        _t_start = time.time()
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            self._log("goBack", taskId=task_id, success=False,
-                      time=round((time.time() - _t_start) * 1000))
-            return {
-                "success": False,
-                "error": f"GoBack failed: {exc}",
-            }
+        page, err = self._get_page_or_error(task_id, "goBack")
+        if err:
+            return err
 
         try:
-            page.go_back(wait_until="networkidle")
+            if self._skip_networkidle:
+                # Stealth patched Firefox doesn't fire networkidle; waiting for
+                # it times out (30s default) and loitering in the event loop can
+                # deadlock the Juggler driver for subsequent contexts.  Match
+                # ``do_navigate``'s load-based settle instead.
+                page.go_back(wait_until="load", timeout=15_000)
+            else:
+                page.go_back(wait_until="networkidle")
             time.sleep(0.3)
 
             new_url: Optional[str] = None
@@ -942,88 +1113,45 @@ class PlaywrightBridge(BrowserBridge):
             except Exception:
                 pass
 
-            snap_text, element_count, elements = self._take_snapshot_and_cache(
-                task_id, page
-            )
-
-            self._log("goBack", taskId=task_id, success=True,
-                      elementCount=element_count,
-                      time=round((time.time() - _t_start) * 1000))
-
-            dialog_events = self._get_dialog_events(task_id)
-            result: dict[str, Any] = {
-                "success": True,
-                "snapshot": snap_text,
-                "elementCount": element_count,
-                "elements": elements,
-                "dialogEvents": dialog_events,
-            }
+            extra: dict[str, Any] = {}
             if new_url is not None:
-                result["newUrl"] = new_url
+                extra["newUrl"] = new_url
             if new_title is not None:
-                result["newTitle"] = new_title
-            return result
-
+                extra["newTitle"] = new_title
+            result = self._build_interaction_result(task_id, page, **extra)
         except Exception as exc:
-            self._log("goBack", taskId=task_id, success=False,
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": False,
                 "error": f"GoBack failed: {exc}",
             }
+        return self._log_op("goBack", {"taskId": task_id}, result)
 
     def do_press(self, task_id: str, key: str) -> dict[str, Any]:
-        """Press a keyboard key."""
-        _t_start = time.time()
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            self._log("press", taskId=task_id, key=key, success=False,
-                      time=round((time.time() - _t_start) * 1000))
-            return {
-                "success": False,
-                "error": f"Press failed: {exc}",
-            }
+        page, err = self._get_page_or_error(task_id, "press")
+        if err:
+            return err
 
         try:
             url_before = page.url
             page.keyboard.press(key)
 
             navigated, _ = self._wait_for_navigation_settle(
-                page, url_before, nav_timeout_ms=3000
+                page, url_before, nav_timeout_ms=3000,
+                skip_networkidle=self._skip_networkidle,
             )
 
             new_url = page.url
             new_title = page.title()
 
-            snap_text, element_count, elements = self._take_snapshot_and_cache(
-                task_id, page
+            result = self._build_interaction_result(
+                task_id, page, newUrl=new_url, newTitle=new_title,
             )
-
-            self._log("press", taskId=task_id, key=key, success=True,
-                      navigated=navigated, elementCount=element_count,
-                      time=round((time.time() - _t_start) * 1000))
-
-            result: dict[str, Any] = {
-                "success": True,
-                "snapshot": snap_text,
-                "elementCount": element_count,
-                "elements": elements,
-                "dialogEvents": self._get_dialog_events(task_id),
-                "newUrl": new_url,
-                "newTitle": new_title,
-            }
-            return result
-
         except Exception as exc:
-            self._log("press", taskId=task_id, key=key, success=False,
-                      time=round((time.time() - _t_start) * 1000))
-            return {
+            result = {
                 "success": False,
                 "error": f"Press failed: {exc}",
             }
+        return self._log_op("press", {"taskId": task_id, "key": key}, result)
 
     # ── Media ───────────────────────────────────────────────────────
 
@@ -1032,17 +1160,9 @@ class PlaywrightBridge(BrowserBridge):
         task_id: str,
         full_page: bool = False,
     ) -> dict[str, Any]:
-        """Take a JPEG screenshot and return as a base64 data URI."""
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            return {
-                "success": False,
-                "dataUri": "",
-                "error": str(exc),
-            }
+        page, err = self._get_page_or_error(task_id, "screenshot")
+        if err:
+            return {**err, "dataUri": ""}
 
         try:
             buffer: bytes = page.screenshot(
@@ -1068,7 +1188,6 @@ class PlaywrightBridge(BrowserBridge):
     # ── Console & eval ──────────────────────────────────────────────
 
     def do_get_console_messages(self, task_id: str) -> dict[str, Any]:
-        """Return captured console messages for the task."""
         try:
             session = self.get_session(task_id)
             if session is None:
@@ -1092,7 +1211,6 @@ class PlaywrightBridge(BrowserBridge):
             }
 
     def do_clear_console(self, task_id: str) -> dict[str, Any]:
-        """Clear captured console messages for the task."""
         try:
             session = self.get_session(task_id)
             if session is not None:
@@ -1105,29 +1223,127 @@ class PlaywrightBridge(BrowserBridge):
                 "error": str(exc),
             }
 
-    def do_evaluate(self, task_id: str, expression: str) -> dict[str, Any]:
-        """Evaluate JavaScript in the page context."""
-        try:
-            page = self._get_page(task_id)
-        except SessionNotFoundError:
-            raise
-        except Exception as exc:
-            return {
-                "success": False,
-                "error": str(exc),
-            }
+    def do_evaluate(
+        self, task_id: str, expression: str, *, read_only: bool = False
+    ) -> dict[str, Any]:
+        """Evaluate JavaScript in the page context.
+
+        When :attr:`_eval_prefix` is non-empty (e.g. Camoufox's ``"mw:"``),
+        it is prepended to the expression so the script runs in the main
+        world where writes work.  Reads work with the prefix too, so it is
+        safe to apply unconditionally.
+
+        When :attr:`_wrap_mw_eval_in_eval` is True (Camoufox), the expression
+        is first wrapped as ``eval(<JSON-string of expression>)`` so that
+        multi-statement scripts survive Camoufox's
+        ``let _s = (${script})`` main-world wrapper (see the quirk's
+        docstring for the full rationale).
+
+        When *read_only* is True (used for the EXTRACTOR_SCRIPT), the
+        ``_eval_prefix`` and ``_wrap_mw_eval_in_eval`` are both bypassed
+        — the expression targets the isolated-world context, which survives
+        in-page JS churn on Camoufox challenge pages.  Writes still need
+        the ``mw:`` prefix; pure DOM reads don't.
+        """
+        page, err = self._get_page_or_error(task_id, "evaluate")
+        if err:
+            return err
+
+        # CSP-safe read-only handoff (patched-Firefox stealth binaries).
+        # On binaries that route page.evaluate through eval() in the main
+        # world, the EXTRACTOR_SCRIPT is CSP-blocked on strict sites.  An init
+        # script stashed the result in <meta id="__pi-extract"> at load; read
+        # it via native query_selector + get_attribute (both CSP-free).  Only
+        # honored when the expression is exactly the registered extractor — a
+        # future non-extractor read_only eval falls through to page.evaluate.
+        # ponytail: result is stale across SPA route changes (no new load);
+        # fine for navigate→inspect. Re-run on demand if SPA freshness matters.
+        if (
+            read_only
+            and self._csp_safe_readonly_via_init_script
+            and self._readonly_extractor_script
+            and expression == self._readonly_extractor_script
+        ):
+            try:
+                meta = page.query_selector("meta#__pi-extract")
+                if meta is not None:
+                    raw = meta.get_attribute("content")
+                    if raw:
+                        return {"success": True, "result": _urlunquote(raw)}
+            except Exception as exc:
+                # Fall through to page.evaluate below — on CSP-strict pages
+                # that will also fail, but the error message is then the
+                # truthful CSP one rather than a meta-read exception.
+                self._log(
+                    "evaluate",
+                    taskId=task_id,
+                    success=False,
+                    via="csp_safe_meta",
+                    error=str(exc),
+                )
+            # Meta missing (page navigated before load fired, or init script
+            # not registered). Fall through to page.evaluate as best-effort.
+
+        # Build effective expression before the try block so the
+        # retry path can reference it regardless of where the exception
+        # came from.
+        #
+        # Read-only evals (EXTRACTOR_SCRIPT) skip the mw: prefix and the
+        # eval() wrap entirely — they run in the isolated-world context,
+        # which survives in-page JS churn on Camoufox challenge pages.
+        # Writes still need mw:; pure DOM reads don't.
+        if read_only:
+            effective_expression = expression
+        elif self._wrap_mw_eval_in_eval:
+            # ``eval(<json>)`` is a single expression (valid inside
+            # Camoufox's ``let _s = (...)`` wrapper) that runs the script
+            # verbatim and returns its completion value.  ``json.dumps``
+            # safely escapes the script into a JS string literal.
+            inner = "eval(" + json.dumps(expression) + ")"
+            effective_expression = (
+                self._eval_prefix + inner if self._eval_prefix else inner
+            )
+        else:
+            effective_expression = (
+                self._eval_prefix + expression if self._eval_prefix else expression
+            )
 
         try:
-            result: Any = page.evaluate(expression)
+            result: Any = page.evaluate(effective_expression)
             return {
                 "success": True,
                 "result": result,
             }
 
         except Exception as exc:
+            err_msg = str(exc)
+            # Genuine context-destruction recovery (Camoufox mw: path only).
+            # When _wrap_mw_eval_in_eval is True (Camoufox), distinguish:
+            #   (1) "Execution context was destroyed" — a transient page
+            #       navigation/challenge-settle — recover with one
+            #       wait_for_load_state + retry.
+            #   (2) Any other error (including a SyntaxError through the eval
+            #       wrap, which means the wrap itself is broken) — terminal.
+            # ponytail: single retry, no backoff — challenge pages settle in
+            # one load cycle; add exponential backoff if a real challenge
+            # needs >1 retry.
+            # Nested ifs (rather than
+            # `self._wrap_mw_eval_in_eval and "Execution context was destroyed" in err_msg`)
+            # keep the no-boolean-in-except lint calm; behavior is identical.
+            if self._wrap_mw_eval_in_eval:
+                if "Execution context was destroyed" in err_msg:
+                    try:
+                        page.wait_for_load_state("load")
+                    except Exception:
+                        pass  # Best-effort: proceed to retry even if wait fails
+                    try:
+                        result = page.evaluate(effective_expression)
+                        return {"success": True, "result": result}
+                    except Exception as retry_exc:
+                        return {"success": False, "error": str(retry_exc)}
             return {
                 "success": False,
-                "error": str(exc),
+                "error": err_msg,
             }
 
     # ── Cookies & storage state ─────────────────────────────────
@@ -1135,7 +1351,6 @@ class PlaywrightBridge(BrowserBridge):
     def do_get_cookies(
         self, task_id: str, urls: Optional[list[str]] = None
     ) -> dict[str, Any]:
-        """Get cookies, optionally filtered by URL."""
         try:
             session = self.require_session(task_id)
             context: Any = session["context"]
@@ -1163,7 +1378,6 @@ class PlaywrightBridge(BrowserBridge):
     def do_add_cookies(
         self, task_id: str, cookies: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Add cookies to the browser context."""
         try:
             session = self.require_session(task_id)
             context: Any = session["context"]
@@ -1181,7 +1395,6 @@ class PlaywrightBridge(BrowserBridge):
         domain: Optional[str] = None,
         path: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Clear cookies, optionally filtered by name/domain/path."""
         try:
             session = self.require_session(task_id)
             context: Any = session["context"]
@@ -1201,7 +1414,6 @@ class PlaywrightBridge(BrowserBridge):
             return {"success": False, "error": str(exc)}
 
     def do_get_storage_state(self, task_id: str) -> dict[str, Any]:
-        """Get full storage state (cookies + localStorage + IndexedDB)."""
         try:
             session = self.require_session(task_id)
             context: Any = session["context"]

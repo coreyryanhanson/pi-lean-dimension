@@ -66,10 +66,13 @@ try {
 	mkdirSync(TMP, { recursive: true });
 	cpSync(PACKAGE_DIR, TMP, { recursive: true });
 
-	// Copy LICENSE alongside (it's in files[] but npm only includes it if
-	// present in the package dir at pack time; prepublishOnly doesn't work
-	// because this script relocates the package to a temp dir).
+	// Copy LICENSE and README alongside (they're in files[] but npm only
+	// includes them if present in the package dir at pack time;
+	// prepublishOnly doesn't work because this script relocates the package
+	// to a temp dir). The dimension package reuses the repo-root README so
+	// there's one source of truth for the npm landing page.
 	cpSync("LICENSE", join(TMP, "LICENSE"));
+	cpSync("README.md", join(TMP, "README.md"));
 
 	// 2. Copy LOCAL workspace packages into the temp dir's node_modules.
 	//    This bundles the exact code being published — not whatever is on npm.

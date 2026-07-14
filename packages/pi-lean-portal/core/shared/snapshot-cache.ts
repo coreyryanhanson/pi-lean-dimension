@@ -55,6 +55,9 @@ interface CacheEntry {
  */
 const activeSnapshotFiles = new Map<string, CacheEntry[]>();
 
+/** Monotonic file-index counter — guarantees unique filenames across writes. */
+let _snapshotIndexCounter = 0;
+
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 /**
@@ -107,12 +110,10 @@ export function cacheSnapshot(
 		const digest = sha256Prefix(snapshot);
 		const existingEntries = activeSnapshotFiles.get(taskId) ?? [];
 
-		// Determine index: next sequential index based on existing files
-		const nextIndex = existingEntries.reduce((max, entry) => {
-			const match = entry.path.match(/-(\d+)\.txt$/);
-			const idx = match ? parseInt(match[1]!, 10) : -1;
-			return Math.max(max, idx + 1);
-		}, 0);
+		// Monotonic index — avoids filename collisions with currently-tracked
+		// entries (length would collide with surviving higher-index files
+		// after eviction; Date.now() can collide within the same ms).
+		const nextIndex = _snapshotIndexCounter++;
 
 		const filePath = buildCacheFilePath(taskId, digest, nextIndex);
 		writeFileSync(filePath, snapshot, "utf-8");

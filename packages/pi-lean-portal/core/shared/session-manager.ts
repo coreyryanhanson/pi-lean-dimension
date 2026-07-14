@@ -90,28 +90,14 @@ class SessionManager {
 		>,
 	): void {
 		const session = this.#sessions.get(taskId);
-		if (session) {
-			if (updates.currentUrl !== undefined)
-				session.currentUrl = updates.currentUrl;
-			if (updates.currentTitle !== undefined)
-				session.currentTitle = updates.currentTitle;
-			if (updates.pluginName !== undefined)
-				session.pluginName = updates.pluginName;
-			if (updates.crashed !== undefined) session.crashed = updates.crashed;
-			if (updates.currentSnapshotFingerprint !== undefined)
-				session.currentSnapshotFingerprint = updates.currentSnapshotFingerprint;
-			if (updates.cachePopulatedAt !== undefined)
-				session.cachePopulatedAt = updates.cachePopulatedAt;
-			if (updates.lastInteractionAt !== undefined)
-				session.lastInteractionAt = updates.lastInteractionAt;
-			if (updates.persistState !== undefined)
-				session.persistState = updates.persistState;
-			if (updates.profileName !== undefined)
-				session.profileName = updates.profileName;
-			if (updates.piSessionId !== undefined)
-				session.piSessionId = updates.piSessionId;
-			session.lastActive = Date.now();
+		if (!session) return;
+		// ponytail: the `as any` is bounded by the Partial<Pick<BrowserSession, …>>
+		// type above — only declared session fields can land here. Skip-undefined
+		// preserves existing fields (matches the prior per-field guards).
+		for (const [k, v] of Object.entries(updates)) {
+			if (v !== undefined) (session as any)[k] = v;
 		}
+		session.lastActive = Date.now();
 	}
 
 	// ─── Last navigation storage (for session auto-recovery) ───

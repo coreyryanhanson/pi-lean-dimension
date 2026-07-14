@@ -27,9 +27,10 @@ import {
 import { sessionManager } from "../../core/shared/session-manager.js";
 import { checkPage } from "../../core/shared/bot-detection.js";
 import { waitForNavigationSettle } from "../../core/shared/nav-settle.js";
+import { NAV_SETTLE } from "../../core/shared/browser-data.js";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
-import { saveStorageState } from "../../core/shared/storage-state.js";
+import { persistSessionState } from "../../core/shared/storage-state.js";
 import type {
 	BrowserPlugin,
 	PluginCapabilities,
@@ -64,7 +65,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	/** Unique stable identifier (e.g. "chromium", "firefox") */
 	abstract readonly name: string;
 
-	/** Advertised capabilities */
 	abstract readonly capabilities: PluginCapabilities;
 
 	/**
@@ -95,16 +95,36 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	 */
 	protected readonly captureUserAgent: boolean = false;
 
-	// ── Private state ──────────────────────────────────────────
-
-	/** Enable structured debug logging via BROWSER_DEBUG env var */
 	private readonly _debug = process.env.BROWSER_DEBUG === "1";
 
-	/** Log a structured debug line to stderr when BROWSER_DEBUG=1 */
 	private _log(event: string, data: Record<string, unknown>): void {
 		if (this._debug) {
 			process.stderr.write(`[browser] ${event}: ${JSON.stringify(data)}\n`);
 		}
+	}
+
+	/**
+	 * Wrap an async operation with automatic success/failure debug logging.
+	 * Runs the body, then logs based on the result. Body should catch its own
+	 * errors and return `{ success: false, error }` — an uncaught throw skips
+	 * the log (but shouldn't happen in normal operation).
+	 */
+	private async _logOp<T extends { success: boolean; error?: string }>(
+		op: string,
+		ctx: Record<string, unknown>,
+		body: () => Promise<T>,
+		getExtra?: (result: T) => Record<string, unknown>,
+	): Promise<T> {
+		const result = await body();
+		if (this._debug) {
+			this._log(op, {
+				...ctx,
+				...(getExtra ? getExtra(result) : {}),
+				success: result.success,
+				...(result.error ? { error: result.error } : {}),
+			});
+		}
+		return result;
 	}
 
 	/** Shared browser instance (lazy-initialised) */
@@ -273,15 +293,22 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		if (!this._browser) {
 			this._browser = await this._launchWithHint();
 
-			// Auto-recover from browser crash/disconnect
-			this._browser.on("disconnected", () => {
-				this._browser = null;
+			// Auto-recover from browser crash/disconnect.
+			// Extracted as a named function for readability. On disconnect:
+			// mark all sessions crashed, clear caches, and null `_browser`
+			// so the next navigate() relaunches via lazy-init (which attaches
+			// a fresh handler to the new browser).
+			const onDisconnected = () => {
+				// All Page/Context objects are dead once the Browser
+				// disconnects — mark sessions crashed and clear caches.
 				for (const tid of this._pages.keys()) {
 					sessionManager.updateSession(tid, { crashed: true });
 					this._elementCache.delete(tid);
 				}
 				this._pages.clear();
-			});
+				this._browser = null;
+			};
+			this._browser.on("disconnected", onDisconnected);
 
 			// UA capture at first launch (Firefox opt-in)
 			if (this.captureUserAgent) {
@@ -395,25 +422,9 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		context: BrowserContext,
 	): Promise<{ cookies: unknown[]; origins: unknown[] } | undefined> {
 		const session = sessionManager.getSession(taskId);
-		if (!session?.persistState) return undefined;
-
-		try {
-			const state = await context.storageState();
-			const name = session.profileName ?? "default";
-			saveStorageState(name, state);
-			return state;
-		} catch (err) {
-			console.warn(
-				`[pi-lean-portal] Failed to auto-save storage state for profile ` +
-					`'${session.profileName ?? "default"}': ` +
-					`${err instanceof Error ? err.message : String(err)}. ` +
-					"Session state may be lost.",
-			);
-			return undefined;
-		}
+		return persistSessionState(session, () => context.storageState());
 	}
 
-	/** Take an accessibility snapshot and update the element cache. */
 	private async takeSnapshot(
 		taskId: string,
 		page: Page,
@@ -465,12 +476,12 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	private async checkBotDetection(page: Page): Promise<boolean> {
 		try {
 			const title = await page.title();
-			const bodyText = await page.evaluate(
-				() => document.body?.innerText || "",
+			const bodyText: string = await page.evaluate(
+				"document.body?.innerText || ''",
 			);
 			// Also grab raw HTML to check for CAPTCHA widget embed codes.
-			const html = await page.evaluate(
-				() => document.documentElement?.innerHTML || "",
+			const html: string = await page.evaluate(
+				"document.documentElement?.innerHTML || ''",
 			);
 			// checkPage handles all three: title (challenge phrases),
 			// body (challenge phrases + CDN patterns), and HTML (CAPTCHA embeds).
@@ -493,7 +504,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			profileMode?: "none" | "session" | "named";
 		},
 	): Promise<NavigateResult> {
-		const _start = performance.now();
 		try {
 			const ctxOpts: {
 				storageState?: unknown;
@@ -546,19 +556,9 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 
 			// Wait for dynamic content to settle
 			try {
-				await page.waitForFunction(
-					() =>
-						new Promise<boolean>((resolve) => {
-							const count = document.querySelectorAll("*").length;
-							setTimeout(() => {
-								resolve(
-									document.querySelectorAll("*").length === count ||
-										count > 5000,
-								);
-							}, 400);
-						}),
-					{ timeout: 5000 },
-				);
+				await page.waitForFunction(NAV_SETTLE.domStabilizationJs, {
+					timeout: NAV_SETTLE.navTimeoutMs,
+				});
 			} catch {
 				// Stabilization timed out — proceed with whatever is rendered
 			}
@@ -589,7 +589,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				success: true,
 				botDetected: botDetected ?? false,
 				elementCount,
-				time: Math.round(performance.now() - _start),
 			});
 
 			return {
@@ -632,7 +631,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				botDetected: botDetected ?? false,
 				elementCount: 0,
 				error: msg,
-				time: Math.round(performance.now() - _start),
 			});
 
 			return {
@@ -648,7 +646,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	}
 
 	async snapshot(taskId: string): Promise<SnapshotResult> {
-		const _start = performance.now();
 		const page = this.requirePage(taskId, "snapshot");
 		if (!page) {
 			return {
@@ -659,51 +656,24 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			};
 		}
 
-		try {
+		return this._logOp("snapshot", { taskId }, async () => {
 			const {
 				snapshot: snapText,
 				elementCount,
 				dialogEvents,
 			} = await this.takeSnapshot(taskId, page);
-
-			this._log("snapshot", {
-				taskId,
-				success: true,
-				elementCount,
-				dialogEvents: dialogEvents.length,
-				fingerprint: snapText.slice(0, 16),
-				time: Math.round(performance.now() - _start),
-			});
-
 			return {
 				success: true,
 				snapshot: snapText,
 				elementCount,
 				dialogEvents,
 			};
-		} catch (err: unknown) {
-			this._log("snapshot", {
-				taskId,
-				success: false,
-				elementCount: 0,
-				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
-			});
-
-			return {
-				success: false,
-				snapshot: "",
-				elementCount: 0,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		}, (r) => ({ elementCount: r.elementCount, dialogEvents: r.dialogEvents.length, fingerprint: r.snapshot.slice(0, 16) }));
 	}
 
 	// ── Interaction ────────────────────────────────────────────
 
 	async click(taskId: string, ref: string): Promise<InteractionResult> {
-		const _start = performance.now();
-		const phases: Record<string, number> = {};
 		const page = this.requirePage(taskId, "click");
 		if (!page) {
 			return { success: false, error: "No active session" };
@@ -720,7 +690,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				name: "(none)",
 				result: "fail",
 				error: `Element ${ref} not found in accessibility tree`,
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
@@ -737,71 +706,46 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				name: node.name,
 				result: "fail",
 				error: `Could not build locator (role: ${node.role})`,
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
 				error: `Could not build locator for ${ref} (role: ${node.role})`,
 			};
 		}
-		phases.locate = Math.round(performance.now() - _start);
 
-		try {
-			const urlBefore = page.url();
-			await locator.click({ timeout: 5000 });
-			phases.click = Math.round(performance.now() - _start);
+		return this._logOp("click", { taskId, ref, role: node.role, name: node.name }, async () => {
+			try {
+				const urlBefore = page.url();
+				await locator.click({ timeout: 5000 });
 
-			// Wait for potential navigation to settle (replaces fixed sleep)
-			const { navigated } = await waitForNavigationSettle(page, urlBefore);
-			phases.wait = Math.round(performance.now() - _start);
+				// Wait for potential navigation to settle (replaces fixed sleep)
+				const { navigated: _navigated } = await waitForNavigationSettle(page, urlBefore);
 
-			const newUrl = page.url();
-			const newTitle = await page.title();
-			sessionManager.updateSession(taskId, {
-				currentUrl: newUrl,
-				currentTitle: newTitle,
-			});
+				const newUrl = page.url();
+				const newTitle = await page.title();
+				sessionManager.updateSession(taskId, {
+					currentUrl: newUrl,
+					currentTitle: newTitle,
+				});
 
-			// Auto-snapshot
-			const snapResult = await this.takeSnapshot(taskId, page);
-			phases.snapshot = Math.round(performance.now() - _start);
+				// Auto-snapshot
+				const snapResult = await this.takeSnapshot(taskId, page);
 
-			this._log("click", {
-				taskId,
-				ref,
-				role: node.role,
-				name: node.name,
-				result: "success",
-				navigated,
-				timings: phases,
-				time: Math.round(performance.now() - _start),
-			});
-
-			return {
-				success: true,
-				newUrl,
-				newTitle,
-				snapshot: snapResult.snapshot,
-				elementCount: snapResult.elementCount,
-				dialogEvents: snapResult.dialogEvents,
-			};
-		} catch (err: unknown) {
-			this._log("click", {
-				taskId,
-				ref,
-				role: node.role,
-				name: node.name,
-				result: "fail",
-				error: err instanceof Error ? err.message : String(err),
-				timings: phases,
-				time: Math.round(performance.now() - _start),
-			});
-
-			return {
-				success: false,
-				error: `Click failed: ${err instanceof Error ? err.message : String(err)}`,
-			};
-		}
+				return {
+					success: true,
+					newUrl,
+					newTitle,
+					snapshot: snapResult.snapshot,
+					elementCount: snapResult.elementCount,
+					dialogEvents: snapResult.dialogEvents,
+				};
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: `Click failed: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
+		});
 	}
 
 	async type(
@@ -809,7 +753,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		ref: string,
 		text: string,
 	): Promise<InteractionResult> {
-		const _start = performance.now();
 		const page = this.requirePage(taskId, "type");
 		if (!page) {
 			return { success: false, error: "No active session" };
@@ -826,7 +769,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				name: "(none)",
 				result: "fail",
 				error: `Element ${ref} not found in accessibility tree`,
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
@@ -843,7 +785,6 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				name: node.name,
 				result: "fail",
 				error: `Could not build locator (role: ${node.role})`,
-				time: Math.round(performance.now() - _start),
 			});
 			return {
 				success: false,
@@ -851,199 +792,141 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			};
 		}
 
-		try {
-			await locator.click({ timeout: 5000 }); // Focus first
-			await locator.fill(text);
+		return this._logOp("type", { taskId, ref, role: node.role, name: node.name }, async () => {
+			try {
+				await locator.click({ timeout: 5000 }); // Focus first
+				await locator.fill(text);
 
-			// Auto-snapshot
-			const snapResult = await this.takeSnapshot(taskId, page);
+				// Auto-snapshot
+				const snapResult = await this.takeSnapshot(taskId, page);
 
-			this._log("type", {
-				taskId,
-				ref,
-				role: node.role,
-				name: node.name,
-				result: "success",
-				elementCount: snapResult.elementCount,
-				time: Math.round(performance.now() - _start),
-			});
-
-			return {
-				success: true,
-				snapshot: snapResult.snapshot,
-				elementCount: snapResult.elementCount,
-				dialogEvents: snapResult.dialogEvents,
-			};
-		} catch (err: unknown) {
-			this._log("type", {
-				taskId,
-				ref,
-				role: node.role,
-				name: node.name,
-				result: "fail",
-				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
-			});
-			return {
-				success: false,
-				error: `Type failed: ${err instanceof Error ? err.message : String(err)}`,
-			};
-		}
+				return {
+					success: true,
+					snapshot: snapResult.snapshot,
+					elementCount: snapResult.elementCount,
+					dialogEvents: snapResult.dialogEvents,
+				};
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: `Type failed: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
+		}, (r) => ({ elementCount: r.elementCount }));
 	}
 
 	async scroll(
 		taskId: string,
 		direction: "up" | "down",
 	): Promise<InteractionResult> {
-		const _start = performance.now();
 		const page = this.requirePage(taskId, "scroll");
 		if (!page) {
 			return { success: false, error: "No active session" };
 		}
 
-		try {
-			const delta = direction === "down" ? 800 : -800;
-			await page.evaluate((d: number) => {
-				window.scrollBy({ top: d, behavior: "smooth" });
-			}, delta);
-			await page.waitForTimeout(200);
+		return this._logOp("scroll", { taskId, direction }, async () => {
+			try {
+				const delta = direction === "down" ? 800 : -800;
+				await page.evaluate(
+					`window.scrollBy({ top: ${delta}, behavior: "smooth" })`,
+				);
+				await page.waitForTimeout(200);
 
-			const snapResult = await this.takeSnapshot(taskId, page);
+				const snapResult = await this.takeSnapshot(taskId, page);
 
-			this._log("scroll", {
-				taskId,
-				direction,
-				success: true,
-				elementCount: snapResult.elementCount,
-				time: Math.round(performance.now() - _start),
-			});
-
-			return {
-				success: true,
-				snapshot: snapResult.snapshot,
-				elementCount: snapResult.elementCount,
-				dialogEvents: snapResult.dialogEvents,
-			};
-		} catch (err: unknown) {
-			this._log("scroll", {
-				taskId,
-				direction,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
-			});
-			return {
-				success: false,
-				error: `Scroll failed: ${err instanceof Error ? err.message : String(err)}`,
-			};
-		}
+				return {
+					success: true,
+					snapshot: snapResult.snapshot,
+					elementCount: snapResult.elementCount,
+					dialogEvents: snapResult.dialogEvents,
+				};
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: `Scroll failed: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
+		}, (r) => ({ elementCount: r.elementCount }));
 	}
 
 	async goBack(taskId: string): Promise<InteractionResult> {
-		const _start = performance.now();
 		const page = this.requirePage(taskId, "goBack");
 		if (!page) {
 			return { success: false, error: "No active session" };
 		}
 
-		try {
-			await page.goBack({ waitUntil: "networkidle" });
-			await page.waitForTimeout(300);
+		return this._logOp("goBack", { taskId }, async () => {
+			try {
+				await page.goBack({ waitUntil: "networkidle" });
+				await page.waitForTimeout(300);
 
-			const newUrl = page.url();
-			const newTitle = await page.title();
-			sessionManager.updateSession(taskId, {
-				currentUrl: newUrl,
-				currentTitle: newTitle,
-			});
+				const newUrl = page.url();
+				const newTitle = await page.title();
+				sessionManager.updateSession(taskId, {
+					currentUrl: newUrl,
+					currentTitle: newTitle,
+				});
 
-			const snapResult = await this.takeSnapshot(taskId, page);
+				const snapResult = await this.takeSnapshot(taskId, page);
 
-			this._log("goBack", {
-				taskId,
-				success: true,
-				elementCount: snapResult.elementCount,
-				time: Math.round(performance.now() - _start),
-			});
-
-			return {
-				success: true,
-				newUrl,
-				newTitle,
-				snapshot: snapResult.snapshot,
-				elementCount: snapResult.elementCount,
-				dialogEvents: snapResult.dialogEvents,
-			};
-		} catch (err: unknown) {
-			this._log("goBack", {
-				taskId,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
-			});
-			return {
-				success: false,
-				error: `GoBack failed: ${err instanceof Error ? err.message : String(err)}`,
-			};
-		}
+				return {
+					success: true,
+					newUrl,
+					newTitle,
+					snapshot: snapResult.snapshot,
+					elementCount: snapResult.elementCount,
+					dialogEvents: snapResult.dialogEvents,
+				};
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: `GoBack failed: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
+		}, (r) => ({ elementCount: r.elementCount }));
 	}
 
 	async press(taskId: string, key: string): Promise<InteractionResult> {
-		const _start = performance.now();
 		const page = this.requirePage(taskId, "press");
 		if (!page) {
 			return { success: false, error: "No active session" };
 		}
 
-		try {
-			const urlBefore = page.url();
-			await page.keyboard.press(key);
+		return this._logOp("press", { taskId, key }, async () => {
+			try {
+				const urlBefore = page.url();
+				await page.keyboard.press(key);
 
-			// Wait for potential navigation to settle (replaces fixed sleep).
-			// Shorter nav timeout since Enter-on-link nav is typically fast.
-			const { navigated } = await waitForNavigationSettle(page, urlBefore, {
-				navTimeoutMs: 3000,
-			});
+				// Wait for potential navigation to settle (replaces fixed sleep).
+				// Shorter nav timeout since Enter-on-link nav is typically fast.
+				const { navigated: _navigated } = await waitForNavigationSettle(page, urlBefore, {
+					navTimeoutMs: 3000,
+				});
 
-			const newUrl = page.url();
-			const newTitle = await page.title();
-			sessionManager.updateSession(taskId, {
-				currentUrl: newUrl,
-				currentTitle: newTitle,
-			});
+				const newUrl = page.url();
+				const newTitle = await page.title();
+				sessionManager.updateSession(taskId, {
+					currentUrl: newUrl,
+					currentTitle: newTitle,
+				});
 
-			const snapResult = await this.takeSnapshot(taskId, page);
+				const snapResult = await this.takeSnapshot(taskId, page);
 
-			this._log("press", {
-				taskId,
-				key,
-				success: true,
-				navigated,
-				elementCount: snapResult.elementCount,
-				time: Math.round(performance.now() - _start),
-			});
-
-			return {
-				success: true,
-				newUrl,
-				newTitle,
-				snapshot: snapResult.snapshot,
-				elementCount: snapResult.elementCount,
-				dialogEvents: snapResult.dialogEvents,
-			};
-		} catch (err: unknown) {
-			this._log("press", {
-				taskId,
-				key,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
-			});
-			return {
-				success: false,
-				error: `Press failed: ${err instanceof Error ? err.message : String(err)}`,
-			};
-		}
+				return {
+					success: true,
+					newUrl,
+					newTitle,
+					snapshot: snapResult.snapshot,
+					elementCount: snapResult.elementCount,
+					dialogEvents: snapResult.dialogEvents,
+				};
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: `Press failed: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
+		}, (r) => ({ elementCount: r.elementCount }));
 	}
 
 	// ── Media ──────────────────────────────────────────────────
@@ -1090,7 +973,11 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		clearConsoleLog(taskId);
 	}
 
-	async evaluate(taskId: string, expression: string): Promise<EvaluateResult> {
+	async evaluate(
+		taskId: string,
+		expression: string,
+		_readOnly?: boolean,
+	): Promise<EvaluateResult> {
 		const page = this.requirePage(taskId);
 		if (!page) {
 			return { success: false, error: "No active session" };
@@ -1110,104 +997,71 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	// ── Cookies & storage state ───────────────────────────────
 
 	async getCookies(taskId: string, urls?: string[]): Promise<CookieResult> {
-		const _start = performance.now();
 		const entry = this.requireEntry(taskId, "getCookies");
 		if (!entry) {
 			return { success: false, cookies: [], error: "No active session" };
 		}
 
-		try {
-			const cookies = await entry.context.cookies(urls);
-			this._log("getCookies", {
-				taskId,
-				success: true,
-				count: cookies.length,
-				time: Math.round(performance.now() - _start),
-			});
-			return { success: true, cookies };
-		} catch (err: unknown) {
-			this._log("getCookies", {
-				taskId,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
-			});
-			return {
-				success: false,
-				cookies: [],
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._logOp("getCookies", { taskId }, async () => {
+			try {
+				const cookies = await entry.context.cookies(urls);
+				return { success: true, cookies };
+			} catch (err: unknown) {
+				return {
+					success: false,
+					cookies: [],
+					error: err instanceof Error ? err.message : String(err),
+				};
+			}
+		}, (r) => ({ count: r.cookies.length }));
 	}
 
 	async addCookies(taskId: string, cookies: Cookie[]): Promise<ResultBase> {
-		const _start = performance.now();
 		const entry = this.requireEntry(taskId, "addCookies");
 		if (!entry) {
 			return { success: false, error: "No active session" };
 		}
 
-		try {
-			await entry.context.addCookies(cookies);
-			this._log("addCookies", {
-				taskId,
-				success: true,
-				count: cookies.length,
-				time: Math.round(performance.now() - _start),
-			});
-			return { success: true };
-		} catch (err: unknown) {
-			this._log("addCookies", {
-				taskId,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
-			});
-			return {
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._logOp("addCookies", { taskId }, async () => {
+			try {
+				await entry.context.addCookies(cookies);
+				return { success: true };
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: err instanceof Error ? err.message : String(err),
+				};
+			}
+		});
 	}
 
 	async clearCookies(
 		taskId: string,
 		options?: ClearCookiesOptions,
 	): Promise<ResultBase> {
-		const _start = performance.now();
 		const entry = this.requireEntry(taskId, "clearCookies");
 		if (!entry) {
 			return { success: false, error: "No active session" };
 		}
 
-		try {
-			await entry.context.clearCookies({
-				...(options?.name ? { name: options.name } : {}),
-				...(options?.domain ? { domain: options.domain } : {}),
-				...(options?.path ? { path: options.path } : {}),
-			});
-			this._log("clearCookies", {
-				taskId,
-				success: true,
-				time: Math.round(performance.now() - _start),
-			});
-			return { success: true };
-		} catch (err: unknown) {
-			this._log("clearCookies", {
-				taskId,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
-			});
-			return {
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._logOp("clearCookies", { taskId }, async () => {
+			try {
+				await entry.context.clearCookies({
+					...(options?.name ? { name: options.name } : {}),
+					...(options?.domain ? { domain: options.domain } : {}),
+					...(options?.path ? { path: options.path } : {}),
+				});
+				return { success: true };
+			} catch (err: unknown) {
+				return {
+					success: false,
+					error: err instanceof Error ? err.message : String(err),
+				};
+			}
+		});
 	}
 
 	async getStorageState(taskId: string): Promise<StorageStateResult> {
-		const _start = performance.now();
 		const entry = this.requireEntry(taskId, "getStorageState");
 		if (!entry) {
 			return {
@@ -1218,34 +1072,23 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			};
 		}
 
-		try {
-			const state = await entry.context.storageState();
-			this._log("getStorageState", {
-				taskId,
-				success: true,
-				cookies: state.cookies.length,
-				origins: state.origins.length,
-				time: Math.round(performance.now() - _start),
-			});
-			return {
-				success: true,
-				cookies: state.cookies,
-				origins: state.origins,
-			};
-		} catch (err: unknown) {
-			this._log("getStorageState", {
-				taskId,
-				success: false,
-				error: err instanceof Error ? err.message : String(err),
-				time: Math.round(performance.now() - _start),
-			});
-			return {
-				success: false,
-				cookies: [],
-				origins: [],
-				error: err instanceof Error ? err.message : String(err),
-			};
-		}
+		return this._logOp("getStorageState", { taskId }, async () => {
+			try {
+				const state = await entry.context.storageState();
+				return {
+					success: true,
+					cookies: state.cookies,
+					origins: state.origins,
+				};
+			} catch (err: unknown) {
+				return {
+					success: false,
+					cookies: [],
+					origins: [],
+					error: err instanceof Error ? err.message : String(err),
+				};
+			}
+		}, (r) => ({ cookies: r.cookies.length, origins: r.origins.length }));
 	}
 
 	// ── Per-task cleanup ───────────────────────────────────────

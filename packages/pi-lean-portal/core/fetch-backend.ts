@@ -312,11 +312,6 @@ export function cleanupFetchTempFiles(taskId?: string): void {
 			}
 		}
 		activeFetchFiles.clear();
-		try {
-			rmSync(BROWSER_TEMP_DIR, { recursive: true, force: true });
-		} catch {
-			/* best-effort */
-		}
 	}
 }
 

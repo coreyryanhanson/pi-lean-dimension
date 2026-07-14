@@ -7,7 +7,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import * as router from "../core/router.js";
 import { taskId } from "../core/shared/task-id.js";
-import { updateFooterStatus } from "./utils.js";
+import { updateFooterStatus, renderExpandedText } from "./utils.js";
 
 export const browserSnapshotTool = defineTool({
 	name: "browser-snapshot",
@@ -72,12 +72,9 @@ export const browserSnapshotTool = defineTool({
 		const content = (result.content?.[0] as any)?.text ?? "";
 		const isFull = !!(d?.full as boolean);
 		if (expanded) {
-			const preview = content.slice(0, 400);
 			let text = theme.fg("accent", `📋 ${ec} elements`);
 			text += isFull ? "" : theme.fg("dim", " (compact)");
-			text += `\n${theme.fg("dim", preview)}`;
-			if (content.length > 400)
-				text += `\n${theme.fg("muted", `… ${content.length - 400} more chars`)}`;
+			text = renderExpandedText(text, theme, content, 400);
 			return new Text(text, 0, 0);
 		}
 		const label = isFull ? " (full)" : " (compact)";

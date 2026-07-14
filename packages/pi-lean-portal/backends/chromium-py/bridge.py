@@ -23,8 +23,6 @@ Requires
 * Playwright Chromium browsers installed (``playwright install chromium``)
 """
 
-import sys
-
 from pi_browser_bridge.playwright_base import PlaywrightBridge, check_playwright_or_exit
 
 

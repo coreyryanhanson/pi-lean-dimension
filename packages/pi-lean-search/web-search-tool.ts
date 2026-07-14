@@ -1,16 +1,6 @@
 /**
- * web-search tool definition for pi-lean-search.
- *
- * Searches the web via a SearXNG instance. Degrades gracefully when
- * no SearXNG URL is configured — returns a setup message on first call.
- *
- * Adapted from the prototype at:
- *   /root/lab/startup_scripts/firecracker/config/pi/extensions/searxng-search/index.ts
- *
- * Changes from prototype:
- *   - Config read from Pi settings.json (searxng.url) instead of env vars
- *   - No injectUnavailabilityNotice (graceful degradation via tool output only)
- *   - Health state management lives in index.ts, not in the tool
+ * web-search tool for pi-lean-search — SearXNG web search with graceful degradation.
+ * Config read from Pi settings.json; health state managed in index.ts.
  */
 
 import { defineTool } from "@earendil-works/pi-coding-agent";
@@ -41,6 +31,7 @@ function buildSearchUrl(
 	query: string,
 	options: {
 		count: number;
+		pageno: number;
 		language: string;
 		safesearch: string;
 		time_range: string;
@@ -60,6 +51,7 @@ function buildSearchUrl(
 	if (options.safesearch) params.set("safesearch", options.safesearch);
 	if (options.time_range) params.set("time_range", options.time_range);
 	if (options.category) params.set("categories", options.category);
+	if (options.pageno > 1) params.set("pageno", String(options.pageno));
 	if (options.engines) params.set("engines", options.engines);
 
 	return `${normalized}/search?${params.toString()}`;
@@ -75,8 +67,10 @@ export const webSearchTool = defineTool({
 		"Use for finding current information, research, news, and fact-checking.",
 	promptSnippet:
 		"Search the web via a local SearXNG instance — use for up-to-date facts, verification, or research.",
-	promptGuidelines:
+	promptGuidelines: [
 		'Use when you need recent/current information not already known. Increase `count` for broad research; keep it small for quick lookups. Filter by time_range="day" for breaking news, category="news" for journalism. Set language to match the query (e.g. "de" for German, "es" for Spanish).',
+		"Use `pageno` (1-indexed) to fetch deeper pages when `count` results are not enough.",
+	],
 
 	parameters: Type.Object({
 		query: Type.String({ description: "The search query" }),
@@ -128,6 +122,13 @@ export const webSearchTool = defineTool({
 				},
 			),
 		),
+		pageno: Type.Optional(
+			Type.Number({
+				description:
+					"Page number, 1-indexed (default: 1). Combine with count to page through results.",
+				minimum: 1,
+			}),
+		),
 		engines: Type.Optional(
 			Type.String({
 				description:
@@ -140,6 +141,7 @@ export const webSearchTool = defineTool({
 		const {
 			query,
 			count = 5,
+			pageno = 1,
 			timeout: userTimeout,
 			language = "",
 			safesearch = "0",
@@ -174,6 +176,7 @@ export const webSearchTool = defineTool({
 		// ── Build URL ──
 		const url = buildSearchUrl(searxngUrl, query, {
 			count,
+			pageno,
 			language,
 			safesearch,
 			time_range,
@@ -359,6 +362,7 @@ export const webSearchTool = defineTool({
 				details: {
 					resultCount: results.length,
 					query,
+					pageno,
 					timeout: timeoutSeconds,
 					results: results.map((r) => ({
 						title: r.title,
@@ -392,6 +396,8 @@ export const webSearchTool = defineTool({
 		const parts: string[] = [theme.fg("toolTitle", theme.bold("web-search "))];
 		parts.push(theme.fg("accent", `"${args.query}"`));
 		if (args.count) parts.push(theme.fg("dim", `count=${args.count}`));
+		if (args.pageno && args.pageno > 1)
+			parts.push(theme.fg("dim", `p${args.pageno}`));
 		if (args.category) parts.push(theme.fg("dim", `cat:${args.category}`));
 		if (args.time_range) parts.push(theme.fg("dim", `time:${args.time_range}`));
 		return new Text(parts.join(" "), 0, 0);

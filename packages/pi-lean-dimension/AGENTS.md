@@ -36,7 +36,6 @@ self-documents its setup on first call if SearXNG isn't configured).
 ## Files
 
 - `package.json` — the manifest. No code, no dependencies beyond the bundled children.
-- `verify-ship-manifest.ts` / `ship-manifest.test.ts` — production `.ts` coverage check (files: `README.md`, `LICENSE` only).
 - `README.md` — user-facing docs (install, prerequisites, full tool list).
 
 There is nothing to maintain here beyond the manifest. Changes to the suite

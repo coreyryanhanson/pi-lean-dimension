@@ -29,6 +29,9 @@ export const PORTAL_DATA_DIR = join(
 	"pi-lean-portal",
 );
 
+/** User-installed Python backend root; sibling of web-guides/ and browser-state/. */
+export const USER_BACKENDS_DIR = join(PORTAL_DATA_DIR, "user-backends");
+
 /**
  * Sanitize a taskId (or any string) for use in filenames.
  * Replaces any character that is not alphanumeric or hyphen with `_`.
