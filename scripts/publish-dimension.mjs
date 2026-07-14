@@ -74,6 +74,13 @@ try {
 	cpSync("LICENSE", join(TMP, "LICENSE"));
 	cpSync("README.md", join(TMP, "README.md"));
 
+	// Carry the repo-root .npmrc into the isolated dir so `npm publish`
+	// uses the same auth token as the workspace publish above. Without this,
+	// npm resolves auth from ~/.npmrc (a different token) and publish 404s.
+	if (existsSync(".npmrc")) {
+		cpSync(".npmrc", join(TMP, ".npmrc"));
+	}
+
 	// 2. Copy LOCAL workspace packages into the temp dir's node_modules.
 	//    This bundles the exact code being published — not whatever is on npm.
 	//    Works for dry-run, alpha, and stable release.
