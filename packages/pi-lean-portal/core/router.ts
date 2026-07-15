@@ -580,7 +580,8 @@ export async function navigate(
 				elementCount: 0,
 				error:
 					"Page appears to be blocked by anti-automation protection. " +
-					"The page may require JavaScript execution or browser interaction to render.",
+					"Retry `browser-navigate` with a stealth backend name from the `strategy` parameter's listed backends, " +
+					"or try `web-fetch` for the raw HTML (it skips JS fingerprinting but loses interactivity).",
 				backendUsed: plugin.name,
 				botDetectionWarning: true,
 			} as NavigateResult & {

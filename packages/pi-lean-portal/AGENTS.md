@@ -199,7 +199,7 @@ All tool calls dispatch through the router. Key responsibilities:
 - **Atomic writes + concurrency safety** (`storage-state.ts`): `saveStorageState()` writes to a temp file then renames atomically, preventing half-write races. Concurrent writers merge at the cookie level (`name+domain+path` key) and localStorage level (`origin+name` key), so two agents sharing a named profile don't clobber each other's data.
 - **Session profiles** (`profile="session"`) are scoped to one pi conversation, stored under `_session-<piSessionId>`. Default profile is now `"session"` (changed from `"none"`), so conversations persist state automatically.
 - **Named profiles** (`profile="shopping"`, `profile="work"`) are shared across conversations and agents.
-- **Conversation-scoped default profile** set via `/web profile set <name>`, survives `/reload`/`/resume`.
+- **Conversation-scoped default profile** set via `/web profile <name>` (or `/web profile none` / `/web profile session`), survives `/reload`/`/resume`.
 - **Cookie operations** (`getCookies`, `addCookies`, `clearCookies`) delegate to the browser plugin's Playwright `context.cookies()` / `context.clearCookies()`.
 
 ## Known Constraints & Debt

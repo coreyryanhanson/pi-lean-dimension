@@ -6,9 +6,7 @@
 > domain. A `/web` toggle removes the tools from the agent's context when
 > switched off, so web browsing doesn't consume tokens on sessions that aren't
 > doing web work. If a site blocks the shipped browsers, drop in your own
-> backend (e.g. [Camoufox](https://github.com/daijro/camoufox)) - as far as
-> we're aware, no other Pi web plugin lets you run a browser backend you wrote
-> yourself.
+> backend (e.g. [Camoufox](https://github.com/daijro/camoufox)).
 >
 > Part of the [pi-lean-dimension](https://github.com/coreyryanhanson/pi-lean-dimension)
 > web-tools suite. For SearXNG search support, install
@@ -42,7 +40,7 @@ npx playwright install chromium firefox
 
 Once loaded, you'll see a notification like:
 
-> 🌐 Browser extension loaded (plugins: chromium, firefox)
+> 🌐 Browser extension loaded (plugins: chromium, firefox). Try: web-fetch for static pages or browser-navigate for interactive browsing.
 
 The browser tools are **enabled by default**. You can:
 
@@ -122,7 +120,8 @@ which defaults to `true`).
 **Auto-captured screenshots:** `browser-navigate` and `browser-snapshot` automatically
 capture a screenshot to a temp file (`/tmp/pi-lean-portal/screenshot-<taskId>.jpg`).
 Use the `read` tool to visually inspect the page when the accessibility tree isn't enough.
-No viewport resizing occurs — screenshots are captured at the native 1280px width.
+Screenshots capture the 1280×720 viewport (not full-page) — the same viewport the
+browser uses for navigation.
 
 ### 1. `browser-navigate` — Visit a Page
 
@@ -201,7 +200,7 @@ Navigates back in browser history. Returns the previous page's snapshot.
 browser-press key="Enter"
 ```
 
-Useful keys: `Enter`, `Tab`, `Escape`, `ArrowDown`, `ArrowUp`, `/`.
+Useful keys: `Enter`, `Tab`, `Escape`, `ArrowDown`, `ArrowUp`, `Backspace`.
 
 ### 8. `browser-console` — Read Console / Run JS
 
@@ -306,12 +305,13 @@ Shows everything about the browser runtime in one notification:
 🌐 Browser tools: ✅ on  |  📖 Learn mode: ❌ off
 ────────────────────────────────────────
 Status: idle
-Plugins: chromium
+Plugins: chromium, firefox, chromium-py (disabled), firefox-py (disabled)
+Use web-fetch for stateless HTTP fetches.
 Active sessions: 1
   PW [chromium] https://example.com — Example Domain [profile: session]
-Profiles: 2 on disk
-  📋 session  (2.1 KB) ← active
-  shopping  (0.3 KB)
+Profiles: 1 on disk (named)
+  shopping  (0.3 KB) ← active
+Session profiles: 1 (manage with /web profile)
 ```
 
 Covers:
@@ -320,7 +320,9 @@ Covers:
 - **Backend health** — idle, busy, or error state
 - **All registered plugins** — enabled/disabled status
 - **Active sessions** — current URL, title, profile name per session
-- **Profiles on disk** — state size and which one is currently active
+- **Profiles on disk** — named profiles with state size and which is
+  currently active; session profiles are collapsed into a single count line
+  (inspect individually with `/web profile list`)
 
 When `pi-lean-search` is also installed, the status bar shows two independent
 glyphs: `● idle` (browser state) and `● searxng` (search health/state).
@@ -614,8 +616,9 @@ Size threshold for profile state warnings (default: 10 MB):
 ### Working with `@e` Element References
 
 - `@e1`, `@e2`, etc. are assigned based on the accessibility tree order
-- After clicking or scrolling, **always take a fresh snapshot** — old `@e`
-  refs become stale
+- `browser-click`/`type`/`scroll` already return a fresh snapshot and cache
+  the full tree to disk — no separate `browser-snapshot` needed unless you
+  want the uncompacted tree (`full=true`) or a screenshot
 - `browser-inspect` is cheaper than `browser-snapshot full=true` for finding
   specific elements
 
@@ -623,8 +626,9 @@ Size threshold for profile state warnings (default: 10 MB):
 
 - Snapshots are automatically compacted to ~2500 characters
 - Very large pages (>8000 chars) preserve the top ~2000 chars
-- The **full tree is cached to disk** at `/tmp/pi-lean-portal/snapshot-*.txt` —
-  you can use `read` on the cache file with offset/limit
+- The **full tree is cached to disk** at `/tmp/pi-lean-portal/snapshot-*.txt`
+  when it would otherwise be truncated — use `read` on the cache file with
+  offset/limit to retrieve the complete tree
 - `browser-inspect text=true query="keyword"` finds specific content without
   loading the full tree
 
@@ -636,8 +640,14 @@ When a page triggers anti-automation:
 2. The **bot-detection guide** footer appears with strategies available via `web-guide`
 3. If very few elements are detected (<5), the navigation is treated as
    a hard failure — the agent won't try to interact with a challenge page
-4. Try `web-fetch` on the same URL — it sometimes succeeds where the
-   interactive browser doesn't
+4. Retry with a stealth backend — the `browser-navigate` `strategy`
+   parameter lists registered backend names; a stealth backend (e.g.
+   `strategy="camoufox"`) can pass challenges the default `chromium`/
+   `firefox` triggers. Only names listed in the `strategy` description
+   are valid — there is no `"stealth"` alias
+5. Try `web-fetch` on the same URL — it skips JS execution, so it can
+   retrieve raw HTML on pages that block the interactive browser via
+   client-side fingerprinting (it won't help against server-side WAFs)
 
 ### Guide Creation Discipline
 
