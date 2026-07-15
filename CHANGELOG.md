@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`web-search` surfaces SearXNG instant answers** — calculator, unit
+  convert, `random uuid`, hashes, DuckDuckGo definitions, translations, and
+  weather answers now render above the result list (in boxed blocks) instead
+  of being silently dropped. Answers show even when there are zero web
+  results, so an answerer-driven query like `avg 1 2 3` returns the answer
+  rather than "No results found". The `SearXNGResponse.answers` type was
+  corrected from `string[]` to a discriminated union on `template`. The TUI
+  status line gains a `💡 N answer(s)` badge, `details` carries
+  `answers`/`answerCount`, and `promptGuidelines` notes answerer-friendly
+  query forms.
+
 ### Fixed
 
 - **Agent-facing strings** — corrected inaccuracies in runtime messaging the

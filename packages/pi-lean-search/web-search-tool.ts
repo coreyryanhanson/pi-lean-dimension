@@ -18,10 +18,186 @@ interface SearXNGResult {
 	score?: number;
 }
 
+interface SearXNGAnswerLegacy {
+	template: "answer/legacy.html";
+	answer: string;
+	url?: string;
+	engine?: string;
+}
+
+interface SearXNGAnswerTranslationItem {
+	text: string;
+	transliteration?: string;
+	definitions?: string[];
+	synonyms?: string[];
+	examples?: string[];
+}
+
+interface SearXNGAnswerTranslations {
+	template: "answer/translations.html";
+	translations: SearXNGAnswerTranslationItem[];
+	url?: string;
+}
+
+interface SearXNGWeatherQuantity {
+	val: number | string;
+	unit: string;
+}
+
+interface SearXNGWeatherItem {
+	location?: { name: string; latitude?: number; longitude?: number };
+	temperature?: SearXNGWeatherQuantity;
+	condition?: string;
+	summary?: string;
+	feels_like?: SearXNGWeatherQuantity;
+	humidity?: SearXNGWeatherQuantity;
+	wind_speed?: SearXNGWeatherQuantity;
+	wind_from?: string | { name?: string };
+}
+
+interface SearXNGAnswerWeather {
+	template: "answer/weather.html";
+	current: SearXNGWeatherItem;
+	forecasts?: SearXNGWeatherItem[];
+	service?: string;
+}
+
+type SearXNGAnswer =
+	| SearXNGAnswerLegacy
+	| SearXNGAnswerTranslations
+	| SearXNGAnswerWeather;
+
 interface SearXNGResponse {
 	results: SearXNGResult[];
-	answers: string[];
+	answers: SearXNGAnswer[];
 	suggestions: string[];
+}
+
+// ─── Answer rendering ────────────────────────────────────────────
+
+// Box width (chars). Title row: `┌─ <title> ` + dashes to reach BOX_W.
+const BOX_W = 40;
+
+function box(title: string, lines: string[]): string {
+	const top = `┌─ ${title} ${"─".repeat(Math.max(0, BOX_W - title.length - 4))}`;
+	const bottom = `└${"─".repeat(BOX_W - 1)}`;
+	return `${top}\n${lines.map((l) => `│ ${l}`).join("\n")}\n${bottom}`;
+}
+
+function trunc(s: string, max: number): string {
+	return s.length > max ? s.slice(0, max) + "[…]" : s;
+}
+
+function windLine(c: SearXNGWeatherItem): string {
+	if (!c.wind_speed) return "";
+	let dir = "";
+	if (c.wind_from) {
+		dir =
+			typeof c.wind_from === "object" ? (c.wind_from?.name ?? "") : c.wind_from;
+	}
+	return `wind ${c.wind_speed.val}${c.wind_speed.unit}${dir ? ` ${dir}` : ""}`;
+}
+
+function renderAnswers(answers: SearXNGAnswer[]): string {
+	const blocks: string[] = [];
+
+	for (const a of answers.slice(0, 3)) {
+		let title: string;
+		let lines: string[];
+		switch (a.template) {
+			case "answer/legacy.html": {
+				title = "Answer";
+				lines = [trunc(a.answer, 500)];
+				if (a.url) lines.push(`source: ${a.url}`);
+				break;
+			}
+			case "answer/translations.html": {
+				const t = a.translations[0];
+				if (!t) continue;
+				title = "Translation";
+				lines = [t.text];
+				if (t.synonyms?.length) {
+					lines.push(
+						`  synonyms: ${t.synonyms.slice(0, 2).join(", ")}${t.synonyms.length > 2 ? ", …" : ""}`,
+					);
+				}
+				const more = a.translations.length - 1;
+				if (more > 0) {
+					lines.push(
+						`  ${more} more translation${more > 1 ? "s" : ""}${a.url ? ` (source: ${a.url})` : ""}`,
+					);
+				} else if (a.url) {
+					lines.push(`source: ${a.url}`);
+				}
+				break;
+			}
+			case "answer/weather.html": {
+				const c = a.current;
+				if (!c) continue;
+				title = "Weather";
+				const line1 =
+					c.summary ??
+					[
+						c.location?.name,
+						c.temperature ? `${c.temperature.val}${c.temperature.unit}` : "",
+						c.condition,
+					]
+						.filter(Boolean)
+						.join(": ");
+				lines = [line1];
+				const details: string[] = [];
+				if (c.feels_like)
+					details.push(`feels like ${c.feels_like.val}${c.feels_like.unit}`);
+				if (c.humidity)
+					details.push(`humidity ${c.humidity.val}${c.humidity.unit}`);
+				if (c.wind_speed) details.push(windLine(c));
+
+				if (details.length) lines.push(details.join(" · "));
+				if (a.service) lines.push(`source: ${a.service}`);
+				break;
+			}
+			default: {
+				const f = a as unknown as Record<string, unknown>;
+				if ("answer" in f && typeof f.answer === "string") {
+					title = "Answer";
+					lines = [trunc(f.answer as string, 500)];
+				} else {
+					blocks.push(`[answer: ${String(f.template ?? "?")}]`);
+					continue;
+				}
+			}
+		}
+		blocks.push(box(title, lines));
+	}
+
+	return blocks.join("\n\n");
+}
+
+function answerDetail(a: SearXNGAnswer): {
+	template: string;
+	text: string;
+	url?: string;
+} {
+	switch (a.template) {
+		case "answer/legacy.html":
+			return {
+				template: a.template,
+				text: a.answer,
+				...(a.url ? { url: a.url } : {}),
+			};
+		case "answer/translations.html":
+			return {
+				template: a.template,
+				text: a.translations?.[0]?.text ?? "",
+				...(a.url ? { url: a.url } : {}),
+			};
+		case "answer/weather.html":
+			return { template: a.template, text: a.current?.summary ?? "" };
+		default: {
+			const f = a as unknown as Record<string, unknown>;
+			return { template: String(f.template ?? "?"), text: "" };
+		}
+	}
 }
 
 // ─── URL building ─────────────────────────────────────────────────
@@ -70,6 +246,7 @@ export const webSearchTool = defineTool({
 	promptGuidelines: [
 		'Use when you need recent/current information not already known. Increase `count` for broad research; keep it small for quick lookups. Filter by time_range="day" for breaking news, category="news" for journalism. Set language to match the query (e.g. "de" for German, "es" for Spanish).',
 		"Use `pageno` (1-indexed) to fetch deeper pages when `count` results are not enough.",
+		"Instant answers (calculator, unit convert, random uuid, hashes, weather, translations) appear above results \u2014 phrase queries like `avg 1 2 3` or `weather berlin` to trigger them.",
 	],
 
 	parameters: Type.Object({
@@ -317,7 +494,27 @@ export const webSearchTool = defineTool({
 			// Slice to requested count
 			const results = sortedResults.slice(0, Math.min(count, 100));
 
+			// Render answer blocks (before empty-results check so answers show even with zero web results)
+			const renderedAnswers = (data.answers ?? []).slice(0, 3);
+			const answerBlocks = renderAnswers(renderedAnswers);
+
 			if (results.length === 0) {
+				if (answerBlocks) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: answerBlocks + `\n\nNo web results for "${query}".`,
+							},
+						],
+						details: {
+							results: [],
+							query,
+							answers: renderedAnswers.map(answerDetail),
+							answerCount: renderedAnswers.length,
+						},
+					};
+				}
 				return {
 					content: [
 						{
@@ -331,7 +528,7 @@ export const webSearchTool = defineTool({
 
 			// Adaptive output formatting
 			const maxSnippetLen = count <= 3 ? 300 : 150;
-			let output = "";
+			let output = answerBlocks ? answerBlocks + "\n\n" : "";
 			for (const [i, r] of results.entries()) {
 				output += `${i + 1}. ${r.title}\n`;
 				output += `   ${r.url}\n`;
@@ -370,6 +567,8 @@ export const webSearchTool = defineTool({
 						engine: r.engine,
 						score: r.score,
 					})),
+					answers: renderedAnswers.map(answerDetail),
+					answerCount: renderedAnswers.length,
 				},
 			};
 		} catch (unexpectedErr) {
@@ -438,15 +637,36 @@ export const webSearchTool = defineTool({
 			| undefined;
 		const resultCount = details?.resultCount as number | undefined;
 		const query = details?.query as string | undefined;
+		const answerCount = details?.answerCount as number | undefined;
+		const answers = details?.answers as
+			| Array<{ template: string; text: string; url?: string }>
+			| undefined;
+
+		const answerTexts =
+			expanded && answers?.length
+				? answers.map((a) => theme.fg("accent", a.text)).join("\n")
+				: "";
+
+		if (answerCount && (!results || results.length === 0)) {
+			let msg = `${theme.fg("muted", `💡 ${answerCount} answer(s) for `)}${theme.fg("accent", `"${query ?? "?"}"`)}`;
+			if (answerTexts) msg += `\n${answerTexts}`;
+			return new Text(msg, 0, 0);
+		}
 
 		if (!results || results.length === 0) {
 			const msg = query ? `No results for "${query}"` : "No results";
 			return new Text(theme.fg("dim", msg), 0, 0);
 		}
 
+		const answerBadge = answerCount
+			? theme.fg("muted", `💡 ${answerCount} answer(s) · `)
+			: "";
 		let text =
+			answerBadge +
 			theme.fg("muted", `🔍 ${resultCount ?? results.length} result(s) for `) +
 			theme.fg("accent", `"${query ?? "?"}"`);
+
+		if (answerTexts) text += `\n${answerTexts}`;
 
 		const display = expanded ? results : results.slice(0, 5);
 
