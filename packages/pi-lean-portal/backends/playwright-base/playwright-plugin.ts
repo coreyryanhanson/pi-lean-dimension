@@ -31,6 +31,7 @@ import { NAV_SETTLE } from "../../core/shared/browser-data.js";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { persistSessionState } from "../../core/shared/storage-state.js";
+import { loadFullConfig } from "../../core/plugin-config.js";
 import type {
 	BrowserPlugin,
 	PluginCapabilities,
@@ -422,7 +423,12 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		context: BrowserContext,
 	): Promise<{ cookies: unknown[]; origins: unknown[] } | undefined> {
 		const session = sessionManager.getSession(taskId);
-		return persistSessionState(session, () => context.storageState());
+		return persistSessionState(
+			session,
+			() => context.storageState(),
+			"",
+			loadFullConfig().browser.maxStorageStateSize,
+		);
 	}
 
 	private async takeSnapshot(
@@ -656,19 +662,28 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			};
 		}
 
-		return this._logOp("snapshot", { taskId }, async () => {
-			const {
-				snapshot: snapText,
-				elementCount,
-				dialogEvents,
-			} = await this.takeSnapshot(taskId, page);
-			return {
-				success: true,
-				snapshot: snapText,
-				elementCount,
-				dialogEvents,
-			};
-		}, (r) => ({ elementCount: r.elementCount, dialogEvents: r.dialogEvents.length, fingerprint: r.snapshot.slice(0, 16) }));
+		return this._logOp(
+			"snapshot",
+			{ taskId },
+			async () => {
+				const {
+					snapshot: snapText,
+					elementCount,
+					dialogEvents,
+				} = await this.takeSnapshot(taskId, page);
+				return {
+					success: true,
+					snapshot: snapText,
+					elementCount,
+					dialogEvents,
+				};
+			},
+			(r) => ({
+				elementCount: r.elementCount,
+				dialogEvents: r.dialogEvents.length,
+				fingerprint: r.snapshot.slice(0, 16),
+			}),
+		);
 	}
 
 	// ── Interaction ────────────────────────────────────────────
@@ -713,39 +728,46 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			};
 		}
 
-		return this._logOp("click", { taskId, ref, role: node.role, name: node.name }, async () => {
-			try {
-				const urlBefore = page.url();
-				await locator.click({ timeout: 5000 });
+		return this._logOp(
+			"click",
+			{ taskId, ref, role: node.role, name: node.name },
+			async () => {
+				try {
+					const urlBefore = page.url();
+					await locator.click({ timeout: 5000 });
 
-				// Wait for potential navigation to settle (replaces fixed sleep)
-				const { navigated: _navigated } = await waitForNavigationSettle(page, urlBefore);
+					// Wait for potential navigation to settle (replaces fixed sleep)
+					const { navigated: _navigated } = await waitForNavigationSettle(
+						page,
+						urlBefore,
+					);
 
-				const newUrl = page.url();
-				const newTitle = await page.title();
-				sessionManager.updateSession(taskId, {
-					currentUrl: newUrl,
-					currentTitle: newTitle,
-				});
+					const newUrl = page.url();
+					const newTitle = await page.title();
+					sessionManager.updateSession(taskId, {
+						currentUrl: newUrl,
+						currentTitle: newTitle,
+					});
 
-				// Auto-snapshot
-				const snapResult = await this.takeSnapshot(taskId, page);
+					// Auto-snapshot
+					const snapResult = await this.takeSnapshot(taskId, page);
 
-				return {
-					success: true,
-					newUrl,
-					newTitle,
-					snapshot: snapResult.snapshot,
-					elementCount: snapResult.elementCount,
-					dialogEvents: snapResult.dialogEvents,
-				};
-			} catch (err: unknown) {
-				return {
-					success: false,
-					error: `Click failed: ${err instanceof Error ? err.message : String(err)}`,
-				};
-			}
-		});
+					return {
+						success: true,
+						newUrl,
+						newTitle,
+						snapshot: snapResult.snapshot,
+						elementCount: snapResult.elementCount,
+						dialogEvents: snapResult.dialogEvents,
+					};
+				} catch (err: unknown) {
+					return {
+						success: false,
+						error: `Click failed: ${err instanceof Error ? err.message : String(err)}`,
+					};
+				}
+			},
+		);
 	}
 
 	async type(
@@ -792,27 +814,32 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			};
 		}
 
-		return this._logOp("type", { taskId, ref, role: node.role, name: node.name }, async () => {
-			try {
-				await locator.click({ timeout: 5000 }); // Focus first
-				await locator.fill(text);
+		return this._logOp(
+			"type",
+			{ taskId, ref, role: node.role, name: node.name },
+			async () => {
+				try {
+					await locator.click({ timeout: 5000 }); // Focus first
+					await locator.fill(text);
 
-				// Auto-snapshot
-				const snapResult = await this.takeSnapshot(taskId, page);
+					// Auto-snapshot
+					const snapResult = await this.takeSnapshot(taskId, page);
 
-				return {
-					success: true,
-					snapshot: snapResult.snapshot,
-					elementCount: snapResult.elementCount,
-					dialogEvents: snapResult.dialogEvents,
-				};
-			} catch (err: unknown) {
-				return {
-					success: false,
-					error: `Type failed: ${err instanceof Error ? err.message : String(err)}`,
-				};
-			}
-		}, (r) => ({ elementCount: r.elementCount }));
+					return {
+						success: true,
+						snapshot: snapResult.snapshot,
+						elementCount: snapResult.elementCount,
+						dialogEvents: snapResult.dialogEvents,
+					};
+				} catch (err: unknown) {
+					return {
+						success: false,
+						error: `Type failed: ${err instanceof Error ? err.message : String(err)}`,
+					};
+				}
+			},
+			(r) => ({ elementCount: r.elementCount }),
+		);
 	}
 
 	async scroll(
@@ -824,29 +851,34 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			return { success: false, error: "No active session" };
 		}
 
-		return this._logOp("scroll", { taskId, direction }, async () => {
-			try {
-				const delta = direction === "down" ? 800 : -800;
-				await page.evaluate(
-					`window.scrollBy({ top: ${delta}, behavior: "smooth" })`,
-				);
-				await page.waitForTimeout(200);
+		return this._logOp(
+			"scroll",
+			{ taskId, direction },
+			async () => {
+				try {
+					const delta = direction === "down" ? 800 : -800;
+					await page.evaluate(
+						`window.scrollBy({ top: ${delta}, behavior: "smooth" })`,
+					);
+					await page.waitForTimeout(200);
 
-				const snapResult = await this.takeSnapshot(taskId, page);
+					const snapResult = await this.takeSnapshot(taskId, page);
 
-				return {
-					success: true,
-					snapshot: snapResult.snapshot,
-					elementCount: snapResult.elementCount,
-					dialogEvents: snapResult.dialogEvents,
-				};
-			} catch (err: unknown) {
-				return {
-					success: false,
-					error: `Scroll failed: ${err instanceof Error ? err.message : String(err)}`,
-				};
-			}
-		}, (r) => ({ elementCount: r.elementCount }));
+					return {
+						success: true,
+						snapshot: snapResult.snapshot,
+						elementCount: snapResult.elementCount,
+						dialogEvents: snapResult.dialogEvents,
+					};
+				} catch (err: unknown) {
+					return {
+						success: false,
+						error: `Scroll failed: ${err instanceof Error ? err.message : String(err)}`,
+					};
+				}
+			},
+			(r) => ({ elementCount: r.elementCount }),
+		);
 	}
 
 	async goBack(taskId: string): Promise<InteractionResult> {
@@ -855,35 +887,40 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			return { success: false, error: "No active session" };
 		}
 
-		return this._logOp("goBack", { taskId }, async () => {
-			try {
-				await page.goBack({ waitUntil: "networkidle" });
-				await page.waitForTimeout(300);
+		return this._logOp(
+			"goBack",
+			{ taskId },
+			async () => {
+				try {
+					await page.goBack({ waitUntil: "networkidle" });
+					await page.waitForTimeout(300);
 
-				const newUrl = page.url();
-				const newTitle = await page.title();
-				sessionManager.updateSession(taskId, {
-					currentUrl: newUrl,
-					currentTitle: newTitle,
-				});
+					const newUrl = page.url();
+					const newTitle = await page.title();
+					sessionManager.updateSession(taskId, {
+						currentUrl: newUrl,
+						currentTitle: newTitle,
+					});
 
-				const snapResult = await this.takeSnapshot(taskId, page);
+					const snapResult = await this.takeSnapshot(taskId, page);
 
-				return {
-					success: true,
-					newUrl,
-					newTitle,
-					snapshot: snapResult.snapshot,
-					elementCount: snapResult.elementCount,
-					dialogEvents: snapResult.dialogEvents,
-				};
-			} catch (err: unknown) {
-				return {
-					success: false,
-					error: `GoBack failed: ${err instanceof Error ? err.message : String(err)}`,
-				};
-			}
-		}, (r) => ({ elementCount: r.elementCount }));
+					return {
+						success: true,
+						newUrl,
+						newTitle,
+						snapshot: snapResult.snapshot,
+						elementCount: snapResult.elementCount,
+						dialogEvents: snapResult.dialogEvents,
+					};
+				} catch (err: unknown) {
+					return {
+						success: false,
+						error: `GoBack failed: ${err instanceof Error ? err.message : String(err)}`,
+					};
+				}
+			},
+			(r) => ({ elementCount: r.elementCount }),
+		);
 	}
 
 	async press(taskId: string, key: string): Promise<InteractionResult> {
@@ -892,41 +929,50 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			return { success: false, error: "No active session" };
 		}
 
-		return this._logOp("press", { taskId, key }, async () => {
-			try {
-				const urlBefore = page.url();
-				await page.keyboard.press(key);
+		return this._logOp(
+			"press",
+			{ taskId, key },
+			async () => {
+				try {
+					const urlBefore = page.url();
+					await page.keyboard.press(key);
 
-				// Wait for potential navigation to settle (replaces fixed sleep).
-				// Shorter nav timeout since Enter-on-link nav is typically fast.
-				const { navigated: _navigated } = await waitForNavigationSettle(page, urlBefore, {
-					navTimeoutMs: 3000,
-				});
+					// Wait for potential navigation to settle (replaces fixed sleep).
+					// Shorter nav timeout since Enter-on-link nav is typically fast.
+					const { navigated: _navigated } = await waitForNavigationSettle(
+						page,
+						urlBefore,
+						{
+							navTimeoutMs: 3000,
+						},
+					);
 
-				const newUrl = page.url();
-				const newTitle = await page.title();
-				sessionManager.updateSession(taskId, {
-					currentUrl: newUrl,
-					currentTitle: newTitle,
-				});
+					const newUrl = page.url();
+					const newTitle = await page.title();
+					sessionManager.updateSession(taskId, {
+						currentUrl: newUrl,
+						currentTitle: newTitle,
+					});
 
-				const snapResult = await this.takeSnapshot(taskId, page);
+					const snapResult = await this.takeSnapshot(taskId, page);
 
-				return {
-					success: true,
-					newUrl,
-					newTitle,
-					snapshot: snapResult.snapshot,
-					elementCount: snapResult.elementCount,
-					dialogEvents: snapResult.dialogEvents,
-				};
-			} catch (err: unknown) {
-				return {
-					success: false,
-					error: `Press failed: ${err instanceof Error ? err.message : String(err)}`,
-				};
-			}
-		}, (r) => ({ elementCount: r.elementCount }));
+					return {
+						success: true,
+						newUrl,
+						newTitle,
+						snapshot: snapResult.snapshot,
+						elementCount: snapResult.elementCount,
+						dialogEvents: snapResult.dialogEvents,
+					};
+				} catch (err: unknown) {
+					return {
+						success: false,
+						error: `Press failed: ${err instanceof Error ? err.message : String(err)}`,
+					};
+				}
+			},
+			(r) => ({ elementCount: r.elementCount }),
+		);
 	}
 
 	// ── Media ──────────────────────────────────────────────────
@@ -1002,18 +1048,23 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			return { success: false, cookies: [], error: "No active session" };
 		}
 
-		return this._logOp("getCookies", { taskId }, async () => {
-			try {
-				const cookies = await entry.context.cookies(urls);
-				return { success: true, cookies };
-			} catch (err: unknown) {
-				return {
-					success: false,
-					cookies: [],
-					error: err instanceof Error ? err.message : String(err),
-				};
-			}
-		}, (r) => ({ count: r.cookies.length }));
+		return this._logOp(
+			"getCookies",
+			{ taskId },
+			async () => {
+				try {
+					const cookies = await entry.context.cookies(urls);
+					return { success: true, cookies };
+				} catch (err: unknown) {
+					return {
+						success: false,
+						cookies: [],
+						error: err instanceof Error ? err.message : String(err),
+					};
+				}
+			},
+			(r) => ({ count: r.cookies.length }),
+		);
 	}
 
 	async addCookies(taskId: string, cookies: Cookie[]): Promise<ResultBase> {
@@ -1072,23 +1123,28 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			};
 		}
 
-		return this._logOp("getStorageState", { taskId }, async () => {
-			try {
-				const state = await entry.context.storageState();
-				return {
-					success: true,
-					cookies: state.cookies,
-					origins: state.origins,
-				};
-			} catch (err: unknown) {
-				return {
-					success: false,
-					cookies: [],
-					origins: [],
-					error: err instanceof Error ? err.message : String(err),
-				};
-			}
-		}, (r) => ({ cookies: r.cookies.length, origins: r.origins.length }));
+		return this._logOp(
+			"getStorageState",
+			{ taskId },
+			async () => {
+				try {
+					const state = await entry.context.storageState();
+					return {
+						success: true,
+						cookies: state.cookies,
+						origins: state.origins,
+					};
+				} catch (err: unknown) {
+					return {
+						success: false,
+						cookies: [],
+						origins: [],
+						error: err instanceof Error ? err.message : String(err),
+					};
+				}
+			},
+			(r) => ({ cookies: r.cookies.length, origins: r.origins.length }),
+		);
 	}
 
 	// ── Per-task cleanup ───────────────────────────────────────

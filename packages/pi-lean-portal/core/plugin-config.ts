@@ -8,6 +8,11 @@
 import { existsSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
 import { USER_BACKENDS_DIR } from "./shared/paths.js";
+import {
+	sanitizeProfileName,
+	DEFAULT_MAX_STORAGE_STATE_SIZE,
+} from "./shared/storage-state.js";
+import { readMergedSettings } from "./shared/settings-reader.js";
 // ─── Plugin Config types ──────────────────────────────────────────
 
 /** A single plugin entry from the user's settings.json */
@@ -34,9 +39,6 @@ export interface PluginDetection {
 	/** Absolute or relative path to the entry point */
 	entryPoint: string;
 }
-import { sanitizeProfileName } from "./shared/storage-state.js";
-import { readMergedSettings } from "./shared/settings-reader.js";
-
 // ─── Config types & loading ────────────────────────────────────────
 
 /**
@@ -51,6 +53,12 @@ export interface BrowserConfig {
 	 * - A named profile string (e.g. "shopping", "work")
 	 */
 	defaultProfile: "none" | "session" | string;
+	/**
+	 * Byte threshold before a profile's saved storage state logs a size
+	 * warning (still saved). Defaults to 10 MB (`DEFAULT_MAX_STORAGE_STATE_SIZE`).
+	 * Set via `browser.maxStorageStateSize` in settings.json.
+	 */
+	maxStorageStateSize: number;
 }
 
 /** Raw plugin entry from settings.json (before validation) */
@@ -87,6 +95,7 @@ function parseBrowserConfig(
 	// Defaults
 	const config: BrowserConfig = {
 		defaultProfile: "session",
+		maxStorageStateSize: DEFAULT_MAX_STORAGE_STATE_SIZE,
 	};
 
 	if (!raw) return config;
@@ -110,6 +119,21 @@ function parseBrowserConfig(
 		} else {
 			errors.push(
 				`browser.defaultProfile: expected a non-empty string, got ${typeof raw.defaultProfile}`,
+			);
+		}
+	}
+
+	// ── maxStorageStateSize ─────────────────────────────────────
+	if (raw.maxStorageStateSize !== undefined) {
+		if (
+			typeof raw.maxStorageStateSize === "number" &&
+			Number.isFinite(raw.maxStorageStateSize) &&
+			raw.maxStorageStateSize > 0
+		) {
+			config.maxStorageStateSize = Math.floor(raw.maxStorageStateSize);
+		} else {
+			errors.push(
+				`browser.maxStorageStateSize: expected a positive finite number, got ${JSON.stringify(raw.maxStorageStateSize)}`,
 			);
 		}
 	}

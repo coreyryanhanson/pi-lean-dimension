@@ -32,7 +32,7 @@ export const PROFILE_DIR = join(PORTAL_DATA_DIR, "browser-state");
 const STORAGE_STATE_VERSION = 1;
 
 /** Default size limit (10 MB) before a warning is logged on save. */
-const DEFAULT_MAX_STORAGE_STATE_SIZE = 10 * 1024 * 1024;
+export const DEFAULT_MAX_STORAGE_STATE_SIZE = 10 * 1024 * 1024;
 
 /** Profile name validation regex. */
 const PROFILE_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -468,6 +468,9 @@ export function deleteStorageState(profileName: string): void {
  * @param getStorageState - Callback that produces the raw storage state.
  * @param viaLabel - Optional backend label inserted into the warning
  *                   (e.g. `"via Python bridge"`) for diagnostic output.
+ * @param maxSizeBytes - Optional byte threshold for the size warning
+ *                       (defaults to `DEFAULT_MAX_STORAGE_STATE_SIZE` when
+ *                       omitted).
  * @returns The raw state object, or `undefined` if the session is
  *          non-persistent or the save failed.
  */
@@ -475,12 +478,13 @@ export async function persistSessionState(
 	session: { persistState?: boolean; profileName?: string } | null | undefined,
 	getStorageState: () => Promise<{ cookies: unknown[]; origins: unknown[] }>,
 	viaLabel: string = "",
+	maxSizeBytes?: number,
 ): Promise<{ cookies: unknown[]; origins: unknown[] } | undefined> {
 	if (!session?.persistState) return undefined;
 	const name = session.profileName ?? "default";
 	try {
 		const state = await getStorageState();
-		saveStorageState(name, state);
+		saveStorageState(name, state, maxSizeBytes);
 		return state;
 	} catch (err) {
 		console.warn(

@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Agent-facing strings** — corrected inaccuracies in runtime messaging the
+  agent sees when interacting with the browser:
+- **`browser.maxStorageStateSize` is now wired** — the setting was documented
+  and referenced in a runtime warning but never read; it's now parsed in
+  `plugin-config.ts` and threaded through both `_persistState` paths.
+
 ## [0.2.1] - 2026-07-14
 
 ### Fixed

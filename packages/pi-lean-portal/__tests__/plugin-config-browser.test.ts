@@ -92,6 +92,34 @@ describe("loadFullConfig().browser", () => {
 		mockGlobalSettings({ unrelated: true });
 		const config = loadFullConfig().browser;
 		expect(config.defaultProfile).toBe("session");
+		expect(config.maxStorageStateSize).toBe(10 * 1024 * 1024);
+	});
+
+	// ── maxStorageStateSize ────────────────────────────────────
+
+	describe("maxStorageStateSize", () => {
+		it("accepts a positive number", () => {
+			mockGlobalSettings({ maxStorageStateSize: 5 * 1024 * 1024 });
+			expect(loadFullConfig().browser.maxStorageStateSize).toBe(
+				5 * 1024 * 1024,
+			);
+		});
+
+		it("floors fractional values", () => {
+			mockGlobalSettings({ maxStorageStateSize: 5.9 * 1024 * 1024 });
+			expect(loadFullConfig().browser.maxStorageStateSize).toBe(
+				Math.floor(5.9 * 1024 * 1024),
+			);
+		});
+
+		it("rejects zero / negative / non-finite and falls back to default", () => {
+			for (const bad of [0, -1, Infinity, NaN, "big", null]) {
+				mockGlobalSettings({ maxStorageStateSize: bad });
+				expect(loadFullConfig().browser.maxStorageStateSize).toBe(
+					10 * 1024 * 1024,
+				);
+			}
+		});
 	});
 
 	// ── defaultProfile ─────────────────────────────────────────

@@ -10,7 +10,10 @@ import { join, delimiter as pathDelimiter } from "node:path";
 
 import { sessionManager } from "../core/shared/session-manager.js";
 import { persistSessionState } from "../core/shared/storage-state.js";
-import { DEFAULT_BACKENDS_ROOT } from "../core/plugin-config.js";
+import {
+	DEFAULT_BACKENDS_ROOT,
+	loadFullConfig,
+} from "../core/plugin-config.js";
 
 import {
 	DEFAULT_CAPABILITIES,
@@ -957,7 +960,8 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				skip_default_viewport: !!raw.skip_default_viewport,
 				skip_networkidle: !!raw.skip_networkidle,
 				wrap_mw_eval_in_eval: !!raw.wrap_mw_eval_in_eval,
-				csp_safe_readonly_via_init_script: !!raw.csp_safe_readonly_via_init_script,
+				csp_safe_readonly_via_init_script:
+					!!raw.csp_safe_readonly_via_init_script,
 			}),
 			(error): QuirksDescriptor => ({
 				success: false,
@@ -1116,6 +1120,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				};
 			},
 			"via Python bridge",
+			loadFullConfig().browser.maxStorageStateSize,
 		);
 	}
 
