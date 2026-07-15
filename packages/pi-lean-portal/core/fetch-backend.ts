@@ -250,14 +250,8 @@ function writeFetchTempFile(content: string, taskId: string): string {
 
 function trackFetchFile(taskId: string, filePath: string): void {
 	const existing = activeFetchFiles.get(taskId) ?? [];
-	for (const oldPath of existing) {
-		try {
-			rmSync(oldPath, { force: true });
-		} catch {
-			/* best-effort */
-		}
-	}
-	activeFetchFiles.set(taskId, [filePath]);
+	if (!existing.includes(filePath)) existing.push(filePath);
+	activeFetchFiles.set(taskId, existing);
 }
 
 interface CappedFetchContent {

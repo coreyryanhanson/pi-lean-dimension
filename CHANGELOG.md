@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`web-fetch` handles parallel calls without clobbering temp files** —
+  `trackFetchFile` no longer eagerly deletes prior spill files for the same
+  taskId on each new spill. Parallel fetches (e.g. two large pages fetched
+  with the same default taskId) now both keep their temp files, fixing a
+  data-loss bug where the agent would read a returned `filePath` only to
+  find it already deleted. Adds a regression test.
+
 ## [0.2.2] - 2026-07-15
 
 ### Added

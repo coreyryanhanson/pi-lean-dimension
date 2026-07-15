@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { existsSync } from "node:fs";
 import { webFetch, cleanupFetchTempFiles } from "../core/fetch-backend.js";
 
 // ─── Setup / Teardown ────────────────────────────────────────
@@ -310,6 +311,20 @@ describe("webFetch — content capping", () => {
 		expect(result.totalChars).toBeGreaterThan(5000);
 		expect(result.content).toContain("more chars");
 		expect(result.content).toContain("Full content saved to");
+	});
+
+	it("preserves both temp files when two large fetches share a taskId", async () => {
+		mockFetch({ body: `<p>${longText(6000)}</p>` });
+		const a = await webFetch({ url: "http://example.com/a", taskId: "shared" });
+
+		mockFetch({ body: `<p>${"B".repeat(6000)}</p>` });
+		const b = await webFetch({ url: "http://example.com/b", taskId: "shared" });
+
+		expect(a.filePath).toBeTruthy();
+		expect(b.filePath).toBeTruthy();
+		expect(a.filePath).not.toBe(b.filePath);
+		expect(existsSync(a.filePath!)).toBe(true);
+		expect(existsSync(b.filePath!)).toBe(true);
 	});
 
 	it("reports totalChars even for small content", async () => {
