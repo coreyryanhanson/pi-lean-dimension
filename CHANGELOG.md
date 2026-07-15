@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`web-search` guidelines document bang syntax, engine restriction, and site operators** —
+  `promptGuidelines` now advertises SearXNG bangs (`!wp`, `!images`, `!map`, `:<lang>`),
+  the `engines` param for upstream restriction, and `site:`/`inurl:`/`intitle:`/`filetype:`
+  operators (engine-dependent). All three features already worked; only visibility was missing.
+
 ### Fixed
 
 - **`web-fetch` handles parallel calls without clobbering temp files** —

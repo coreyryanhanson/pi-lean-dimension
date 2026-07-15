@@ -247,6 +247,7 @@ export const webSearchTool = defineTool({
 		'Use when you need recent/current information not already known. Increase `count` for broad research; keep it small for quick lookups. Filter by time_range="day" for breaking news, category="news" for journalism. Set language to match the query (e.g. "de" for German, "es" for Spanish).',
 		"Use `pageno` (1-indexed) to fetch deeper pages when `count` results are not enough.",
 		"Instant answers (calculator, unit convert, random uuid, hashes, weather, translations) appear above results \u2014 phrase queries like `avg 1 2 3` or `weather berlin` to trigger them.",
+		'Target results precisely: prefix the query with a bang to route to a specific source \u2014 `!wp <term>` (Wikipedia), `!images <term>`, `!map <term>`, or `:<lang> !<bang> <term>` (e.g. `:fr !wp paris`). Use the `engines` param to restrict upstreams (e.g. engines="google,bing"). For site-scoped queries put the operator inside `query` \u2014 `site:github.com foo`, `inurl:`, `intitle:`, `filetype:pdf` \u2014 but note these only work with engines that support them (Google, Bing, DuckDuckGo) and are silently ignored by others.',
 	],
 
 	parameters: Type.Object({
