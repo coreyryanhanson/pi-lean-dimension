@@ -1,6 +1,6 @@
 {
 	"name": "pi-lean-search",
-	"version": "0.2.2",
+	"version": "0.2.3",
 	"description": "Pi extension. SearXNG search tool for Pi — pairs with pi-lean-portal's /web toggle; search-only installs are valid, or add it to a portal install for the full web-tools suite.",
 	"keywords": [
 		"pi-package",
