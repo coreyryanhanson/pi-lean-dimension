@@ -36,9 +36,9 @@ Pi settings (`~/.pi/agent/settings.json` or `.pi/settings.json`):
 |---|---|---|---|
 | **A — Browser** (recommended) | `pi install npm:pi-lean-portal` | 12 browser tools + `/web` command | `npx playwright install chromium firefox` |
 | **B — Full suite** | `pi install npm:pi-lean-dimension` | 13 tools (browser + search) + `/web` | Playwright browsers + SearXNG server |
-| **B-search — Search only** | `pi install npm:pi-lean-search` | `web-search` tool only | SearXNG server |
+| **C — Search only** | `pi install npm:pi-lean-search` | `web-search` tool only | SearXNG server |
 
-Notes the table doesn't carry:
+Notes the table doesn't cover:
 
 - **Browser binaries aren't downloaded during `npm install`** (configured via `.npmrc`). The first `browser-navigate` call prompts you to run `npx playwright install chromium firefox` if they're missing.
 - **SearXNG is optional for Mode B.** The browser works immediately without it; `web-search` returns a clear setup message on first call. When you do run it, point the suite at your instance in Pi settings:
@@ -100,7 +100,7 @@ When search is installed, two independent glyphs appear:
 Beyond the `/web` toggle, two surfaces are user-driven rather than hardcoded:
 
 - **Navigation guides** — `web-learn` saves site-specific playbooks that auto-match by domain and resurface in later sessions.
-- **Custom browser backends** — if a site blocks the shipped Chromium/Firefox, drop a `bridge.py` subclass into `~/.pi/agent/pi-lean-portal/user-backends/` and drive a patched engine like [Camoufox](https://github.com/daijro/camoufox) yourself. A quirks schema declares how the engine diverges from base Playwright, and `launch` options flow from `settings.json` to the subprocess at runtime. This is user-authored, user-audited code that the extension never auto-downloads — and as far as we're aware, no other Pi web plugin lets you run a browser backend you wrote yourself. Most installs never need it; the [portal README](packages/pi-lean-portal/README.md#stealth--custom-browser-backends) and [`contributed/README.md`](packages/pi-lean-portal/contributed/README.md) cover the full flow when you do.
+- **Custom browser backends** — if a site blocks the shipped Chromium/Firefox, drop a `bridge.py` subclass into `~/.pi/agent/pi-lean-portal/user-backends/` and drive a patched engine like [Camoufox](https://github.com/daijro/camoufox) yourself. A quirks schema declares how the engine diverges from base Playwright, and `launch` options flow from `settings.json` to the subprocess at runtime. This is user-authored, user-audited code that the extension never auto-downloads. Most installs never need it; the [portal README](packages/pi-lean-portal/README.md#stealth--custom-browser-backends) and [`contributed/README.md`](packages/pi-lean-portal/contributed/README.md) cover the full flow when you do.
 
 ---
 

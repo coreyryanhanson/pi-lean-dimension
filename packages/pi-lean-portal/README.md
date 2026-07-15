@@ -284,7 +284,7 @@ navigation guidance for specific sites using `web-learn`.
 web-learn domain="reddit.com" content="…guidance text…"
 ```
 
-This creates a `.md` file with YAML frontmatter in the `guides/` directory.
+This creates a `.md` file with YAML frontmatter in `~/.pi/agent/pi-lean-portal/web-guides/`.
 The guide becomes available immediately via `web-guide` and appears in the guide footer on
 future navigations to that domain.
 
@@ -595,7 +595,7 @@ Size threshold for profile state warnings (default: 10 MB):
 ```jsonc
 {
   "browser": {
-    "maxStorageStateSize": 10485760  
+    "maxStorageStateSize": 10485760
   }
 }
 ```
