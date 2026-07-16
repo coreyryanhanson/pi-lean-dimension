@@ -148,7 +148,7 @@ export interface QuirksDescriptor extends ResultBase {
 // ─── PythonPluginAdapter ──────────────────────────────────────────────
 
 /**
- * Adapts a Python browser backend (running the `BrowserBridge` protocol)
+ * Adapts a Python browser backend (running the `PlaywrightBridge` protocol)
  * to the TypeScript `BrowserPlugin` interface.
  */
 export class PythonPluginAdapter implements BrowserPlugin {

@@ -1,8 +1,9 @@
 """
-Playwright Bridge Base — shared Playwright logic for Python browser bridges.
+PlaywrightBridge — Python browser automation bridge for Playwright-based backends.
 
-Extracts the Playwright-specific implementation from chromium-py/bridge.py
-into a parameterized base class.  Subclasses override:
+Provides JSON-RPC command routing, session lifecycle, element caching,
+and a ``run()`` main loop.  ``PlaywrightBridge`` is a concrete base
+class that subclasses override with engine-specific settings:
 
 * ``_plugin_name`` — e.g. ``"chromium-py"``, ``"firefox-py"``
 * ``_user_agent`` — fallback UA string (when dynamic probe is disabled or fails)
@@ -12,6 +13,28 @@ into a parameterized base class.  Subclasses override:
 
 All navigation, interaction, console, cookie, and storage operations
 are shared across engines.
+
+Protocol
+--------
+All communication is JSON-RPC 2.0 over stdin/stdout with newline-delimited
+framing.  See ``transport.py`` for details.
+
+Lifecycle
+---------
+1. The TypeScript ``PythonPluginAdapter`` spawns the Python process.
+2. The bridge starts its ``run()`` loop, waiting for commands.
+3. First command is typically ``browser.navigate``, which calls
+   ``create_browser_session()`` (if no session exists yet for that taskId)
+   and then navigates.
+4. Subsequent commands use the existing session.
+5. ``browser.cleanup`` closes the session for a taskId.
+6. ``browser.shutdown`` (sent via cleanupAll) terminates the process.
+
+Named profiles are fully handled by the TypeScript side via
+``core/shared/storage-state.ts`` (disk persistence).  The Python
+bridge receives ``storageState`` in the navigate request and applies
+it when creating a new BrowserContext — it does NOT track shared
+contexts across tasks.
 """
 
 import base64
@@ -20,13 +43,26 @@ import os
 import re
 import sys
 import time
+import traceback
 from typing import Any, Optional
 from urllib.parse import unquote as _urlunquote
 
-from .bridge import BrowserBridge, SessionNotFoundError
 from .bot_detection import check_bot_detection
-from .accessibility import parse_snapshot, build_locator_args
+from .accessibility import parse_snapshot, build_locator_args, AriaParseResult
 from .browser_data import NAV_SETTLE
+from .transport import (
+    read_request,
+    write_response,
+    make_success_response,
+    make_error_response,
+    make_parse_error,
+    make_invalid_request,
+    make_application_error,
+    InvalidRequestError,
+    METHOD_NOT_FOUND,
+    INVALID_PARAMS,
+    SESSION_ERROR,
+)
 
 # ─── Playwright import (lazy, for better error messages) ──────────────
 
@@ -39,9 +75,26 @@ except ImportError:
     PlaywrightTimeout = TimeoutError  # type: ignore[misc]
 
 
+# ─── Default timeout ──────────────────────────────────────────────────
+
+DEFAULT_NAVIGATION_TIMEOUT_MS: int = 30_000
+DEFAULT_INTERACTION_TIMEOUT_MS: int = 10_000
+
+
 # ─── Nav-settle constants (loaded from shared browser-data.json) ──────
 
 _DOM_STABILIZE_JS: str = NAV_SETTLE["domStabilizationJs"]
+
+
+# ─── Custom exceptions ────────────────────────────────────────────────
+
+
+class SessionNotFoundError(Exception):
+    """Raised when an operation requires a session but none exists."""
+
+
+class InvalidParamsError(Exception):
+    """Raised when a required parameter is missing or has the wrong type."""
 
 
 # ─── Shared helper for bridge entry points ───────────────────────────
@@ -73,7 +126,7 @@ def check_playwright_or_exit(browser: str) -> None:
         sys.exit(1)
 
 
-class PlaywrightBridge(BrowserBridge):
+class PlaywrightBridge:
     """Base class for Playwright-based browser bridges.
 
     Subclasses must set these class/instance attributes:
@@ -236,13 +289,36 @@ class PlaywrightBridge(BrowserBridge):
     _csp_safe_readonly_via_init_script: bool = False
 
 
+    # ── Session storage (persists across RPC calls) ─────────────
+
+    #: Per-taskId session data: {task_id: {...}}.
+    #: The dict contents are backend-specific (page, context, etc.).
+    sessions: dict[str, dict[str, Any]]
+
+    #: Per-taskId element cache: {task_id: AriaParseResult}.
+    element_caches: dict[str, AriaParseResult]
+
+    #: Whether the bridge is still running.
+    _running: bool
+
+    #: Plugin configuration dict forwarded from the TypeScript adapter via
+    #: the ``browser.init`` RPC.  Defaults to ``{}`` for bridges that never
+    #: receive an init call (e.g. older adapters, or the shipped
+    #: ``chromium-py``/``firefox-py`` when run standalone).  Subclasses read
+    #: engine-specific options from ``self.plugin_config.get("launch", {})``.
+    _plugin_config: dict[str, Any]
+
+
     # ── Shared Playwright state ─────────────────────────────────
 
     _pw: Any  # Playwright instance (lazy, shared)
     _browser: Any  # Browser instance (lazy, shared)
 
     def __init__(self) -> None:
-        super().__init__()
+        self.sessions = {}
+        self.element_caches = {}
+        self._running = False
+        self._plugin_config = {}
         self._pw = None
         self._browser = None
         self._cached_ua: str = ""
@@ -253,6 +329,51 @@ class PlaywrightBridge(BrowserBridge):
         # non-extractor read_only eval (none today) can't silently receive
         # the extractor's stale result.
         self._readonly_extractor_script: str = ""
+
+    # ── Plugin config (forwarded via browser.init) ───────────────
+
+    @property
+    def plugin_config(self) -> dict[str, Any]:
+        """Return the plugin config dict forwarded from the TypeScript adapter.
+
+        Populated by the ``browser.init`` RPC handler.  Always returns a
+        dict (empty when no init was received) so subclasses can safely
+        call ``self.plugin_config.get("launch", {})``.
+        """
+        return self._plugin_config
+
+    # ── Session helpers ─────────────────────────────────────────
+
+    def get_session(self, task_id: str) -> Optional[dict[str, Any]]:
+        """Get the session data for a task, or None."""
+        return self.sessions.get(task_id)
+
+    def require_session(self, task_id: str) -> dict[str, Any]:
+        """Get the session for a task, raising SESSION_ERROR if absent."""
+        session = self.get_session(task_id)
+        if session is None:
+            raise SessionNotFoundError(
+                f"No active session for task '{task_id}'. "
+                "Call browser.navigate first."
+            )
+        return session
+
+    def ensure_session(self, task_id: str, config: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Get or create a session for the given task."""
+        session = self.get_session(task_id)
+        if session is not None:
+            return session
+        new_session = self.create_browser_session(task_id, config or {})
+        self.sessions[task_id] = new_session
+        return new_session
+
+    def get_element_cache(self, task_id: str) -> Optional[AriaParseResult]:
+        """Get the cached element parse result for a task, or None."""
+        return self.element_caches.get(task_id)
+
+    def set_element_cache(self, task_id: str, result: AriaParseResult) -> None:
+        """Store a parsed element cache for a task."""
+        self.element_caches[task_id] = result
 
     # ── Subclass extension point ───────────────────────────────
 
@@ -1432,3 +1553,245 @@ class PlaywrightBridge(BrowserBridge):
                 "origins": [],
                 "error": str(exc),
             }
+
+    # ── Command handlers ────────────────────────────────────────
+    #
+    # One ``_h_*`` method per JSON-RPC method.  Each extracts params and
+    # calls the matching ``do_*`` method.  ``_DISPATCH`` (class attribute,
+    # built at the bottom of the class body) maps method name → handler.
+
+    def _h_ping(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        return make_success_response(cmd_id, "pong")
+
+    def _h_init(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        # Forward plugin config from the TypeScript adapter.  Sent exactly
+        # once after the ping handshake, before any other RPC.
+        self._plugin_config = params.get("config") or {}
+        return make_success_response(cmd_id, {"ok": True})
+
+    def _h_shutdown(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        self._running = False
+        return make_success_response(cmd_id, "shutting_down")
+
+    def _h_navigate(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        url = self._require_param(params, "url", str)
+        task_id = self._require_param(params, "taskId", str)
+        timeout_ms = params.get("timeoutMs", DEFAULT_NAVIGATION_TIMEOUT_MS)
+        result = self.do_navigate(
+            task_id, url, timeout_ms,
+            storageState=params.get("storageState"),
+            profileName=params.get("profileName"),
+            profileMode=params.get("profileMode"),
+        )
+        return make_success_response(cmd_id, result)
+
+    def _h_snapshot(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        return make_success_response(cmd_id, self.do_snapshot(task_id))
+
+    def _h_click(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        ref = self._require_param(params, "ref", str)
+        return make_success_response(cmd_id, self.do_click(task_id, ref))
+
+    def _h_type(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        ref = self._require_param(params, "ref", str)
+        text = self._require_param(params, "text", str)
+        return make_success_response(cmd_id, self.do_type(task_id, ref, text))
+
+    def _h_scroll(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        direction = self._require_param(params, "direction", str)
+        if direction not in ("up", "down"):
+            return make_error_response(
+                cmd_id, INVALID_PARAMS,
+                'direction must be "up" or "down"',
+            )
+        return make_success_response(cmd_id, self.do_scroll(task_id, direction))
+
+    def _h_go_back(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        return make_success_response(cmd_id, self.do_go_back(task_id))
+
+    def _h_press(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        key = self._require_param(params, "key", str)
+        return make_success_response(cmd_id, self.do_press(task_id, key))
+
+    def _h_screenshot(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        full_page = params.get("fullPage", False)
+        return make_success_response(cmd_id, self.do_screenshot(task_id, full_page))
+
+    def _h_get_console_messages(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        return make_success_response(cmd_id, self.do_get_console_messages(task_id))
+
+    def _h_clear_console(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        return make_success_response(cmd_id, self.do_clear_console(task_id))
+
+    def _h_evaluate(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        expression = self._require_param(params, "expression", str)
+        read_only = bool(params.get("readOnly", False))
+        result = self.do_evaluate(task_id, expression, read_only=read_only)
+        return make_success_response(cmd_id, result)
+
+    def _h_get_cookies(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        return make_success_response(cmd_id, self.do_get_cookies(task_id, params.get("urls")))
+
+    def _h_add_cookies(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        cookies = self._require_param(params, "cookies", list)
+        return make_success_response(cmd_id, self.do_add_cookies(task_id, cookies))
+
+    def _h_clear_cookies(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        # No required params beyond taskId — empty call clears ALL cookies
+        result = self.do_clear_cookies(
+            task_id, params.get("name"), params.get("domain"), params.get("path")
+        )
+        return make_success_response(cmd_id, result)
+
+    def _h_get_storage_state(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        return make_success_response(cmd_id, self.do_get_storage_state(task_id))
+
+    def _h_cleanup(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        task_id = self._require_param(params, "taskId", str)
+        return make_success_response(cmd_id, self.do_cleanup(task_id))
+
+    def _h_describe_quirks(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        # Return the bridge's declared quirks flags.
+        return make_success_response(cmd_id, {
+            "fingerprint_managed_context": getattr(
+                self, "_fingerprint_managed_context", False
+            ),
+            "eval_prefix": getattr(self, "_eval_prefix", ""),
+            "scroll_via_wheel": getattr(self, "_scroll_via_wheel", False),
+            "skip_default_viewport": getattr(self, "_skip_default_viewport", False),
+            "skip_networkidle": getattr(self, "_skip_networkidle", False),
+            "wrap_mw_eval_in_eval": getattr(self, "_wrap_mw_eval_in_eval", False),
+            "csp_safe_readonly_via_init_script": getattr(
+                self, "_csp_safe_readonly_via_init_script", False
+            ),
+        })
+
+    #: JSON-RPC method name → handler.  Built after the handlers are
+    #: defined so the names are in scope.  ``handle_command`` looks up
+    #: here and calls ``handler(self, params, cmd_id)``.
+    _DISPATCH = {
+        "ping": _h_ping,
+        "browser.init": _h_init,
+        "shutdown": _h_shutdown,
+        "browser.navigate": _h_navigate,
+        "browser.snapshot": _h_snapshot,
+        "browser.click": _h_click,
+        "browser.type": _h_type,
+        "browser.scroll": _h_scroll,
+        "browser.goBack": _h_go_back,
+        "browser.press": _h_press,
+        "browser.screenshot": _h_screenshot,
+        "browser.getConsoleMessages": _h_get_console_messages,
+        "browser.clearConsole": _h_clear_console,
+        "browser.evaluate": _h_evaluate,
+        "browser.getCookies": _h_get_cookies,
+        "browser.addCookies": _h_add_cookies,
+        "browser.clearCookies": _h_clear_cookies,
+        "browser.getStorageState": _h_get_storage_state,
+        "browser.cleanup": _h_cleanup,
+        "browser.describeQuirks": _h_describe_quirks,
+    }
+
+    # ── Command routing ─────────────────────────────────────────
+
+    def handle_command(self, method: str, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+        """Route a JSON-RPC method to the appropriate operation handler.
+
+        Returns a JSON-RPC response dict (either result or error).
+        """
+        try:
+            handler = self._DISPATCH.get(method)
+            if handler is None:
+                return make_error_response(
+                    cmd_id, METHOD_NOT_FOUND, f"Method not found: {method}"
+                )
+            return handler(self, params, cmd_id)
+
+        except SessionNotFoundError as exc:
+            return make_error_response(cmd_id, SESSION_ERROR, str(exc))
+        except NotImplementedError as exc:
+            return make_application_error(cmd_id, str(exc))
+        except Exception as exc:
+            tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            return make_application_error(cmd_id, str(exc), traceback_str=tb)
+
+    # ── Main loop ─────────────────────────────────────────────
+
+    def run(self) -> None:
+        """Start the main JSON-RPC command loop.
+
+        Reads requests from stdin, dispatches them, and writes responses
+        to stdout.  Runs until EOF or a ``shutdown`` command.
+        """
+        self._running = True
+        while self._running:
+            try:
+                request = read_request()
+                if request is None:
+                    break  # EOF
+
+                cmd_id = request.get("id")
+                method = request.get("method", "")
+                params = request.get("params", {})
+
+                if not isinstance(params, dict):
+                    write_response(make_error_response(
+                        cmd_id, INVALID_PARAMS,
+                        '"params" must be a JSON object',
+                    ))
+                    continue
+
+                response = self.handle_command(method, params, cmd_id)
+                write_response(response)
+
+            except InvalidRequestError:
+                # Valid JSON but not a valid JSON-RPC Request object
+                write_response(make_invalid_request(None))
+            except ValueError:
+                # JSON parse error
+                write_response(make_parse_error(None))
+            except EOFError:
+                break
+            except KeyboardInterrupt:
+                break
+            except Exception as exc:
+                tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+                write_response(make_application_error(None, str(exc), traceback_str=tb))
+
+    # ── Internal helpers ──────────────────────────────────────
+
+    @staticmethod
+    def _require_param(
+        params: dict[str, Any],
+        key: str,
+        expected_type: type,
+    ) -> Any:
+        """Require a param to exist and be of the expected type.
+
+        Raises ``InvalidParamsError`` if the param is missing or has the
+        wrong type.  The caller's ``except Exception`` clause turns this
+        into a JSON-RPC application-error response.
+        """
+        if key not in params:
+            raise InvalidParamsError(f'Missing required parameter: "{key}"')
+        value = params[key]
+        if not isinstance(value, expected_type):
+            raise InvalidParamsError(
+                f'Parameter "{key}" must be of type {expected_type.__name__}, '
+                f"got {type(value).__name__}"
+            )
+        return value

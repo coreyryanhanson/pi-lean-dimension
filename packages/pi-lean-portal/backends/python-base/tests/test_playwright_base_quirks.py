@@ -2,7 +2,7 @@
 Tests for ``pi_browser_bridge.playwright_base.PlaywrightBridge`` Phase 0 work:
 
 * ``plugin_config`` defaults to ``{}`` and is populated by the
-  ``browser.init`` RPC handler (inherited from ``BrowserBridge``).
+  ``browser.init`` RPC handler.
 * The stealth quirks change base-class behavior:
     - ``_fingerprint_managed_context`` → viewport/user_agent omitted
     - ``_skip_default_viewport`` → ``no_viewport=True`` passed to avoid
@@ -22,7 +22,6 @@ from typing import Any
 
 import pytest
 
-from pi_browser_bridge.bridge import BrowserBridge
 from pi_browser_bridge.playwright_base import PlaywrightBridge
 
 
@@ -138,30 +137,6 @@ def _bind_session(bridge: _FakePlaywrightBridge, page: _FakePage) -> None:
     bridge.sessions["t"] = {"page": page, "context": _FakeContext()}
 
 
-class _BareBridge(BrowserBridge):
-    """Trivial concrete ``BrowserBridge`` for base-class handler tests.
-
-    Only exercises base-class handlers (``browser.init``,
-    ``browser.describeQuirks``); the ``do_*`` stubs below are never
-    invoked but satisfy the abstract contract so the class instantiates.
-    """
-
-    def create_browser_session(self, task_id, config):  # pragma: no cover
-        return {}
-
-    def create_browser_context(self, config):  # pragma: no cover
-        return None
-
-    def _do_stub(self, *args, **kwargs):  # pragma: no cover
-        return {}
-
-    do_navigate = do_snapshot = do_click = do_type = do_scroll = _do_stub
-    do_go_back = do_press = do_screenshot = _do_stub
-    do_get_console_messages = do_clear_console = do_evaluate = _do_stub
-    do_get_cookies = do_add_cookies = do_clear_cookies = _do_stub
-    do_get_storage_state = _do_stub
-
-
 # ═══════════════════════════════════════════════════════════════════════
 #  plugin_config (browser.init RPC)
 # ═══════════════════════════════════════════════════════════════════════
@@ -189,16 +164,14 @@ class TestPluginConfig:
         assert result["result"] == {"ok": True}
         assert bridge.plugin_config == {}
 
-    def test_init_is_inherited_from_browser_bridge(self):
-        """The handler lives on BrowserBridge (so non-Playwright bridges get it too)."""
-        # A bare BrowserBridge can't be instantiated meaningfully (create_browser_session
-        # is abstract), but the handler routing is on the base class.
-        bare = _BareBridge()
-        result = bare.handle_command(
+    def test_init_handler_on_playwright_bridge(self):
+        """The handler is available on a plain PlaywrightBridge without Playwright."""
+        bridge = PlaywrightBridge()
+        result = bridge.handle_command(
             "browser.init", {"config": {"x": 1}}, cmd_id=7
         )
         assert result["result"] == {"ok": True}
-        assert bare.plugin_config == {"x": 1}
+        assert bridge.plugin_config == {"x": 1}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -465,12 +438,10 @@ class TestWrapMwEvalInEval:
 
 class TestDescribeQuirks:
     """Tests for the ``browser.describeQuirks`` introspection RPC handler
-    on ``BrowserBridge`` (``bridge.py``).
+    on ``PlaywrightBridge``.
 
     Verifies the handler returns the bridge's class-attribute quirks
-    flags correctly, and that the getattr-based defaulting handles both
-    PlaywrightBridge instances (which have the quirks attrs) and bare
-    BrowserBridge instances (which don't).
+    flags correctly, including default values.
     """
 
     @pytest.mark.parametrize("overrides,expected", [
@@ -496,11 +467,10 @@ class TestDescribeQuirks:
         assert "result" in result
         assert result["result"] == expected
 
-    def test_bare_bridge_returns_all_defaults(self):
-        """A bare ``BrowserBridge`` (no Playwright quirks attrs) also returns
-        default values via ``getattr`` — the handler doesn't throw."""
-        bare = _BareBridge()
-        result = bare.handle_command("browser.describeQuirks", {}, 4)
+    def test_plain_playwright_bridge_returns_all_defaults(self):
+        """A plain ``PlaywrightBridge`` returns default quirks values."""
+        bridge = PlaywrightBridge()
+        result = bridge.handle_command("browser.describeQuirks", {}, 4)
         assert "result" in result
         q = result["result"]
         assert q["fingerprint_managed_context"] == False
