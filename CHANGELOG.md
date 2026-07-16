@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (Python bridge API):** the abstract `BrowserBridge` class in
+  `pi_browser_bridge/bridge.py` has been folded into its only subclass
+  `PlaywrightBridge` in `playwright_base.py`. `bridge.py` is deleted and the
+  module no longer exports `BrowserBridge`. User-installed stealth backends
+  that subclassed `BrowserBridge` must now subclass `PlaywrightBridge`
+  instead — the Camoufox template was already on `PlaywrightBridge`, so
+  shipped examples are unaffected.
+
+### Internal
+
+- Refactor and documentation cleanup: deduplicated `setSearchStatus`, shared a
+  `formatBytes` helper, simplified the bot-detection result shape, and removed
+  unused exports across `core/shared`. No behavior change.
+
 ## [0.2.3] - 2026-07-15
 
 ### Added
