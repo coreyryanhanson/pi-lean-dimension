@@ -21,6 +21,7 @@ import {
 	sanitizeProfileName,
 	profileDir,
 } from "./core/shared/storage-state.js";
+import { formatBytes } from "./core/shared/paths.js";
 
 // ─── Profile helpers ─────────────────────────────────────────────
 
@@ -34,9 +35,7 @@ export function profileStateSize(profileName: string): string {
 		if (!existsSync(path)) return "no state";
 		const bytes = statSync(path).size;
 		if (bytes === 0) return "empty";
-		if (bytes < 1024) return `${bytes} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+		return formatBytes(bytes);
 	} catch {
 		return "?";
 	}

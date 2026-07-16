@@ -20,6 +20,7 @@ import {
 	BROWSER_TEMP_DIR,
 	safeTaskId,
 	ensureBrowserTempDir,
+	formatBytes,
 } from "./shared/paths.js";
 import TurndownService from "turndown";
 import { parse as parseHtml } from "node-html-parser";
@@ -230,12 +231,6 @@ const FETCH_SPILL_THRESHOLD = 5000;
 const activeFetchFiles = new Map<string, string[]>();
 
 // ─── Temp file management ──────────────────────────────────────────────
-
-function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${bytes}B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
-	return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-}
 
 function writeFetchTempFile(content: string, taskId: string): string {
 	ensureBrowserTempDir();
