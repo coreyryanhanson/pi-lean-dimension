@@ -61,7 +61,7 @@ the full 130-task MiniWoB++ suite.
 | `adapter/` | `runMiniwobTask` wrapper, episode lifecycle JS constants |
 | `solvers/` | Trivial solvers, parser, `registerMiniwobSuite` |
 | `scripts/` | Setup (`setup-miniwob.mjs`), static server |
-| `suites/` | Per-backend test files (chromium, firefox, chromium-py, firefox-py, adapter-smoke, user-backends) |
+| `suites/` | Per-backend test files (chromium, firefox, chromium-py, firefox-py, adapter-smoke, user-backends, inspect-csp-smoke, inspect-eval-smoke) |
 
 ### Running the MiniWoB test suite
 
