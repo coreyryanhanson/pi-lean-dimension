@@ -405,8 +405,7 @@ export async function webFetch(
 	let botDetected: boolean | undefined;
 	try {
 		const bodyText = result.root.textContent?.trim() || "";
-		const detection = checkPage(result.title, bodyText);
-		if (detection.isBlocked) botDetected = true;
+		if (checkPage(result.title, bodyText)) botDetected = true;
 	} catch {
 		/* best-effort — don't fail on bot detection errors */
 	}
