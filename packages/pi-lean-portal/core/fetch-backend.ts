@@ -194,7 +194,7 @@ function htmlToMarkdown(root: ReturnType<typeof parseHtml>): string {
 
 // ─── Decoupled entry point: webFetch() ────────────────────────────────
 
-export interface WebFetchOptions {
+interface WebFetchOptions {
 	url: string;
 	timeout?: number; // seconds, default 30, max 120
 	signal?: AbortSignal;
@@ -202,7 +202,7 @@ export interface WebFetchOptions {
 	taskId?: string;
 }
 
-export interface WebFetchResult {
+interface WebFetchResult {
 	success: boolean;
 	url: string;
 	title: string;

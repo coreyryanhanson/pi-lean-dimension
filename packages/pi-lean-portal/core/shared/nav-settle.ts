@@ -30,7 +30,7 @@ export interface NavigationSettlePage {
 }
 
 /** Options for `waitForNavigationSettle`. */
-export interface NavigationSettleOptions {
+interface NavigationSettleOptions {
 	/**
 	 * Maximum time (ms) to wait for page readiness (load + networkidle)
 	 * when a navigation is detected.  Shared budget for both waits.
@@ -45,7 +45,7 @@ export interface NavigationSettleOptions {
 }
 
 /** Result of `waitForNavigationSettle`. */
-export interface NavigationSettleResult {
+interface NavigationSettleResult {
 	/** Whether a `framenavigated` event was observed on the main frame. */
 	navigated: boolean;
 	/** The page URL after settling (guaranteed consistent with DOM). */
