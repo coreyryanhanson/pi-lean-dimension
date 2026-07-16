@@ -39,16 +39,11 @@ Capabilities (`PluginCapabilities`) advertise quirks. The router checks them at 
 ## Browser launch hook
 
 The portal's own backends launch their browser directly and drive
-their own page — there is **no external-attach path**. The
-`getAttachEndpoint()` interface method, the `AttachEndpoint` union,
-`core/shared/cdp-endpoint.ts`, the `launchServer()` / `connect()`
-hop, and the `_cdpEndpoint` / `_wsEndpoint` / `_browserServer` /
-`_reconnectBrowser()` scaffolding were all removed (see
+their own page — there is **no external-attach path** and no
+post-launch hook for third-party subclasses (see
 [`docs/decisions/miniwob-and-host-setup.md`](../../docs/decisions/miniwob-and-host-setup.md)).
-There is no post-launch hook for third-party subclasses and no
-`connectOverCDP?` interface hook — a host-owns-browser ("Mode B")
-path was considered and dropped as YAGNI; either will be re-added
-alongside a real consumer that needs it.
+A host-owns-browser path ("Mode B") was considered and dropped as
+YAGNI; either will be re-added alongside a real consumer that needs it.
 
 ## Stealth backends (user-managed)
 
@@ -143,19 +138,15 @@ as class attributes on your subclass:
 | `_scroll_via_wheel` | `False` | `do_scroll` uses `page.mouse.wheel` instead of `page.evaluate("window.scrollBy")` (avoids eval-write under isolated-world stealth). |
 | `_skip_default_viewport` | `False` | Skips Playwright's `Browser.setDefaultViewport` CDP call (Camoufox binary rejects its `isMobile` prop). |
 | `_skip_networkidle` | `False` | Nav-settle uses `load` instead of `networkidle` (patched binaries don't fire `networkidle` reliably). |
-| `_wrap_mw_eval_in_eval` | `False` | `do_evaluate` rewrites the expression as `eval(<JSON-string of expression>)` before prepending `_eval_prefix`, so multi-statement scripts survive Camoufox's `let _s = (${script})` main-world wrapper (see prose below). |
+| `_wrap_mw_eval_in_eval` | `False` | `do_evaluate` rewrites the expression as `eval(<JSON-string of expression>)` before prepending `_eval_prefix`, so multi-statement scripts survive Camoufox's `let _s = (${script})` main-world wrapper. |
 | `_csp_safe_readonly_via_init_script` | `False` | `do_evaluate(read_only=True)` (the EXTRACTOR_SCRIPT) reads its JSON result from a `<meta id="__pi-extract">` tag that `create_browser_context` registers as a `context.add_init_script` (isolated world, CSP-free) at `DOMContentLoaded`, instead of `page.evaluate`. For patched-Firefox stealth binaries that route `page.evaluate` through `eval()` in the page's main world (CSP-subject) — Camoufox is NOT affected (its binary keeps Juggler's CSP-free isolated-world). The adapter plumbs the script via the `browser.init` config key `readOnlyExtractorScript`. Stale across SPA route changes (no new load) — fine for navigate→inspect. |
 
 All flags default off → `chromium-py` / `firefox-py` behavior is
-bit-identical to a pre-stealth install. A dropped v2 `_context_factory`
-flag (dispatching to a `_camoufox_new_context` helper) was removed
-when `camoufox.NewContext` turned out to be broken on the current
-binary (`Protocol error (Browser.setDefaultViewport)` from the same
-`isMobile` rejection `_skip_default_viewport` handles). Camoufox
-injects the fingerprint at **browser launch** via `camoufox.NewBrowser`,
+bit-identical to a pre-stealth install. Camoufox injects the
+fingerprint at **browser launch** via `camoufox.NewBrowser`,
 so standard `browser.new_context()` with
-`_fingerprint_managed_context = True` is correct — do not re-attempt
-`NewContext`.
+`_fingerprint_managed_context = True` is correct — do not
+re-attempt `NewContext`.
 
 ### Camoufox: the shipped example template
 
@@ -204,10 +195,10 @@ All tool calls dispatch through the router. Key responsibilities:
 
 ## Known Constraints & Debt
 
-- **Console capture in Python backends** — Both `chromium-py` and `firefox-py` inherit console capture (500-entry ring buffer) and dialog auto-dismissal from `PlaywrightBridge._setup_page_session()` in `python-base`. All Python browser backends must subclass `PlaywrightBridge` to get session setup and JSON-RPC dispatch; the former engine-agnostic `BrowserBridge` ABC was collapsed into `PlaywrightBridge` as it had exactly one implementation.
+- **Console capture in Python backends** — Both `chromium-py` and `firefox-py` inherit console capture (500-entry ring buffer) and dialog auto-dismissal from `PlaywrightBridge._setup_page_session()` in `python-base`. All Python browser backends must subclass `PlaywrightBridge` to get session setup and JSON-RPC dispatch.
 - **AbortSignal not supported on Python bridge** — the router passes `signal` through unconditionally (no capability check). The Python adapter accepts and silently ignores the signal. `supportsAbortSignal` is advertised but unenforced.
 - **Sessions are per taskId** — mapped to `browser-NNN` keys via `_sessionKeys`/`_sessionCounter` in `core/shared/task-id.ts`. Created on first navigate, cleaned up on `session_shutdown`.
-- **Python shared-context machinery removed (B1)** — the `browser.newPage`/`browser.closePage` RPC routes, `_profile_contexts` ref-counting, and `ensure_profile_session`/`remove_profile_session` methods were removed from `PlaywrightBridge` and `ChromiumPyBridge`. Named profiles now use disk persistence (load-on-navigate via `storageState`) matching the TS Chromium plugin. Both backends use `ensure_session(task_id, config)` for all sessions.
+- **Python shared-context machinery removed** — Named profiles now use disk persistence (load-on-navigate via `storageState`) matching the TS Chromium plugin. Both backends use `ensure_session(task_id, config)` for all sessions.
 - **Python bridge reuses BrowserContexts across navigations** — `ensure_session()` returns the existing session on re-navigate (unlike the TS Chromium plugin which creates a fresh context per navigate). This means in-process cookies survive re-navigation without explicit save, but also means `storageState` from the router is ignored on re-navigate (the context already exists). The Python adapter's `_persistState()` saves current cookies to disk before the navigate RPC for cross-process persistence.
 - **`_persistState()` helper in both backends** — both `PlaywrightPluginBase._persistState` (direct `context.storageState()` call) and `PythonPluginAdapter._persistState` (JSON-RPC `browser.getStorageState` retrieval) delegate to the shared `persistSessionState()` helper in `core/shared/storage-state.ts`, which owns the `session?.persistState` gate, the `saveStorageState()` call, and the warn-and-swallow error path. Called both from `cleanup()` and — on re-navigate — from `getOrCreateContext()` (Chromium) or `navigate()` (Python) before the old context is closed/reused.
 - **Role-based locators only**: never XPath/CSS — always `getByRole()` via `buildLocator()` with positional `.nth()` for duplicates. The `INTERACTIVE_ROLES` set defines which roles get @e refs.

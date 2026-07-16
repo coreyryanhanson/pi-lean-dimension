@@ -251,7 +251,7 @@ plugin factory:
 - **13 tasks run** with trivial solvers — 3 confident (assert reward > 0)
   and 10 best-effort (pipeline smoke tests).
 - **82 element tasks** without a registered solver → `it.skip` with reason
-  `needs goal-aware solver (Step 2 follow-up)`.
+  `needs goal-aware solver`.
 - **35 non-element tasks** (coord/drag/hover/select) → `it.skip` with
   the missing-tool reason.
 - **Public API:** `registerMiniwobSuite` from `bench/miniwob/solvers/register-suite.ts` lets
@@ -341,8 +341,8 @@ from the Actions tab. Depends on `structural` passing.
    into the user-backends tree
 5. **Clone MiniWoB++ content** via `npm run setup:miniwob`
 6. **Start MiniWoB static server** on port 8080
-7. **Run Camoufox contract tests** (Sprint 3) + the
-   `miniwob-user-backends.test.ts` suite (Sprint 2, which discovers the
+7. **Run Camoufox contract tests** + the
+   `miniwob-user-backends.test.ts` suite (which discovers the
    installed Camoufox backend)
 8. **Upload test artifacts on failure** (vitest output, Playwright traces)
 
