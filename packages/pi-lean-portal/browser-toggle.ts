@@ -54,7 +54,7 @@ const LEARN_TOOL_NAMES = new Set(["web-learn"]);
  * Names of sibling-package tools that are toggled alongside browser tools
  * by /web on|off|learn.
  *
- * - "web-search": SearXNG search from pi-lean-search (Sprint 4).
+ * - "web-search": SearXNG search from pi-lean-search.
  *
  * Exact-name `Set.has()` membership — NO regex (avoids false positives
  * on third-party web-* tools).
@@ -373,7 +373,8 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 			"Usage: /web on | off | learn | status",
 		handler: async (args, ctx) => {
 			const cmd = args.trim().toLowerCase();
-			const hasBrowserTools = getRegisteredIn(pi, BROWSER_TOOL_NAMES).length > 0;
+			const hasBrowserTools =
+				getRegisteredIn(pi, BROWSER_TOOL_NAMES).length > 0;
 
 			if (!hasBrowserTools) {
 				ctx.ui.notify(

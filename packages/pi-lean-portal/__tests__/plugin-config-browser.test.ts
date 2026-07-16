@@ -190,7 +190,7 @@ describe("loadFullConfig().browser", () => {
 	});
 });
 
-// ─── Default plugin fallback (Phase 0b) ─────────────────────────
+// ─── Default plugin fallback ───────────────────────────────────────
 
 describe("loadFullConfig().plugins default fallback", () => {
 	it("returns the four shipped backends when browser.plugins is absent", () => {

@@ -162,14 +162,14 @@ class PlaywrightBridge:
     #: Engine-specific install hint (shown when browser executable missing).
     _install_hint: str = ""
 
-    # ── Stealth quirks (Phase 0) ──────────────────────────────────
+    # ── Stealth quirks ───────────────────────────────────────────────
     #
     # These opt-in flags let stealth subclasses (Camoufox and other stealth engines)
     # disable the base's hard-coded Playwright defaults that would otherwise
     # clobber a fingerprint-managed browser context.  All default to ``off``
     # so the shipped ``chromium-py`` / ``firefox-py`` bridges are bit-identical.
     #
-    # See stealth-browser-plan-v3.md "Quirks schema" for the concrete
+    # See the portal AGENTS.md quirks table for the concrete
     # correctness problem each flag fixes.
 
     #: When True, ``create_browser_context()`` does NOT pass ``viewport`` or

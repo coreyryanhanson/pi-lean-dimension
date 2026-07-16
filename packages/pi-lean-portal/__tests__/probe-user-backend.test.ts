@@ -1,5 +1,5 @@
 /**
- * Unit tests for `probeUserBackend` (Sprint 1, AC 1.2).
+ * Unit tests for `probeUserBackend`.
  *
  * Structural — no real browser, no MiniWoB content. Uses a temp
  * directory as `PI_USER_BACKENDS_DIR` so nothing is written to the

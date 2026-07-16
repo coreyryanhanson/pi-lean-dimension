@@ -322,7 +322,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 					env: {
 						...process.env,
 						PYTHONUNBUFFERED: "1",
-						// Phase 0b: make the shared `pi_browser_bridge` library
+						// Make the shared `pi_browser_bridge` library
 						// importable from any venv the user points `pythonPath`
 						// at, without requiring a `pip install` of the bridge.
 						// Appended to any existing PYTHONPATH so user entries keep
@@ -418,7 +418,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 				try {
 					await this._directRpcCall("ping", {}, PING_TIMEOUT_MS);
 
-					// ── Forward plugin config to the bridge (Phase 0) ──
+					// ── Forward plugin config to the bridge ──
 					// Sent exactly once, immediately after the ping handshake and
 					// before any other RPC, so stealth subclasses can read launch
 					// options from `self.plugin_config.get("launch", {})` at

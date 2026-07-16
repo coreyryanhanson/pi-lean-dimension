@@ -43,8 +43,7 @@ import { isAbsolute, join } from "node:path";
  * and non-empty; otherwise defaults to
  * `~/.pi/agent/pi-lean-portal/user-backends/`.
  *
- * Vendored locally — see the module doc for the rationale. Sprint 2's
- * generic runner reuses this same helper for consistency.
+ * Vendored locally — reused by the contributed test runner for consistency.
  */
 export function userBackendsDir(): string {
 	const env = process.env.PI_USER_BACKENDS_DIR;

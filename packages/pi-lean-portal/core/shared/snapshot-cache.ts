@@ -1,5 +1,5 @@
 /**
- * Snapshot Disk Cache — Phase 1 of the browser-intelligence plan.
+ * Snapshot Disk Cache — disk-backed snapshot caching.
  *
  * When compactSnapshot() truncates a page's accessibility tree, the full
  * tree is written to /tmp/pi-lean-portal/snapshot-*.txt so the agent can read

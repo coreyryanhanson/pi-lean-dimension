@@ -32,9 +32,8 @@ import { startMiniwobServer } from "../scripts/miniwob-server.js";
 
 /**
  * The single env var that gates all contributed opt-in surface.
- * Used by both the MiniWoB parity helper (Sprint 2) and the generic
- * contributed runner (Sprint 3) so both shared suites answer to the
- * same knob.
+ * Used by both the MiniWoB parity helper and the generic contributed runner so
+ * both shared suites answer to the same knob.
  */
 const CONTRIB_RUN = process.env.CONTRIB_RUN === "1";
 

@@ -155,7 +155,7 @@ export const loginUser: TrivialSolver = async ({
  * Per-subdomain solver map. Add an entry here to enable a task; the
  * test generator in {@link registerMiniwobSuite} picks it up
  * automatically. Tasks absent from this map are reported as `it.skip`
- * with a `needs goal-aware solver (Step 2 follow-up)` reason.
+ * with a `needs a goal-aware solver` reason.
  */
 export const SOLVERS: Map<string, TrivialSolver> = new Map([
 	// ── Confident (trivial action == pass condition) ──

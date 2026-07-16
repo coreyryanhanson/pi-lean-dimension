@@ -1,5 +1,5 @@
 """
-Tests for ``pi_browser_bridge.playwright_base.PlaywrightBridge`` Phase 0 work:
+Tests for ``pi_browser_bridge.playwright_base.PlaywrightBridge`` stealth quirk flags:
 
 * ``plugin_config`` defaults to ``{}`` and is populated by the
   ``browser.init`` RPC handler.

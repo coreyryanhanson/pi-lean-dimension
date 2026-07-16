@@ -230,7 +230,7 @@ export function registerMiniwobSuite(
 			// Element tasks without a registered solver: skip as follow-up.
 			const solver = SOLVERS.get(subdomain);
 			if (!solver) {
-				it.skip(`${subdomain} — needs goal-aware solver (Step 2 follow-up)`, () => {});
+				it.skip(`${subdomain} — needs a goal-aware solver`, () => {});
 				continue;
 			}
 

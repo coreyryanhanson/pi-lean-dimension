@@ -53,7 +53,7 @@ export default function (pi: ExtensionAPI) {
 	// --- Plugin registration ----------------------------------------
 	// Resolve plugin `dir` values against the shipped backends root first,
 	// then the user-writable `~/.pi/agent/pi-lean-portal/user-backends/`
-	// tree (Phase 0b).  An absolute `dir` short-circuits both roots.
+	// tree.  An absolute `dir` short-circuits both roots.
 	const { plugins: pluginConfigs, errors: configErrors } = loadFullConfig(
 		DEFAULT_BACKEND_ROOTS,
 	).plugins;

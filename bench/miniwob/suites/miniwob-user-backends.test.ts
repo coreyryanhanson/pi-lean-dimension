@@ -145,7 +145,7 @@ if (discovered.length > 0) {
 
 		// The MiniWoB static server lifecycle is owned by the caller per
 		// the `registerMiniwobSuite` doc. `ensureBaseUrl` (defined above)
-		// honors `MINIWOB_URL` when set (the Sprint 5 CI workflow sets
+		// honors `MINIWOB_URL` when set (the contributed CI workflow sets
 		// this); otherwise it lazily starts an ephemeral
 		// `startMiniwobServer()` and tears it down in the file-level
 		// `afterAll`. All discovered backends share the one server.
