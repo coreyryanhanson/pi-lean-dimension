@@ -61,7 +61,7 @@ the full 130-task MiniWoB++ suite.
 | `adapter/` | `runMiniwobTask` wrapper, episode lifecycle JS constants |
 | `solvers/` | Trivial solvers, parser, `registerMiniwobSuite` |
 | `scripts/` | Setup (`setup-miniwob.mjs`), static server |
-| `suites/` | Per-backend test files (chromium, firefox, chromium-py, firefox-py, adapter-smoke, user-backends) |
+| `suites/` | Per-backend test files (chromium, firefox, chromium-py, firefox-py, adapter-smoke, user-backends, inspect-csp-smoke, inspect-eval-smoke) |
 
 ### Running the MiniWoB test suite
 
@@ -117,9 +117,9 @@ the gate fires, run `npm run setup:miniwob` to download the content.
    MiniWoB static server.
 3. Run via `npx vitest run <your-test-file>`.
 
-See the shipped parity template at
-`packages/pi-lean-portal/contributed/camoufox-py/miniwob-parity.test.ts`
-for a complete example.
+See the contributed parity suite at
+`packages/pi-lean-portal/__tests__/run-contributed-suites.test.ts` (the discovery
+runner that validates any installed user backend) for the contract template.
 
 ### Attribution
 

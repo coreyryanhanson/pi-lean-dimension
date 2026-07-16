@@ -814,12 +814,12 @@ describeStderr("stderr capture", () => {
 // ═════════════════════════════════════════════════════════════════════
 
 // ══════════════════════════════════════════════════════════════════════
-//  browser.init RPC (Phase 0)
+//  browser.init RPC
 // ══════════════════════════════════════════════════════════════════════
 
 const describeBrowserInit = PYTHON_AVAILABLE ? describe : describe.skip;
 
-describeBrowserInit("browser.init RPC (Phase 0)", () => {
+describeBrowserInit("browser.init RPC", () => {
 	/**
 	 * Build a bridge that records every method received (in order) and
 	 * optionally answers `browser.init` with success or an error.
@@ -1087,7 +1087,7 @@ describeBrowserInit("browser.init RPC (Phase 0)", () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════
-//  PYTHONPATH injection (Phase 0b)
+//  PYTHONPATH injection
 // ═════════════════════════════════════════════════════════════════════
 
 /**
@@ -1095,7 +1095,7 @@ describeBrowserInit("browser.init RPC (Phase 0)", () => {
  * module-level `DEFAULT_BACKENDS_ROOT` only, never `this`), so it can be
  * invoked without binding.  These unit tests don't need a subprocess.
  */
-describe("_buildPythonPath — PYTHONPATH injection (Phase 0b)", () => {
+describe("_buildPythonPath — PYTHONPATH injection", () => {
 	it("includes the package python-base directory when PYTHONPATH is unset", () => {
 		const adapter = createAdapter();
 		const saved = process.env.PYTHONPATH;
@@ -1131,73 +1131,69 @@ describe("_buildPythonPath — PYTHONPATH injection (Phase 0b)", () => {
 
 const describePythonPathEnv = PYTHON_AVAILABLE ? describe : describe.skip;
 
-describePythonPathEnv(
-	"PYTHONPATH reaches the spawned bridge (Phase 0b)",
-	() => {
-		it("the bridge process env includes the package python-base path", async () => {
-			const dir = mkdtempSync(join(tmpdir(), "pi-lean-portal-pypath-"));
-			const bridgePath = join(dir, "bridge.py");
-			const lines: string[] = [
-				"import json, sys, os",
-				"sys.stderr.write('PYPATH:' + (os.environ.get('PYTHONPATH') or '') + '\\n')",
-				"sys.stderr.flush()",
-				"for _line in sys.stdin:",
-				"    _line = _line.strip()",
-				"    if not _line: continue",
-				"    _req = json.loads(_line)",
-				"    _m = _req.get('method','')",
-				"    _rid = _req.get('id')",
-				"    if _m == 'ping':",
-				"        sys.stdout.write(json.dumps({'jsonrpc':'2.0','id':_rid,'result':'pong'}) + '\\n')",
-				"        sys.stdout.flush()",
-				"    elif _m == 'browser.init':",
-				"        sys.stdout.write(json.dumps({'jsonrpc':'2.0','id':_rid,'result':{'ok':True}}) + '\\n')",
-				"        sys.stdout.flush()",
-				"    elif _m == 'shutdown':",
-				"        sys.stdout.write(json.dumps({'jsonrpc':'2.0','id':_rid,'result':'bye'}) + '\\n')",
-				"        sys.stdout.flush()",
-				"        break",
-				"    elif _m == 'browser.navigate':",
-				"        sys.stdout.write(json.dumps({'jsonrpc':'2.0','id':_rid,'result':{'success':True,'url':_req.get('params',{}).get('url',''),'title':'P','snapshot':'','elementCount':0}}) + '\\n')",
-				"        sys.stdout.flush()",
-				"    else:",
-				"        sys.stdout.write(json.dumps({'jsonrpc':'2.0','id':_rid,'error':{'code':-32601,'message':'unknown'}}) + '\\n')",
-				"        sys.stdout.flush()",
-			];
-			writeFileSync(bridgePath, lines.join("\n"), "utf-8");
-			const adapter = new PythonPluginAdapter("pypath-test", {
-				bridgeScript: bridgePath,
-				pythonPath: "python3",
-			});
-			try {
-				await adapter.init({});
-				const r = await adapter.navigate(
-					"https://example.com",
-					"pypath-t1",
-					30_000,
-				);
-				expect(r.success).toBe(true);
-				const stderr =
-					(adapter as unknown as Record<string, string>)[
-						"_stderrAccumulated"
-					] ?? "";
-				const pypathLine = stderr
-					.split("\n")
-					.find((l) => l.startsWith("PYPATH:"));
-				expect(pypathLine).toBeDefined();
-				const pypath = (pypathLine ?? "").slice("PYPATH:".length);
-				expect(pypath).toContain(join(DEFAULT_BACKENDS_ROOT, "python-base"));
-			} finally {
-				await adapter.cleanupAll().catch(() => {});
-				try {
-					rmSync(dir, { recursive: true, force: true });
-				} catch {
-					/* ignore */
-				}
-			}
+describePythonPathEnv("PYTHONPATH reaches the spawned bridge", () => {
+	it("the bridge process env includes the package python-base path", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pi-lean-portal-pypath-"));
+		const bridgePath = join(dir, "bridge.py");
+		const lines: string[] = [
+			"import json, sys, os",
+			"sys.stderr.write('PYPATH:' + (os.environ.get('PYTHONPATH') or '') + '\\n')",
+			"sys.stderr.flush()",
+			"for _line in sys.stdin:",
+			"    _line = _line.strip()",
+			"    if not _line: continue",
+			"    _req = json.loads(_line)",
+			"    _m = _req.get('method','')",
+			"    _rid = _req.get('id')",
+			"    if _m == 'ping':",
+			"        sys.stdout.write(json.dumps({'jsonrpc':'2.0','id':_rid,'result':'pong'}) + '\\n')",
+			"        sys.stdout.flush()",
+			"    elif _m == 'browser.init':",
+			"        sys.stdout.write(json.dumps({'jsonrpc':'2.0','id':_rid,'result':{'ok':True}}) + '\\n')",
+			"        sys.stdout.flush()",
+			"    elif _m == 'shutdown':",
+			"        sys.stdout.write(json.dumps({'jsonrpc':'2.0','id':_rid,'result':'bye'}) + '\\n')",
+			"        sys.stdout.flush()",
+			"        break",
+			"    elif _m == 'browser.navigate':",
+			"        sys.stdout.write(json.dumps({'jsonrpc':'2.0','id':_rid,'result':{'success':True,'url':_req.get('params',{}).get('url',''),'title':'P','snapshot':'','elementCount':0}}) + '\\n')",
+			"        sys.stdout.flush()",
+			"    else:",
+			"        sys.stdout.write(json.dumps({'jsonrpc':'2.0','id':_rid,'error':{'code':-32601,'message':'unknown'}}) + '\\n')",
+			"        sys.stdout.flush()",
+		];
+		writeFileSync(bridgePath, lines.join("\n"), "utf-8");
+		const adapter = new PythonPluginAdapter("pypath-test", {
+			bridgeScript: bridgePath,
+			pythonPath: "python3",
 		});
-	},
-);
+		try {
+			await adapter.init({});
+			const r = await adapter.navigate(
+				"https://example.com",
+				"pypath-t1",
+				30_000,
+			);
+			expect(r.success).toBe(true);
+			const stderr =
+				(adapter as unknown as Record<string, string>)["_stderrAccumulated"] ??
+				"";
+			const pypathLine = stderr
+				.split("\n")
+				.find((l) => l.startsWith("PYPATH:"));
+			expect(pypathLine).toBeDefined();
+			const pypath = (pypathLine ?? "").slice("PYPATH:".length);
+			expect(pypath).toContain(join(DEFAULT_BACKENDS_ROOT, "python-base"));
+		} finally {
+			await adapter.cleanupAll().catch(() => {});
+			try {
+				rmSync(dir, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
+		}
+	});
+});
 
 const describePersistence = PYTHON_AVAILABLE ? describe : describe.skip;
 

@@ -31,7 +31,7 @@ elimination) into the takeaways that matter going forward.
   code.
 - **CI:** `structural` job (no browser, fast) + `miniwob` job (installs
   Chromium + Firefox + Python `playwright`, clones MiniWoB++ content, runs
-  all 6 suite files under `bench/miniwob/suites/`). Per-backend suites
+  all 8 suite files under `bench/miniwob/suites/`). Per-backend suites
   auto-skip when prereqs are absent, so `npm test` / `npm run test:ci` stay
   green in bare CI.
 

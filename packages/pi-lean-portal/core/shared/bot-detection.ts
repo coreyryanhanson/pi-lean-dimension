@@ -13,11 +13,6 @@
 
 import { BOT_SIGNALS } from "./browser-data.js";
 
-export interface BotDetectionResult {
-	/** True if the page appears to be a bot block/challenge page */
-	isBlocked: boolean;
-}
-
 /**
  * Content patterns that indicate a bot block — loaded from shared data.
  */
@@ -43,17 +38,17 @@ const HTML_SIGNALS = BOT_SIGNALS.htmlSignals;
 /**
  * Check if page text content suggests a bot block.
  */
-function checkBodyText(bodyText: string): BotDetectionResult {
-	if (!bodyText) return { isBlocked: false };
+function checkBodyText(bodyText: string): boolean {
+	if (!bodyText) return false;
 
 	const lower = bodyText.toLowerCase();
 	for (const signal of BLOCK_SIGNALS) {
 		if (lower.includes(signal)) {
-			return { isBlocked: true };
+			return true;
 		}
 	}
 
-	return { isBlocked: false };
+	return false;
 }
 
 /**
@@ -62,15 +57,15 @@ function checkBodyText(bodyText: string): BotDetectionResult {
  * inclusion (for CDN domains, generic 403 messages) and regex patterns
  * (for Akamai reference codes, etc.).
  */
-function checkBodyOnlyText(bodyText: string): BotDetectionResult {
-	if (!bodyText) return { isBlocked: false };
+function checkBodyOnlyText(bodyText: string): boolean {
+	if (!bodyText) return false;
 
 	const lower = bodyText.toLowerCase();
 
 	// Check string signals first
 	for (const signal of BODY_ONLY_SIGNALS) {
 		if (lower.includes(signal)) {
-			return { isBlocked: true };
+			return true;
 		}
 	}
 
@@ -78,11 +73,11 @@ function checkBodyOnlyText(bodyText: string): BotDetectionResult {
 	for (const pattern of BODY_ONLY_PATTERNS) {
 		const match = bodyText.match(pattern);
 		if (match) {
-			return { isBlocked: true };
+			return true;
 		}
 	}
 
-	return { isBlocked: false };
+	return false;
 }
 
 /**
@@ -93,17 +88,17 @@ function checkBodyOnlyText(bodyText: string): BotDetectionResult {
  * loaded from the shared ``browser-data.json`` so TypeScript and Python
  * bridge implementations share a single source of truth.
  */
-function checkHtmlContent(html: string): BotDetectionResult {
-	if (!html) return { isBlocked: false };
+function checkHtmlContent(html: string): boolean {
+	if (!html) return false;
 
 	const lower = html.toLowerCase();
 	for (const signal of HTML_SIGNALS) {
 		if (lower.includes(signal)) {
-			return { isBlocked: true };
+			return true;
 		}
 	}
 
-	return { isBlocked: false };
+	return false;
 }
 
 /**
@@ -118,24 +113,18 @@ export function checkPage(
 	title: string,
 	bodyText: string,
 	html?: string,
-): BotDetectionResult {
+): boolean {
 	// Check title first (often contains "Attention Required!" etc.)
-	const titleResult = checkBodyText(title);
-	if (titleResult.isBlocked) return titleResult;
+	if (checkBodyText(title)) return true;
 
 	// Check body against challenge phrases
-	const bodyResult = checkBodyText(bodyText);
-	if (bodyResult.isBlocked) return bodyResult;
+	if (checkBodyText(bodyText)) return true;
 
 	// Check body against CDN-specific patterns (reference #, etc.)
-	const bodyOnlyResult = checkBodyOnlyText(bodyText);
-	if (bodyOnlyResult.isBlocked) return bodyOnlyResult;
+	if (checkBodyOnlyText(bodyText)) return true;
 
 	// Check HTML source for CAPTCHA widget embed codes
-	if (html !== undefined) {
-		const htmlResult = checkHtmlContent(html);
-		if (htmlResult.isBlocked) return htmlResult;
-	}
+	if (html !== undefined && checkHtmlContent(html)) return true;
 
-	return { isBlocked: false };
+	return false;
 }

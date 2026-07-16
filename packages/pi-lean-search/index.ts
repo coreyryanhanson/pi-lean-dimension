@@ -120,42 +120,27 @@ function setSearchStatus(
 	healthy: boolean | null,
 	degraded: boolean,
 ): void {
+	const safeSetStatus = (text: string) => {
+		try {
+			ctx.ui.setStatus("search", text);
+		} catch {
+			/* ctx.ui may be unavailable */
+		}
+	};
+
 	if (healthy === null) {
-		// Unconfigured — no glyph
-		try {
-			ctx.ui.setStatus("search", "");
-		} catch {
-			// ctx.ui may be unavailable during shutdown
-		}
+		safeSetStatus("");
 		return;
 	}
-
 	if (!healthy) {
-		// Unreachable
-		try {
-			ctx.ui.setStatus("search", ctx.ui.theme.fg("error", "●") + " searxng");
-		} catch {
-			// ignore
-		}
+		safeSetStatus(ctx.ui.theme.fg("error", "●") + " searxng");
 		return;
 	}
-
 	if (degraded) {
-		// Server up but pipeline broken
-		try {
-			ctx.ui.setStatus("search", ctx.ui.theme.fg("warning", "●") + " searxng");
-		} catch {
-			// ignore
-		}
+		safeSetStatus(ctx.ui.theme.fg("warning", "●") + " searxng");
 		return;
 	}
-
-	// Healthy
-	try {
-		ctx.ui.setStatus("search", ctx.ui.theme.fg("accent", "●") + " searxng");
-	} catch {
-		// ignore
-	}
+	safeSetStatus(ctx.ui.theme.fg("accent", "●") + " searxng");
 }
 
 // ─── Extension entry point ────────────────────────────────────────

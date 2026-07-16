@@ -1,5 +1,5 @@
 /**
- * Snapshot Disk Cache tests — Phase 1 of the browser-intelligence plan.
+ * Snapshot Disk Cache tests — disk-backed snapshot caching.
  *
  * All tests are browser-free — no Chromium needed.
  * Cleanup of temp files happens in afterEach.

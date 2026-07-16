@@ -1,10 +1,9 @@
 """
 pi_browser_bridge — Shared Python bridge library for pi-lean-portal.
-Provides BrowserBridge and PlaywrightBridge base classes for Python browser backends.
+Provides PlaywrightBridge base class for Python browser backends.
 """
 
-from .bridge import BrowserBridge, SessionNotFoundError, InvalidParamsError
-from .playwright_base import PlaywrightBridge
+from .playwright_base import PlaywrightBridge, SessionNotFoundError, InvalidParamsError
 from .accessibility import (
     AriaCachedNode,
     AriaParseResult,
@@ -16,7 +15,6 @@ from .accessibility import (
 from .bot_detection import check_bot_detection
 
 __all__ = [
-    "BrowserBridge",
     "PlaywrightBridge",
     "SessionNotFoundError",
     "InvalidParamsError",

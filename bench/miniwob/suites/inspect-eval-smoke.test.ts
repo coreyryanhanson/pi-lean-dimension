@@ -14,7 +14,7 @@
  * HTML — no challenge cycle — so this is a **regression net for the
  * eval wrapping + the real eval pipeline**, not a faithful repro of
  * the challenge-page class. The genuine context-destruction class is
- * covered by the Phase 2 split quirk tests.
+ * covered by the Python bridge quirks tests.
  *
  * One describe per backend, each handled by the shared
  * `registerBackendSuite` harness:

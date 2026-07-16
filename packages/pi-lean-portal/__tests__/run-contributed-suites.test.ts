@@ -11,8 +11,7 @@
  * invisible-py's lifecycle/deadlock tests) keep a hand-authored
  * file under ``__tests__/contributed/<name>-py/``.
  *
- * Gated by `CONTRIB_RUN === "1"` (the same env var Sprint 2 established
- * for the contributed MiniWoB parity helper).  No-op in bare CI (no
+ * Gated by `CONTRIB_RUN === "1"` (the same env var the contributed MiniWoB parity helper established).  No-op in bare CI (no
  * user-backends installed → discovered list empty → registers nothing)
  * and also no-op when `CONTRIB_RUN` is unset, so `npm run test:ci`
  * stays green with the file present even on a machine that has
@@ -20,8 +19,8 @@
  *
  * No stealth engine is **named** in this file.  Discovery is purely
  * runtime — whatever the user has installed under `user-backends/` is
- * what runs.  The shared suites own parametrized `it` titles (Sprint 1
- * mitigation) so a helper regression is attributable per-backend.
+ * what runs.  The shared suites own parametrized `it` titles so a helper
+ * regression is attributable per-backend.
  *
  * @module
  */

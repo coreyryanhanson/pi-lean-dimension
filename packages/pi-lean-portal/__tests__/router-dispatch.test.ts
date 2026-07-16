@@ -836,7 +836,7 @@ describe("bot detection UX", () => {
 		});
 	});
 
-	// ─── Profile-aware auto-recovery (Phase 7) ─────────────────
+	// ─── Profile-aware auto-recovery ────────────────────────────────
 	describe("profile-aware auto-recovery", () => {
 		it("restores profileName from lastNav on auto-creation", async () => {
 			await sessionManager.removeAll();

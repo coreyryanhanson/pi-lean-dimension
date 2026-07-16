@@ -35,7 +35,8 @@
  * purposes of the auto-skip + task-classification logic (the
  * `supports*` set is what the suite actually consults). A user-owned
  * parity template that cares about the identity test's engine read
- * (e.g. the shipped `camoufox-py/miniwob-parity.test.ts` template)
+ * (e.g. see the contributed parity suite at
+ * `packages/pi-lean-portal/__tests__/run-contributed-suites.test.ts`)
  * should set `capabilities.engine` explicitly in its own factory.
  *
  * **Why `userBackendsDir()` is imported from `pi-lean-portal/__tests__/helpers/`**
@@ -132,7 +133,7 @@ if (discovered.length > 0) {
 					// read a specific engine (e.g. Camoufox → "firefox")
 					// should set `capabilities.engine` explicitly in its
 					// own factory — see the shipped
-					// `camoufox-py/miniwob-parity.test.ts` template.
+					// `run-contributed-suites.test.ts`.
 					capabilities: {
 						supportsFullPageScreenshot: true,
 						supportsJavaScriptEvaluate: true,
@@ -145,7 +146,7 @@ if (discovered.length > 0) {
 
 		// The MiniWoB static server lifecycle is owned by the caller per
 		// the `registerMiniwobSuite` doc. `ensureBaseUrl` (defined above)
-		// honors `MINIWOB_URL` when set (the Sprint 5 CI workflow sets
+		// honors `MINIWOB_URL` when set (the contributed CI workflow sets
 		// this); otherwise it lazily starts an ephemeral
 		// `startMiniwobServer()` and tears it down in the file-level
 		// `afterAll`. All discovered backends share the one server.

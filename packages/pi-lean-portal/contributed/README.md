@@ -16,8 +16,8 @@ documented in `playwright_base.py`.
 > **You need the git repo, not just `npm install pi-lean-portal`.**
 > The template bridge and this README live under
 > `packages/pi-lean-portal/contributed/` in the source
-> repository. `docs/` is excluded from the portal `package.json`
-> `files`, so the templates are not in the published tarball. Clone the
+> repository. `contributed/` is not included in the portal `package.json`
+> `files` allow-list, so the templates are not in the published tarball. Clone the
 > repo (or obtain a copy of these files) before starting.
 
 For *whether* you should reach for a stealth backend at all, see
@@ -67,8 +67,8 @@ cp packages/pi-lean-portal/contributed/camoufox-py/bridge.py \
 ```
 
 You need the **git repo** for this step — the template is not in the
-`npm install pi-lean-portal` tarball (`docs/` is excluded from
-`package.json` `files` by design). Alternatively, write your own
+`npm install pi-lean-portal` tarball (`contributed/` is not included in the
+`package.json` `files` allow-list by design). Alternatively, write your own
 subclass using the [quirks schema](#quirks-schema-reference) documented
 in `backends/python-base/pi_browser_bridge/playwright_base.py`. Either
 way, audit what you copy — this is trusted user code that the extension
@@ -230,6 +230,7 @@ as class attributes on your subclass:
 | `_skip_default_viewport` | `False` | Skips Playwright's `Browser.setDefaultViewport` CDP call (Camoufox binary rejects its `isMobile` prop). |
 | `_skip_networkidle` | `False` | Nav-settle uses `load` instead of `networkidle` (patched binaries don't fire `networkidle` reliably). |
 | `_wrap_mw_eval_in_eval` | `False` | `do_evaluate` rewrites the expression as `eval(<JSON-string of expression>)` before prepending `_eval_prefix`, so multi-statement scripts survive Camoufox's `let _s = (${script})` main-world wrapper (which only accepts a single expression). Camoufox-only; flip back to `False` when a future driver fixes the wrapper. |
+| `_csp_safe_readonly_via_init_script` | `False` | `create_browser_context` registers an init script (isolated world, CSP-free) that wraps the EXTRACTOR_SCRIPT in a `DOMContentLoaded`-deferred IIFE writing JSON to `<meta id="__pi-extract">`. `do_evaluate(read_only=True)` reads from that meta via `query_selector` + `get_attribute` instead of `page.evaluate` (which is CSP-blocked on some patched-Firefox stealth binaries). |
 
 All flags default off, so the shipped `chromium-py` / `firefox-py`
 behavior is bit-identical to a pre-stealth install. For the two

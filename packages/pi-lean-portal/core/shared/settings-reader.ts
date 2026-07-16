@@ -15,15 +15,10 @@ import { join } from "node:path";
 // ─── Config paths ─────────────────────────────────────────────────
 
 /** Global pi settings path. */
-export const GLOBAL_SETTINGS_PATH = join(
-	homedir(),
-	".pi",
-	"agent",
-	"settings.json",
-);
+const GLOBAL_SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
 
 /** Project pi settings path (relative to cwd). */
-export const PROJECT_SETTINGS_PATH = ".pi/settings.json";
+const PROJECT_SETTINGS_PATH = ".pi/settings.json";
 
 // ─── Reader ────────────────────────────────────────────────────────
 

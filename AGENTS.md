@@ -34,10 +34,10 @@ npm run setup:miniwob                               # one-time clone of MiniWoB+
 npx vitest run packages/pi-lean-portal/__tests__/router-dispatch.test.ts  # single test file (fast, ~1s)
 npx vitest run packages/pi-lean-portal/__tests__/cookie-persistence.test.ts  # Chromium persistence
 npx vitest run packages/pi-lean-portal/__tests__/firefox.test.ts  # Firefox contract tests
-npx vitest run bench/miniwob/suites/                # run all MiniWoB suites (chromium, firefox, chromium-py, firefox-py, adapter-smoke)
+npx vitest run bench/miniwob/suites/                # run all MiniWoB suites (chromium, firefox, chromium-py, firefox-py, adapter-smoke, user-backends, inspect-csp-smoke, inspect-eval-smoke)
 npm run test:watch                                 # vitest in watch mode
-npm run publish:dry                                # npm publish --workspaces --dry-run (inspect tarballs)
-npm run publish                                    # npm publish --workspaces --access public
+npm run publish:dry                                # dry-run publish (portal+search --dry-run + dimension --dry-run) — inspect tarballs
+npm run publish                                    # full publish (portal+search npm publish + dimension publish)
 ```
 
 There is no build step (`noEmit: true` in tsconfig). The extension is loaded directly by pi from the source TypeScript files. No linter or formatter is configured. Lockstep versioning via `scripts/sync-versions.js`; release pipeline in `scripts/release.mjs`.
@@ -51,12 +51,15 @@ pi-lean-dimension/                       (monorepo root)
 ├── vitest.config.ts
 ├── scripts/
 │   ├── sync-versions.js                 (lockstep version bump)
-│   └── release.mjs                      (full release pipeline)
+│   ├── release.mjs                      (full release pipeline)
+│   ├── publish-dimension.mjs            (umbrella meta-package publish)
+│   └── run-py-bridge-tests.mjs          (Python bridge unit test runner)
 ├── AGENTS.md                            (this file — monorepo-level truth)
 ├── README.md                            (monorepo overview with install matrix)
 ├── CHANGELOG.md
 ├── LICENSE
 ├── bench/                            ← MiniWoB++ evaluation harness
+│   ├── README.md                      (bench architecture and public API)
 │   └── miniwob/                       130-task harness (adapter, solvers, suites, scripts)
 └── packages/
     ├── pi-lean-portal/                  ← THE BROWSER + /web owner
@@ -205,7 +208,7 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 | Python bridge unit | `pi-lean-portal/backends/python-base/tests/` | 6 | 248 | No (pytest only) |
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 8 | varies | Per-backend (auto-skip) |
 | MiniWoB behavioral | `bench/miniwob/suites/` | 8 | 130 tasks × 4 + user-backends + smoke* | Chromium + Firefox + Python + MiniWoB content |
-| Search | `pi-lean-search/` | 2 | 18 | No |
+| Search | `pi-lean-search/` | 2 | 26 | No |
 
 **Portal structural (23 files):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, browser-status, session-manager, browser-data, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, url-safety, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, probe-user-backend, ship-manifest
 
@@ -251,7 +254,7 @@ plugin factory:
 - **13 tasks run** with trivial solvers — 3 confident (assert reward > 0)
   and 10 best-effort (pipeline smoke tests).
 - **82 element tasks** without a registered solver → `it.skip` with reason
-  `needs goal-aware solver (Step 2 follow-up)`.
+  `needs goal-aware solver`.
 - **35 non-element tasks** (coord/drag/hover/select) → `it.skip` with
   the missing-tool reason.
 - **Public API:** `registerMiniwobSuite` from `bench/miniwob/solvers/register-suite.ts` lets
@@ -317,7 +320,7 @@ split into three jobs (two run on every PR; one is opt-in via
    (drives chromium-py + firefox-py suites)
 5. **Clone MiniWoB++ content** via `npm run setup:miniwob`
 6. **Run all MiniWoB browser tests** via `npm run test:miniwob`
-   (runs `bench/miniwob/suites/`, covering all 5 suite
+   (runs `bench/miniwob/suites/`, covering all 8 suite
    files)
 7. **Upload test artifacts on failure** (vitest output, Playwright
    traces)
@@ -341,8 +344,8 @@ from the Actions tab. Depends on `structural` passing.
    into the user-backends tree
 5. **Clone MiniWoB++ content** via `npm run setup:miniwob`
 6. **Start MiniWoB static server** on port 8080
-7. **Run Camoufox contract tests** (Sprint 3) + the
-   `miniwob-user-backends.test.ts` suite (Sprint 2, which discovers the
+7. **Run Camoufox contract tests** + the
+   `miniwob-user-backends.test.ts` suite (which discovers the
    installed Camoufox backend)
 8. **Upload test artifacts on failure** (vitest output, Playwright traces)
 

@@ -3,7 +3,7 @@
  * Runs the pure-logic pytest suite under
  * `packages/pi-lean-portal/backends/python-base/tests/`.
  *
- * These 243 tests cover the shared Python bridge library
+ * These 248 tests cover the shared Python bridge library
  * (`pi_browser_bridge`): accessibility parsing, bot detection,
  * JSON-RPC transport, the chromium-py / firefox-py routing layers, and
  * the `PlaywrightBridge` stealth-quirk flags. They use fakes/mocks and

@@ -17,7 +17,7 @@
  * serving the html directory).
  *
  * Usage:
- *   npm run setup:miniwob                                            # workspace default
+ *   npm run setup:miniwob                                            # default path
  *   node bench/miniwob/scripts/setup-miniwob.mjs                # same (direct)
  *   MINIWOB_HTML_ROOT=/opt/miniwob node …setup-miniwob.mjs      # custom path
  *   node bench/miniwob/scripts/setup-miniwob.mjs /custom/path

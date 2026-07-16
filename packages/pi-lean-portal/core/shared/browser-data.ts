@@ -14,27 +14,27 @@ import _raw from "./browser-data.json" with { type: "json" };
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
-export interface BotSignals {
+interface BotSignals {
 	blockSignals: string[];
 	bodyOnlySignals: string[];
 	bodyOnlyPatterns: string[];
 	htmlSignals: string[];
 }
 
-export interface AccessibilityData {
+interface AccessibilityData {
 	interactiveRoles: string[];
 	informationalRoles: string[];
 	roleIcons: Record<string, string>;
 }
 
-export interface NavSettleData {
+interface NavSettleData {
 	navTimeoutMs: number;
 	settleTimeoutMs: number;
 	settleRaceMs: number;
 	domStabilizationJs: string;
 }
 
-export interface BrowserDataFile {
+interface BrowserDataFile {
 	version: number;
 	botSignals: BotSignals;
 	accessibility: AccessibilityData;

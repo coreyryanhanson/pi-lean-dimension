@@ -64,7 +64,7 @@ const SECRET_PATTERNS = [
 
 // ─── Types ────────────────────────────────────────────────────────────
 
-export interface UrlSafetyResult {
+interface UrlSafetyResult {
 	/** Whether the URL is safe to navigate to */
 	safe: boolean;
 	/** Human-readable reason if not safe */

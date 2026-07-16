@@ -118,8 +118,8 @@ rather than failing opaquely.
   executes stealth backends automatically. `user-backends/` is trusted
   user code — you wrote or audited it.
 - **Not shipped in the npm tarball.** The templates live in the source
-  repo under `contributed/`; `docs/` is excluded from
-  `package.json` `files`. You need the git repo (or a copy of the
+repo under `contributed/`; `contributed/` is not included in the
+`package.json` `files` allow-list. You need the git repo (or a copy of the
   files) to install a stealth backend.
 - **Not in the default fallback list.** Stealth backends are loaded
   only when explicitly listed in `browser.plugins`. A fresh install

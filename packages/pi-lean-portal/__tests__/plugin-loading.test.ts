@@ -259,7 +259,7 @@ describe("DEFAULT_BACKENDS_ROOT", () => {
 	});
 });
 
-// ─── Multi-root discovery (Phase 0b) ─────────────────────────────
+// ─── Multi-root discovery ────────────────────────────────────────────
 
 describe("detectPluginType — multi-root", () => {
 	let packageRoot: string;

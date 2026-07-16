@@ -491,7 +491,7 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			);
 			// checkPage handles all three: title (challenge phrases),
 			// body (challenge phrases + CDN patterns), and HTML (CAPTCHA embeds).
-			return checkPage(title, bodyText, html).isBlocked;
+			return checkPage(title, bodyText, html);
 		} catch {
 			return false;
 		}

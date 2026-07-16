@@ -20,6 +20,7 @@ import {
 	BROWSER_TEMP_DIR,
 	safeTaskId,
 	ensureBrowserTempDir,
+	formatBytes,
 } from "./shared/paths.js";
 import TurndownService from "turndown";
 import { parse as parseHtml } from "node-html-parser";
@@ -194,7 +195,7 @@ function htmlToMarkdown(root: ReturnType<typeof parseHtml>): string {
 
 // ─── Decoupled entry point: webFetch() ────────────────────────────────
 
-export interface WebFetchOptions {
+interface WebFetchOptions {
 	url: string;
 	timeout?: number; // seconds, default 30, max 120
 	signal?: AbortSignal;
@@ -202,7 +203,7 @@ export interface WebFetchOptions {
 	taskId?: string;
 }
 
-export interface WebFetchResult {
+interface WebFetchResult {
 	success: boolean;
 	url: string;
 	title: string;
@@ -230,12 +231,6 @@ const FETCH_SPILL_THRESHOLD = 5000;
 const activeFetchFiles = new Map<string, string[]>();
 
 // ─── Temp file management ──────────────────────────────────────────────
-
-function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${bytes}B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
-	return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-}
 
 function writeFetchTempFile(content: string, taskId: string): string {
 	ensureBrowserTempDir();
@@ -405,8 +400,7 @@ export async function webFetch(
 	let botDetected: boolean | undefined;
 	try {
 		const bodyText = result.root.textContent?.trim() || "";
-		const detection = checkPage(result.title, bodyText);
-		if (detection.isBlocked) botDetected = true;
+		if (checkPage(result.title, bodyText)) botDetected = true;
 	} catch {
 		/* best-effort — don't fail on bot detection errors */
 	}

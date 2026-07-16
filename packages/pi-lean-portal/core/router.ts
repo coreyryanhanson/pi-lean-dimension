@@ -866,7 +866,7 @@ export async function clearConsole(
 
 // ─── browser-inspect public types ──────────────────────────────────
 
-export interface InspectParams {
+interface InspectParams {
 	role?: string;
 	name?: string;
 	ref?: string;
