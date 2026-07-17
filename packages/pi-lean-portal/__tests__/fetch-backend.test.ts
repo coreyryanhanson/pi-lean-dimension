@@ -286,15 +286,13 @@ describe("webFetch — content capping", () => {
 		expect(result.content).toContain("Full content saved to");
 	});
 
-	// ponytail: cleanupFetchTempFiles on the first call removes temp files the
-	// second call hasn't asserted yet. Fix: sequential assertions with a retry,
-	// or don't clean up the first taskId's files until the test exits.
 	it("preserves both temp files when two large fetches share a taskId", async () => {
+		const tid = "preserve-shared";
 		mockFetch({ body: `<p>${longText(6000)}</p>` });
-		const a = await webFetch({ url: "http://example.com/a", taskId: "shared" });
+		const a = await webFetch({ url: "http://example.com/a", taskId: tid });
 
 		mockFetch({ body: `<p>${"B".repeat(6000)}</p>` });
-		const b = await webFetch({ url: "http://example.com/b", taskId: "shared" });
+		const b = await webFetch({ url: "http://example.com/b", taskId: tid });
 
 		expect(a.filePath).toBeTruthy();
 		expect(b.filePath).toBeTruthy();
