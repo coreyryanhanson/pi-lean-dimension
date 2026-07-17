@@ -2,7 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Documented user-guide override of builtins** — a same-named `.md` in
+  `~/.pi/agent/pi-lean-portal/web-guides/` (e.g. `bot-detection.md`) shadows
+  the builtin guide entirely: whole-guide replacement, not field merge. The
+  README and `AGENTS.md` now spell out the override semantics, the
+  `trigger.signal` requirement to keep a pattern guide firing after override,
+  and that site guides and pattern guides live in disjoint namespaces (a site
+  guide for `www.botdetection.com` does not collide with the `bot-detection`
+  pattern). Tests pin all four override cases.
+
 ### Changed
+
+- **Guide footer names the `web-guide` invocation** — `formatGuideFooter`
+  now appends `(web-guide guide="<name>")` to each listed guide so the
+  agent can call `web-guide` with the exact guide key instead of guessing
+  from the short name.
 
 - **Breaking (Python bridge API):** the abstract `BrowserBridge` class in
   `pi_browser_bridge/bridge.py` has been folded into its only subclass
@@ -17,6 +33,14 @@
 - Refactor and documentation cleanup: deduplicated `setSearchStatus`, shared a
   `formatBytes` helper, simplified the bot-detection result shape, and removed
   unused exports across `core/shared`. No behavior change.
+- **Dropped the lazy guide-content cache** — `getGuideContent()` now always
+  reads user guides from disk (cheap, and removes a stale-cache footgun where
+  a freshly `web-learn`ed guide wouldn't appear until invalidation).
+  `invalidateGuideContent()` is removed; `web-learn` no longer calls it.
+  `_setGuideContentForTest` now layers test overrides on top of the real
+  builtin+user guides instead of replacing a cached map, and the guide tests
+  mock `node:fs.existsSync` for the web-guides dir so on-disk user guides
+  can't leak into the suite.
 
 ## [0.2.3] - 2026-07-15
 

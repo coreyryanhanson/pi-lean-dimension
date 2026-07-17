@@ -17,11 +17,25 @@ import {
 	formatGuideFooter,
 	sortApplicableGuides,
 	getGuideContent,
-	invalidateGuideContent,
 	_setGuideContentForTest,
 	buildDomainMap,
 	BUILTIN_GUIDES,
 } from "../core/guides.js";
+
+// ── Isolate from on-disk user guides ──────────────────────────
+// User guide files in ~/.pi/agent/pi-lean-portal/web-guides/ must not leak
+// into tests. Mocking existsSync for the web-guides path ensures
+// loadUserGuides() returns {} (guarded by existsSync at the top).
+vi.mock("node:fs", async (importActual) => {
+	const actual = await importActual<typeof import("node:fs")>();
+	return {
+		...actual,
+		existsSync: (p: unknown) =>
+			typeof p === "string" && p.endsWith("web-guides")
+				? false
+				: actual.existsSync(p as string),
+	};
+});
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -93,7 +107,7 @@ describe("resolveApplicableGuides", () => {
 	});
 
 	afterEach(() => {
-		invalidateGuideContent();
+		_setGuideContentForTest();
 	});
 
 	const hasDialog = true;
@@ -241,7 +255,9 @@ describe("formatGuideFooter", () => {
 		];
 		const result = formatGuideFooter(guides);
 		expect(result).toContain("Guides available for this page");
-		expect(result).toContain("• ⚠ bot detection — challenge page detected");
+		expect(result).toContain(
+			'• ⚠ bot detection — challenge page detected (web-guide guide="bot-detection")',
+		);
 		expect(result).not.toContain("Site:");
 	});
 
@@ -258,7 +274,9 @@ describe("formatGuideFooter", () => {
 		const result = formatGuideFooter(guides);
 		expect(result).toContain("Guides available for this page");
 		expect(result).toContain("Site:");
-		expect(result).toContain("• 📖 reddit — site guide for reddit.com");
+		expect(result).toContain(
+			'• 📖 reddit — site guide for reddit.com (web-guide guide="reddit")',
+		);
 	});
 
 	it("renders mixed patterns + sites with correct ordering", () => {
@@ -316,7 +334,9 @@ describe("formatGuideFooter", () => {
 			},
 		];
 		const result = formatGuideFooter(guides);
-		expect(result).toMatch(/• ⚠ bot detection/);
+		expect(result).toMatch(
+			/• ⚠ bot detection.*web-guide guide="bot-detection"/,
+		);
 	});
 });
 
@@ -588,7 +608,7 @@ describe("buildDomainMap", () => {
 	});
 
 	afterEach(() => {
-		invalidateGuideContent();
+		_setGuideContentForTest();
 	});
 
 	it("includes fixtures from guides with domains field", () => {
@@ -614,25 +634,14 @@ describe("buildDomainMap", () => {
 	});
 });
 
-describe("getGuideContent / invalidateGuideContent", () => {
-	beforeEach(() => {
-		invalidateGuideContent();
-	});
-
+describe("getGuideContent", () => {
 	afterEach(() => {
-		invalidateGuideContent();
+		_setGuideContentForTest();
 	});
 
 	it("returns builtin guides", () => {
 		const content = getGuideContent();
 		expect(content["bot-detection"]).toBeDefined();
-	});
-
-	it("after invalidation, returns fresh content (same keys)", () => {
-		const before = getGuideContent();
-		invalidateGuideContent();
-		const after = getGuideContent();
-		expect(Object.keys(after).sort()).toEqual(Object.keys(before).sort());
 	});
 });
 
@@ -703,5 +712,123 @@ describe("getGuideContent merge", () => {
 	it("builtin guides maintain trigger in getGuideContent()", () => {
 		const botGuide = getGuideContent()["bot-detection"];
 		expect(botGuide?.triggerSignal).toBe("botDetected");
+	});
+});
+
+// ─── Builtin guide override ────────────────────────────────────
+
+describe("builtin guide override", () => {
+	afterEach(() => {
+		_setGuideContentForTest();
+	});
+
+	it("override wins and keeps firing — user bot-detection with custom shortName/icon", () => {
+		const base = getGuideContent();
+		_setGuideContentForTest({
+			...base,
+			"bot-detection": {
+				category: "pattern",
+				source: "user",
+				updated: "2026-07-01",
+				icon: "🤖",
+				shortName: "my bot guide",
+				triggerSignal: "botDetected",
+				content: "Custom bot guidance.",
+			},
+		});
+
+		const result = resolveApplicableGuides(
+			"https://example.com/page",
+			false,
+			true,
+		);
+		expect(result).toHaveLength(1);
+		expect(result[0]!.icon).toBe("🤖");
+		expect(result[0]!.shortName).toBe("my bot guide");
+		expect(result[0]!.name).toBe("bot-detection");
+	});
+
+	it("override that drops trigger.signal stops the pattern", () => {
+		const base = getGuideContent();
+		_setGuideContentForTest({
+			...base,
+			"bot-detection": {
+				category: "pattern",
+				source: "user",
+				updated: "2026-07-01",
+				icon: "🤖",
+				shortName: "my bot guide",
+				// No triggerSignal — override disables auto-fire
+				content: "Custom bot guidance, no trigger.",
+			},
+		});
+
+		const result = resolveApplicableGuides(
+			"https://example.com/page",
+			false,
+			true,
+		);
+		// bot-detection key exists but has no triggerSignal, so it should not fire
+		expect(result.filter((g) => g.name === "bot-detection")).toEqual([]);
+	});
+
+	it("site-vs-pattern namespaces are disjoint — site guide for www.botdetection.com coexists with builtin bot-detection pattern", () => {
+		const base = getGuideContent();
+		_setGuideContentForTest({
+			...base,
+			"www.botdetection.com": {
+				category: "site",
+				source: "user",
+				updated: "2026-07-01",
+				icon: "📖",
+				shortName: "Bot Detection Site",
+				domains: ["www.botdetection.com"],
+				content: "Site-specific guide for bot detection domain.",
+			},
+		});
+
+		const result = resolveApplicableGuides(
+			"https://www.botdetection.com/page",
+			false,
+			true,
+		);
+		expect(result).toHaveLength(2);
+		const names = result.map((g) => g.name).sort();
+		expect(names).toEqual(["bot-detection", "www.botdetection.com"]);
+	});
+
+	it("override with category:site + domains replaces the pattern entirely — pattern stops firing", () => {
+		const base = getGuideContent();
+		_setGuideContentForTest({
+			...base,
+			"bot-detection": {
+				category: "site",
+				source: "user",
+				updated: "2026-07-01",
+				icon: "📖",
+				shortName: "bot detection site",
+				domains: ["botdetection.example"],
+				// No triggerSignal — this is a site guide, not a pattern
+				content: "Site guide that shadows the builtin bot-detection.",
+			},
+		});
+
+		// botDetected=true, but the bot-detection key is now a site guide with no triggerSignal
+		const result = resolveApplicableGuides(
+			"https://example.com/page",
+			false,
+			true,
+		);
+		expect(result.filter((g) => g.name === "bot-detection")).toEqual([]);
+
+		// The site guide should match via its domain though
+		const domainResult = resolveApplicableGuides(
+			"https://botdetection.example/page",
+			false,
+			false,
+		);
+		expect(domainResult).toHaveLength(1);
+		expect(domainResult[0]!.name).toBe("bot-detection");
+		expect(domainResult[0]!.category).toBe("site");
 	});
 });

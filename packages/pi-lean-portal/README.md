@@ -265,6 +265,28 @@ HTML to Markdown. It does **not** create a browser session.
 | `pagination` | On-demand | Next buttons, infinite scroll, pages |
 | `search` | On-demand | Search boxes, comboboxes, result lists |
 
+### Overriding Built-in Guides
+
+A same-named `.md` file in `~/.pi/agent/pi-lean-portal/web-guides/` (e.g.
+`bot-detection.md`) **shadows the builtin entirely** — the whole guide is
+replaced, not field-merged. To keep a pattern guide firing, include
+`trigger.signal: botDetected` (or `dialogDetected`) in the frontmatter;
+omitting it disables the trigger.
+
+```yaml
+---
+category: pattern
+trigger.signal: botDetected
+icon: 🤖
+shortName: my bot guide
+---
+Custom guidance text for bot challenges.
+```
+
+Site guides and pattern guides live in **disjoint namespaces** — a site guide
+for `www.botdetection.com` does not collide with the `bot-detection` pattern
+guide; both fire when applicable.
+
 ### Viewing Guides
 
 ```text

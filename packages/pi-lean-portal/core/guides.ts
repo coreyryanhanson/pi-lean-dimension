@@ -280,37 +280,31 @@ export function loadUserGuides(): Record<string, Guide> {
 	return result;
 }
 
-// ── Merged Guide Content (lazy) ────────────────────────────────
+// ── Merged Guide Content (always fresh) ──────────────────────
 
-let _guideContentCache: Record<string, Guide> | null = null;
+let _testGuideOverrides: Record<string, Guide> | null = null;
 
 /**
  * Get the merged guide content (builtin + user-authored).
- * Lazily built on first call; invalidate via invalidateGuideContent().
+ * Always reads user guides from disk — no stale cache.
  * User-authored guides override builtin guides on name collision.
  */
 export function getGuideContent(): Record<string, Guide> {
-	if (!_guideContentCache) {
-		_guideContentCache = {
-			...BUILTIN_GUIDES,
-			...loadUserGuides(),
-		};
+	const base = { ...BUILTIN_GUIDES, ...loadUserGuides() };
+	if (_testGuideOverrides) {
+		return { ...base, ..._testGuideOverrides };
 	}
-	return _guideContentCache;
-}
-
-/** Invalidate the guide content cache so the next getGuideContent() call rescans guides/. */
-export function invalidateGuideContent(): void {
-	_guideContentCache = null;
+	return base;
 }
 
 /**
- * Override the guide content cache for testing.
- * Pass undefined/null to reset to default (same as invalidateGuideContent).
+ * Inject test-only guide overrides.
+ * Pass undefined/null to clear. These are layered on top of the real
+ * builtin+user guides — no filesystem writes needed in tests.
  * @internal
  */
 export function _setGuideContentForTest(content?: Record<string, Guide>): void {
-	_guideContentCache = content ?? null;
+	_testGuideOverrides = content ?? null;
 }
 
 /** Format guide listing grouped by category, with icon/shortName and trigger info. */
@@ -434,7 +428,9 @@ export function formatGuideFooter(guides: ApplicableGuide[]): string {
 			lines.push("  Site:");
 			addedSiteHeader = true;
 		}
-		lines.push(`  • ${g.icon} ${g.shortName} — ${g.reason}`);
+		lines.push(
+			`  • ${g.icon} ${g.shortName} — ${g.reason} (web-guide guide="${g.name}")`,
+		);
 	}
 
 	return lines.join("\n");

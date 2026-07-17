@@ -7,7 +7,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { USER_GUIDES_DIR, invalidateGuideContent } from "../core/guides.js";
+import { USER_GUIDES_DIR } from "../core/guides.js";
 
 export const webLearnTool = defineTool({
 	name: "web-learn",
@@ -95,9 +95,6 @@ export const webLearnTool = defineTool({
 		// ── Detect whether this is a create or update ──────────────
 		const isUpdate = existsSync(filepath);
 		writeFileSync(filepath, fileContent, "utf-8");
-
-		// ── Invalidate cache ────────────────────────────────────
-		invalidateGuideContent();
 
 		const verb = isUpdate ? "Updated" : "Created";
 		return {
