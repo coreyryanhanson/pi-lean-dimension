@@ -1,6 +1,6 @@
 # pi-lean-dimension
 
-> Web browsing and search tools for [Pi](https://github.com/earendil-works/pi-coding-agent), the AI coding agent.
+> Web browsing and search tools for [Pi](https://github.com/earendil-works/pi), the AI coding agent.
 
 A monorepo housing three Pi extension packages that give your AI agent the
 ability to browse the web interactively, fetch static pages as Markdown, and
