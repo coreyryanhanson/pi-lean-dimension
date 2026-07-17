@@ -1,6 +1,6 @@
 /**
  * Plugin Router — registry-based dispatch for interactive browser operations.
- * Handles snapshot truncation, URL safety, session lifecycle, and crash recovery.
+ * Handles snapshot truncation, session lifecycle, and crash recovery.
  */
 
 import { writeFileSync } from "node:fs";
@@ -8,7 +8,6 @@ import { BROWSER_TEMP_DIR, ensureBrowserTempDir } from "./shared/paths.js";
 import { pluginRegistry } from "./plugin-registry.js";
 import { sessionManager } from "./shared/session-manager.js";
 import type { BrowserSession } from "./shared/session-manager.js";
-import { validateUrl } from "./shared/url-safety.js";
 import { snapshotFingerprint } from "./shared/accessibility-tree.js";
 import {
 	cacheSnapshot,
@@ -418,23 +417,6 @@ export async function navigate(
 			snapshot: "",
 			elementCount: 0,
 			error: `Invalid URL: ${url}`,
-			backendUsed: plugin.name,
-		} as NavigateResult & {
-			backendUsed: string;
-			botDetectionWarning?: boolean;
-		};
-	}
-
-	// URL safety check
-	const safety = validateUrl(normalizedUrl);
-	if (!safety.safe) {
-		return {
-			success: false,
-			url: normalizedUrl,
-			title: "",
-			snapshot: "",
-			elementCount: 0,
-			error: `URL blocked: ${safety.reason}`,
 			backendUsed: plugin.name,
 		} as NavigateResult & {
 			backendUsed: string;

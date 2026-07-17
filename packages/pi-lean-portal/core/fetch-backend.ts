@@ -6,7 +6,6 @@
  * No JavaScript execution — fastest path for static content.
  *
  * When called directly via the `webFetch()` entry point, this backend:
- * - Validates the URL (blocks localhost, private IPs, dangerous schemes)
  * - Fetches and converts HTML → Markdown
  * - Runs JS-shell detection inline
  * - Runs bot-detection heuristics inline
@@ -24,7 +23,6 @@ import {
 } from "./shared/paths.js";
 import TurndownService from "turndown";
 import { parse as parseHtml } from "node-html-parser";
-import { validateUrl } from "./shared/url-safety.js";
 import { checkPage } from "./shared/bot-detection.js";
 
 const DEFAULT_USER_AGENT =
@@ -307,7 +305,7 @@ export function cleanupFetchTempFiles(taskId?: string): void {
 /**
  * Decoupled web fetch entry point.
  *
- * Pipeline: URL safety → fetch → JS detection → bot detection → content capping
+ * Pipeline: fetch → JS detection → bot detection → content capping
  *
  * This function is the new recommended way to perform a stateless HTTP fetch.
  * It replaces the router-level fetch dispatch that used to live in `router.ts navigate()`.
@@ -317,7 +315,7 @@ export async function webFetch(
 ): Promise<WebFetchResult> {
 	const timeout = (options.timeout ?? 30) * 1000;
 
-	// Step 1: URL safety validation
+	// Parse URL
 	let url: string;
 	try {
 		url = new URL(options.url).href;
@@ -332,19 +330,7 @@ export async function webFetch(
 		};
 	}
 
-	const safety = validateUrl(url);
-	if (!safety.safe) {
-		return {
-			success: false,
-			url,
-			title: "",
-			content: safety.reason || "URL blocked",
-			backendUsed: "fetch",
-			error: `URL blocked: ${safety.reason}`,
-		};
-	}
-
-	// Step 2: Perform fetch
+	// Step 1: Perform fetch
 	let result: {
 		html: string;
 		title: string;
@@ -396,7 +382,7 @@ export async function webFetch(
 		};
 	}
 
-	// Step 3: Bot detection via shared utility (uses un-mutated parsed root)
+	// Step 2: Bot detection via shared utility (uses un-mutated parsed root)
 	let botDetected: boolean | undefined;
 	try {
 		const bodyText = result.root.textContent?.trim() || "";
@@ -405,11 +391,11 @@ export async function webFetch(
 		/* best-effort — don't fail on bot detection errors */
 	}
 
-	// Step 4: Convert to Markdown (uses pre-parsed root from performFetch)
+	// Step 3: Convert to Markdown (uses pre-parsed root from performFetch)
 	// NOTE: htmlToMarkdown mutates the tree — run after bot detection
 	const markdown = htmlToMarkdown(result.root);
 
-	// Step 5: Cap content
+	// Step 4: Cap content
 	const tid = options.taskId ?? "web-fetch-default";
 	const { inline, filePath, totalChars } = capFetchContent(markdown, tid);
 

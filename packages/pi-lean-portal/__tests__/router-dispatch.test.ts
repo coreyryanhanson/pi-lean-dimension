@@ -64,19 +64,6 @@ describe("Router dispatch", () => {
 			expect(mock.calls.get("navigate")).toBeUndefined();
 		});
 
-		it("blocks SSRF URLs without calling the plugin", async () => {
-			const result = await router.navigate("http://localhost:8080/");
-			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/blocked/i);
-			expect(mock.calls.get("navigate")).toBeUndefined();
-		});
-
-		it("blocks private IP ranges", async () => {
-			const result = await router.navigate("http://192.168.1.1/");
-			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/blocked/i);
-		});
-
 		it("returns error for unknown strategy", async () => {
 			const result = await router.navigate("https://example.com", {
 				strategy: "nonexistent",

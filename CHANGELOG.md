@@ -15,6 +15,16 @@
 
 ### Changed
 
+- **Removed the portal URL guard** — `core/shared/url-safety.ts` and its
+  tests are deleted; `browser-navigate` and `web-fetch` no longer reject
+  localhost, private-IP, non-http(s) schemes, or secret-bearing URLs. The
+  guard was an SSRF-style boundary that doesn't fit a coding agent with
+  filesystem `bash`/`read`/`write` already in scope — it patched one hole in
+  a sieve. The malformed-URL `new URL()` parse at both call sites stays
+  (input validation, not a guard), so `webFetch({ url: "not a url" })` still
+  returns `{ success: false, error: "Invalid URL" }`. The portal
+  `AGENTS.md` constraint listing the guard is dropped.
+
 - **Guide footer names the `web-guide` invocation** — `formatGuideFooter`
   now appends `(web-guide guide="<name>")` to each listed guide so the
   agent can call `web-guide` with the exact guide key instead of guessing

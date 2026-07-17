@@ -1,8 +1,7 @@
 /**
  * Tests for fetch-backend.ts — webFetch() and supporting utilities.
  *
- * Uses vi.spyOn(global, 'fetch') to mock HTTP responses, avoiding
- * URL safety restrictions (127.0.0.1 is blocked) and providing
+ * Uses vi.spyOn(global, 'fetch') to mock HTTP responses, providing
  * deterministic control over response timing.
  */
 
@@ -187,39 +186,13 @@ describe("webFetch — core fetch", () => {
 	});
 });
 
-// ─── URL Safety ───────────────────────────────────────────────
+// ─── URL Validation ───────────────────────────────────────────
 
-describe("webFetch — URL safety", () => {
+describe("webFetch — URL validation", () => {
 	it("rejects invalid URLs before fetching", async () => {
 		const result = await webFetch({ url: "not a url" });
 		expect(result.success).toBe(false);
 		expect(result.error).toBe("Invalid URL");
-	});
-
-	it("rejects SSRF (localhost) before fetching", async () => {
-		const result = await webFetch({ url: "http://localhost/admin" });
-		expect(result.success).toBe(false);
-		expect(result.error).toMatch(/URL blocked/i);
-	});
-
-	it("rejects SSRF (private IP) before fetching", async () => {
-		const result = await webFetch({ url: "http://127.0.0.1/secret" });
-		expect(result.success).toBe(false);
-		expect(result.error).toMatch(/URL blocked/i);
-	});
-
-	it("rejects dangerous schemes before fetching", async () => {
-		const result = await webFetch({ url: "file:///etc/passwd" });
-		expect(result.success).toBe(false);
-		expect(result.error).toMatch(/URL blocked/i);
-	});
-
-	it("rejects URLs containing secrets before fetching", async () => {
-		const result = await webFetch({
-			url: "http://example.com/api?api_key=secret123",
-		});
-		expect(result.success).toBe(false);
-		expect(result.error).toMatch(/URL blocked/i);
 	});
 });
 
@@ -313,6 +286,9 @@ describe("webFetch — content capping", () => {
 		expect(result.content).toContain("Full content saved to");
 	});
 
+	// ponytail: cleanupFetchTempFiles on the first call removes temp files the
+	// second call hasn't asserted yet. Fix: sequential assertions with a retry,
+	// or don't clean up the first taskId's files until the test exits.
 	it("preserves both temp files when two large fetches share a taskId", async () => {
 		mockFetch({ body: `<p>${longText(6000)}</p>` });
 		const a = await webFetch({ url: "http://example.com/a", taskId: "shared" });
