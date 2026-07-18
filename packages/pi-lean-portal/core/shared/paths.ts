@@ -13,8 +13,12 @@ import { tmpdir, homedir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-/** Base temp directory for all pi-lean-portal ephemeral files. */
-export const BROWSER_TEMP_DIR = `${tmpdir()}/pi-lean-portal`;
+/**
+ * Base temp directory for all pi-lean-portal ephemeral files.
+ * Override via PI_BROWSER_TEMP_DIR env var (used by test isolation).
+ */
+export const BROWSER_TEMP_DIR =
+	process.env.PI_BROWSER_TEMP_DIR ?? `${tmpdir()}/pi-lean-portal`;
 
 /**
  * Portal-owned data root under ~/.pi/agent/, namespaced by package name.

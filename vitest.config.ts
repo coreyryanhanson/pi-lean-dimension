@@ -3,6 +3,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
 	test: {
 		globals: true,
+		setupFiles: ["packages/pi-lean-portal/__tests__/helpers/setup-temp-dir.ts"],
 		include: ["packages/*/**/*.test.ts", "bench/**/*.test.ts"],
 		passWithNoTests: true,
 		// Browser contract tests (Playwright subprocess, Firefox, Python bridges)
