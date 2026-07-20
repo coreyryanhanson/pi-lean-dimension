@@ -260,6 +260,13 @@ export default function (pi: ExtensionAPI) {
 		updateFooterStatus(ctx);
 	});
 
+	// Sync the status-bar glyph after /tree navigation. browser-toggle's
+	// session_tree handler restores the toggle state + active tools first
+	// (registered earlier, runs first); this repaints the glyph to match.
+	pi.on("session_tree", async (_event, ctx) => {
+		updateFooterStatus(ctx);
+	});
+
 	// --- Cleanup ----------------------------------------------------
 	pi.on("session_shutdown", async (_event, ctx) => {
 		setLastCtx(null);

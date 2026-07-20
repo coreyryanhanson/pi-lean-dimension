@@ -52,6 +52,18 @@
   mock `node:fs.existsSync` for the web-guides dir so on-disk user guides
   can't leak into the suite.
 
+### Fixed
+
+- **Status-bar glyph now syncs after `/tree` navigation** — the `browser`
+  status-bar slot was stale after navigating the conversation tree:
+  `browser-toggle`'s `session_tree` handler restored the toggle state and
+  active-tool set from the branch, but nothing repainted the glyph, so the
+  display could show `● idle` while the browser tools were actually
+  disabled (or vice versa). `index.ts` now calls `updateFooterStatus` on
+  `session_tree`, mirroring the existing `session_start` repaint. The fix
+  is isolated to portal and ships independently of the in-flight host
+  work.
+
 ## [0.2.4] - 2026-07-20
 
 ### Fixed
