@@ -38,20 +38,6 @@
   instead — the Camoufox template was already on `PlaywrightBridge`, so
   shipped examples are unaffected.
 
-### Fixed
-
-- **`/web off` no longer re-enables other extensions' disabled tools** —
-  `applyBrowserState(false)` rebuilt the active set from
-  `pi.getAllTools()` (every registered tool) and filtered out only portal's
-  own tools, silently re-activating any tool a peer extension or toggle had
-  removed from the active set. The bug was latent as long as portal was the
-  only thing disabling tools; any co-installed extension managing its own
-  tool visibility would have its state clobbered by a subsequent `/web off`.
-  The disable path now subtracts from `pi.getActiveTools()` (the
-  currently-active set), matching the existing `applyLearnState` pattern,
-  so peer toggles compose correctly. The symmetric enable path was already
-  safe.
-
 ### Internal
 
 - Refactor and documentation cleanup: deduplicated `setSearchStatus`, shared a
@@ -65,6 +51,22 @@
   builtin+user guides instead of replacing a cached map, and the guide tests
   mock `node:fs.existsSync` for the web-guides dir so on-disk user guides
   can't leak into the suite.
+
+## [0.2.4] - 2026-07-20
+
+### Fixed
+
+- **`/web off` no longer re-enables other extensions' disabled tools** —
+  `applyBrowserState(false)` rebuilt the active set from
+  `pi.getAllTools()` (every registered tool) and filtered out only portal's
+  own tools, silently re-activating any tool a peer extension or toggle had
+  removed from the active set. The bug was latent as long as portal was the
+  only thing disabling tools; any co-installed extension managing its own
+  tool visibility would have its state clobbered by a subsequent `/web off`.
+  The disable path now subtracts from `pi.getActiveTools()` (the
+  currently-active set), matching the existing `applyLearnState` pattern,
+  so peer toggles compose correctly. The symmetric enable path was already
+  safe.
 
 ## [0.2.3] - 2026-07-15
 
