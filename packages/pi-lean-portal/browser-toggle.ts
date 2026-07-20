@@ -142,9 +142,14 @@ function applyBrowserState(pi: ExtensionAPI, enable: boolean): void {
 		const current = pi.getActiveTools();
 		pi.setActiveTools([...new Set([...current, ...registered])]);
 	} else {
-		// Keep everything that is NOT a browser+sibling tool
-		const all = pi.getAllTools().map((t) => t.name);
-		pi.setActiveTools(all.filter((name) => !registered.has(name)));
+		// Keep everything that is NOT a browser+sibling tool — but only
+		// within the *currently active* set. Using getActiveTools() (not
+		// getAllTools()) is critical for peer-toggle composition: /web off
+		// must not re-enable tools that another toggle (e.g. host's /api off)
+		// has already disabled. getAllTools() would silently re-activate
+		// every registered tool outside our own set.
+		const current = pi.getActiveTools();
+		pi.setActiveTools(current.filter((name) => !registered.has(name)));
 	}
 }
 

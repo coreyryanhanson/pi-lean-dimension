@@ -381,6 +381,30 @@ describe("applyBrowserState(false) — disable", () => {
 			expect(calledWith).not.toContain(tool);
 		}
 	});
+
+	it("does not re-enable tools that were already inactive", () => {
+		// /web off must only remove portal's own tools. Any other tool that
+		// was inactive (disabled by a peer toggle, a config default, etc.)
+		// must stay inactive — a toggle affects no tools outside its own set.
+		// Regression guard: the previous implementation rebuilt the set from
+		// getAllTools(), silently re-activating every registered non-browser
+		// tool. We now filter from getActiveTools() so peer toggles compose.
+		const OTHER_TOOL = { name: "peer-ext-tool", description: "x" };
+		const pi = mockPi({
+			tools: [...ALL_BROWSER_TOOLS, OTHER_TOOL, ...NON_BROWSER_TOOLS],
+			activeTools: [
+				...ALL_BROWSER_TOOLS.map((t) => t.name),
+				...NON_BROWSER_TOOLS.map((t) => t.name),
+			], // OTHER_TOOL intentionally absent (off)
+		});
+		applyBrowserState(pi, false);
+		const setActive = pi.setActiveTools as ReturnType<typeof vi.fn>;
+		const calledWith: string[] = setActive.mock.calls[0]![0] as string[];
+		expect(calledWith).not.toContain("peer-ext-tool");
+		for (const name of ALL_BROWSER_TOOLS.map((t) => t.name)) {
+			expect(calledWith).not.toContain(name);
+		}
+	});
 });
 
 // ==================================================================
