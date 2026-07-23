@@ -44,6 +44,9 @@ let _lastToggleState = true;
 /** @internal Last known learn state for status bar coloring. */
 let _lastLearnState = false;
 
+/** @internal Last captured ExtensionContext for event-driven glyph rendering. */
+let _lastCtx: ExtensionCommandContext | null = null;
+
 export function getToggleState(): boolean {
 	return _lastToggleState;
 }
@@ -90,6 +93,7 @@ function restoreProfile(_pi: ExtensionAPI, ctx: ExtensionContext): void {
 function _resetToggleStateForTest(): void {
 	_lastToggleState = true;
 	_lastLearnState = false;
+	_lastCtx = null;
 	_conversationDefaultProfile = undefined;
 }
 
@@ -97,6 +101,7 @@ function _resetToggleStateForTest(): void {
 function resetToggleModuleState(): void {
 	_lastToggleState = true;
 	_lastLearnState = false;
+	_lastCtx = null;
 	_conversationDefaultProfile = undefined;
 }
 
@@ -148,9 +153,15 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 	const learnToolset = defineToolset(pi, PORTAL_LEARN_SPEC);
 
 	// ── Keep cached state in sync with library events ─────────
+	// Re-render the glyph on every change/restore so external callers
+	// (e.g. pi-tbox's `/tbox all off`) keep the slot in sync — the cached
+	// flags alone don't update the status bar.
 	const syncCachedState = () => {
 		_lastToggleState = webToolset.isEnabled(pi);
 		_lastLearnState = learnToolset.isEnabled(pi);
+		if (_lastCtx) {
+			renderBrowserGlyph(_lastCtx, _lastToggleState, _lastLearnState);
+		}
 	};
 
 	pi.events.on(TOOLSET_EVENTS.changed, syncCachedState);
@@ -167,21 +178,18 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 			if (cmd === "on") {
 				webToolset.enable(pi);
 				learnToolset.disable(pi);
-				renderBrowserGlyph(ctx, true, false);
 				ctx.ui.notify(
 					"🌐 Browser tools enabled. /web learn to make web-learn available.",
 					"info",
 				);
 			} else if (cmd === "learn") {
 				learnToolset.enable(pi); // cascades web on via requires
-				renderBrowserGlyph(ctx, true, true);
 				ctx.ui.notify(
 					"📖 web-learn tool is now available. Agent will save/update guides when asked.",
 					"info",
 				);
 			} else if (cmd === "off") {
 				webToolset.disable(pi); // cascades learn off via requires
-				renderBrowserGlyph(ctx, false, false);
 				ctx.ui.notify(
 					"🌐 Browser tools disabled. /web on to re-enable.",
 					"info",
@@ -235,21 +243,17 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 	// ── Session handlers: restore profile + render glyph ─────
 	pi.on("session_start", async (_event, ctx) => {
 		restoreProfile(pi, ctx);
+		_lastCtx = ctx as unknown as ExtensionCommandContext;
 		syncCachedState();
-		renderBrowserGlyph(
-			ctx as unknown as ExtensionCommandContext,
-			_lastToggleState,
-			_lastLearnState,
-		);
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		restoreProfile(pi, ctx);
+		_lastCtx = ctx as unknown as ExtensionCommandContext;
 		syncCachedState();
-		renderBrowserGlyph(
-			ctx as unknown as ExtensionCommandContext,
-			_lastToggleState,
-			_lastLearnState,
-		);
+	});
+
+	pi.on("session_shutdown", async () => {
+		_lastCtx = null;
 	});
 }
