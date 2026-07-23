@@ -10,7 +10,8 @@
 
 import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { EventEmitter } from "node:events";
+import type { ExtensionAPI, EventBus } from "@earendil-works/pi-coding-agent";
 
 // Mock node:fs to control the filesystem for profile tests
 vi.mock("node:fs", () => ({
@@ -30,6 +31,7 @@ import { listProfiles, formatProfileList } from "../browser-profile.js";
 // ─── Helpers ─────────────────────────────────────────────────────
 
 function mockPi(tools?: string[]): ExtensionAPI {
+	const emitter = new EventEmitter();
 	const allTools = (tools ?? []).map((name) => ({ name }));
 	// Return a full active set by default
 	const active = tools ?? [];
@@ -40,6 +42,15 @@ function mockPi(tools?: string[]): ExtensionAPI {
 		appendEntry: vi.fn(),
 		registerCommand: vi.fn(),
 		on: vi.fn(),
+		get events() {
+			return {
+				emit: (channel: string, data: unknown) => emitter.emit(channel, data),
+				on: (channel: string, handler: (data: unknown) => void) => {
+					emitter.on(channel, handler);
+					return () => emitter.off(channel, handler);
+				},
+			} as EventBus;
+		},
 	} as unknown as ExtensionAPI;
 }
 
