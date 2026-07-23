@@ -37,6 +37,9 @@
 		"prepack": "cp ../../LICENSE ./LICENSE",
 		"test": "vitest run"
 	},
+	"dependencies": {
+		"pi-tool-masking": "file:../../pi-tool-masking"
+	},
 	"peerDependencies": {
 		"@earendil-works/pi-ai": "*",
 		"@earendil-works/pi-coding-agent": "*",

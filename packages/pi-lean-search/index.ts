@@ -4,27 +4,48 @@
  * Registers the `web-search` tool and a `/searxng-status` diagnostic command.
  * Manages the `search` status bar slot with health-colored glyphs.
  *
- * On session_start, probes SearXNG reachability and updates the search slot:
- *   ● searxng  (accent/blue)  — healthy and reachable
- *   ● searxng  (warning/yellow) — server up but pipeline degraded
- *   ● searxng  (error/red)    — unreachable
- *
- * Portal owns the `search` slot's "off" state: when `/web off` is called,
- * portal writes `○ searxng` (open circle). Search overrides with the
- * health-colored glyph on session_start.
+ * Owns the `search.web` toolset (co-activated off `portal.web`):
+ *   ● searxng  (accent/blue)    — healthy and reachable
+ *   ● searxng  (warning/yellow)  — server up but pipeline degraded
+ *   ● searxng  (error/red)      — unreachable
+ *   ○ searxng                    — search tools off
  */
 
 import type {
 	ExtensionAPI,
 	ExtensionContext,
+	ThemeColor,
 } from "@earendil-works/pi-coding-agent";
+import { defineToolset, TOOLSET_EVENTS } from "pi-tool-masking";
+import type { ToolsetSpec, ToolsetChangedEvent } from "pi-tool-masking";
 import { readSearxngUrl } from "./search-config.js";
 import { webSearchTool } from "./web-search-tool.js";
 
-// ─── Module-level state ───────────────────────────────────────────
+// ─── Toolset spec ────────────────────────────────────────────────
+
+const SEARCH_WEB_SPEC: ToolsetSpec = {
+	id: "search.web",
+	names: new Set(["web-search"]),
+	persistKey: "toolset-state:search.web",
+	defaultEnabled: true,
+};
+
+// ─── Module-level state ──────────────────────────────────────────
 
 /** Cached SearXNG URL (read once at startup, stable mid-session). */
 let _searxngUrl: string | undefined;
+
+/** Last known search.web enabled state (updated by library events). */
+let _lastSearchEnabled = true;
+
+/** Last known health state: true=healthy, false=unreachable, null=unconfigured. */
+let _lastHealth: boolean | null = null;
+
+/** Whether the search pipeline is degraded (server up, aggregation broken). */
+let _lastDegraded = false;
+
+/** Cached ExtensionContext for event-driven glyph rendering. */
+let _lastCtx: ExtensionContext | null = null;
 
 // ─── Health probes ───────────────────────────────────────────────
 
@@ -95,7 +116,7 @@ async function checkSearchReachable(
 	}
 }
 
-// ─── Status slot helpers ──────────────────────────────────────────
+// ─── Status slot helpers ─────────────────────────────────────────
 
 /**
  * Normalize the SearXNG URL for display (strip protocol prefix for brevity).
@@ -105,21 +126,20 @@ function displayUrl(url: string): string {
 }
 
 /**
- * Set the `search` status slot with a health-colored glyph.
+ * Render the `search` status slot based on toolset state + health.
  *
- * Coloring:
- *   - Healthy:   accent (blue) — same as browser on
- *   - Degraded:  warning (yellow/gold) — server up but pipeline broken
- *   - Unhealthy: error (red) — unreachable or unconfigured
- *
- * Portal writes `○ searxng` on /web off; search overrides here on
- * session_start or /searxng-status.
+ *   search.web off         → ○ searxng
+ *   search.web on + healthy → ● searxng (accent/blue)
+ *   search.web on + degraded → ● searxng (warning/yellow)
+ *   search.web on + unreachable → ● searxng (error/red)
+ *   unconfigured           → (clear slot)
  */
-function setSearchStatus(
-	ctx: ExtensionContext,
-	healthy: boolean | null,
-	degraded: boolean,
-): void {
+function renderSearchGlyph(ctx: {
+	ui: {
+		setStatus: (key: string, label: string) => void;
+		theme: { fg: (c: ThemeColor, t: string) => string };
+	};
+}): void {
 	const safeSetStatus = (text: string) => {
 		try {
 			ctx.ui.setStatus("search", text);
@@ -128,22 +148,43 @@ function setSearchStatus(
 		}
 	};
 
-	if (healthy === null) {
+	// Unconfigured — clear slot entirely
+	if (_lastHealth === null) {
 		safeSetStatus("");
 		return;
 	}
-	if (!healthy) {
+
+	// search.web disabled — show off state
+	if (!_lastSearchEnabled) {
+		safeSetStatus("○ searxng");
+		return;
+	}
+
+	// search.web enabled — show health-colored glyph
+	if (!_lastHealth) {
 		safeSetStatus(ctx.ui.theme.fg("error", "●") + " searxng");
 		return;
 	}
-	if (degraded) {
+	if (_lastDegraded) {
 		safeSetStatus(ctx.ui.theme.fg("warning", "●") + " searxng");
 		return;
 	}
 	safeSetStatus(ctx.ui.theme.fg("accent", "●") + " searxng");
 }
 
-// ─── Extension entry point ────────────────────────────────────────
+// ─── Test helpers ─────────────────────────────────────────────────
+
+/** @internal Reset cached state to defaults (test helper). */
+function _resetStateForTest(): void {
+	_lastSearchEnabled = true;
+	_lastHealth = null;
+	_lastDegraded = false;
+	_lastCtx = null;
+}
+
+export { _resetStateForTest };
+
+// ─── Extension entry point ───────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
 	// Read config at startup
@@ -152,48 +193,83 @@ export default function (pi: ExtensionAPI) {
 	// ── Register the web-search tool ─────────────────────────
 	pi.registerTool(webSearchTool);
 
-	// ── Session start: health probe + status update ──────────
+	// ── Define the search.web toolset ────────────────────────
+	// Registers restore handler on session_start / session_tree.
+	const searchToolset = defineToolset(pi, SEARCH_WEB_SPEC);
+
+	// ── Co-activation: mirror portal.web changed events ──────
+	// Listen on changed ONLY, not restored (§10.1).
+	pi.events.on(TOOLSET_EVENTS.changed, (data: unknown) => {
+		const event = data as ToolsetChangedEvent;
+		if (event.id === "portal.web") {
+			if (event.enabled) {
+				searchToolset.enable(pi);
+			} else {
+				searchToolset.disable(pi);
+			}
+		}
+	});
+
+	// ── Keep cached state in sync with library events ────────
+	const syncSearchState = (data: unknown) => {
+		const event = data as ToolsetChangedEvent;
+		if (event.id === "search.web") {
+			_lastSearchEnabled = event.enabled;
+			if (_lastCtx) renderSearchGlyph(_lastCtx);
+		}
+	};
+	pi.events.on(TOOLSET_EVENTS.changed, syncSearchState);
+	pi.events.on(TOOLSET_EVENTS.restored, syncSearchState);
+
+	// ── Session start: health probe + glyph ──────────────────
 	pi.on("session_start", async (_event, ctx) => {
+		_lastCtx = ctx;
+
 		// Re-read config in case it changed between sessions
 		_searxngUrl = readSearxngUrl();
 
 		if (!_searxngUrl) {
-			// Unconfigured — clear the slot
-			setSearchStatus(ctx, null, false);
+			_lastHealth = null;
+			renderSearchGlyph(ctx);
 			return;
 		}
 
-		// Check if web-search tools are currently active (portal
-		// restores toggle state before search's session_start fires).
-		const activeTools = pi.getActiveTools();
-		if (!activeTools.includes("web-search")) {
-			// Tools are off — don't override portal's ○ searxng
-			return;
-		}
+		// Note: by now the library's restore handler has already
+		// fired (registered by defineToolset), so _lastSearchEnabled
+		// reflects the restored toolset state.
 
 		const reachable = await checkServerReachable(
 			_searxngUrl,
 			ctx.signal ?? undefined,
 		);
+		_lastHealth = reachable;
+		_lastDegraded = false;
 
 		if (reachable) {
-			setSearchStatus(ctx, true, false);
 			ctx.ui.notify(
 				`🔍 SearXNG at ${displayUrl(_searxngUrl)} is available`,
 				"info",
 			);
 		} else {
-			setSearchStatus(ctx, false, false);
 			ctx.ui.notify(
 				`⚠ SearXNG at ${displayUrl(_searxngUrl)} is unreachable. ` +
 					"Web search will degrade gracefully with error messages.",
 				"warning",
 			);
 		}
+
+		renderSearchGlyph(ctx);
+	});
+
+	// ── Session tree: re-render with cached state ────────────
+	pi.on("session_tree", async (_event, ctx) => {
+		_lastCtx = ctx;
+		renderSearchGlyph(ctx);
 	});
 
 	// ── Session shutdown: clean up ───────────────────────────
 	pi.on("session_shutdown", async (_event, ctx) => {
+		_lastCtx = null;
 		try {
 			ctx?.ui?.setStatus?.("search", "");
 		} catch {
@@ -208,13 +284,16 @@ export default function (pi: ExtensionAPI) {
 			"and update the status bar. Use when web-search returns " +
 			"errors or when you've just started/restarted SearXNG.",
 		handler: async (_args, ctx) => {
+			_lastCtx = ctx;
+
 			if (!_searxngUrl) {
 				ctx.ui.notify(
 					"❌ SearXNG is not configured. " +
 						"Set `searxng.url` in your Pi settings.json.",
 					"error",
 				);
-				setSearchStatus(ctx, false, false);
+				_lastHealth = false;
+				renderSearchGlyph(ctx);
 				return;
 			}
 
@@ -225,7 +304,9 @@ export default function (pi: ExtensionAPI) {
 			);
 
 			if (searchOk) {
-				setSearchStatus(ctx, true, false);
+				_lastHealth = true;
+				_lastDegraded = false;
+				renderSearchGlyph(ctx);
 				ctx.ui.notify(
 					`✅ SearXNG search pipeline is working at ${displayUrl(_searxngUrl)}`,
 					"info",
@@ -240,7 +321,9 @@ export default function (pi: ExtensionAPI) {
 			);
 
 			if (serverOk) {
-				setSearchStatus(ctx, true, true); // degraded
+				_lastHealth = true;
+				_lastDegraded = true;
+				renderSearchGlyph(ctx);
 				ctx.ui.notify(
 					"⚠ SearXNG server is up but the search pipeline " +
 						"may be broken (aggregation failed). " +
@@ -248,7 +331,9 @@ export default function (pi: ExtensionAPI) {
 					"warning",
 				);
 			} else {
-				setSearchStatus(ctx, false, false);
+				_lastHealth = false;
+				_lastDegraded = false;
+				renderSearchGlyph(ctx);
 				ctx.ui.notify(
 					`❌ SearXNG at ${displayUrl(_searxngUrl)} is not responding. ` +
 						"Check that the SearXNG service is running.",
