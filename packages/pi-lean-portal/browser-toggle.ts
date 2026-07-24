@@ -4,7 +4,11 @@ import type {
 	ExtensionContext,
 	ThemeColor,
 } from "@earendil-works/pi-coding-agent";
-import { defineToolset, TOOLSET_EVENTS } from "pi-tool-masking";
+import {
+	defineToolset,
+	TOOLSET_EVENTS,
+	getDefaultResolutionMode,
+} from "pi-tool-masking";
 import type { ToolsetSpec } from "pi-tool-masking";
 import { readMergedSettings } from "./core/shared/settings-reader.js";
 
@@ -174,6 +178,22 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 			"Usage: /web on | off | learn | status",
 		handler: async (args, ctx) => {
 			const cmd = args.trim().toLowerCase();
+
+			// Focus-mode guard (§13.2): refuse actuating subcommands while the
+			// library holds the line in inclusion mode, so a sibling toggle
+			// can't write a focus-indistinguishable {enabled} entry. Read-only
+			// subcommands (status/profile/cookies/bare /web) stay unguarded,
+			// matching tbox's treatment of its own read-only commands.
+			if (
+				["on", "off", "learn"].includes(cmd) &&
+				getDefaultResolutionMode(pi) === "inclusion"
+			) {
+				ctx.ui.notify(
+					"Another plugin has active inclusion mode — this toolset can't be toggled while inclusion is holding the line. Deactivate it there first.",
+					"warning",
+				);
+				return;
+			}
 
 			if (cmd === "on") {
 				webToolset.enable(pi);

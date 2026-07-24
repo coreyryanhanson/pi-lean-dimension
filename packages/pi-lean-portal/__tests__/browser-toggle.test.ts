@@ -15,6 +15,9 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import {
+	setDefaultResolutionMode,
+} from "pi-tool-masking";
 import browserToggle, {
 	getToggleState,
 	getLearnState,
@@ -312,5 +315,62 @@ describe("session_start integration", () => {
 describe("getConversationDefaultProfile", () => {
 	it("returns undefined initially", () => {
 		expect(getConversationDefaultProfile()).toBeUndefined();
+	});
+});
+
+// ==================================================================
+//  Focus-mode guard (Fix 3) — /web on/off/learn refuse during inclusion
+// ==================================================================
+describe("/web focus-mode guard", () => {
+	it("refuses /web on/off/learn while inclusion focus is active", async () => {
+		const { pi } = mockPi([]);
+		browserToggle(pi);
+		setDefaultResolutionMode(pi, "inclusion");
+
+		for (const sub of ["on", "off", "learn"]) {
+			(pi.setActiveTools as any).mockClear();
+			const ctx = mockCtx();
+			await captureWebHandler(pi)(sub, ctx);
+
+			expect(ctx.ui.notify).toHaveBeenCalledWith(
+				expect.stringContaining("Another plugin has active inclusion mode"),
+				"warning",
+			);
+			expect(pi.setActiveTools).not.toHaveBeenCalled();
+		}
+	});
+
+	it("read-only subcommands unaffected by inclusion focus", async () => {
+		const { pi } = mockPi([]);
+		browserToggle(pi);
+		setDefaultResolutionMode(pi, "inclusion");
+
+		for (const sub of ["status", "profile", "cookies", ""]) {
+			const ctx = mockCtx();
+			await captureWebHandler(pi)(sub, ctx);
+
+			expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+				expect.stringContaining("Another plugin has active inclusion mode"),
+				"warning",
+			);
+		}
+	});
+
+	it("actuating subcommands work when focus is off (exclusion)", async () => {
+		const { pi } = mockPi([]);
+		browserToggle(pi);
+		// default mode is exclusion after beforeEach reset
+
+		const ctx = mockCtx();
+		await captureWebHandler(pi)("on", ctx);
+
+		expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+			expect.stringContaining("Another plugin has active inclusion mode"),
+			"warning",
+		);
+		const finalActive = pi.getActiveTools();
+		for (const name of BROWSER_TOOL_NAMES) {
+			expect(finalActive).toContain(name);
+		}
 	});
 });
