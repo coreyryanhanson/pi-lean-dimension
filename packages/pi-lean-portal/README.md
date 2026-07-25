@@ -72,7 +72,7 @@ Beyond the toggle, three surfaces are extensible or shared rather than hardcoded
   yourself. The full flow lives in [Backend Architecture](#backend-architecture)
   and [`contributed/README.md`](./contributed/README.md).
 - **Toolset toggles** — the `/web` toggle is powered by the shared
-  [`pi-tool-masking`](https://www.npmjs.com/package/pi-tool-masking) peer dep,
+  [`pi-tool-masking`](https://github.com/coreyryanhanson/pi-tool-masking/) peer dep,
   which handles active-set masking, sibling-tool union math, and the
   `TOOLSET_EVENTS` protocol that keeps the `browser`/`search` status-bar
   glyphs in sync across extensions. It's published as a general toggle
