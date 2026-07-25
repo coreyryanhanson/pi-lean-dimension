@@ -37,7 +37,6 @@
 		"prepack": "cp ../../LICENSE ./LICENSE",
 		"test": "vitest run"
 	},
-	"dependencies": {},
 	"peerDependencies": {
 		"@earendil-works/pi-ai": "*",
 		"@earendil-works/pi-coding-agent": "*",

@@ -49,7 +49,7 @@ let _lastToggleState = true;
 let _lastLearnState = false;
 
 /** @internal Last captured ExtensionContext for event-driven glyph rendering. */
-let _lastCtx: ExtensionCommandContext | null = null;
+let _lastCtx: ExtensionContext | null = null;
 
 export function getToggleState(): boolean {
 	return _lastToggleState;
@@ -263,13 +263,13 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 	// ── Session handlers: restore profile + render glyph ─────
 	pi.on("session_start", async (_event, ctx) => {
 		restoreProfile(pi, ctx);
-		_lastCtx = ctx as unknown as ExtensionCommandContext;
+		_lastCtx = ctx;
 		syncCachedState();
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		restoreProfile(pi, ctx);
-		_lastCtx = ctx as unknown as ExtensionCommandContext;
+		_lastCtx = ctx;
 		syncCachedState();
 	});
 
