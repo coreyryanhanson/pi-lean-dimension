@@ -15,9 +15,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import {
-	setDefaultResolutionMode,
-} from "pi-tool-masking";
+import { TOOLSET_EVENTS, setDefaultResolutionMode } from "pi-tool-masking";
 import browserToggle, {
 	getToggleState,
 	getLearnState,
@@ -372,5 +370,39 @@ describe("/web focus-mode guard", () => {
 		for (const name of BROWSER_TOOL_NAMES) {
 			expect(finalActive).toContain(name);
 		}
+	});
+});
+
+// ==================================================================
+//  Glyph sync on external-plugin changed events
+// ==================================================================
+describe("external-plugin glyph sync", () => {
+	it("re-renders browser glyph off when external plugin fires portal.web disabled", async () => {
+		const { pi, handlers, events } = mockPi();
+		browserToggle(pi);
+
+		// Fire session_start once to establish _lastCtx.
+		// After this, the glyph is rendered correctly for default state.
+		const startCtx = mockCtx();
+		for (const h of handlers.get("session_start") ?? []) {
+			await h({}, startCtx);
+		}
+
+		// Clear the initial render call so we only see the external-plugin re-render.
+		vi.clearAllMocks();
+
+		// Simulate an external plugin disabling portal.web — it has
+		// already removed browser tools from the active set.
+		const nonBrowser = ALL_TOOLS.map((t) => t.name).filter(
+			(n) => !BROWSER_TOOL_NAMES.has(n),
+		);
+		(pi.getActiveTools as any).mockReturnValue(nonBrowser);
+
+		events.emit(TOOLSET_EVENTS.changed, {
+			id: "portal.web",
+			enabled: false,
+		});
+
+		expect(startCtx.ui.setStatus).toHaveBeenCalledWith("browser", "○ web off");
 	});
 });
