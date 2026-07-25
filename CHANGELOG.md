@@ -38,8 +38,33 @@
   instead — the Camoufox template was already on `PlaywrightBridge`, so
   shipped examples are unaffected.
 
+- **Breaking (toggle state persistence):** the `/web` toggle's persisted
+  branch state moved from a single `web-toggle-state` entry (shape
+  `{ browserToolsEnabled, learnToolsEnabled, defaultProfile }`) to three
+  separate keys: `toolset-state:portal.web` (`{ enabled }`),
+  `toolset-state:portal.learn` (`{ enabled }`), and
+  `portal-conversation-state` (`{ defaultProfile }`). In-flight sessions
+  that stored the legacy `web-toggle-state` shape are not found by the new
+  restore logic — on upgrade to 0.3.0 the toggle resets to defaults and
+  any conversation-scoped profile override is lost. No migration is
+  performed; the schema break is intentional, part of moving the low-level
+  masking logic into the shared `pi-tool-masking` package (see Internal).
+
 ### Internal
 
+- **Toggle masking offloaded to `pi-tool-masking`** — the low-level
+  active-set masking logic that lived in `browser-toggle.ts`
+  (`applyBrowserState`, `applyLearnState`, `SIBLING_TOOL_NAMES`, the
+  peer-tool union math) is replaced by the shared `pi-tool-masking`
+  package's `defineToolset` / `defineToolsetPeer` / `TOOLSET_EVENTS` API.
+  Portal now owns only command dispatch, glyph rendering, and profile
+  persistence; toolset state, peer composition, branch restore, and the
+  requires-cascade live in the library. `pi-lean-search` migrated from
+  portal's old `setSearchSlot` callback to a self-managed `search.web`
+  toolset that mirrors `portal.web` via `TOOLSET_EVENTS`. Both portal and
+  search declare `pi-tool-masking` as a peerDependency; the package has no
+  runtime transitive deps. The masking seam is clean — no logic is
+  duplicated across the boundary.
 - Refactor and documentation cleanup: deduplicated `setSearchStatus`, shared a
   `formatBytes` helper, simplified the bot-detection result shape, and removed
   unused exports across `core/shared`. No behavior change.
