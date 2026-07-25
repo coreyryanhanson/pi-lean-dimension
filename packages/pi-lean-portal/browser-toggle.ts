@@ -186,7 +186,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 			// matching tbox's treatment of its own read-only commands.
 			if (
 				["on", "off", "learn"].includes(cmd) &&
-				getDefaultResolutionMode(pi) === "inclusion"
+				getDefaultResolutionMode() === "inclusion"
 			) {
 				ctx.ui.notify(
 					"Another plugin has active inclusion mode — this toolset can't be toggled while inclusion is holding the line. Deactivate it there first.",
