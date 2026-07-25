@@ -26,6 +26,46 @@ discovery, `browser.init` RPC, `PYTHONPATH` injection), see the
 "Stealth backends (user-managed)" section of
 [`packages/pi-lean-portal/AGENTS.md`](../../AGENTS.md).
 
+## Pinned CI stack
+
+The `contributed` GitHub Actions job pins both pieces of the Camoufox
+stack for reproducibility — the patched-Firefox **binary** and the
+**`cloverlabs-camoufox`** PyPI package. Unpinned, `camoufox fetch`
+pulls the latest stable binary on every run, and a new release silently
+changed wheel-scroll, humanized-click commit, and `mw:` main-world eval
+semantics — the quirks in `playwright_base.py` were written against the
+older binary and the `contributed` job went red. See
+[`docs/decisions/camoufox-ci-drift.md`](../../../docs/decisions/camoufox-ci-drift.md)
+for the full diagnosis.
+
+| Pin | Value | Last green | How to override |
+|-----|-------|------------|-----------------|
+| PyPI package | `cloverlabs-camoufox==0.6.0` | Jul 14 2026 | `.github/workflows/ci.yml` `pip install` line |
+| Patched binary | `official/135.0.1-beta.24` | Jul 14 2026 | `.github/workflows/ci.yml` `camoufox fetch` line |
+
+`135.0.1-beta.24` was the latest stable binary on Jul 14 2026 (the last
+green `contributed` run). `152.0.4-beta.27` shipped on Jul 16 2026 and
+is what broke the unpinned job — the pins hold the stack at the
+pre-drift state.
+
+### Upgrade procedure
+
+1. Reproduce the failure locally with `BROWSER_DEBUG=1` against the
+   **latest** Camoufox stack (bump both pins or drop them temporarily):
+   `npm run setup:miniwob` then
+   `CONTRIB_RUN=1 npx vitest run packages/pi-lean-portal/__tests__/run-contributed-suites.test.ts bench/miniwob/suites/miniwob-user-backends.test.ts`.
+2. Adapt the affected quirks in
+   `contributed/camoufox-py/bridge.py` and/or
+   `backends/python-base/pi_browser_bridge/playwright_base.py`. Keep the
+   `ponytail:` ceiling-notes on each quirk accurate to the new binary.
+3. Bump **both** pins together in `.github/workflows/ci.yml` to the
+   newest passing versions and update the table above.
+4. Re-run the `contributed` job via `workflow_dispatch` to confirm green.
+
+The `camoufox fetch` version format is `<repo>/<version>` (e.g.
+`official/135.0.1-beta.24`); run `camoufox sync` then `camoufox list` to
+discover available versions.
+
 ## Where things live
 
 ```

@@ -180,12 +180,28 @@ jobs:
         with:
           python-version: "3.12"
 
+      # ── Camoufox stack is PINNED for reproducibility ───────────────
+      #
+      # The patched Firefox binary (`camoufox fetch`) and the
+      # `cloverlabs-camoufox` PyPI package are both pinned to the
+      # last-known-good versions from the last green `contributed` run
+      # (Jul 14 2026, commit b066714). Unpinned, `camoufox fetch` pulls
+      # the latest stable binary, which drifted on Jul 16 2026
+      # (152.0.4-beta.27) and broke the stealth quirks (wheel scroll,
+      # humanized click commit, `mw:` main-world eval) — see
+      # docs/decisions/camoufox-ci-drift.md.
+      #
+      # To upgrade: reproduce locally (BROWSER_DEBUG=1), adapt the
+      # affected quirks in contributed/camoufox-py/bridge.py and
+      # backends/python-base/pi_browser_bridge/playwright_base.py, then
+      # bump both pins together. See contributed/README.md
+      # ("Pinned CI stack") for the upgrade procedure.
       - name: Create user-backends hierarchy and install Camoufox
         run: |
           mkdir -p ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py
           python3 -m venv ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv
-          ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv/bin/pip install --quiet "cloverlabs-camoufox[geoip]"
-          ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv/bin/python -m camoufox fetch
+          ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv/bin/pip install --quiet "cloverlabs-camoufox[geoip]==0.6.0"
+          ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv/bin/python -m camoufox fetch official/135.0.1-beta.24
 
       - name: Copy Camoufox bridge template to user-backends
         run: |
