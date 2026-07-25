@@ -6,8 +6,56 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { EventEmitter } from "node:events";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { TOOLSET_EVENTS } from "pi-tool-masking";
 import { readSearxngUrl } from "../search-config.js";
 import { webSearchTool } from "../web-search-tool.js";
+import searchExtension, { _resetStateForTest } from "../index.js";
+
+// Mock Pi used for integration-style tests (toolset wiring, glyph rendering).
+// ─── Mock helpers ─────────────────────────────────────────────────────
+
+const REGISTRY_KEY = "__piToolMaskingRegistry";
+
+function mockSearchPi(initialActive?: string[]) {
+	let active = initialActive ?? ["web-search"];
+	const eventEmitter = new EventEmitter();
+	const handlers = new Map<string, Array<(...args: any[]) => void>>();
+	const entryCalls: Array<{ customType: string; data: unknown }> = [];
+
+	// A minimal mock of the ExtensionAPI. We intentionally don't mock
+	// _everything_ — only the methods the extension code actually calls.
+	const pi = {
+		getAllTools: vi.fn(() => [{ name: "web-search", description: "search" }]),
+		getActiveTools: vi.fn(() => [...active]),
+		setActiveTools: vi.fn((names: string[]) => {
+			active = [...names];
+		}),
+		appendEntry: vi.fn((customType: string, data?: unknown) => {
+			entryCalls.push({ customType, data });
+		}),
+		registerCommand: vi.fn(),
+		registerTool: vi.fn(),
+		on: vi.fn(<T>(event: string, handler: (event: T, ctx: any) => void) => {
+			if (!handlers.has(event)) handlers.set(event, []);
+			handlers.get(event)!.push(handler as any);
+			return () => {};
+		}),
+		get events() {
+			return {
+				emit: (channel: string, data: unknown) =>
+					eventEmitter.emit(channel, data),
+				on: (channel: string, handler: (data: unknown) => void) => {
+					eventEmitter.on(channel, handler);
+					return () => eventEmitter.off(channel, handler);
+				},
+			};
+		},
+	} as unknown as ExtensionAPI;
+
+	return { pi, events: eventEmitter, handlers, entryCalls };
+}
 
 // ─── Config reader (mocked fs) ──────────────────────────────────
 
@@ -389,5 +437,44 @@ describe("execute answer rendering", () => {
 		// Both present
 		expect(r.content[0].text).toContain("42");
 		expect(r.content[0].text).toContain("Result 1");
+	});
+});
+
+// Clean module-level state between tests.
+beforeEach(() => {
+	_resetStateForTest();
+	delete (globalThis as any)[REGISTRY_KEY];
+});
+
+// ==================================================================
+//  Toolset wiring: portal.web ↔ search.web co-activation mirror
+// ==================================================================
+describe("portal.web co-activation mirror", () => {
+	it("disables search.web when portal.web changed fires with enabled: false", async () => {
+		const { pi, events } = mockSearchPi();
+		searchExtension(pi);
+
+		events.emit(TOOLSET_EVENTS.changed, {
+			id: "portal.web",
+			enabled: false,
+		});
+
+		expect(pi.setActiveTools).toHaveBeenCalledWith(
+			expect.not.arrayContaining(["web-search"]),
+		);
+	});
+
+	it("enables search.web when portal.web changed fires with enabled: true", async () => {
+		const { pi, events } = mockSearchPi([]);
+		searchExtension(pi);
+
+		events.emit(TOOLSET_EVENTS.changed, {
+			id: "portal.web",
+			enabled: true,
+		});
+
+		expect(pi.setActiveTools).toHaveBeenCalledWith(
+			expect.arrayContaining(["web-search"]),
+		);
 	});
 });

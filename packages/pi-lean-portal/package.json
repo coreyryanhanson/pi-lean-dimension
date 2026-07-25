@@ -63,6 +63,7 @@
 		"@earendil-works/pi-ai": "*",
 		"@earendil-works/pi-coding-agent": "*",
 		"@earendil-works/pi-tui": "*",
+		"pi-tool-masking": "^1.0.0",
 		"typebox": "*"
 	}
 }
