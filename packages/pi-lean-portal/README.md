@@ -61,7 +61,7 @@ The browser tools are **enabled by default**. You can:
 
 ## Extending it
 
-Beyond the toggle, two surfaces are user-extensible rather than hardcoded:
+Beyond the toggle, three surfaces are extensible or shared rather than hardcoded:
 
 - **Navigation guides** — `web-learn` saves site-specific playbooks that
   auto-match by domain and resurface in later sessions. See
@@ -71,6 +71,14 @@ Beyond the toggle, two surfaces are user-extensible rather than hardcoded:
   and drive a patched engine like [Camoufox](https://github.com/daijro/camoufox)
   yourself. The full flow lives in [Backend Architecture](#backend-architecture)
   and [`contributed/README.md`](./contributed/README.md).
+- **Toolset toggles** — the `/web` toggle is powered by the shared
+  [`pi-tool-masking`](https://www.npmjs.com/package/pi-tool-masking) peer dep,
+  which handles active-set masking, sibling-tool union math, and the
+  `TOOLSET_EVENTS` protocol that keeps the `browser`/`search` status-bar
+  glyphs in sync across extensions. It's published as a general toggle
+  mechanism — any extension that hides/shows its own tools can build on the
+  same scheme so masking and glyph events stay consistent across the whole
+  agent, rather than each toggle reinventing its own.
 
 ---
 
