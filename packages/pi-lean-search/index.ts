@@ -4,7 +4,7 @@
  * Registers the `web-search` tool and a `/searxng-status` diagnostic command.
  * Manages the `search` status bar slot with health-colored glyphs.
  *
- * Owns the `search.web` toolset (co-activated off `portal.web`):
+ * Owns the `pi-lean-dimension.search` toolset (co-activated off `pi-lean-dimension.web`):
  *   ● searxng  (accent/blue)    — healthy and reachable
  *   ● searxng  (warning/yellow)  — server up but pipeline degraded
  *   ● searxng  (error/red)      — unreachable
@@ -24,9 +24,9 @@ import { webSearchTool } from "./web-search-tool.js";
 // ─── Toolset spec ────────────────────────────────────────────────
 
 const SEARCH_WEB_SPEC: ToolsetSpec = {
-	id: "search.web",
+	id: "pi-lean-dimension.search",
 	names: new Set(["web-search"]),
-	persistKey: "toolset-state:search.web",
+	persistKey: "toolset-state:pi-lean-dimension.search",
 	defaultEnabled: true,
 };
 
@@ -35,7 +35,7 @@ const SEARCH_WEB_SPEC: ToolsetSpec = {
 /** Cached SearXNG URL (read once at startup, stable mid-session). */
 let _searxngUrl: string | undefined;
 
-/** Last known search.web enabled state (updated by library events). */
+/** Last known pi-lean-dimension.search enabled state (updated by library events). */
 let _lastSearchEnabled = true;
 
 /** Last known health state: true=healthy, false=unreachable, null=unconfigured. */
@@ -128,10 +128,10 @@ function displayUrl(url: string): string {
 /**
  * Render the `search` status slot based on toolset state + health.
  *
- *   search.web off         → ○ searxng
- *   search.web on + healthy → ● searxng (accent/blue)
- *   search.web on + degraded → ● searxng (warning/yellow)
- *   search.web on + unreachable → ● searxng (error/red)
+ *   pi-lean-dimension.search off         → ○ searxng
+ *   pi-lean-dimension.search on + healthy → ● searxng (accent/blue)
+ *   pi-lean-dimension.search on + degraded → ● searxng (warning/yellow)
+ *   pi-lean-dimension.search on + unreachable → ● searxng (error/red)
  *   unconfigured           → (clear slot)
  */
 function renderSearchGlyph(ctx: {
@@ -154,13 +154,13 @@ function renderSearchGlyph(ctx: {
 		return;
 	}
 
-	// search.web disabled — show off state
+	// pi-lean-dimension.search disabled — show off state
 	if (!_lastSearchEnabled) {
 		safeSetStatus("○ searxng");
 		return;
 	}
 
-	// search.web enabled — show health-colored glyph
+	// pi-lean-dimension.search enabled — show health-colored glyph
 	if (!_lastHealth) {
 		safeSetStatus(ctx.ui.theme.fg("error", "●") + " searxng");
 		return;
@@ -193,15 +193,15 @@ export default function (pi: ExtensionAPI) {
 	// ── Register the web-search tool ─────────────────────────
 	pi.registerTool(webSearchTool);
 
-	// ── Define the search.web toolset ────────────────────────
+	// ── Define the pi-lean-dimension.search toolset ───────────
 	// Registers restore handler on session_start / session_tree.
 	const searchToolset = defineToolset(pi, SEARCH_WEB_SPEC);
 
-	// ── Co-activation: mirror portal.web changed events ──────
+	// ── Co-activation: mirror pi-lean-dimension.web changed events ─
 	// Listen on changed ONLY, not restored (§10.1).
 	pi.events.on(TOOLSET_EVENTS.changed, (data: unknown) => {
 		const event = data as ToolsetChangedEvent;
-		if (event.id === "portal.web") {
+		if (event.id === "pi-lean-dimension.web") {
 			if (event.enabled) {
 				searchToolset.enable(pi);
 			} else {
@@ -213,7 +213,7 @@ export default function (pi: ExtensionAPI) {
 	// ── Keep cached state in sync with library events ────────
 	const syncSearchState = (data: unknown) => {
 		const event = data as ToolsetChangedEvent;
-		if (event.id === "search.web") {
+		if (event.id === "pi-lean-dimension.search") {
 			_lastSearchEnabled = event.enabled;
 			if (_lastCtx) renderSearchGlyph(_lastCtx);
 		}

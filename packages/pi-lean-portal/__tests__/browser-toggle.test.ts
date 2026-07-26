@@ -259,26 +259,26 @@ describe("getToggleState / getLearnState", () => {
 //  appendEntry persist keys
 // ==================================================================
 describe("persistence key split", () => {
-	it("appends toolset-state:portal.web on enable", async () => {
+	it("appends toolset-state:pi-lean-dimension.web on enable", async () => {
 		const { pi } = mockPi([]);
 		browserToggle(pi);
 
 		await captureWebHandler(pi)("on", mockCtx());
 
 		const webCalls = (pi.appendEntry as any).mock.calls.filter(
-			(c: any) => c[0] === "toolset-state:portal.web",
+			(c: any) => c[0] === "toolset-state:pi-lean-dimension.web",
 		);
 		expect(webCalls.length).toBeGreaterThanOrEqual(1);
 	});
 
-	it("appends toolset-state:portal.learn on learn", async () => {
+	it("appends toolset-state:pi-lean-dimension.web-learn on learn", async () => {
 		const { pi } = mockPi([]);
 		browserToggle(pi);
 
 		await captureWebHandler(pi)("learn", mockCtx());
 
 		const learnCalls = (pi.appendEntry as any).mock.calls.filter(
-			(c: any) => c[0] === "toolset-state:portal.learn",
+			(c: any) => c[0] === "toolset-state:pi-lean-dimension.web-learn",
 		);
 		expect(learnCalls.length).toBeGreaterThanOrEqual(1);
 	});
@@ -377,7 +377,7 @@ describe("/web focus-mode guard", () => {
 //  Glyph sync on external-plugin changed events
 // ==================================================================
 describe("external-plugin glyph sync", () => {
-	it("re-renders browser glyph off when external plugin fires portal.web disabled", async () => {
+	it("re-renders browser glyph off when external plugin fires pi-lean-dimension.web disabled", async () => {
 		const { pi, handlers, events } = mockPi();
 		browserToggle(pi);
 
@@ -391,7 +391,7 @@ describe("external-plugin glyph sync", () => {
 		// Clear the initial render call so we only see the external-plugin re-render.
 		vi.clearAllMocks();
 
-		// Simulate an external plugin disabling portal.web — it has
+		// Simulate an external plugin disabling pi-lean-dimension.web — it has
 		// already removed browser tools from the active set.
 		const nonBrowser = ALL_TOOLS.map((t) => t.name).filter(
 			(n) => !BROWSER_TOOL_NAMES.has(n),
@@ -399,7 +399,7 @@ describe("external-plugin glyph sync", () => {
 		(pi.getActiveTools as any).mockReturnValue(nonBrowser);
 
 		events.emit(TOOLSET_EVENTS.changed, {
-			id: "portal.web",
+			id: "pi-lean-dimension.web",
 			enabled: false,
 		});
 

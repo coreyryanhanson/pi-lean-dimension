@@ -15,7 +15,7 @@ import { readMergedSettings } from "./core/shared/settings-reader.js";
 // ---- Toolset specs -----------------------------------------------
 
 const PORTAL_WEB_SPEC: ToolsetSpec = {
-	id: "portal.web",
+	id: "pi-lean-dimension.web",
 	names: new Set([
 		"web-fetch",
 		"browser-navigate",
@@ -29,15 +29,15 @@ const PORTAL_WEB_SPEC: ToolsetSpec = {
 		"browser-inspect",
 		"web-guide",
 	]),
-	persistKey: "toolset-state:portal.web",
+	persistKey: "toolset-state:pi-lean-dimension.web",
 };
 
 const PORTAL_LEARN_SPEC: ToolsetSpec = {
-	id: "portal.learn",
+	id: "pi-lean-dimension.web-learn",
 	names: new Set(["web-learn"]),
-	persistKey: "toolset-state:portal.learn",
+	persistKey: "toolset-state:pi-lean-dimension.web-learn",
 	defaultEnabled: false,
-	requires: ["portal.web"],
+	requires: ["pi-lean-dimension.web"],
 };
 
 // ---- Status bar cached state (derived from library events) ------

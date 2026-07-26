@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Renamed toolset IDs to a namespaced scheme** — the three toolset
+  identifiers are now `pi-lean-dimension.web` (was `portal.web`),
+  `pi-lean-dimension.web-learn` (was `portal.learn`), and
+  `pi-lean-dimension.search` (was `search.web`), with `toolset-state:`
+  persist keys following suit. The old names were generic enough to risk
+  colliding with third-party plugin toolsets; the package-name prefix
+  reserves the namespace and keeps co-activation wiring unambiguous.
+  Existing persisted toggle state under the old keys is not migrated — a
+  session branched before the rename re-resolves to defaults.
+
 ## [0.3.0] - 2026-07-26
 
 ### Added

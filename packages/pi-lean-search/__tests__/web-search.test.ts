@@ -447,15 +447,15 @@ beforeEach(() => {
 });
 
 // ==================================================================
-//  Toolset wiring: portal.web ↔ search.web co-activation mirror
+//  Toolset wiring: pi-lean-dimension.web ↔ pi-lean-dimension.search co-activation mirror
 // ==================================================================
-describe("portal.web co-activation mirror", () => {
-	it("disables search.web when portal.web changed fires with enabled: false", async () => {
+describe("pi-lean-dimension.web co-activation mirror", () => {
+	it("disables pi-lean-dimension.search when pi-lean-dimension.web changed fires with enabled: false", async () => {
 		const { pi, events } = mockSearchPi();
 		searchExtension(pi);
 
 		events.emit(TOOLSET_EVENTS.changed, {
-			id: "portal.web",
+			id: "pi-lean-dimension.web",
 			enabled: false,
 		});
 
@@ -464,12 +464,12 @@ describe("portal.web co-activation mirror", () => {
 		);
 	});
 
-	it("enables search.web when portal.web changed fires with enabled: true", async () => {
+	it("enables pi-lean-dimension.search when pi-lean-dimension.web changed fires with enabled: true", async () => {
 		const { pi, events } = mockSearchPi([]);
 		searchExtension(pi);
 
 		events.emit(TOOLSET_EVENTS.changed, {
-			id: "portal.web",
+			id: "pi-lean-dimension.web",
 			enabled: true,
 		});
 
