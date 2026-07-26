@@ -1,6 +1,6 @@
 {
 	"name": "pi-lean-portal",
-	"version": "0.3.1",
+	"version": "0.3.2",
 	"description": "Pi extension. Interactive web browsing for Pi — a /web toggle removes the tools from context when switched off, Playwright Chromium/Firefox deliver accessibility-tree snapshots, persistent profiles, cookies, and domain-matched guides; custom/stealth backends (Camoufox) plug in when a site blocks the shipped browsers.",
 	"keywords": [
 		"pi-package",
