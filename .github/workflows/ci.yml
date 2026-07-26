@@ -41,6 +41,15 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      miniwob:
+        description: "Run MiniWoB baseline browser tests (chromium, firefox, python bridges)"
+        type: boolean
+        default: false
+      contributed:
+        description: "Run Contributed backend tests (Camoufox)"
+        type: boolean
+        default: false
 
 # Cancel in-flight runs for the same PR/branch to save CI minutes.
 concurrency:
@@ -95,6 +104,9 @@ jobs:
     name: MiniWoB browser tests
     runs-on: ubuntu-latest
     needs: structural
+    # On push/PR always run (existing behaviour).  On workflow_dispatch only
+    # when the "miniwob" input is toggled on.
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.miniwob == 'true'
 
     # Auto-skips individual backends when their prerequisites are absent.
 
@@ -152,11 +164,11 @@ jobs:
   # bridge template copy, contract tests, and MiniWoB user-backends runner.
   #
   # workflow_dispatch-only — does NOT run on every PR. Trigger manually
-  # from the Actions tab to validate the contributed pipeline on a branch.
+  # from the Actions tab and toggle the "contributed" input on to run.
   contributed:
     name: Contributed backends (Camoufox)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.contributed == 'true'
     needs: structural
 
     steps:
@@ -180,12 +192,36 @@ jobs:
         with:
           python-version: "3.12"
 
+      # ── Camoufox stack is PINNED for reproducibility ───────────────
+      #
+      # The pinned versions live in
+      # `contributed/camoufox-py/pin.json` (sidecar manifest).
+      # The PyPI package has not drifted (``0.6.0`` is current);
+      # the *binary* is the moving target.  ``152.0.4-beta.27``
+      # broke the stealth quirks (wheel scroll no-ops,
+      # humanized-click ``locator.click`` flaked past the 5 s
+      # timeout and blew MiniWoB task budgets) — the quirks
+      # were adapted to the new binary
+      # (``_scroll_via_wheel`` off; ``launch.humanize=false`` in the
+      # contributed test suites), so the pin now tracks
+      # ``152.0.4-beta.28``.
+      #
+      # To upgrade: reproduce locally (BROWSER_DEBUG=1), adapt the
+      # affected quirks in contributed/camoufox-py/bridge.py and
+      # backends/python-base/pi_browser_bridge/playwright_base.py,
+      # then bump the binary field in pin.json and re-run the
+      # contributed job via workflow_dispatch to confirm green.
+      # See contributed/README.md ("Pinned CI stack") for the
+      # full upgrade procedure.
       - name: Create user-backends hierarchy and install Camoufox
         run: |
           mkdir -p ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py
           python3 -m venv ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv
-          ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv/bin/pip install --quiet "cloverlabs-camoufox[geoip]"
-          ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv/bin/python -m camoufox fetch
+          PIN_JSON="packages/pi-lean-portal/contributed/camoufox-py/pin.json"
+          PACKAGE_SPEC="$(jq -r '.package' "$PIN_JSON")"
+          BINARY_REF="$(jq -r '.binary' "$PIN_JSON")"
+          ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv/bin/pip install --quiet "$PACKAGE_SPEC"
+          ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/.venv/bin/python -m camoufox fetch "$BINARY_REF"
 
       - name: Copy Camoufox bridge template to user-backends
         run: |

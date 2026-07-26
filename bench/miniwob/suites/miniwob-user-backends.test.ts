@@ -139,7 +139,7 @@ if (discovered.length > 0) {
 						supportsJavaScriptEvaluate: true,
 					},
 				});
-				await plugin.init({});
+				await plugin.init({ launch: { humanize: false } });
 				return plugin;
 			},
 		};

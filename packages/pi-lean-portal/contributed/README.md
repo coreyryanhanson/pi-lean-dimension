@@ -26,6 +26,52 @@ discovery, `browser.init` RPC, `PYTHONPATH` injection), see the
 "Stealth backends (user-managed)" section of
 [`packages/pi-lean-portal/AGENTS.md`](../../AGENTS.md).
 
+## Pinned CI stack
+
+The `contributed` GitHub Actions job pins both pieces of the Camoufox
+stack for reproducibility — the patched-Firefox **binary** and the
+**`cloverlabs-camoufox`** PyPI package. The canonical pin values live in
+the sidecar manifest `contributed/camoufox-py/pin.json` (the CI workflow
+reads them from there via `jq`). Unpinned, `camoufox fetch` pulls the
+latest stable binary on every run, and a new release silently changed
+wheel-scroll and humanized-click semantics — the quirks in
+`playwright_base.py` were written against the older binary and the
+`contributed` job went red.
+
+| Pin | Value | Pinned since | Source |
+|-----|-------|--------------|--------|
+| PyPI package | `cloverlabs-camoufox==0.6.0` | Jul 14 2026 | `pin.json` `.package` |
+| Patched binary | `official/152.0.4-beta.28` | Jul 16 2026 | `pin.json` `.binary` |
+
+`152.0.4-beta.27` shipped on Jul 16 2026 and broke the unpinned job:
+`page.mouse.wheel` became a no-op and `humanize=True`'s bezier motion
+made `locator.click(timeout=5s)` flake/timeout and blew MiniWoB task
+budgets. The quirks were adapted to the new binary —
+`_scroll_via_wheel` flipped off (eval `window.scrollBy` works again)
+and the contributed test suites force `launch.humanize=false` (they
+exercise the backend contract, not human-emulation stealth). The pin
+now tracks `152.0.4-beta.28`.
+
+### Upgrade procedure
+
+1. Reproduce the failure locally with `BROWSER_DEBUG=1` against the
+   **latest** Camoufox stack (bump both pins or drop them temporarily):
+   `npm run setup:miniwob` then
+   `CONTRIB_RUN=1 npx vitest run packages/pi-lean-portal/__tests__/run-contributed-suites.test.ts bench/miniwob/suites/miniwob-user-backends.test.ts`.
+2. Adapt the affected quirks in
+   `contributed/camoufox-py/bridge.py` and/or
+   `backends/python-base/pi_browser_bridge/playwright_base.py`. Keep the
+   `ponytail:` ceiling-notes on each quirk accurate to the new binary.
+3. Update `pin.json` to the newest passing version and re-run the
+   `contributed` job via `workflow_dispatch` to confirm green.
+4. The `pin.json` file drives both CI and the per-backend binary drift
+   check (see below), so bumping it here is the single source of truth
+   — no separate CI edit is needed.
+
+The `camoufox fetch` version format is `<repo>/<version>` (e.g.
+`official/152.0.4-beta.28`); run `camoufox sync` then `camoufox list` to
+discover available versions.
+
 ## Where things live
 
 ```
@@ -35,6 +81,8 @@ discovery, `browser.init` RPC, `PYTHONPATH` injection), see the
 └── user-backends/           ← stealth backends go here
     └── camoufox-py/
         ├── bridge.py        ← you copy this from the source repo
+        ├── pin.json         ← pinned versions this bridge was tested
+        │                      against; copy alongside bridge.py
         └── .venv/           ← you create this (engine pip pkg + playwright)
 ```
 
@@ -56,7 +104,7 @@ The convention is `<name>-py/` (mirrors the shipped `chromium-py` /
 `firefox-py` naming). The directory name is the plugin `name` you will
 register in `settings.json`.
 
-### 2. Copy the template bridge
+### 2. Copy the template bridge and pin manifest
 
 Copy the source-repo template into your user-backends tree:
 
@@ -64,7 +112,15 @@ Copy the source-repo template into your user-backends tree:
 mkdir -p ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py
 cp packages/pi-lean-portal/contributed/camoufox-py/bridge.py \
    ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/bridge.py
+cp packages/pi-lean-portal/contributed/camoufox-py/pin.json \
+   ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/pin.json
 ```
+
+The `pin.json` sidecar is what the CI reads and what the bridge's
+built-in drift check uses at launch. Copying it alongside the bridge
+lets the binary self-verify that the locally installed package
+matches the tested pin — a warning is emitted to stderr if the
+versions diverge.
 
 You need the **git repo** for this step — the template is not in the
 `npm install pi-lean-portal` tarball (`contributed/` is not included in the
@@ -226,10 +282,12 @@ as class attributes on your subclass:
 |------|---------|-----------------|
 | `_fingerprint_managed_context` | `False` | `create_browser_context()` skips hardcoded `viewport`/`user_agent`; lets the fingerprint package set them. |
 | `_eval_prefix` | `""` | Prepended to every `page.evaluate` expression in `do_evaluate` (e.g. Camoufox's `"mw:"` routes writes to the main world). |
-| `_scroll_via_wheel` | `False` | `do_scroll` uses `page.mouse.wheel` instead of `page.evaluate("window.scrollBy")` (avoids eval-write under isolated-world stealth). |
+| `_scroll_via_wheel` | `False` | `do_scroll` uses `page.mouse.wheel` instead of `page.evaluate("window.scrollBy")`. Legacy Camoufox (``135.0.1-beta.24``) needed this — eval-write scrollBy no-op'd under the isolated world. Current binary (``152.0.4-beta.28``) is the reverse: wheel no-ops, eval scrollBy works, so Camoufox now leaves the default `False`. |
 | `_skip_default_viewport` | `False` | Skips Playwright's `Browser.setDefaultViewport` CDP call (Camoufox binary rejects its `isMobile` prop). |
 | `_skip_networkidle` | `False` | Nav-settle uses `load` instead of `networkidle` (patched binaries don't fire `networkidle` reliably). |
 | `_wrap_mw_eval_in_eval` | `False` | `do_evaluate` rewrites the expression as `eval(<JSON-string of expression>)` before prepending `_eval_prefix`, so multi-statement scripts survive Camoufox's `let _s = (${script})` main-world wrapper (which only accepts a single expression). Camoufox-only; flip back to `False` when a future driver fixes the wrapper. |
+| `_settle_budget_ms` | `400` | Poll budget (ms) for `_wait_for_navigation_settle` when no `framenavigated` event fires. Stealth backends whose patched Juggler fires events with higher latency (e.g. Camoufox) set a larger value (2000) to avoid settling before the navigation commit is observable. |
+| `_url_stability_settle` | `False` | When True, the no-nav poll waits for the URL to stabilise at a new value for 150 ms before exiting, instead of a fixed budget. Complements a wider `_settle_budget_ms` by confirming the URL has finished changing. |
 | `_csp_safe_readonly_via_init_script` | `False` | `create_browser_context` registers an init script (isolated world, CSP-free) that wraps the EXTRACTOR_SCRIPT in a `DOMContentLoaded`-deferred IIFE writing JSON to `<meta id="__pi-extract">`. `do_evaluate(read_only=True)` reads from that meta via `query_selector` + `get_attribute` instead of `page.evaluate` (which is CSP-blocked on some patched-Firefox stealth binaries). |
 
 All flags default off, so the shipped `chromium-py` / `firefox-py`

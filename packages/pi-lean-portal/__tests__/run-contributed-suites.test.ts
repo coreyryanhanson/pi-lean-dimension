@@ -187,6 +187,21 @@ ${Array.from({ length: 80 }, (_, i) => `<p>Paragraph ${i + 1}: content to make t
 			// absent or has no matching entry, cfg stays {} (synthetic fallback).
 			const entry = pluginCfg?.plugins.find((p) => p.name === name);
 			const cfg = entry?.config ?? {};
+			// Camoufox ``152.0.4-beta.27+`` humanized-click motion makes
+			// ``locator.click(timeout=5s)`` flake/timeout and eats MiniWoB
+			// task budgets (~1.5s/click vs 10s task timers).  The contributed
+			// suite exercises the backend *contract*, not human-emulation
+			// stealth, so force ``launch.humanize=false`` for every discovered
+			// backend.  Real users keep the humanize=True default for
+			// evasion-sensitive browsing.
+			const launchOverride = {
+				...((cfg.launch as Record<string, unknown> | undefined) ?? {}),
+				humanize: false,
+			};
+			const testCfg: Record<string, unknown> = {
+				...cfg,
+				launch: launchOverride,
+			};
 			if (!entry) {
 				console.warn(
 					`[contributed-runner] ${name}: no settings entry — synthetic config`,
@@ -201,12 +216,12 @@ ${Array.from({ length: 80 }, (_, i) => `<p>Paragraph ${i + 1}: content to make t
 				new PythonPluginAdapter(`${name}-${idSuffix}`, {
 					bridgeScript: probe.bridgePath,
 					pythonPath:
-						typeof cfg.pythonPath === "string"
-							? cfg.pythonPath
+						typeof testCfg.pythonPath === "string"
+							? testCfg.pythonPath
 							: probe.venvPython,
-					capabilities: mergeCapabilities(cfg.capabilities),
-					...(typeof cfg.transportTimeoutMs === "number"
-						? { transportTimeoutMs: cfg.transportTimeoutMs }
+					capabilities: mergeCapabilities(testCfg.capabilities),
+					...(typeof testCfg.transportTimeoutMs === "number"
+						? { transportTimeoutMs: testCfg.transportTimeoutMs }
 						: {}),
 				});
 
@@ -231,7 +246,7 @@ ${Array.from({ length: 80 }, (_, i) => `<p>Paragraph ${i + 1}: content to make t
 					getServerUrl: () => serverUrl,
 					createPlugin: async () => {
 						const p = buildAdapter("persist");
-						await p.init(cfg);
+						await p.init(testCfg);
 						return p;
 					},
 				});
@@ -246,12 +261,13 @@ ${Array.from({ length: 80 }, (_, i) => `<p>Paragraph ${i + 1}: content to make t
 				registerContributedParitySuite({
 					name,
 					probe,
-					...(cfg.capabilities !== undefined
+					...(testCfg.capabilities !== undefined
 						? {
-								capabilities: cfg.capabilities as Partial<PluginCapabilities>,
+								capabilities:
+									testCfg.capabilities as Partial<PluginCapabilities>,
 							}
 						: {}),
-					config: cfg,
+					config: testCfg,
 					getBaseUrl: async () => miniwobBaseUrl,
 				});
 
@@ -268,7 +284,7 @@ ${Array.from({ length: 80 }, (_, i) => `<p>Paragraph ${i + 1}: content to make t
 				describe("quirks", () => {
 					beforeAll(async () => {
 						const p = buildAdapter("quirks");
-						await p.init(cfg);
+						await p.init(testCfg);
 						quirks_ = await p.describeQuirks();
 						await p.cleanupAll().catch(() => {});
 					});
@@ -276,7 +292,7 @@ ${Array.from({ length: 80 }, (_, i) => `<p>Paragraph ${i + 1}: content to make t
 					it("eval_prefix: evaluate('1 + 1') === 2", async () => {
 						if (!quirks_.eval_prefix) return;
 						const p = buildAdapter("quirks-eval");
-						await p.init(cfg);
+						await p.init(testCfg);
 						const nav = await p.navigate(
 							`${serverUrl}/simple`,
 							"quirks-eval",
@@ -292,7 +308,7 @@ ${Array.from({ length: 80 }, (_, i) => `<p>Paragraph ${i + 1}: content to make t
 					it("scroll_via_wheel: scroll moves the page", async () => {
 						if (!quirks_.scroll_via_wheel) return;
 						const p = buildAdapter("quirks-scroll");
-						await p.init(cfg);
+						await p.init(testCfg);
 						const nav = await p.navigate(
 							`${serverUrl}/scroll`,
 							"quirks-scroll",

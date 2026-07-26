@@ -6,6 +6,7 @@ User-installed backend for fingerprint-managed browsing via cloverlabs-camoufox.
 
 import json
 import sys
+from pathlib import Path
 
 # Lazy-patch Playwright's coreBundle.js if needed. The patcher is idempotent
 # and guarded: it only runs once per file (marker comment), warns on pattern
@@ -34,7 +35,7 @@ class CamoufoxPyBridge(PlaywrightBridge):
     """Stealth bridge using Camoufox (Firefox-based).
 
     The base's quirks dispatch handles eval-world routing (``mw:`` prefix)
-    and wheel-based scrolling (``_scroll_via_wheel``).  This subclass sets
+    and eval-based scrolling (``window.scrollBy``).  This subclass sets
     the quirk flags and overrides ``_launch_browser`` to call
     ``camoufox.NewBrowser`` with the plugin config's launch options.
 
@@ -60,7 +61,13 @@ class CamoufoxPyBridge(PlaywrightBridge):
     # crashes on this binary (same ``isMobile`` rejection).  Keep using
     # the standard ``browser.new_context()``.
     _eval_prefix: str = "mw:"
-    _scroll_via_wheel: bool = True
+    # Camoufox ``152.0.4-beta.27+`` no-ops ``page.mouse.wheel`` (the ``wheel``
+    # listener never fires), so the base's eval-based ``window.scrollBy`` is
+    # the only path that moves the page on the current binary.  Leave the
+    # base default (``_scroll_via_wheel = False``).  The legacy
+    # ``135.0.1-beta.24`` binary needed ``True`` (eval-write scrollBy
+    # no-op'd under the isolated world); flipped off when the CI pin moved
+    # to ``152.0.4-beta.28``.  See ``playwright_base._scroll_via_wheel``.
     # The Camoufox patched Firefox binary rejects the ``isMobile`` property that
     # Playwright includes in ``Browser.setDefaultViewport``.  Skip the call.
     _skip_default_viewport: bool = True
@@ -75,12 +82,95 @@ class CamoufoxPyBridge(PlaywrightBridge):
     # `mw:eval(<json>)` so it is a single expression that `eval` runs
     # verbatim.  See the `_wrap_mw_eval_in_eval` quirk docstring.
     _wrap_mw_eval_in_eval: bool = True
+    # The patched Camoufox Juggler fires ``framenavigated`` events and
+    # updates ``page.url`` with higher latency than a standard Playwright
+    # browser.  Widen the settle poll budget so a ``setTimeout``-delayed
+    # redirect (e.g. ``location.href`` after 280 ms) is still captured
+    # under CI load.  URL stability mode confirms the URL has finished
+    # changing before declaring "no navigation" — the 150 ms hold is
+    # negligible against the wider budget.
+    _settle_budget_ms: int = 2000
+    _url_stability_settle: bool = True
     _install_hint: str = (
         "Camoufox browser not installed.\n"
         "Run the following commands in your camoufox-py virtual environment:\n"
         "  pip install cloverlabs-camoufox[geoip]\n"
         "  python -m camoufox fetch"
     )
+
+    def _check_pinned_version(self) -> None:
+        """Best-effort runtime check that the installed Camoufox stack matches pin.json.
+
+        Reads ``pin.json`` (same directory as this module) and
+        compares the pinned ``cloverlabs-camoufox`` package version
+        against what's actually installed via pip metadata.
+        Warns to stderr on any mismatch or if the check cannot be
+        performed.  Never raises — this is advisory only.
+        """
+        try:
+            pin_path = Path(__file__).parent / "pin.json"
+            if not pin_path.exists():
+                return
+            pinned = json.loads(pin_path.read_text())
+        except Exception:
+            return
+
+        expected_pkg = pinned.get("package", "")
+        if expected_pkg:
+            try:
+                from importlib.metadata import version as _get_version
+
+                installed = _get_version("cloverlabs-camoufox")
+                expected_ver = expected_pkg.split("==")[-1].split("[")[0]
+                if installed != expected_ver:
+                    print(
+                        "pi-bridge camoufox-py: pin.json pins "
+                        f"cloverlabs-camoufox=={expected_ver} but "
+                        f"{installed} is installed — browser binary "
+                        "drift risk.",
+                        file=sys.stderr,
+                    )
+            except Exception:
+                pass  # package not installed or metadata unavailable
+
+        expected_binary = pinned.get("binary", "")
+        if expected_binary:
+            try:
+                import camoufox  # type: ignore[import-unresolved]
+                _binary_version = None
+                for _attr in (
+                    "__binary_version__",
+                    "_binary_version",
+                    "binary_version",
+                ):
+                    _candidate = getattr(camoufox, _attr, None)
+                    if _candidate is not None:
+                        _binary_version = _candidate
+                        break
+                if _binary_version is None:
+                    _sync = getattr(camoufox, "sync", None)
+                    if _sync is not None:
+                        for _attr in (
+                            "__binary_version__",
+                            "_binary_version",
+                            "binary_version",
+                        ):
+                            _candidate = getattr(_sync, _attr, None)
+                            if _candidate is not None:
+                                _binary_version = _candidate
+                                break
+                if _binary_version is None:
+                    return
+                expected_ref = expected_binary.split("/")[-1]
+                if _binary_version != expected_ref:
+                    print(
+                        "pi-bridge camoufox-py: pin.json expects binary "
+                        f"{expected_ref} but {_binary_version} is "
+                        "installed — binary drift risk.",
+                        file=sys.stderr,
+                    )
+            except Exception:
+                pass  # camoufox not importable yet — skip silently
 
     def _launch_browser(self):  # type: ignore[override]
         """Launch Camoufox via ``camoufox.NewBrowser``.
@@ -103,6 +193,8 @@ class CamoufoxPyBridge(PlaywrightBridge):
 
         Returns a standard Playwright ``Browser`` patched by Camoufox.
         """
+        self._check_pinned_version()
+
         # Lazy-import so non-Camoufox bridges don't pay the import cost
         # and to give a clear error when the package is missing.
         try:
@@ -196,18 +288,20 @@ if __name__ == "__main__":
         import camoufox  # type: ignore[import-unresolved] # noqa: F401
     except ImportError:
         print(
-            json.dumps({
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32000,
-                    "message": (
-                        "cloverlabs-camoufox is not installed.\n"
-                        "Run: pip install cloverlabs-camoufox[geoip] && "
-                        "python -m camoufox fetch"
-                    ),
-                },
-            })
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": -32000,
+                        "message": (
+                            "cloverlabs-camoufox is not installed.\n"
+                            "Run: pip install cloverlabs-camoufox[geoip] && "
+                            "python -m camoufox fetch"
+                        ),
+                    },
+                }
+            )
         )
         sys.stdout.flush()
         sys.exit(1)

@@ -297,8 +297,10 @@ BrowserGym removal and host/MiniWoB setup decision record.
 
 The repository includes a GitHub Actions workflow at
 `.github/workflows/ci.yml` that runs on every PR and push to `main`,
-split into three jobs (two run on every PR; one is opt-in via
-`workflow_dispatch`):
+split into three jobs, two gated by inputs on
+`workflow_dispatch` (both default to **off** so a bare manual
+run only hits structural; push/PR always runs both
+`structural` + `miniwob`):
 
 **`structural` job (fast, no browser):**
 
@@ -310,6 +312,10 @@ split into three jobs (two run on every PR; one is opt-in via
 6. **Run Python bridge unit tests** via `npm run test:py-bridge` (248 pure-logic pytest tests under `packages/pi-lean-portal/backends/python-base/tests/` — no Playwright wheel or browser binaries required)
 
 **`miniwob` job (cross-engine browser tests, depends on structural):**
+
+- On push/PR: always runs.
+- On `workflow_dispatch`: runs only when the **miniwob** input
+  is toggled on.
 
 1. **Checkout** + **Setup Node.js 22** + `npm ci`
 2. **Install Playwright Chromium** (drives Node chromium +
@@ -333,15 +339,21 @@ content is unreachable. This keeps `npm test` and
 **`contributed` job (opt-in, Camoufox user-backends validation):**
 
 `workflow_dispatch`-only — does NOT run on every PR. Trigger manually
-from the Actions tab. Depends on `structural` passing.
+from the Actions tab and toggle the **contributed** input on.
+Depends on `structural` passing.
 
 1. **Checkout** + **Setup Node.js 22** + `npm ci`
 2. **Install Firefox system deps** via `npx playwright install-deps firefox`
-3. **Setup Python 3.12 + user-backends venv** with `cloverlabs-camoufox[geoip]`
-   and `python -m camoufox fetch`
-4. **Copy Camoufox bridge template** from
-   `packages/pi-lean-portal/contributed/camoufox-py/bridge.py`
-   into the user-backends tree
+3. **Setup Python 3.12 + user-backends venv** using the pinned
+   versions in `packages/pi-lean-portal/contributed/camoufox-py/pin.json`
+   (the CI workflow reads package + binary from that sidecar via `jq`;
+   PyPI package pinned since Jul 14 2026, binary pinned to the current
+   release after the quirks were adapted to ``152.0.4-beta.28`` — see
+   `packages/pi-lean-portal/contributed/README.md`
+   "Pinned CI stack" for the upgrade procedure)
+4. **Copy Camoufox bridge template** and pin manifest from
+   `packages/pi-lean-portal/contributed/camoufox-py/`
+   (`bridge.py` + `pin.json`) into the user-backends tree
 5. **Clone MiniWoB++ content** via `npm run setup:miniwob`
 6. **Start MiniWoB static server** on port 8080
 7. **Run Camoufox contract tests** + the
@@ -350,8 +362,10 @@ from the Actions tab. Depends on `structural` passing.
 8. **Upload test artifacts on failure** (vitest output, Playwright traces)
 
 **Manual trigger:** The workflow also supports `workflow_dispatch`
-for re-running jobs from the Actions tab without pushing a new commit,
-and for triggering the `contributed` job.
+for re-running jobs from the Actions tab without pushing a new commit.
+The **miniwob** and **contributed** inputs both default to **off**;
+turn them on to run the respective jobs. When both are off, only
+the `structural` job runs (fast, no browser required).
 
 ## TypeScript Quirks
 
