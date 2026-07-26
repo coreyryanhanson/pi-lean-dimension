@@ -691,12 +691,10 @@ When creating navigation guides with `web-learn`:
 
 ### Security
 
-- URLs are validated against private IP ranges (10.x, 172.16-31.x,
-  192.168.x, 127.x, 169.254.169.254) — localhost and internal networks
-  are blocked by default
-- Dangerous URL schemes are blocked: `file:`, `ftp:`, `data:`,
-  `javascript:`, `vbscript:`
-- Secrets in URLs are detected heuristically
+- URLs are parsed with `new URL()` as input validation — malformed
+  URLs are rejected, but no SSRF boundary is enforced (a coding agent
+  already has filesystem and shell access, so blocking localhost or
+  private IPs would be theater)
 - Profile state is stored with restricted file permissions (0700 dirs,
   0600 files)
 
