@@ -200,9 +200,8 @@ jobs:
       # the *binary* is the moving target.  ``152.0.4-beta.27``
       # broke the stealth quirks (wheel scroll no-ops,
       # humanized-click ``locator.click`` flaked past the 5 s
-      # timeout and blew MiniWoB task budgets) — diagnosed in
-      # docs/decisions/camoufox-ci-drift.md.  Step 2 of that plan
-      # adapted the quirks to the new binary
+      # timeout and blew MiniWoB task budgets) — the quirks
+      # were adapted to the new binary
       # (``_scroll_via_wheel`` off; ``launch.humanize=false`` in the
       # contributed test suites), so the pin now tracks
       # ``152.0.4-beta.28``.

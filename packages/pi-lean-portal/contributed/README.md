@@ -36,19 +36,17 @@ reads them from there via `jq`). Unpinned, `camoufox fetch` pulls the
 latest stable binary on every run, and a new release silently changed
 wheel-scroll and humanized-click semantics — the quirks in
 `playwright_base.py` were written against the older binary and the
-`contributed` job went red. See
-[`docs/decisions/camoufox-ci-drift.md`](../../../docs/decisions/camoufox-ci-drift.md)
-for the full diagnosis and the Step 1 → Step 2 fix sequence.
+`contributed` job went red.
 
 | Pin | Value | Pinned since | Source |
 |-----|-------|--------------|--------|
 | PyPI package | `cloverlabs-camoufox==0.6.0` | Jul 14 2026 | `pin.json` `.package` |
-| Patched binary | `official/152.0.4-beta.28` | Step 2 drift fix | `pin.json` `.binary` |
+| Patched binary | `official/152.0.4-beta.28` | Jul 16 2026 | `pin.json` `.binary` |
 
 `152.0.4-beta.27` shipped on Jul 16 2026 and broke the unpinned job:
 `page.mouse.wheel` became a no-op and `humanize=True`'s bezier motion
 made `locator.click(timeout=5s)` flake/timeout and blew MiniWoB task
-budgets. Step 2 adapted the quirks to the new binary —
+budgets. The quirks were adapted to the new binary —
 `_scroll_via_wheel` flipped off (eval `window.scrollBy` works again)
 and the contributed test suites force `launch.humanize=false` (they
 exercise the backend contract, not human-emulation stealth). The pin

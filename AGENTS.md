@@ -348,8 +348,8 @@ Depends on `structural` passing.
    versions in `packages/pi-lean-portal/contributed/camoufox-py/pin.json`
    (the CI workflow reads package + binary from that sidecar via `jq`;
    PyPI package pinned since Jul 14 2026, binary pinned to the current
-   release after Step 2 of `docs/decisions/camoufox-ci-drift.md` adapted
-   the quirks — see `packages/pi-lean-portal/contributed/README.md`
+   release after the quirks were adapted to ``152.0.4-beta.28`` — see
+   `packages/pi-lean-portal/contributed/README.md`
    "Pinned CI stack" for the upgrade procedure)
 4. **Copy Camoufox bridge template** and pin manifest from
    `packages/pi-lean-portal/contributed/camoufox-py/`

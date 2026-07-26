@@ -193,8 +193,7 @@ ${Array.from({ length: 80 }, (_, i) => `<p>Paragraph ${i + 1}: content to make t
 			// suite exercises the backend *contract*, not human-emulation
 			// stealth, so force ``launch.humanize=false`` for every discovered
 			// backend.  Real users keep the humanize=True default for
-			// evasion-sensitive browsing; see
-			// ``docs/decisions/camoufox-ci-drift.md`` Step 2.
+			// evasion-sensitive browsing.
 			const launchOverride = {
 				...((cfg.launch as Record<string, unknown> | undefined) ?? {}),
 				humanize: false,
