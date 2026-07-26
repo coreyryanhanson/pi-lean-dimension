@@ -37,12 +37,14 @@
 		"prepack": "cp ../../LICENSE ./LICENSE",
 		"test": "vitest run"
 	},
+	"dependencies": {
+		"pi-tool-masking": "^1.0.0"
+	},
 	"peerDependencies": {
 		"@earendil-works/pi-ai": "*",
 		"@earendil-works/pi-coding-agent": "*",
 		"@earendil-works/pi-tui": "*",
 		"pi-lean-portal": "*",
-		"pi-tool-masking": "^1.0.0",
 		"typebox": "*"
 	},
 	"peerDependenciesMeta": {

@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pi-tool-masking` now ships as a regular dependency** — it was
+  incorrectly declared as a `peerDependency` in `pi-lean-portal` and
+  `pi-lean-search`, but unlike the `@earendil-works/*` and `typebox`
+  peers it is a standalone package the pi runtime does not provide.
+  npm does not auto-install peers on global/transitive installs, so a
+  clean `pi` install failed to load both extensions with
+  `Cannot find module 'pi-tool-masking'`. Reclassifying it as a
+  `dependency` lets npm hoist it to a single deduped instance
+  (preserving the singleton `TOOLSET_EVENTS` contract) on every install
+  path. The umbrella `pi-lean-dimension` package needs no change — it
+  pulls the dep transitively through its bundled children.
+
 ## [0.3.1] - 2026-07-26
 
 ### Changed
