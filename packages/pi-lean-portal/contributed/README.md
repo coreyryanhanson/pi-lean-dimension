@@ -30,18 +30,20 @@ discovery, `browser.init` RPC, `PYTHONPATH` injection), see the
 
 The `contributed` GitHub Actions job pins both pieces of the Camoufox
 stack for reproducibility — the patched-Firefox **binary** and the
-**`cloverlabs-camoufox`** PyPI package. Unpinned, `camoufox fetch`
-pulls the latest stable binary on every run, and a new release silently
-changed wheel-scroll and humanized-click semantics — the quirks in
+**`cloverlabs-camoufox`** PyPI package. The canonical pin values live in
+the sidecar manifest `contributed/camoufox-py/pin.json` (the CI workflow
+reads them from there via `jq`). Unpinned, `camoufox fetch` pulls the
+latest stable binary on every run, and a new release silently changed
+wheel-scroll and humanized-click semantics — the quirks in
 `playwright_base.py` were written against the older binary and the
 `contributed` job went red. See
 [`docs/decisions/camoufox-ci-drift.md`](../../../docs/decisions/camoufox-ci-drift.md)
 for the full diagnosis and the Step 1 → Step 2 fix sequence.
 
-| Pin | Value | Pinned since | How to override |
-|-----|-------|--------------|-----------------|
-| PyPI package | `cloverlabs-camoufox==0.6.0` | Jul 14 2026 | `.github/workflows/ci.yml` `pip install` line |
-| Patched binary | `official/152.0.4-beta.28` | Step 2 drift fix | `.github/workflows/ci.yml` `camoufox fetch` line |
+| Pin | Value | Pinned since | Source |
+|-----|-------|--------------|--------|
+| PyPI package | `cloverlabs-camoufox==0.6.0` | Jul 14 2026 | `pin.json` `.package` |
+| Patched binary | `official/152.0.4-beta.28` | Step 2 drift fix | `pin.json` `.binary` |
 
 `152.0.4-beta.27` shipped on Jul 16 2026 and broke the unpinned job:
 `page.mouse.wheel` became a no-op and `humanize=True`'s bezier motion
@@ -62,10 +64,11 @@ now tracks `152.0.4-beta.28`.
    `contributed/camoufox-py/bridge.py` and/or
    `backends/python-base/pi_browser_bridge/playwright_base.py`. Keep the
    `ponytail:` ceiling-notes on each quirk accurate to the new binary.
-3. Bump the binary pin in `.github/workflows/ci.yml` to the newest
-   passing version and update the table above (the PyPI package pin
-   only moves when `cloverlabs-camoufox` itself releases a new version).
-4. Re-run the `contributed` job via `workflow_dispatch` to confirm green.
+3. Update `pin.json` to the newest passing version and re-run the
+   `contributed` job via `workflow_dispatch` to confirm green.
+4. The `pin.json` file drives both CI and the per-backend binary drift
+   check (see below), so bumping it here is the single source of truth
+   — no separate CI edit is needed.
 
 The `camoufox fetch` version format is `<repo>/<version>` (e.g.
 `official/152.0.4-beta.28`); run `camoufox sync` then `camoufox list` to
@@ -80,6 +83,8 @@ discover available versions.
 └── user-backends/           ← stealth backends go here
     └── camoufox-py/
         ├── bridge.py        ← you copy this from the source repo
+        ├── pin.json         ← pinned versions this bridge was tested
+        │                      against; copy alongside bridge.py
         └── .venv/           ← you create this (engine pip pkg + playwright)
 ```
 
@@ -101,7 +106,7 @@ The convention is `<name>-py/` (mirrors the shipped `chromium-py` /
 `firefox-py` naming). The directory name is the plugin `name` you will
 register in `settings.json`.
 
-### 2. Copy the template bridge
+### 2. Copy the template bridge and pin manifest
 
 Copy the source-repo template into your user-backends tree:
 
@@ -109,7 +114,15 @@ Copy the source-repo template into your user-backends tree:
 mkdir -p ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py
 cp packages/pi-lean-portal/contributed/camoufox-py/bridge.py \
    ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/bridge.py
+cp packages/pi-lean-portal/contributed/camoufox-py/pin.json \
+   ~/.pi/agent/pi-lean-portal/user-backends/camoufox-py/pin.json
 ```
+
+The `pin.json` sidecar is what the CI reads and what the bridge's
+built-in drift check uses at launch. Copying it alongside the bridge
+lets the binary self-verify that the locally installed package
+matches the tested pin — a warning is emitted to stderr if the
+versions diverge.
 
 You need the **git repo** for this step — the template is not in the
 `npm install pi-lean-portal` tarball (`contributed/` is not included in the

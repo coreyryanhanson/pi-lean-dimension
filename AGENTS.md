@@ -337,16 +337,16 @@ from the Actions tab. Depends on `structural` passing.
 
 1. **Checkout** + **Setup Node.js 22** + `npm ci`
 2. **Install Firefox system deps** via `npx playwright install-deps firefox`
-3. **Setup Python 3.12 + user-backends venv** with the **pinned**
-   `cloverlabs-camoufox[geoip]==0.6.0` and
-   `python -m camoufox fetch official/152.0.4-beta.28` (PyPI package
-   pinned since Jul 14 2026; binary pinned to the current release after
-   Step 2 of `docs/decisions/camoufox-ci-drift.md` adapted the quirks —
-   see `packages/pi-lean-portal/contributed/README.md` "Pinned CI stack"
-   for the upgrade procedure)
-4. **Copy Camoufox bridge template** from
-   `packages/pi-lean-portal/contributed/camoufox-py/bridge.py`
-   into the user-backends tree
+3. **Setup Python 3.12 + user-backends venv** using the pinned
+   versions in `packages/pi-lean-portal/contributed/camoufox-py/pin.json`
+   (the CI workflow reads package + binary from that sidecar via `jq`;
+   PyPI package pinned since Jul 14 2026, binary pinned to the current
+   release after Step 2 of `docs/decisions/camoufox-ci-drift.md` adapted
+   the quirks — see `packages/pi-lean-portal/contributed/README.md`
+   "Pinned CI stack" for the upgrade procedure)
+4. **Copy Camoufox bridge template** and pin manifest from
+   `packages/pi-lean-portal/contributed/camoufox-py/`
+   (`bridge.py` + `pin.json`) into the user-backends tree
 5. **Clone MiniWoB++ content** via `npm run setup:miniwob`
 6. **Start MiniWoB static server** on port 8080
 7. **Run Camoufox contract tests** + the

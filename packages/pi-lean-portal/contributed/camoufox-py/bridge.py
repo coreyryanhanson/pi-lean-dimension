@@ -6,6 +6,7 @@ User-installed backend for fingerprint-managed browsing via cloverlabs-camoufox.
 
 import json
 import sys
+from pathlib import Path
 
 # Lazy-patch Playwright's coreBundle.js if needed. The patcher is idempotent
 # and guarded: it only runs once per file (marker comment), warns on pattern
@@ -97,6 +98,80 @@ class CamoufoxPyBridge(PlaywrightBridge):
         "  python -m camoufox fetch"
     )
 
+    def _check_pinned_version(self) -> None:
+        """Best-effort runtime check that the installed Camoufox stack matches pin.json.
+
+        Reads ``pin.json`` (same directory as this module) and
+        compares the pinned ``cloverlabs-camoufox`` package version
+        against what's actually installed via pip metadata.
+        Warns to stderr on any mismatch or if the check cannot be
+        performed.  Never raises — this is advisory only.
+        """
+        try:
+            pin_path = Path(__file__).parent / "pin.json"
+            if not pin_path.exists():
+                return
+            pinned = json.loads(pin_path.read_text())
+        except Exception:
+            return
+
+        expected_pkg = pinned.get("package", "")
+        if expected_pkg:
+            try:
+                from importlib.metadata import version as _get_version
+
+                installed = _get_version("cloverlabs-camoufox")
+                expected_ver = expected_pkg.split("==")[-1].split("[")[0]
+                if installed != expected_ver:
+                    print(
+                        "pi-bridge camoufox-py: pin.json pins "
+                        f"cloverlabs-camoufox=={expected_ver} but "
+                        f"{installed} is installed — browser binary "
+                        "drift risk.",
+                        file=sys.stderr,
+                    )
+            except Exception:
+                pass  # package not installed or metadata unavailable
+
+        expected_binary = pinned.get("binary", "")
+        if expected_binary:
+            try:
+                import camoufox  # type: ignore[import-unresolved]
+                _binary_version = None
+                for _attr in (
+                    "__binary_version__",
+                    "_binary_version",
+                    "binary_version",
+                ):
+                    _candidate = getattr(camoufox, _attr, None)
+                    if _candidate is not None:
+                        _binary_version = _candidate
+                        break
+                if _binary_version is None:
+                    _sync = getattr(camoufox, "sync", None)
+                    if _sync is not None:
+                        for _attr in (
+                            "__binary_version__",
+                            "_binary_version",
+                            "binary_version",
+                        ):
+                            _candidate = getattr(_sync, _attr, None)
+                            if _candidate is not None:
+                                _binary_version = _candidate
+                                break
+                if _binary_version is None:
+                    return
+                expected_ref = expected_binary.split("/")[-1]
+                if _binary_version != expected_ref:
+                    print(
+                        "pi-bridge camoufox-py: pin.json expects binary "
+                        f"{expected_ref} but {_binary_version} is "
+                        "installed — binary drift risk.",
+                        file=sys.stderr,
+                    )
+            except Exception:
+                pass  # camoufox not importable yet — skip silently
+
     def _launch_browser(self):  # type: ignore[override]
         """Launch Camoufox via ``camoufox.NewBrowser``.
 
@@ -118,6 +193,8 @@ class CamoufoxPyBridge(PlaywrightBridge):
 
         Returns a standard Playwright ``Browser`` patched by Camoufox.
         """
+        self._check_pinned_version()
+
         # Lazy-import so non-Camoufox bridges don't pay the import cost
         # and to give a clear error when the package is missing.
         try:

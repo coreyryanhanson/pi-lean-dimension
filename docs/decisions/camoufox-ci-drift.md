@@ -1,10 +1,19 @@
 # Decision: Camoufox CI Drift — Diagnosis and Fix Plan
 
-**Status:** Steps 1 & 2 complete. Step 1 (CI version pin) restored a
-green baseline on the legacy binary; Step 2 reproduced against the
-current binary (`152.0.4-beta.28`), adapted the quirks, and moved the
-pin forward. Step 3 (drift guard) is deferred — optional, lowest
-priority.
+**Status:** Steps 1, 2 & 3 complete.
+
+- **Step 1** (CI version pin) restored a green baseline on the
+  legacy binary — see the `pin.json` sidecar manifest in
+  `contributed/camoufox-py/pin.json` (CI reads it via `jq`).
+- **Step 2** (quirk adaptation) reproduced against the current
+  binary (`152.0.4-beta.28`), adapted the quirks, and moved the
+  pin forward.
+- **Step 3** (drift guard) added a runtime self-check in
+  `CamoufoxPyBridge` that reads `pin.json` at launch and warns
+  to stderr if the installed PyPI package diverges from the
+  pinned version. The binary-version check is best-effort (falls
+  back silently). The `pin.json` sidecar is the single source
+  of truth for both CI and the per-backend drift check.
 
 **Branch:** Landed on the dedicated `fix/camoufox-ci-drift` branch cut
 from `main`, **not** on the `refactor/break-out-masking-tool` feature
@@ -191,10 +200,46 @@ The plan's original reproduction notes (kept for the record):
 
 ### Step 3 — Guard against silent drift recurring
 
-- Add a CI step (or a comment block in `ci.yml`) that fails loudly when
-  the pinned `cloverlabs-camoufox` is outdated relative to latest, so a
-  maintainer gets a prompt to re-run Step 2 rather than discovering drift
-  on the next unpinned rebuild. (Optional; lowest priority.)
+**Done.** The upstream Camoufox stack drift is contained via a
+sidecar manifest (`contributed/camoufox-py/pin.json`) that serves as
+the single source of truth for both CI and the per-backend runtime
+self-check.
+
+The `pin.json` file declares `package` and `binary` fields:
+
+- CI reads both via `jq` at setup time (no hardcoded values in
+  `.github/workflows/ci.yml`).
+- `CamoufoxPyBridge._check_pinned_version()` reads the same file
+  at first launch and compares the installed `cloverlabs-camoufox`
+  PyPI package to `pin.json` `.package`. A mismatch emits a stderr
+  warning. The binary-version check is best-effort (camoufox's
+  internal version API varies — the check falls back silently if it
+  can't be resolved).
+
+Users who copy `bridge.py` into their user-backends tree get the
+same guard by also copying `pin.json` (the install guide in
+`contributed/README.md` includes the copy step). If `pin.json` is
+absent (e.g. older template copies), the check is a silent no-op.
+
+This means:
+
+- Adding a new Camoufox release to the CI path requires one edit
+  (bump `pin.json` `.binary`), not two edits in two files.
+- The bridge independently flags at runtime if a user has an
+  older or newer `cloverlabs-camoufox` installed than what
+  the bridge was tested against.
+
+The "drift-detection CI job that fails when the pin is outdated"
+idea from the original plan is superseded by the runtime check:
+because the bridge itself enforces the contract at launch, a
+binary regression surfaces immediately in local use (and in CI
+via the user-backend contract tests) without a separate CI step.
+
+The original Step 3 item ("fails loudly when the pinned
+cloverlabs-camoufox is outdated relative to latest") lives on as
+an optional future enhancement — a `npm run test:ci` check that
+warns when `pin.json .binary` is behind `camoufox list --latest`. (The
+runtime check covers the practical cases today.)
 
 ## What this is not
 

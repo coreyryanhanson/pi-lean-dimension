@@ -175,6 +175,7 @@ packages/pi-lean-portal/contributed/*
 !packages/pi-lean-portal/contributed/camoufox-py
 packages/pi-lean-portal/contributed/camoufox-py/*
 !packages/pi-lean-portal/contributed/camoufox-py/bridge.py
+!packages/pi-lean-portal/contributed/camoufox-py/pin.json
 
 # Contributed backend tests: same ignore-by-default + whitelist-shipped
 # logic as the templates above. Contract/persistence tests for scratch
