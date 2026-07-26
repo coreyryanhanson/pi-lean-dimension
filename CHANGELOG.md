@@ -13,6 +13,22 @@
   guide for `www.botdetection.com` does not collide with the `bot-detection`
   pattern). Tests pin all four override cases.
 
+- **Pinned Camoufox CI stack via `pin.json` sidecar** —
+  `contributed/camoufox-py/pin.json` is now the single source of truth for
+  the `cloverlabs-camoufox` package (`==0.6.0`) and fetched binary
+  (`official/152.0.4-beta.28`) the `contributed` job runs against. CI reads
+  both with `jq` before the Python venv exists. The Camoufox bridge runs an
+  advisory `_check_pinned_version()` at launch that warns to stderr on
+  package or binary drift but never raises. `contributed/README.md`
+  documents the pin and a 4-step upgrade procedure; user-facing install
+  instructions stay unpinned so local users track latest.
+
+- **`workflow_dispatch` input toggles** — `ci.yml` gains `miniwob` and
+  `contributed` boolean inputs (both default `false`). A manual run with
+  both off now runs only `structural`; `miniwob` stays on for every push/PR,
+  and `contributed` stays manual-only but now requires its input toggled on
+  instead of firing on any dispatch.
+
 ### Changed
 
 - **Removed the portal URL guard** — `core/shared/url-safety.ts` and its
@@ -29,6 +45,23 @@
   now appends `(web-guide guide="<name>")` to each listed guide so the
   agent can call `web-guide` with the exact guide key instead of guessing
   from the short name.
+
+- **Camoufox scroll quirk reversed for the current binary** —
+  `_scroll_via_wheel` now defaults to `False` (eval-based
+  `window.scrollBy`). On `152.0.4-beta.27+` the patched Juggler no-ops
+  `page.mouse.wheel` (the `wheel` listener never fires), while the
+  eval-write path that silently no-op'd on the legacy `135.0.1-beta.24`
+  binary now works. The Camoufox template drops its `True` override; the
+  base default is unchanged for shipped `chromium-py`/`firefox-py` (both
+  already `False`).
+
+- **Contributed test suites force `launch.humanize=false`** —
+  `run-contributed-suites.test.ts` and `miniwob-user-backends.test.ts`
+  override `humanize` to `false` for every discovered backend. Camoufox's
+  humanized-click motion (~1.5s bezier) makes `locator.click(timeout=5s)`
+  flake and exceeds MiniWoB's ~10s task budgets; the suites exercise the
+  backend *contract*, not human-emulation, so the override is test-mode
+  only. Real users keep the `humanize=True` default.
 
 - **Breaking (Python bridge API):** the abstract `BrowserBridge` class in
   `pi_browser_bridge/bridge.py` has been folded into its only subclass
@@ -88,6 +121,20 @@
   `session_tree`, mirroring the existing `session_start` repaint. The fix
   is isolated to portal and ships independently of the in-flight host
   work.
+
+- **`_wait_for_navigation_settle` hardened against late-arriving
+  navigations** — the blind 400ms sleep in the no-navigation branch is
+  replaced with a 50ms polling loop, so a `setTimeout`-delayed redirect
+  that fires late under CI load is still captured instead of racing past
+  the settle window. The method became an instance method reading two new
+  opt-in class attrs: `_settle_budget_ms` (default `400`) and
+  `_url_stability_settle` (default `False`), both unchanged for shipped
+  `chromium-py`/`firefox-py`. Camoufox overrides to `2000`/`True` — its
+  patched Juggler fires `framenavigated` and updates `page.url` with
+  higher latency than a standard Playwright browser, so it waits for the
+  URL to hold stable for 150ms (or the wider budget) before declaring
+  no-nav. Fixes the `clicks a link with delayed navigation` flake and the
+  four downstream cookie-persistence failures.
 
 ## [0.2.4] - 2026-07-20
 
