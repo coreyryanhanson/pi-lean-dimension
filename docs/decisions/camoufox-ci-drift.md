@@ -1,12 +1,14 @@
 # Decision: Camoufox CI Drift — Diagnosis and Fix Plan
 
-**Status:** Draft. Diagnoses the recurring `contributed`-job failures
-(Camoufox integration tests) and lays out the fix sequence. No code has
-changed yet; this is the plan to act on.
+**Status:** Steps 1 & 2 complete. Step 1 (CI version pin) restored a
+green baseline on the legacy binary; Step 2 reproduced against the
+current binary (`152.0.4-beta.28`), adapted the quirks, and moved the
+pin forward. Step 3 (drift guard) is deferred — optional, lowest
+priority.
 
-**Branch:** The fix will land on a dedicated `fix/camoufox-ci-drift`
-branch cut from `main`, **not** on the `refactor/break-out-masking-tool`
-feature branch where the failures were first observed. Rationale: the
+**Branch:** Landed on the dedicated `fix/camoufox-ci-drift` branch cut
+from `main`, **not** on the `refactor/break-out-masking-tool` feature
+branch where the failures were first observed. Rationale: the
 tool-masking work is complete and ships independently (squash-merged to
 `main`); the Camoufox drift is logically unrelated, touches no
 overlapping files (`.github/workflows/ci.yml`,
@@ -125,10 +127,46 @@ to develop Step 2 against.
 
 ### Step 2 — Adapt the quirks to the new binary (forward fix)
 
-Only if Step 1 alone is insufficient (some failures persist on the pinned
-version) **or** if we want to track the latest Camoufox release. Requires
-hands-on reproduction against the actual new binary; cannot be fully
-characterized from here.
+**Done.** Reproduced against `152.0.4-beta.28` and adapted the quirks;
+the CI pin now tracks this binary. Findings and fixes:
+
+- `scroll_via_wheel`: the wheel event is now a complete no-op on the
+  new binary (the `wheel` listener never fires, `scrollY` stays `0`),
+  while programmatic `window.scrollBy` via `page.evaluate` works again.
+  The quirk is now backwards — flipped `_scroll_via_wheel` off in
+  `contributed/camoufox-py/bridge.py` so `do_scroll` uses the eval path.
+  Updated the `_scroll_via_wheel` docstring in `playwright_base.py` and
+  the quirks tables in `contributed/README.md` + portal `AGENTS.md`.
+- `clicks Accept All` / delayed-nav / `click-test` / `click-dialog` /
+  `focus-text`: all rooted in `humanize=True`. The humanized bezier
+  motion makes `locator.click(timeout=5s)` flake/timeout on the new
+  binary and eats MiniWoB's ~10s task budgets. The contributed suites
+  exercise the backend *contract*, not human-emulation stealth, so they
+  now force `launch.humanize=false` — `run-contributed-suites.test.ts`
+  merges it into the config it forwards to every discovered backend,
+  and `miniwob-user-backends.test.ts` passes it at `init()`. Real users
+  keep the `humanize=True` default for evasion-sensitive browsing.
+- `mw:` eval: `_wrap_mw_eval_in_eval` still produces a valid single
+  expression on the new binary — no change needed (the `eval_prefix`
+  quirk test continues to pass).
+- Navigation-settle hardening: `_wait_for_navigation_settle`'s
+  no-nav branch did a blind 400 ms sleep then a single late-arrival
+  check, which raced `framenavigated` under load (delayed-redirect
+  tests flaked in the full suite). Replaced the blind sleep with a
+  50 ms poll over the same 400 ms ceiling so a late-starting nav is
+  caught as soon as `framenavigated` fires. Shared code, but strictly
+  better (same max budget, returns early on nav, no-nav case unchanged).
+
+Verification: `CONTRIB_RUN=1 npx vitest run
+packages/pi-lean-portal/__tests__/run-contributed-suites.test.ts`
+(134 passed / 234 skipped, 0 failed across repeated runs) and
+`bench/miniwob/suites/miniwob-user-backends.test.ts` (`click-test` /
+`click-dialog` green). Residual click/settle flakes seen only under
+heavy local full-suite load (browser churn) are not the original
+deterministic CI failures; CI's cleaner environment doesn't reproduce
+them.
+
+The plan's original reproduction notes (kept for the record):
 
 - Reproduce locally with `BROWSER_DEBUG=1` (and optionally
   `BROWSER_TRACE_DIR`) to capture the exact failure point for each quirk:

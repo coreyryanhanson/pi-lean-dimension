@@ -34,7 +34,7 @@ class CamoufoxPyBridge(PlaywrightBridge):
     """Stealth bridge using Camoufox (Firefox-based).
 
     The base's quirks dispatch handles eval-world routing (``mw:`` prefix)
-    and wheel-based scrolling (``_scroll_via_wheel``).  This subclass sets
+    and eval-based scrolling (``window.scrollBy``).  This subclass sets
     the quirk flags and overrides ``_launch_browser`` to call
     ``camoufox.NewBrowser`` with the plugin config's launch options.
 
@@ -60,7 +60,13 @@ class CamoufoxPyBridge(PlaywrightBridge):
     # crashes on this binary (same ``isMobile`` rejection).  Keep using
     # the standard ``browser.new_context()``.
     _eval_prefix: str = "mw:"
-    _scroll_via_wheel: bool = True
+    # Camoufox ``152.0.4-beta.27+`` no-ops ``page.mouse.wheel`` (the ``wheel``
+    # listener never fires), so the base's eval-based ``window.scrollBy`` is
+    # the only path that moves the page on the current binary.  Leave the
+    # base default (``_scroll_via_wheel = False``).  The legacy
+    # ``135.0.1-beta.24`` binary needed ``True`` (eval-write scrollBy
+    # no-op'd under the isolated world); flipped off when the CI pin moved
+    # to ``152.0.4-beta.28``.  See ``playwright_base._scroll_via_wheel``.
     # The Camoufox patched Firefox binary rejects the ``isMobile`` property that
     # Playwright includes in ``Browser.setDefaultViewport``.  Skip the call.
     _skip_default_viewport: bool = True
@@ -196,18 +202,20 @@ if __name__ == "__main__":
         import camoufox  # type: ignore[import-unresolved] # noqa: F401
     except ImportError:
         print(
-            json.dumps({
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32000,
-                    "message": (
-                        "cloverlabs-camoufox is not installed.\n"
-                        "Run: pip install cloverlabs-camoufox[geoip] && "
-                        "python -m camoufox fetch"
-                    ),
-                },
-            })
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": -32000,
+                        "message": (
+                            "cloverlabs-camoufox is not installed.\n"
+                            "Run: pip install cloverlabs-camoufox[geoip] && "
+                            "python -m camoufox fetch"
+                        ),
+                    },
+                }
+            )
         )
         sys.stdout.flush()
         sys.exit(1)

@@ -135,7 +135,7 @@ as class attributes on your subclass:
 |------|---------|-----------------|
 | `_fingerprint_managed_context` | `False` | `create_browser_context()` skips hardcoded `viewport`/`user_agent`; lets the fingerprint package set them. |
 | `_eval_prefix` | `""` | Prepended to every `page.evaluate` expression in `do_evaluate` (e.g. Camoufox's `"mw:"` routes writes to the main world). |
-| `_scroll_via_wheel` | `False` | `do_scroll` uses `page.mouse.wheel` instead of `page.evaluate("window.scrollBy")` (avoids eval-write under isolated-world stealth). |
+| `_scroll_via_wheel` | `False` | `do_scroll` uses `page.mouse.wheel` instead of `page.evaluate("window.scrollBy")`. Legacy Camoufox (``135.0.1-beta.24``) needed this; current binary (``152.0.4-beta.28``) is the reverse (wheel no-ops, eval scrollBy works), so Camoufox leaves the default `False`. |
 | `_skip_default_viewport` | `False` | Skips Playwright's `Browser.setDefaultViewport` CDP call (Camoufox binary rejects its `isMobile` prop). |
 | `_skip_networkidle` | `False` | Nav-settle uses `load` instead of `networkidle` (patched binaries don't fire `networkidle` reliably). |
 | `_wrap_mw_eval_in_eval` | `False` | `do_evaluate` rewrites the expression as `eval(<JSON-string of expression>)` before prepending `_eval_prefix`, so multi-statement scripts survive Camoufox's `let _s = (${script})` main-world wrapper. |

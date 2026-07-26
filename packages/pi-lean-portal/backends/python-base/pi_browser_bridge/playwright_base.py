@@ -68,6 +68,7 @@ from .transport import (
 
 try:
     from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout  # type: ignore[import-unresolved]
+
     HAS_PLAYWRIGHT = True
 except ImportError:
     HAS_PLAYWRIGHT = False
@@ -117,11 +118,15 @@ def check_playwright_or_exit(browser: str) -> None:
             "  pip install playwright\n"
             f"  playwright install {browser}\n"
         )
-        print(json.dumps({
-            "jsonrpc": "2.0",
-            "id": None,
-            "error": {"code": -32000, "message": msg.strip()},
-        }))
+        print(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32000, "message": msg.strip()},
+                }
+            )
+        )
         sys.stdout.flush()
         sys.exit(1)
 
@@ -187,9 +192,14 @@ class PlaywrightBridge:
     _eval_prefix: str = ""
 
     #: When True, ``do_scroll`` uses ``page.mouse.wheel`` instead of
-    #: ``page.evaluate("window.scrollBy")``.  The eval-based scroll is a
-    #: write that silently no-ops under Camoufox's isolated world; the wheel
-    #: event performs the scroll via input events instead.
+    #: ``page.evaluate("window.scrollBy")``.  On older Camoufox binaries
+    #: (``135.0.1-beta.24`` and earlier) the eval-based scroll was a write
+    #: that silently no-op'd under the isolated world, so the wheel event
+    #: was the only path that moved the page.  On ``152.0.4-beta.27+`` the
+    #: wheel event itself no-ops (the ``wheel`` listener never fires) while
+    #: the eval-based ``window.scrollBy`` now works — so the flag must be
+    #: ``False`` on the current binary.  Default ``False`` (eval scroll);
+    #: only set ``True`` for the legacy Camoufox binary.
     _scroll_via_wheel: bool = False
 
     #: When True, ``create_browser_context`` passes ``no_viewport=True`` to
@@ -288,7 +298,6 @@ class PlaywrightBridge:
     #: Default ``False`` so shipped bridges stay bit-identical.
     _csp_safe_readonly_via_init_script: bool = False
 
-
     # ── Session storage (persists across RPC calls) ─────────────
 
     #: Per-taskId session data: {task_id: {...}}.
@@ -307,7 +316,6 @@ class PlaywrightBridge:
     #: ``chromium-py``/``firefox-py`` when run standalone).  Subclasses read
     #: engine-specific options from ``self.plugin_config.get("launch", {})``.
     _plugin_config: dict[str, Any]
-
 
     # ── Shared Playwright state ─────────────────────────────────
 
@@ -353,12 +361,13 @@ class PlaywrightBridge:
         session = self.get_session(task_id)
         if session is None:
             raise SessionNotFoundError(
-                f"No active session for task '{task_id}'. "
-                "Call browser.navigate first."
+                f"No active session for task '{task_id}'. Call browser.navigate first."
             )
         return session
 
-    def ensure_session(self, task_id: str, config: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    def ensure_session(
+        self, task_id: str, config: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
         """Get or create a session for the given task."""
         session = self.get_session(task_id)
         if session is not None:
@@ -425,7 +434,6 @@ class PlaywrightBridge:
                 except Exception:
                     pass
 
-
     # ── Debug logging ───────────────────────────────────────────
 
     @property
@@ -466,7 +474,11 @@ class PlaywrightBridge:
                 raise RuntimeError(
                     "Playwright is not installed. "
                     "Run: pip install playwright && "
-                    + (self._install_hint.lower() if self._install_hint else "playwright install <browser>")
+                    + (
+                        self._install_hint.lower()
+                        if self._install_hint
+                        else "playwright install <browser>"
+                    )
                 )
             self._pw = sync_playwright().start()  # type: ignore[union-attr]
             try:
@@ -552,8 +564,12 @@ class PlaywrightBridge:
                     snapshots=True,
                     sources=True,
                 )
-                self._log("tracing", taskId=config.get("_task_id", "shared"),
-                          action="start", dir=_trace_dir)
+                self._log(
+                    "tracing",
+                    taskId=config.get("_task_id", "shared"),
+                    action="start",
+                    dir=_trace_dir,
+                )
             except Exception:
                 pass  # Best-effort
 
@@ -663,14 +679,19 @@ class PlaywrightBridge:
 
         # ── Dialog auto-dismissal ───────────────────────────────
         dialog_log: list[dict[str, str]] = []
-        page.on("dialog", lambda dialog: (
-            dialog_log.append({
-                "type": dialog.type,
-                "message": dialog.message[:200],
-                "handledAs": "accepted",
-            }),
-            dialog.accept(),
-        ))
+        page.on(
+            "dialog",
+            lambda dialog: (
+                dialog_log.append(
+                    {
+                        "type": dialog.type,
+                        "message": dialog.message[:200],
+                        "handledAs": "accepted",
+                    }
+                ),
+                dialog.accept(),
+            ),
+        )
 
         return {
             "page": page,
@@ -726,8 +747,7 @@ class PlaywrightBridge:
                         f"trace-{task_id}-{int(time.time() * 1000)}.zip",
                     )
                     context.tracing.stop(path=_trace_path)
-                    self._log("tracing", taskId=task_id, action="stop",
-                              dir=_trace_dir)
+                    self._log("tracing", taskId=task_id, action="stop", dir=_trace_dir)
                 except Exception:
                     pass
 
@@ -788,18 +808,22 @@ class PlaywrightBridge:
         parsed = parse_snapshot(snap_text)
         self.set_element_cache(task_id, parsed)
 
-        return parsed.text, parsed.count, {
-            ref: {
-                "role": node.role,
-                "name": node.name,
-                "props": list(node.props),
-                "depth": node.depth,
-                "raw": node.raw,
-                "occurrenceIndex": node.occurrence_index,
-                "parentRef": node.parent_ref,
-            }
-            for ref, node in parsed.elements.items()
-        }
+        return (
+            parsed.text,
+            parsed.count,
+            {
+                ref: {
+                    "role": node.role,
+                    "name": node.name,
+                    "props": list(node.props),
+                    "depth": node.depth,
+                    "raw": node.raw,
+                    "occurrenceIndex": node.occurrence_index,
+                    "parentRef": node.parent_ref,
+                }
+                for ref, node in parsed.elements.items()
+            },
+        )
 
     def _build_interaction_result(
         self, task_id: str, page: Any, **extra: Any
@@ -826,9 +850,7 @@ class PlaywrightBridge:
             getattr(node, "name", "unknown") if node else "unknown",
         )
 
-    def _locate_element(
-        self, page: Any, task_id: str, ref: str
-    ) -> Any:
+    def _locate_element(self, page: Any, task_id: str, ref: str) -> Any:
         """Resolve an @e ref to a Playwright locator.
 
         Args:
@@ -867,7 +889,9 @@ class PlaywrightBridge:
     # ── Navigation settle helpers ───────────────────────────────
 
     @staticmethod
-    def _wait_for_page_ready(page: Any, timeout_ms: int, skip_networkidle: bool = False) -> None:
+    def _wait_for_page_ready(
+        page: Any, timeout_ms: int, skip_networkidle: bool = False
+    ) -> None:
         """Wait for page readiness after a navigation.
 
         Mirrors the TypeScript ``waitForPageReady`` helper — each load
@@ -935,19 +959,37 @@ class PlaywrightBridge:
 
             waited_for_load = False
             if navigated:
-                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms, skip_networkidle)
+                PlaywrightBridge._wait_for_page_ready(
+                    page, nav_timeout_ms, skip_networkidle
+                )
                 waited_for_load = True
             elif page.url != url_before:
                 # URL changed without framenavigated event
-                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms, skip_networkidle)
+                PlaywrightBridge._wait_for_page_ready(
+                    page, nav_timeout_ms, skip_networkidle
+                )
                 waited_for_load = True
             else:
-                # No navigation — settle for client-side rerenders
-                page.wait_for_timeout(settle_timeout_ms)
+                # No navigation yet — poll briefly for a late-starting
+                # navigation (e.g. ``setTimeout``-delayed redirects) before
+                # falling through to the late-arrival gate.  A fixed blind
+                # ``wait_for_timeout`` races the ``framenavigated`` event under
+                # load (the event can lag past the single late-arrival check,
+                # leaving ``newUrl`` stuck at the pre-click URL); polling at
+                # 50 ms granularity catches the nav as soon as it fires within
+                # the same ``settle_timeout_ms`` ceiling.
+                # ponytail: 50 ms poll, 400 ms ceiling — add a real
+                # ``page.wait_for_function`` if sub-50 ms latency matters.
+                remaining = settle_timeout_ms
+                while remaining > 0 and not navigated and page.url == url_before:
+                    page.wait_for_timeout(50)
+                    remaining -= 50
 
             # Late-arrival gate: catch navigations that started during settle
             if not waited_for_load and (navigated or page.url != url_before):
-                PlaywrightBridge._wait_for_page_ready(page, nav_timeout_ms, skip_networkidle)
+                PlaywrightBridge._wait_for_page_ready(
+                    page, nav_timeout_ms, skip_networkidle
+                )
 
         finally:
             page.remove_listener("framenavigated", _on_nav)
@@ -1061,10 +1103,15 @@ class PlaywrightBridge:
             title = ""
 
         if last_error is None:
-            self._log("navigate", url=url, plugin=self._plugin_name,
-                      success=True, botDetected=bot_detected,
-                      elementCount=element_count,
-                      time=round((time.time() - _t_start) * 1000))
+            self._log(
+                "navigate",
+                url=url,
+                plugin=self._plugin_name,
+                success=True,
+                botDetected=bot_detected,
+                elementCount=element_count,
+                time=round((time.time() - _t_start) * 1000),
+            )
             return {
                 "success": True,
                 "url": page.url,
@@ -1076,10 +1123,16 @@ class PlaywrightBridge:
                 "dialogEvents": self._get_dialog_events(task_id),
             }
         else:
-            self._log("navigate", url=url, plugin=self._plugin_name,
-                      success=False, botDetected=bot_detected,
-                      elementCount=element_count, error=last_error,
-                      time=round((time.time() - _t_start) * 1000))
+            self._log(
+                "navigate",
+                url=url,
+                plugin=self._plugin_name,
+                success=False,
+                botDetected=bot_detected,
+                elementCount=element_count,
+                error=last_error,
+                time=round((time.time() - _t_start) * 1000),
+            )
             return {
                 "success": False,
                 "url": url,
@@ -1132,8 +1185,9 @@ class PlaywrightBridge:
         try:
             locator = self._locate_element(page, task_id, ref)
         except RuntimeError as exc:
-            self._log("click", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail")
+            self._log(
+                "click", taskId=task_id, ref=ref, role=_role, name=_name, result="fail"
+            )
             return {"success": False, "error": str(exc)}
 
         try:
@@ -1141,21 +1195,30 @@ class PlaywrightBridge:
             locator.click(timeout=5_000)
 
             navigated, _ = self._wait_for_navigation_settle(
-                page, url_before, skip_networkidle=self._skip_networkidle,
+                page,
+                url_before,
+                skip_networkidle=self._skip_networkidle,
             )
 
             new_url = page.url
             new_title = page.title()
 
             result = self._build_interaction_result(
-                task_id, page, newUrl=new_url, newTitle=new_title,
+                task_id,
+                page,
+                newUrl=new_url,
+                newTitle=new_title,
             )
         except Exception as exc:
             result = {
                 "success": False,
                 "error": f"Click failed: {exc}",
             }
-        return self._log_op("click", {"taskId": task_id, "ref": ref, "role": _role, "name": _name}, result)
+        return self._log_op(
+            "click",
+            {"taskId": task_id, "ref": ref, "role": _role, "name": _name},
+            result,
+        )
 
     def do_type(self, task_id: str, ref: str, text: str) -> dict[str, Any]:
         _role, _name = self._ref_debug_info(task_id, ref)
@@ -1167,8 +1230,9 @@ class PlaywrightBridge:
         try:
             locator = self._locate_element(page, task_id, ref)
         except RuntimeError as exc:
-            self._log("type", taskId=task_id, ref=ref, role=_role,
-                      name=_name, result="fail")
+            self._log(
+                "type", taskId=task_id, ref=ref, role=_role, name=_name, result="fail"
+            )
             return {"success": False, "error": str(exc)}
 
         try:
@@ -1181,7 +1245,11 @@ class PlaywrightBridge:
                 "success": False,
                 "error": f"Type failed: {exc}",
             }
-        return self._log_op("type", {"taskId": task_id, "ref": ref, "role": _role, "name": _name}, result)
+        return self._log_op(
+            "type",
+            {"taskId": task_id, "ref": ref, "role": _role, "name": _name},
+            result,
+        )
 
     def do_scroll(self, task_id: str, direction: str) -> dict[str, Any]:
         page, err = self._get_page_or_error(task_id, "scroll")
@@ -1208,7 +1276,9 @@ class PlaywrightBridge:
                 "success": False,
                 "error": f"Scroll failed: {exc}",
             }
-        return self._log_op("scroll", {"taskId": task_id, "direction": direction}, result)
+        return self._log_op(
+            "scroll", {"taskId": task_id, "direction": direction}, result
+        )
 
     def do_go_back(self, task_id: str) -> dict[str, Any]:
         page, err = self._get_page_or_error(task_id, "goBack")
@@ -1257,7 +1327,9 @@ class PlaywrightBridge:
             page.keyboard.press(key)
 
             navigated, _ = self._wait_for_navigation_settle(
-                page, url_before, nav_timeout_ms=3000,
+                page,
+                url_before,
+                nav_timeout_ms=3000,
                 skip_networkidle=self._skip_networkidle,
             )
 
@@ -1265,7 +1337,10 @@ class PlaywrightBridge:
             new_title = page.title()
 
             result = self._build_interaction_result(
-                task_id, page, newUrl=new_url, newTitle=new_title,
+                task_id,
+                page,
+                newUrl=new_url,
+                newTitle=new_title,
             )
         except Exception as exc:
             result = {
@@ -1316,9 +1391,7 @@ class PlaywrightBridge:
                     "success": True,
                     "messages": [],
                 }
-            messages: list[dict[str, str]] = session.get(
-                "console_messages", []
-            )
+            messages: list[dict[str, str]] = session.get("console_messages", [])
             return {
                 "success": True,
                 "messages": messages,
@@ -1578,7 +1651,9 @@ class PlaywrightBridge:
         task_id = self._require_param(params, "taskId", str)
         timeout_ms = params.get("timeoutMs", DEFAULT_NAVIGATION_TIMEOUT_MS)
         result = self.do_navigate(
-            task_id, url, timeout_ms,
+            task_id,
+            url,
+            timeout_ms,
             storageState=params.get("storageState"),
             profileName=params.get("profileName"),
             profileMode=params.get("profileMode"),
@@ -1605,7 +1680,8 @@ class PlaywrightBridge:
         direction = self._require_param(params, "direction", str)
         if direction not in ("up", "down"):
             return make_error_response(
-                cmd_id, INVALID_PARAMS,
+                cmd_id,
+                INVALID_PARAMS,
                 'direction must be "up" or "down"',
             )
         return make_success_response(cmd_id, self.do_scroll(task_id, direction))
@@ -1624,7 +1700,9 @@ class PlaywrightBridge:
         full_page = params.get("fullPage", False)
         return make_success_response(cmd_id, self.do_screenshot(task_id, full_page))
 
-    def _h_get_console_messages(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+    def _h_get_console_messages(
+        self, params: dict[str, Any], cmd_id: Any
+    ) -> dict[str, Any]:
         task_id = self._require_param(params, "taskId", str)
         return make_success_response(cmd_id, self.do_get_console_messages(task_id))
 
@@ -1641,7 +1719,9 @@ class PlaywrightBridge:
 
     def _h_get_cookies(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
         task_id = self._require_param(params, "taskId", str)
-        return make_success_response(cmd_id, self.do_get_cookies(task_id, params.get("urls")))
+        return make_success_response(
+            cmd_id, self.do_get_cookies(task_id, params.get("urls"))
+        )
 
     def _h_add_cookies(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
         task_id = self._require_param(params, "taskId", str)
@@ -1656,7 +1736,9 @@ class PlaywrightBridge:
         )
         return make_success_response(cmd_id, result)
 
-    def _h_get_storage_state(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+    def _h_get_storage_state(
+        self, params: dict[str, Any], cmd_id: Any
+    ) -> dict[str, Any]:
         task_id = self._require_param(params, "taskId", str)
         return make_success_response(cmd_id, self.do_get_storage_state(task_id))
 
@@ -1666,19 +1748,22 @@ class PlaywrightBridge:
 
     def _h_describe_quirks(self, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
         # Return the bridge's declared quirks flags.
-        return make_success_response(cmd_id, {
-            "fingerprint_managed_context": getattr(
-                self, "_fingerprint_managed_context", False
-            ),
-            "eval_prefix": getattr(self, "_eval_prefix", ""),
-            "scroll_via_wheel": getattr(self, "_scroll_via_wheel", False),
-            "skip_default_viewport": getattr(self, "_skip_default_viewport", False),
-            "skip_networkidle": getattr(self, "_skip_networkidle", False),
-            "wrap_mw_eval_in_eval": getattr(self, "_wrap_mw_eval_in_eval", False),
-            "csp_safe_readonly_via_init_script": getattr(
-                self, "_csp_safe_readonly_via_init_script", False
-            ),
-        })
+        return make_success_response(
+            cmd_id,
+            {
+                "fingerprint_managed_context": getattr(
+                    self, "_fingerprint_managed_context", False
+                ),
+                "eval_prefix": getattr(self, "_eval_prefix", ""),
+                "scroll_via_wheel": getattr(self, "_scroll_via_wheel", False),
+                "skip_default_viewport": getattr(self, "_skip_default_viewport", False),
+                "skip_networkidle": getattr(self, "_skip_networkidle", False),
+                "wrap_mw_eval_in_eval": getattr(self, "_wrap_mw_eval_in_eval", False),
+                "csp_safe_readonly_via_init_script": getattr(
+                    self, "_csp_safe_readonly_via_init_script", False
+                ),
+            },
+        )
 
     #: JSON-RPC method name → handler.  Built after the handlers are
     #: defined so the names are in scope.  ``handle_command`` looks up
@@ -1708,7 +1793,9 @@ class PlaywrightBridge:
 
     # ── Command routing ─────────────────────────────────────────
 
-    def handle_command(self, method: str, params: dict[str, Any], cmd_id: Any) -> dict[str, Any]:
+    def handle_command(
+        self, method: str, params: dict[str, Any], cmd_id: Any
+    ) -> dict[str, Any]:
         """Route a JSON-RPC method to the appropriate operation handler.
 
         Returns a JSON-RPC response dict (either result or error).
@@ -1749,10 +1836,13 @@ class PlaywrightBridge:
                 params = request.get("params", {})
 
                 if not isinstance(params, dict):
-                    write_response(make_error_response(
-                        cmd_id, INVALID_PARAMS,
-                        '"params" must be a JSON object',
-                    ))
+                    write_response(
+                        make_error_response(
+                            cmd_id,
+                            INVALID_PARAMS,
+                            '"params" must be a JSON object',
+                        )
+                    )
                     continue
 
                 response = self.handle_command(method, params, cmd_id)
@@ -1769,7 +1859,9 @@ class PlaywrightBridge:
             except KeyboardInterrupt:
                 break
             except Exception as exc:
-                tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+                tb = "".join(
+                    traceback.format_exception(type(exc), exc, exc.__traceback__)
+                )
                 write_response(make_application_error(None, str(exc), traceback_str=tb))
 
     # ── Internal helpers ──────────────────────────────────────

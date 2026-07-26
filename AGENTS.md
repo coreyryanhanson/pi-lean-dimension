@@ -339,10 +339,11 @@ from the Actions tab. Depends on `structural` passing.
 2. **Install Firefox system deps** via `npx playwright install-deps firefox`
 3. **Setup Python 3.12 + user-backends venv** with the **pinned**
    `cloverlabs-camoufox[geoip]==0.6.0` and
-   `python -m camoufox fetch official/135.0.1-beta.24` (both pinned to
-   the last green run, Jul 14 2026 — see
-   `packages/pi-lean-portal/contributed/README.md` "Pinned CI stack" and
-   `docs/decisions/camoufox-ci-drift.md` for the upgrade procedure)
+   `python -m camoufox fetch official/152.0.4-beta.28` (PyPI package
+   pinned since Jul 14 2026; binary pinned to the current release after
+   Step 2 of `docs/decisions/camoufox-ci-drift.md` adapted the quirks —
+   see `packages/pi-lean-portal/contributed/README.md` "Pinned CI stack"
+   for the upgrade procedure)
 4. **Copy Camoufox bridge template** from
    `packages/pi-lean-portal/contributed/camoufox-py/bridge.py`
    into the user-backends tree
