@@ -139,6 +139,8 @@ as class attributes on your subclass:
 | `_skip_default_viewport` | `False` | Skips Playwright's `Browser.setDefaultViewport` CDP call (Camoufox binary rejects its `isMobile` prop). |
 | `_skip_networkidle` | `False` | Nav-settle uses `load` instead of `networkidle` (patched binaries don't fire `networkidle` reliably). |
 | `_wrap_mw_eval_in_eval` | `False` | `do_evaluate` rewrites the expression as `eval(<JSON-string of expression>)` before prepending `_eval_prefix`, so multi-statement scripts survive Camoufox's `let _s = (${script})` main-world wrapper. |
+| `_settle_budget_ms` | `400` | Poll budget (ms) for `_wait_for_navigation_settle` when no `framenavigated` event fires. Stealth backends with high Juggler event latency (e.g. Camoufox) override to 2000. |
+| `_url_stability_settle` | `False` | When True, the no-nav poll confirms URL is stable at a new value for 150 ms before exiting, rather than a fixed budget. |
 | `_csp_safe_readonly_via_init_script` | `False` | `do_evaluate(read_only=True)` (the EXTRACTOR_SCRIPT) reads its JSON result from a `<meta id="__pi-extract">` tag that `create_browser_context` registers as a `context.add_init_script` (isolated world, CSP-free) at `DOMContentLoaded`, instead of `page.evaluate`. For patched-Firefox stealth binaries that route `page.evaluate` through `eval()` in the page's main world (CSP-subject) — Camoufox is NOT affected (its binary keeps Juggler's CSP-free isolated-world). The adapter plumbs the script via the `browser.init` config key `readOnlyExtractorScript`. Stale across SPA route changes (no new load) — fine for navigate→inspect. |
 
 All flags default off → `chromium-py` / `firefox-py` behavior is

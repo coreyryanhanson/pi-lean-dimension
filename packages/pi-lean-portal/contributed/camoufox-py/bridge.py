@@ -81,6 +81,15 @@ class CamoufoxPyBridge(PlaywrightBridge):
     # `mw:eval(<json>)` so it is a single expression that `eval` runs
     # verbatim.  See the `_wrap_mw_eval_in_eval` quirk docstring.
     _wrap_mw_eval_in_eval: bool = True
+    # The patched Camoufox Juggler fires ``framenavigated`` events and
+    # updates ``page.url`` with higher latency than a standard Playwright
+    # browser.  Widen the settle poll budget so a ``setTimeout``-delayed
+    # redirect (e.g. ``location.href`` after 280 ms) is still captured
+    # under CI load.  URL stability mode confirms the URL has finished
+    # changing before declaring "no navigation" — the 150 ms hold is
+    # negligible against the wider budget.
+    _settle_budget_ms: int = 2000
+    _url_stability_settle: bool = True
     _install_hint: str = (
         "Camoufox browser not installed.\n"
         "Run the following commands in your camoufox-py virtual environment:\n"

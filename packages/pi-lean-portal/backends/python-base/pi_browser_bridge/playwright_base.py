@@ -298,6 +298,25 @@ class PlaywrightBridge:
     #: Default ``False`` so shipped bridges stay bit-identical.
     _csp_safe_readonly_via_init_script: bool = False
 
+    #: When non-zero, ``_wait_for_navigation_settle`` uses this as the
+    #: settle poll budget (ms) instead of the default 400.  Stealth backends
+    #: whose patched browser fires navigation events with higher latency
+    #: (e.g. Camoufox's Juggler) set a larger value to avoid settling before
+    #: the navigation commit is observable.  Default 400 matches the
+    #: historical hard-coded value so shipped chromium-py / firefox-py are
+    #: unchanged.
+    _settle_budget_ms: int = 400
+
+    #: When True, ``_wait_for_navigation_settle`` switches the no-nav
+    #: polling branch from a fixed budget to "URL stable for 150 ms **or**
+    #: budget exhausted".  Stealth backends whose patched Juggler fires
+    #: ``page.url`` updates with higher latency set this along with a wider
+    #: :attr:`_settle_budget_ms` so the settle waits for the URL to
+    #: stabilize at the target value before declaring no navigation
+    #: occurred.  Default ``False`` so shipped chromium-py / firefox-py keep
+    #: the current tight settle behaviour.
+    _url_stability_settle: bool = False
+
     # ── Session storage (persists across RPC calls) ─────────────
 
     #: Per-taskId session data: {task_id: {...}}.
@@ -917,19 +936,21 @@ class PlaywrightBridge:
             except Exception:
                 pass
 
-    @staticmethod
     def _wait_for_navigation_settle(
+        self,
         page: Any,
         url_before: str,
         nav_timeout_ms: int = 5000,
-        settle_timeout_ms: int = 400,
         skip_networkidle: bool = False,
     ) -> tuple[bool, str]:
         """Wait for navigation to settle after a user interaction.
 
-        Replaces fixed ``time.sleep()`` calls that race against navigation
-        commit.  Instead, listens for the ``framenavigated`` event and waits
-        for page readiness only when a navigation has actually started.
+        Listens for the ``framenavigated`` event and waits for page
+        readiness only when a navigation has actually started.
+
+        Uses :attr:`_settle_budget_ms` and :attr:`_url_stability_settle`
+        to allow stealth backends with higher event latency (e.g.
+        Camoufox's Juggler) to widen the settle window.
 
         Args:
             page: Playwright Page.
@@ -937,8 +958,7 @@ class PlaywrightBridge:
             nav_timeout_ms: Max time (ms) to wait for each page readiness
                             check (load and networkidle each get the full
                             budget). Default: 5000.
-            settle_timeout_ms: Short settle delay (ms) when no navigation
-                               occurs (default: 400).
+            skip_networkidle: When True, skip the ``networkidle`` wait.
 
         Returns:
             ``(navigated, url)`` — whether a main-frame navigation was
@@ -959,37 +979,53 @@ class PlaywrightBridge:
 
             waited_for_load = False
             if navigated:
-                PlaywrightBridge._wait_for_page_ready(
-                    page, nav_timeout_ms, skip_networkidle
-                )
+                self._wait_for_page_ready(page, nav_timeout_ms, skip_networkidle)
                 waited_for_load = True
             elif page.url != url_before:
                 # URL changed without framenavigated event
-                PlaywrightBridge._wait_for_page_ready(
-                    page, nav_timeout_ms, skip_networkidle
-                )
+                self._wait_for_page_ready(page, nav_timeout_ms, skip_networkidle)
                 waited_for_load = True
             else:
-                # No navigation yet — poll briefly for a late-starting
-                # navigation (e.g. ``setTimeout``-delayed redirects) before
-                # falling through to the late-arrival gate.  A fixed blind
+                # No navigation yet — poll for a late-starting navigation
+                # (e.g. ``setTimeout``-delayed redirects).  A fixed blind
                 # ``wait_for_timeout`` races the ``framenavigated`` event under
-                # load (the event can lag past the single late-arrival check,
-                # leaving ``newUrl`` stuck at the pre-click URL); polling at
-                # 50 ms granularity catches the nav as soon as it fires within
-                # the same ``settle_timeout_ms`` ceiling.
-                # ponytail: 50 ms poll, 400 ms ceiling — add a real
+                # load; polling at 50 ms granularity catches the nav as soon
+                # as it fires within the settle budget.
+                # ponytail: 50 ms poll, budget = self._settle_budget_ms
+                # (default 400, Camoufox 2000).  Switch to
                 # ``page.wait_for_function`` if sub-50 ms latency matters.
-                remaining = settle_timeout_ms
-                while remaining > 0 and not navigated and page.url == url_before:
-                    page.wait_for_timeout(50)
-                    remaining -= 50
+                settle_budget = self._settle_budget_ms
+                remaining = settle_budget
+
+                if self._url_stability_settle:
+                    # URL-stability mode: wait for the URL to stabilize at a
+                    # new value for 150 ms, or until the budget expires.
+                    # Stealth backends with high Juggler event latency (e.g.
+                    # Camoufox) benefit from confirming the URL has finished
+                    # changing before declaring no navigation occurred.
+                    url_stable_since: float | None = None
+                    while remaining > 0 and not navigated:
+                        page.wait_for_timeout(50)
+                        remaining -= 50
+                        if navigated:
+                            break
+                        if page.url != url_before:
+                            if url_stable_since is None:
+                                url_stable_since = time.monotonic()
+                            elif (time.monotonic() - url_stable_since) >= 0.150:
+                                break  # URL stable for 150 ms
+                        else:
+                            url_stable_since = None
+                else:
+                    # Original tight-poll mode: exit as soon as the URL
+                    # changes or the event fires.
+                    while remaining > 0 and not navigated and page.url == url_before:
+                        page.wait_for_timeout(50)
+                        remaining -= 50
 
             # Late-arrival gate: catch navigations that started during settle
             if not waited_for_load and (navigated or page.url != url_before):
-                PlaywrightBridge._wait_for_page_ready(
-                    page, nav_timeout_ms, skip_networkidle
-                )
+                self._wait_for_page_ready(page, nav_timeout_ms, skip_networkidle)
 
         finally:
             page.remove_listener("framenavigated", _on_nav)

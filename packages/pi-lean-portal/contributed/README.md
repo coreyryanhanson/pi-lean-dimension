@@ -275,6 +275,8 @@ as class attributes on your subclass:
 | `_skip_default_viewport` | `False` | Skips Playwright's `Browser.setDefaultViewport` CDP call (Camoufox binary rejects its `isMobile` prop). |
 | `_skip_networkidle` | `False` | Nav-settle uses `load` instead of `networkidle` (patched binaries don't fire `networkidle` reliably). |
 | `_wrap_mw_eval_in_eval` | `False` | `do_evaluate` rewrites the expression as `eval(<JSON-string of expression>)` before prepending `_eval_prefix`, so multi-statement scripts survive Camoufox's `let _s = (${script})` main-world wrapper (which only accepts a single expression). Camoufox-only; flip back to `False` when a future driver fixes the wrapper. |
+| `_settle_budget_ms` | `400` | Poll budget (ms) for `_wait_for_navigation_settle` when no `framenavigated` event fires. Stealth backends whose patched Juggler fires events with higher latency (e.g. Camoufox) set a larger value (2000) to avoid settling before the navigation commit is observable. |
+| `_url_stability_settle` | `False` | When True, the no-nav poll waits for the URL to stabilise at a new value for 150 ms before exiting, instead of a fixed budget. Complements a wider `_settle_budget_ms` by confirming the URL has finished changing. |
 | `_csp_safe_readonly_via_init_script` | `False` | `create_browser_context` registers an init script (isolated world, CSP-free) that wraps the EXTRACTOR_SCRIPT in a `DOMContentLoaded`-deferred IIFE writing JSON to `<meta id="__pi-extract">`. `do_evaluate(read_only=True)` reads from that meta via `query_selector` + `get_attribute` instead of `page.evaluate` (which is CSP-blocked on some patched-Firefox stealth binaries). |
 
 All flags default off, so the shipped `chromium-py` / `firefox-py`
