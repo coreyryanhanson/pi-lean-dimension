@@ -1,6 +1,5 @@
 import type {
 	ExtensionAPI,
-	ExtensionCommandContext,
 	ExtensionContext,
 	ThemeColor,
 } from "@earendil-works/pi-coding-agent";
@@ -11,6 +10,25 @@ import {
 } from "pi-tool-masking";
 import type { ToolsetSpec } from "pi-tool-masking";
 import { readMergedSettings } from "./core/shared/settings-reader.js";
+
+// Focus-mode guard helper. The library's published `DefaultResolutionMode`
+// type is `"exclusion" | "inclusion"` (the allowlist mode is unpublished /
+// ships in pi-tool-masking 1.2.0), so the string cast is load-bearing: an
+// allowlist-capable consumer sharing the `globalThis` module state writes
+// `"allowlist"` into it, and this consumer reads that value back at runtime
+// even though its own bundled type doesn't name the mode. On published
+// versions no caller ever writes `"allowlist"`, so this is a no-op for
+// ordinary users — it only activates when an allowlist-capable
+// pi-tool-masking consumer is in play.
+//
+// Cleanup at the ^1.2.0 bump: once `DefaultResolutionMode` names
+// `"allowlist"`, drop the `as string` cast here and in pi-lean-search's
+// co-activation mirror — the type system can then check the comparison
+// directly and the cast becomes a suppressor of a check it should perform.
+function isFocusHolding(): boolean {
+	const mode = getDefaultResolutionMode() as string;
+	return mode === "inclusion" || mode === "allowlist";
+}
 
 // ---- Toolset specs -----------------------------------------------
 
@@ -136,10 +154,72 @@ function renderBrowserGlyph(
 	}
 }
 
+// ---- Legacy settings migration warning ---------------------------
+//
+// The portal currently seeds the web toolset's fresh-session default from
+// `browserToggle.defaultEnabled` in settings.json. An upcoming pi-tool-masking
+// release takes over settings-based toolset defaults and reads a new
+// `toolsetDefaults` block instead. Warn users who pinned the legacy key so
+// they can migrate before the offload lands and the legacy read is removed.
+//
+// ponytail: warn-only — we still honor the legacy key for backward compat
+// until pi-tool-masking owns the settings tier; then delete this helper and
+// the `browserToggle` read below. Ceiling: a silent default shift for users
+// who ignore the warning; upgrade path is the pi-tool-masking bump.
+const TOOLSET_DEFAULTS_MIGRATION_MSG =
+	"⚠️ pi-lean-portal: settings-based toolset defaults are moving to the " +
+	"pi-tool-masking library. The `browserToggle.defaultEnabled` key in your " +
+	"settings.json will stop being read in an upcoming release. It still works " +
+	"today — KEEP it until the replacement ships, and add the new " +
+	"`toolsetDefaults` block alongside it so your config is ready (the new " +
+	"block is not read yet, but is harmless now and will take effect " +
+	"automatically once the offload lands):\n\n" +
+	"{\n" +
+	'  "browserToggle": { "defaultEnabled": true },\n' +
+	'  "toolsetDefaults": {\n' +
+	'    "toolset-state:pi-lean-dimension.web": { "enabled": true },\n' +
+	'    "toolset-state:pi-lean-dimension.web-learn": { "enabled": true },\n' +
+	'    "toolset-state:pi-lean-dimension.search": { "enabled": true }\n' +
+	"  }\n" +
+	"}\n" +
+	"(omit a `toolsetDefaults` key to use the toolset's packaged default; the " +
+	"`search` key only applies when pi-lean-search is installed). Mirror your " +
+	"web default into `toolset-state:pi-lean-dimension.web` to silence this " +
+	"warning.";
+
+function hasLegacyToolsetDefault(merged: Record<string, unknown>): boolean {
+	const seg = merged["browserToggle"];
+	if (!seg || typeof seg !== "object" || Array.isArray(seg)) return false;
+	return (
+		typeof (seg as Record<string, unknown>)["defaultEnabled"] === "boolean"
+	);
+}
+
+// The new `toolsetDefaults` block the pi-tool-masking offload will read.
+// When the user has already migrated the web toolset's default into it,
+// the warning is redundant even if the legacy `browserToggle.defaultEnabled`
+// key is still sitting on disk — suppress so a migrated settings file stays
+// quiet. Only the web persist key gates this: it's the one the legacy key
+// controlled, so its presence means the user acted on the migration.
+const WEB_TOOLSET_PERSIST_KEY = "toolset-state:pi-lean-dimension.web";
+function hasMigratedToolsetDefault(merged: Record<string, unknown>): boolean {
+	const td = merged["toolsetDefaults"];
+	if (!td || typeof td !== "object" || Array.isArray(td)) return false;
+	const entry = (td as Record<string, unknown>)[WEB_TOOLSET_PERSIST_KEY];
+	if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+	return typeof (entry as Record<string, unknown>)["enabled"] === "boolean";
+}
+
 // ---- Toggle initializer ------------------------------------------
 
 export default function initBrowserToggle(pi: ExtensionAPI) {
 	const merged = readMergedSettings();
+	// Warn only when the legacy key is pinned AND the user hasn't already
+	// migrated the web default into `toolsetDefaults`. Once the migrated
+	// entry exists, pi-tool-masking will read it directly and the legacy
+	// key is dead weight — no need to nag.
+	const legacyDefaultPinned =
+		hasLegacyToolsetDefault(merged) && !hasMigratedToolsetDefault(merged);
 	const browserToggleSegment = (merged as Record<string, unknown>)[
 		"browserToggle"
 	] as Record<string, unknown> | undefined;
@@ -180,16 +260,19 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 			const cmd = args.trim().toLowerCase();
 
 			// Focus-mode guard (§13.2): refuse actuating subcommands while the
-			// library holds the line in inclusion mode, so a sibling toggle
-			// can't write a focus-indistinguishable {enabled} entry. Read-only
-			// subcommands (status/profile/cookies/bare /web) stay unguarded,
-			// matching tbox's treatment of its own read-only commands.
-			if (
-				["on", "off", "learn"].includes(cmd) &&
-				getDefaultResolutionMode() === "inclusion"
-			) {
+			// library holds the line — either inclusion mode or allowlist focus
+			// (an upstream pi-tool-masking consumer). Either way a sibling
+			// toggle must not write a focus-indistinguishable {enabled} entry.
+			// Read-only subcommands (status/profile/cookies/bare /web) stay
+			// unguarded, matching the focus controller's treatment of its own
+			// read-only commands.
+			if (["on", "off", "learn"].includes(cmd) && isFocusHolding()) {
+				const inInclusion =
+					(getDefaultResolutionMode() as string) === "inclusion";
 				ctx.ui.notify(
-					"Another plugin has active inclusion mode — this toolset can't be toggled while inclusion is holding the line. Deactivate it there first.",
+					inInclusion
+						? "Another plugin has active inclusion mode — this toolset can't be toggled while inclusion is holding the line. Deactivate it there first."
+						: "Focus mode (allowlist) is active — this toolset can't be toggled while focus is holding the line. Exit focus there first.",
 					"warning",
 				);
 				return;
@@ -265,6 +348,11 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 		restoreProfile(pi, ctx);
 		_lastCtx = ctx;
 		syncCachedState();
+		// One-time-per-session migration warning when the legacy
+		// `browserToggle.defaultEnabled` pin is still on disk.
+		if (legacyDefaultPinned) {
+			ctx.ui.notify(TOOLSET_DEFAULTS_MIGRATION_MSG, "warning");
+		}
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {

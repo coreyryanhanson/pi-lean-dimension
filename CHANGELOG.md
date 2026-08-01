@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Migration warning for `browserToggle.defaultEnabled`** — `pi-lean-portal`
+  now warns on `session_start` when the legacy `browserToggle.defaultEnabled`
+  key is present in `settings.json`. Settings-based toolset defaults are being
+  offloaded to the `pi-tool-masking` library, which reads a new
+  `toolsetDefaults` block keyed by persist key
+  (`toolset-state:pi-lean-dimension.web`, `.web-learn`, `.search`). The legacy
+  key is still honored for backward compat until the offload lands; the warning
+  shows the new shape so users can migrate before the legacy read is removed.
+  Once the `toolset-state:pi-lean-dimension.web` entry is present in
+  `toolsetDefaults`, the warning is suppressed even if the legacy key is still
+  on disk — the migration target exists, so the nudge is redundant. The root
+  and portal READMEs now mark `browserToggle.defaultEnabled` as deprecated at
+  each reference and show the forward-compatible `toolsetDefaults` shape.
+
+### Fixed
+
+- **Focus-mode guards in `pi-lean-portal` and `pi-lean-search`** — `/web` actuating
+  subcommands (`on`/`off`/`learn`) and the search co-activation mirror now refuse to
+  modify toolset state while an allowlist focus is active, alongside the existing
+  inclusion guard. Prevents a focus-resume bug where a consumer mirror wrote a
+  focus-indistinguishable `{enabled}` entry on resume, corrupting the persisted
+  branch across sessions. The guards read the shared `globalThis` resolution-mode
+  state (a string cast bridges the unpublished `"allowlist"` mode until
+  `pi-tool-masking@1.2.0`) and are a no-op on published versions where nothing
+  writes that mode. Bumped the `pi-tool-masking` dependency range to `^1.1.0`.
+
 ## [0.3.2] - 2026-07-26
 
 ### Fixed

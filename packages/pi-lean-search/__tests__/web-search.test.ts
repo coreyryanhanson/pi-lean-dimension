@@ -444,6 +444,7 @@ describe("execute answer rendering", () => {
 beforeEach(() => {
 	_resetStateForTest();
 	delete (globalThis as any)[REGISTRY_KEY];
+	delete (globalThis as any)["__piToolMaskingModuleState"];
 });
 
 // ==================================================================
@@ -476,5 +477,26 @@ describe("pi-lean-dimension.web co-activation mirror", () => {
 		expect(pi.setActiveTools).toHaveBeenCalledWith(
 			expect.arrayContaining(["web-search"]),
 		);
+	});
+
+	// Allowlist focus (an upstream pi-tool-masking consumer) holds the line —
+	// the mirror must not co-activate, so a stale library `doRestore` emitting
+	// a web `changed` during resume can't disable search or write a {enabled}
+	// entry. Set the shared module state directly (published type doesn't name
+	// "allowlist").
+	it("skips co-activation while allowlist focus is active", async () => {
+		const { pi, events } = mockSearchPi(["web-search"]);
+		searchExtension(pi);
+		(globalThis as any)["__piToolMaskingModuleState"] = {
+			defaultResolutionMode: "allowlist",
+		};
+
+		(pi.setActiveTools as any).mockClear();
+		events.emit(TOOLSET_EVENTS.changed, {
+			id: "pi-lean-dimension.web",
+			enabled: false,
+		});
+
+		expect(pi.setActiveTools).not.toHaveBeenCalled();
 	});
 });

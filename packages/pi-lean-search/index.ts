@@ -16,7 +16,11 @@ import type {
 	ExtensionContext,
 	ThemeColor,
 } from "@earendil-works/pi-coding-agent";
-import { defineToolset, TOOLSET_EVENTS } from "pi-tool-masking";
+import {
+	defineToolset,
+	TOOLSET_EVENTS,
+	getDefaultResolutionMode,
+} from "pi-tool-masking";
 import type { ToolsetSpec, ToolsetChangedEvent } from "pi-tool-masking";
 import { readSearxngUrl } from "./search-config.js";
 import { webSearchTool } from "./web-search-tool.js";
@@ -199,9 +203,25 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Co-activation: mirror pi-lean-dimension.web changed events ─
 	// Listen on changed ONLY, not restored (§10.1).
+	//
+	// Focus-mode guard: while allowlist focus holds the line, skip
+	// co-activation. The focus set is authoritative, so a web `changed` event
+	// — including one a stale library `doRestore` emits during resume — must
+	// not disable search or write a focus-indistinguishable {enabled} entry.
+	// The published `DefaultResolutionMode` type doesn't name `"allowlist"`
+	// (it ships in pi-tool-masking 1.2.0), so the string cast is load-bearing:
+	// an allowlist-capable consumer sharing the `globalThis` module state
+	// writes `"allowlist"` into it and we read it back here. No-op for
+	// ordinary users on published versions, where nothing ever writes
+	// `"allowlist"`.
+	//
+	// Cleanup at the ^1.2.0 bump: drop the `as string` cast once
+	// `DefaultResolutionMode` names `"allowlist"` — same as the matching cast
+	// in pi-lean-portal's browser-toggle focus guard.
 	pi.events.on(TOOLSET_EVENTS.changed, (data: unknown) => {
 		const event = data as ToolsetChangedEvent;
 		if (event.id === "pi-lean-dimension.web") {
+			if ((getDefaultResolutionMode() as string) === "allowlist") return;
 			if (event.enabled) {
 				searchToolset.enable(pi);
 			} else {
