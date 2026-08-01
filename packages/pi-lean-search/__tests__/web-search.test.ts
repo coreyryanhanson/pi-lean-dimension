@@ -479,10 +479,11 @@ describe("pi-lean-dimension.web co-activation mirror", () => {
 		);
 	});
 
-	// Allowlist focus (pi-tbox `/tbox focus`) holds the line — the mirror must
-	// not co-activate, so a stale library `doRestore` emitting a web `changed`
-	// during resume can't disable search or write a {enabled} entry. Set the
-	// shared module state directly (published type doesn't name "allowlist").
+	// Allowlist focus (an upstream pi-tool-masking consumer) holds the line —
+	// the mirror must not co-activate, so a stale library `doRestore` emitting
+	// a web `changed` during resume can't disable search or write a {enabled}
+	// entry. Set the shared module state directly (published type doesn't name
+	// "allowlist").
 	it("skips co-activation while allowlist focus is active", async () => {
 		const { pi, events } = mockSearchPi(["web-search"]);
 		searchExtension(pi);

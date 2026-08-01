@@ -13,12 +13,18 @@ import { readMergedSettings } from "./core/shared/settings-reader.js";
 
 // Focus-mode guard helper. The library's published `DefaultResolutionMode`
 // type is `"exclusion" | "inclusion"` (the allowlist mode is unpublished /
-// ships in 1.2.0), so the string cast is load-bearing: a newer pi-tbox
-// holding an allowlist focus writes `"allowlist"` into the shared
-// `globalThis` module state, and this consumer reads it back at runtime
-// even though its own bundled type doesn't name it. On published versions
-// no caller ever writes `"allowlist"`, so this is a no-op for ordinary
-// users — it only activates when a allowlist-capable pi-tbox is in play.
+// ships in pi-tool-masking 1.2.0), so the string cast is load-bearing: an
+// allowlist-capable consumer sharing the `globalThis` module state writes
+// `"allowlist"` into it, and this consumer reads that value back at runtime
+// even though its own bundled type doesn't name the mode. On published
+// versions no caller ever writes `"allowlist"`, so this is a no-op for
+// ordinary users — it only activates when an allowlist-capable
+// pi-tool-masking consumer is in play.
+//
+// Cleanup at the ^1.2.0 bump: once `DefaultResolutionMode` names
+// `"allowlist"`, drop the `as string` cast here and in pi-lean-search's
+// co-activation mirror — the type system can then check the comparison
+// directly and the cast becomes a suppressor of a check it should perform.
 function isFocusHolding(): boolean {
 	const mode = getDefaultResolutionMode() as string;
 	return mode === "inclusion" || mode === "allowlist";
@@ -193,10 +199,11 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 
 			// Focus-mode guard (§13.2): refuse actuating subcommands while the
 			// library holds the line — either inclusion mode or allowlist focus
-			// (pi-tbox `/tbox focus`). Either way a sibling toggle must not write a
-			// focus-indistinguishable {enabled} entry. Read-only subcommands
-			// (status/profile/cookies/bare /web) stay unguarded, matching tbox's
-			// treatment of its own read-only commands.
+			// (an upstream pi-tool-masking consumer). Either way a sibling
+			// toggle must not write a focus-indistinguishable {enabled} entry.
+			// Read-only subcommands (status/profile/cookies/bare /web) stay
+			// unguarded, matching the focus controller's treatment of its own
+			// read-only commands.
 			if (["on", "off", "learn"].includes(cmd) && isFocusHolding()) {
 				const inInclusion =
 					(getDefaultResolutionMode() as string) === "inclusion";

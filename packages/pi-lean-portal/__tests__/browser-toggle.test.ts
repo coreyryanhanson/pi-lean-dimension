@@ -372,10 +372,10 @@ describe("/web focus-mode guard", () => {
 		}
 	});
 
-	// Allowlist focus (pi-tbox `/tbox focus`) holds the line the same way
-	// inclusion does. The published library type doesn't name "allowlist", so
-	// we set the shared module state directly — mirroring what a newer
-	// pi-tbox's restore writes into globalThis.
+	// Allowlist focus (an upstream pi-tool-masking consumer) holds the line
+	// the same way inclusion does. The published library type doesn't name
+	// "allowlist", so we set the shared module state directly — mirroring what
+	// an allowlist-capable consumer's restore writes into globalThis.
 	it("refuses /web on/off/learn while allowlist focus is active", async () => {
 		const { pi } = mockPi([]);
 		browserToggle(pi);
