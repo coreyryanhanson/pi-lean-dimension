@@ -371,6 +371,30 @@ describe("/web focus-mode guard", () => {
 			expect(finalActive).toContain(name);
 		}
 	});
+
+	// Allowlist focus (pi-tbox `/tbox focus`) holds the line the same way
+	// inclusion does. The published library type doesn't name "allowlist", so
+	// we set the shared module state directly — mirroring what a newer
+	// pi-tbox's restore writes into globalThis.
+	it("refuses /web on/off/learn while allowlist focus is active", async () => {
+		const { pi } = mockPi([]);
+		browserToggle(pi);
+		(globalThis as any)[MODULE_STATE_KEY] = {
+			defaultResolutionMode: "allowlist",
+		};
+
+		for (const sub of ["on", "off", "learn"]) {
+			(pi.setActiveTools as any).mockClear();
+			const ctx = mockCtx();
+			await captureWebHandler(pi)(sub, ctx);
+
+			expect(ctx.ui.notify).toHaveBeenCalledWith(
+				expect.stringContaining("Focus mode (allowlist) is active"),
+				"warning",
+			);
+			expect(pi.setActiveTools).not.toHaveBeenCalled();
+		}
+	});
 });
 
 // ==================================================================

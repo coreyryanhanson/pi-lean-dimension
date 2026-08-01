@@ -1,6 +1,5 @@
 import type {
 	ExtensionAPI,
-	ExtensionCommandContext,
 	ExtensionContext,
 	ThemeColor,
 } from "@earendil-works/pi-coding-agent";
@@ -11,6 +10,19 @@ import {
 } from "pi-tool-masking";
 import type { ToolsetSpec } from "pi-tool-masking";
 import { readMergedSettings } from "./core/shared/settings-reader.js";
+
+// Focus-mode guard helper. The library's published `DefaultResolutionMode`
+// type is `"exclusion" | "inclusion"` (the allowlist mode is unpublished /
+// ships in 1.2.0), so the string cast is load-bearing: a newer pi-tbox
+// holding an allowlist focus writes `"allowlist"` into the shared
+// `globalThis` module state, and this consumer reads it back at runtime
+// even though its own bundled type doesn't name it. On published versions
+// no caller ever writes `"allowlist"`, so this is a no-op for ordinary
+// users — it only activates when a allowlist-capable pi-tbox is in play.
+function isFocusHolding(): boolean {
+	const mode = getDefaultResolutionMode() as string;
+	return mode === "inclusion" || mode === "allowlist";
+}
 
 // ---- Toolset specs -----------------------------------------------
 
@@ -180,16 +192,18 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 			const cmd = args.trim().toLowerCase();
 
 			// Focus-mode guard (§13.2): refuse actuating subcommands while the
-			// library holds the line in inclusion mode, so a sibling toggle
-			// can't write a focus-indistinguishable {enabled} entry. Read-only
-			// subcommands (status/profile/cookies/bare /web) stay unguarded,
-			// matching tbox's treatment of its own read-only commands.
-			if (
-				["on", "off", "learn"].includes(cmd) &&
-				getDefaultResolutionMode() === "inclusion"
-			) {
+			// library holds the line — either inclusion mode or allowlist focus
+			// (pi-tbox `/tbox focus`). Either way a sibling toggle must not write a
+			// focus-indistinguishable {enabled} entry. Read-only subcommands
+			// (status/profile/cookies/bare /web) stay unguarded, matching tbox's
+			// treatment of its own read-only commands.
+			if (["on", "off", "learn"].includes(cmd) && isFocusHolding()) {
+				const inInclusion =
+					(getDefaultResolutionMode() as string) === "inclusion";
 				ctx.ui.notify(
-					"Another plugin has active inclusion mode — this toolset can't be toggled while inclusion is holding the line. Deactivate it there first.",
+					inInclusion
+						? "Another plugin has active inclusion mode — this toolset can't be toggled while inclusion is holding the line. Deactivate it there first."
+						: "Focus mode (allowlist) is active — this toolset can't be toggled while focus is holding the line. Exit focus there first.",
 					"warning",
 				);
 				return;
