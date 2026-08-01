@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Focus-mode guards in `pi-lean-portal` and `pi-lean-search`** — `/web` actuating
+  subcommands (`on`/`off`/`learn`) and the search co-activation mirror now refuse to
+  modify toolset state while an allowlist focus is active, alongside the existing
+  inclusion guard. Prevents a focus-resume bug where a consumer mirror wrote a
+  focus-indistinguishable `{enabled}` entry on resume, corrupting the persisted
+  branch across sessions. The guards read the shared `globalThis` resolution-mode
+  state (a string cast bridges the unpublished `"allowlist"` mode until
+  `pi-tool-masking@1.2.0`) and are a no-op on published versions where nothing
+  writes that mode. Bumped the `pi-tool-masking` dependency range to `^1.1.0`.
+
 ## [0.3.2] - 2026-07-26
 
 ### Fixed
