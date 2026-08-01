@@ -14,7 +14,9 @@
   shows the new shape so users can migrate before the legacy read is removed.
   Once the `toolset-state:pi-lean-dimension.web` entry is present in
   `toolsetDefaults`, the warning is suppressed even if the legacy key is still
-  on disk — the migration target exists, so the nudge is redundant.
+  on disk — the migration target exists, so the nudge is redundant. The root
+  and portal READMEs now mark `browserToggle.defaultEnabled` as deprecated at
+  each reference and show the forward-compatible `toolsetDefaults` shape.
 
 ### Fixed
 

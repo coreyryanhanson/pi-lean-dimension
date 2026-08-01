@@ -169,17 +169,23 @@ function renderBrowserGlyph(
 const TOOLSET_DEFAULTS_MIGRATION_MSG =
 	"⚠️ pi-lean-portal: settings-based toolset defaults are moving to the " +
 	"pi-tool-masking library. The `browserToggle.defaultEnabled` key in your " +
-	"settings.json will stop being read in an upcoming release — migrate to " +
-	"the `toolsetDefaults` block now so your default is preserved:\n\n" +
+	"settings.json will stop being read in an upcoming release. It still works " +
+	"today — KEEP it until the replacement ships, and add the new " +
+	"`toolsetDefaults` block alongside it so your config is ready (the new " +
+	"block is not read yet, but is harmless now and will take effect " +
+	"automatically once the offload lands):\n\n" +
 	"{\n" +
+	'  "browserToggle": { "defaultEnabled": true },\n' +
 	'  "toolsetDefaults": {\n' +
 	'    "toolset-state:pi-lean-dimension.web": { "enabled": true },\n' +
 	'    "toolset-state:pi-lean-dimension.web-learn": { "enabled": true },\n' +
 	'    "toolset-state:pi-lean-dimension.search": { "enabled": true }\n' +
 	"  }\n" +
 	"}\n" +
-	"(omit a key to use the toolset's packaged default; the `search` key " +
-	"only applies when pi-lean-search is installed).";
+	"(omit a `toolsetDefaults` key to use the toolset's packaged default; the " +
+	"`search` key only applies when pi-lean-search is installed). Mirror your " +
+	"web default into `toolset-state:pi-lean-dimension.web` to silence this " +
+	"warning.";
 
 function hasLegacyToolsetDefault(merged: Record<string, unknown>): boolean {
 	const seg = merged["browserToggle"];

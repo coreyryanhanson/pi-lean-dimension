@@ -28,6 +28,28 @@ Pi settings (`~/.pi/agent/settings.json` or `.pi/settings.json`):
 { "browserToggle": { "defaultEnabled": false } }
 ```
 
+> ⚠️ **Deprecated — not yet replaced.** `browserToggle.defaultEnabled` is
+> still read today and works as shown. It is *scheduled* to be replaced by
+> the `pi-tool-masking` library's `toolsetDefaults` block in an upcoming
+> release — **that block is not read yet**, so keep the legacy key until the
+> replacement ships. To be ready, you can add the future block alongside it
+> (it's harmless today; it'll take effect automatically once the offload
+> lands):
+>
+> ```json
+> {
+>   "browserToggle": { "defaultEnabled": false },
+>   "toolsetDefaults": {
+>     "toolset-state:pi-lean-dimension.web": { "enabled": false },
+>     "toolset-state:pi-lean-dimension.web-learn": { "enabled": false },
+>     "toolset-state:pi-lean-dimension.search": { "enabled": false }
+>   }
+> }
+> ```
+>
+> (omit a `toolsetDefaults` key to use the toolset's packaged default; the
+> `search` key only applies when `pi-lean-search` is installed.)
+
 ---
 
 ## Install options

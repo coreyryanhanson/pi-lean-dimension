@@ -105,6 +105,11 @@ describe("legacy browserToggle.defaultEnabled migration warning", () => {
 		const msg = (ctx.ui.notify as any).mock.calls[0][0] as string;
 		expect(msg).toContain("toolset-state:pi-lean-dimension.web");
 		expect(msg).toContain("toolset-state:pi-lean-dimension.web-learn");
+		// The warning must make clear the legacy key still works today and the
+		// new block is not read yet — otherwise users drop the working key.
+		expect(msg).toContain("KEEP");
+		expect(msg).toContain("not read yet");
+		expect(msg).toContain("browserToggle");
 	});
 
 	it("stays silent when no legacy key is present", async () => {
