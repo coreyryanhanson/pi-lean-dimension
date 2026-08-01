@@ -154,10 +154,66 @@ function renderBrowserGlyph(
 	}
 }
 
+// ---- Legacy settings migration warning ---------------------------
+//
+// The portal currently seeds the web toolset's fresh-session default from
+// `browserToggle.defaultEnabled` in settings.json. An upcoming pi-tool-masking
+// release takes over settings-based toolset defaults and reads a new
+// `toolsetDefaults` block instead. Warn users who pinned the legacy key so
+// they can migrate before the offload lands and the legacy read is removed.
+//
+// ponytail: warn-only — we still honor the legacy key for backward compat
+// until pi-tool-masking owns the settings tier; then delete this helper and
+// the `browserToggle` read below. Ceiling: a silent default shift for users
+// who ignore the warning; upgrade path is the pi-tool-masking bump.
+const TOOLSET_DEFAULTS_MIGRATION_MSG =
+	"⚠️ pi-lean-portal: settings-based toolset defaults are moving to the " +
+	"pi-tool-masking library. The `browserToggle.defaultEnabled` key in your " +
+	"settings.json will stop being read in an upcoming release — migrate to " +
+	"the `toolsetDefaults` block now so your default is preserved:\n\n" +
+	"{\n" +
+	'  "toolsetDefaults": {\n' +
+	'    "toolset-state:pi-lean-dimension.web": { "enabled": true },\n' +
+	'    "toolset-state:pi-lean-dimension.web-learn": { "enabled": true },\n' +
+	'    "toolset-state:pi-lean-dimension.search": { "enabled": true }\n' +
+	"  }\n" +
+	"}\n" +
+	"(omit a key to use the toolset's packaged default; the `search` key " +
+	"only applies when pi-lean-search is installed).";
+
+function hasLegacyToolsetDefault(merged: Record<string, unknown>): boolean {
+	const seg = merged["browserToggle"];
+	if (!seg || typeof seg !== "object" || Array.isArray(seg)) return false;
+	return (
+		typeof (seg as Record<string, unknown>)["defaultEnabled"] === "boolean"
+	);
+}
+
+// The new `toolsetDefaults` block the pi-tool-masking offload will read.
+// When the user has already migrated the web toolset's default into it,
+// the warning is redundant even if the legacy `browserToggle.defaultEnabled`
+// key is still sitting on disk — suppress so a migrated settings file stays
+// quiet. Only the web persist key gates this: it's the one the legacy key
+// controlled, so its presence means the user acted on the migration.
+const WEB_TOOLSET_PERSIST_KEY = "toolset-state:pi-lean-dimension.web";
+function hasMigratedToolsetDefault(merged: Record<string, unknown>): boolean {
+	const td = merged["toolsetDefaults"];
+	if (!td || typeof td !== "object" || Array.isArray(td)) return false;
+	const entry = (td as Record<string, unknown>)[WEB_TOOLSET_PERSIST_KEY];
+	if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+	return typeof (entry as Record<string, unknown>)["enabled"] === "boolean";
+}
+
 // ---- Toggle initializer ------------------------------------------
 
 export default function initBrowserToggle(pi: ExtensionAPI) {
 	const merged = readMergedSettings();
+	// Warn only when the legacy key is pinned AND the user hasn't already
+	// migrated the web default into `toolsetDefaults`. Once the migrated
+	// entry exists, pi-tool-masking will read it directly and the legacy
+	// key is dead weight — no need to nag.
+	const legacyDefaultPinned =
+		hasLegacyToolsetDefault(merged) && !hasMigratedToolsetDefault(merged);
 	const browserToggleSegment = (merged as Record<string, unknown>)[
 		"browserToggle"
 	] as Record<string, unknown> | undefined;
@@ -286,6 +342,11 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 		restoreProfile(pi, ctx);
 		_lastCtx = ctx;
 		syncCachedState();
+		// One-time-per-session migration warning when the legacy
+		// `browserToggle.defaultEnabled` pin is still on disk.
+		if (legacyDefaultPinned) {
+			ctx.ui.notify(TOOLSET_DEFAULTS_MIGRATION_MSG, "warning");
+		}
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {

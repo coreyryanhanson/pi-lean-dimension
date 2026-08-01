@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Migration warning for `browserToggle.defaultEnabled`** — `pi-lean-portal`
+  now warns on `session_start` when the legacy `browserToggle.defaultEnabled`
+  key is present in `settings.json`. Settings-based toolset defaults are being
+  offloaded to the `pi-tool-masking` library, which reads a new
+  `toolsetDefaults` block keyed by persist key
+  (`toolset-state:pi-lean-dimension.web`, `.web-learn`, `.search`). The legacy
+  key is still honored for backward compat until the offload lands; the warning
+  shows the new shape so users can migrate before the legacy read is removed.
+  Once the `toolset-state:pi-lean-dimension.web` entry is present in
+  `toolsetDefaults`, the warning is suppressed even if the legacy key is still
+  on disk — the migration target exists, so the nudge is redundant.
+
 ### Fixed
 
 - **Focus-mode guards in `pi-lean-portal` and `pi-lean-search`** — `/web` actuating
