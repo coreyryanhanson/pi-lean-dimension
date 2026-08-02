@@ -35,7 +35,7 @@ per session. To set a different default for **new** sessions, add a
 }
 ```
 
-`toolsetDefaults` is read by the `pi-tool-masking` library on restore, before
+`toolsetDefaults` is read by the [`pi-tool-masking`](https://github.com/coreyryanhanson/pi-tool-masking/) library on restore, before
 the toolset's packaged default. Omit a key to use the packaged default; the
 `search` key only applies when `pi-lean-search` is installed.
 
