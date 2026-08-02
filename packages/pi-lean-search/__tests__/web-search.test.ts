@@ -80,9 +80,7 @@ describe("readSearxngUrl", () => {
 		vi.mocked(existsSync).mockImplementation(
 			(path) => typeof path === "string" && path.includes(".pi"),
 		);
-		vi.mocked(readFileSync).mockReturnValue(
-			JSON.stringify({ theme: "dark", browserToggle: {} }),
-		);
+		vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ theme: "dark" }));
 		expect(readSearxngUrl()).toBeUndefined();
 	});
 
@@ -482,8 +480,7 @@ describe("pi-lean-dimension.web co-activation mirror", () => {
 	// Allowlist focus (an upstream pi-tool-masking consumer) holds the line —
 	// the mirror must not co-activate, so a stale library `doRestore` emitting
 	// a web `changed` during resume can't disable search or write a {enabled}
-	// entry. Set the shared module state directly (published type doesn't name
-	// "allowlist").
+	// entry. Set the shared module state directly.
 	it("skips co-activation while allowlist focus is active", async () => {
 		const { pi, events } = mockSearchPi(["web-search"]);
 		searchExtension(pi);

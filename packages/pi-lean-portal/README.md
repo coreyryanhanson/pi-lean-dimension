@@ -115,17 +115,10 @@ toggles guide-saving mode, and manages browser profiles.
 ### Persistence
 
 The toggle state is stored in the conversation's branch history. A fresh
-conversation starts with the default from `settings.json` (`browserToggle.defaultEnabled`,
-which defaults to `true`).
-
-> ⚠️ `browserToggle.defaultEnabled` is still read today but is scheduled to be
-> replaced by the `pi-tool-masking` library's `toolsetDefaults` block in an
-> upcoming release — **that block is not read yet**, so keep the legacy key
-> until the replacement ships. See
-> [Configuration (`settings.json`)](#configuration-settingsjson) for the
-> future shape and how to pre-add it harmlessly. A migration warning fires on
-> session start once the legacy key is present and the web default hasn't yet
-> been mirrored into `toolsetDefaults`.
+conversation starts with the default from `settings.json` — the
+`pi-tool-masking` library's `toolsetDefaults` block (see
+[Configuration (`settings.json`)](#configuration-settingsjson)), falling back
+to the toolset's packaged default (`true` for `web`).
 
 ---
 
@@ -615,48 +608,30 @@ a `profile` parameter:
 }
 ```
 
-### `browserToggle.defaultEnabled` *(deprecated — not yet replaced)*
+### `toolsetDefaults` *(settings-based toolset defaults)*
 
-Whether browser tools are enabled on fresh conversations. **This key is still
-read today and works as shown.** It is *scheduled* to be replaced by the
-`pi-tool-masking` library's `toolsetDefaults` block in an upcoming release —
-**that block is not read yet**, so keep this key until the replacement ships.
+Whether browser tools are enabled on fresh conversations. Read by the
+`pi-tool-masking` library at restore time, between the chat-branch tier and
+the toolset's packaged default:
 
 ```jsonc
 {
-  "browserToggle": {
-    "defaultEnabled": true
+  "toolsetDefaults": {
+    "toolset-state:pi-lean-dimension.web": { "enabled": true },
+    "toolset-state:pi-lean-dimension.web-learn": { "enabled": false },
+    "toolset-state:pi-lean-dimension.search": { "enabled": true }
   }
 }
 ```
 
-> ⚠️ **Preparing for the offload.** Settings-based toolset defaults are being
-> offloaded to the `pi-tool-masking` library, which will read a new
-> `toolsetDefaults` block keyed by persist key. **The new block is not read
-> by the current release** — it's harmless to add now and will take effect
-> automatically once the offload ships, at which point the legacy key stops
-> being read. To pre-stage the migration, set both:
->
-> ```jsonc
-> {
->   "browserToggle": { "defaultEnabled": true },
->   "toolsetDefaults": {
->     "toolset-state:pi-lean-dimension.web": { "enabled": true },
->     "toolset-state:pi-lean-dimension.web-learn": { "enabled": false },
->     "toolset-state:pi-lean-dimension.search": { "enabled": true }
->   }
-> }
-> ```
->
-> - Keys are the toolsets' `persistKey` values (`toolset-state:<id>`).
-> - Omit a `toolsetDefaults` key to use the toolset's packaged default (`web`
->   and `search` default `true`; `web-learn` defaults `false`).
-> - The `search` key only applies when `pi-lean-search` is installed.
->
-> Once the offload ships and the legacy read is removed, delete the
-> `browserToggle` block. Until then, a migration warning fires on session
-> start when the legacy key is present and the web default hasn't yet been
-> mirrored into `toolsetDefaults`; mirroring it suppresses the warning.
+- Keys are the toolsets' `persistKey` values (`toolset-state:<id>`).
+- Omit a `toolsetDefaults` key to use the toolset's packaged default (`web`
+  and `search` default `true`; `web-learn` defaults `false`).
+- The `search` key only applies when `pi-lean-search` is installed.
+
+> The legacy `browserToggle.defaultEnabled` key is **removed in 0.4.0** — it
+> is no longer read. If you pinned it, move the value into the matching
+> `toolsetDefaults` entry above.
 
 ### `browser.maxStorageStateSize`
 
