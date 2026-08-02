@@ -161,7 +161,6 @@ packages/pi-lean-dimension/README.md
 
 # Scratch files (not part of the active branch)
 /.pi-subagents/
-/reports/
 
 # Contributed backend templates: ignore everything under contributed/ by
 # default; whitelist only the shipped (tracked) camoufox set. Any user-
@@ -181,4 +180,7 @@ packages/pi-lean-portal/contributed/camoufox-py/*
 # logic as the templates above. Contract/persistence tests for scratch
 # backends are ignored unless explicitly re-included.
 packages/pi-lean-portal/__tests__/contributed/*
+
+# Pi settings
+.pi
 
