@@ -80,9 +80,7 @@ describe("readSearxngUrl", () => {
 		vi.mocked(existsSync).mockImplementation(
 			(path) => typeof path === "string" && path.includes(".pi"),
 		);
-		vi.mocked(readFileSync).mockReturnValue(
-			JSON.stringify({ theme: "dark", browserToggle: {} }),
-		);
+		vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ theme: "dark" }));
 		expect(readSearxngUrl()).toBeUndefined();
 	});
 
