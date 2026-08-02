@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings-based toolset defaults now read by `pi-tool-masking`** — the
+  `toolsetDefaults` block in `settings.json`
+  (`toolset-state:pi-lean-dimension.web`, `.web-learn`, `.search`) is now read
+  by the `pi-tool-masking` library at restore time, between the chat-branch
+  tier and the toolset's packaged default. The legacy
+  `browserToggle.defaultEnabled` key is **removed** — users who pinned it
+  should add the matching `toolsetDefaults` entry (the 0.3.3 migration
+  warning prepared this). Focus guards in `pi-lean-portal` and
+  `pi-lean-search` now use the typed `allowlist` resolution mode instead of
+  string casts. `pi-tool-masking` bumped to `^1.2.0`.
+
 ## [0.3.3] - 2026-08-01
 
 ### Added

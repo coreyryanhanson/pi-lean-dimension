@@ -21,34 +21,27 @@ npx playwright install chromium firefox
 That's it — the tools are registered and start enabled by default. Control
 them with `/web on|off|learn` (`on` = browser tools, `learn` = browser tools
 plus guide-saving via `web-learn`, `off` = everything off). The state persists
-per session. To set a different default for **new** sessions, add this to your
-Pi settings (`~/.pi/agent/settings.json` or `.pi/settings.json`):
+per session. To set a different default for **new** sessions, add a
+`toolsetDefaults` block to your Pi settings (`~/.pi/agent/settings.json` or
+`.pi/settings.json`):
 
 ```json
-{ "browserToggle": { "defaultEnabled": false } }
+{
+  "toolsetDefaults": {
+    "toolset-state:pi-lean-dimension.web": { "enabled": false },
+    "toolset-state:pi-lean-dimension.web-learn": { "enabled": false },
+    "toolset-state:pi-lean-dimension.search": { "enabled": false }
+  }
+}
 ```
 
-> ⚠️ **Deprecated — not yet replaced.** `browserToggle.defaultEnabled` is
-> still read today and works as shown. It is *scheduled* to be replaced by
-> the `pi-tool-masking` library's `toolsetDefaults` block in an upcoming
-> release — **that block is not read yet**, so keep the legacy key until the
-> replacement ships. To be ready, you can add the future block alongside it
-> (it's harmless today; it'll take effect automatically once the offload
-> lands):
->
-> ```json
-> {
->   "browserToggle": { "defaultEnabled": false },
->   "toolsetDefaults": {
->     "toolset-state:pi-lean-dimension.web": { "enabled": false },
->     "toolset-state:pi-lean-dimension.web-learn": { "enabled": false },
->     "toolset-state:pi-lean-dimension.search": { "enabled": false }
->   }
-> }
-> ```
->
-> (omit a `toolsetDefaults` key to use the toolset's packaged default; the
-> `search` key only applies when `pi-lean-search` is installed.)
+`toolsetDefaults` is read by the `pi-tool-masking` library on restore, before
+the toolset's packaged default. Omit a key to use the packaged default; the
+`search` key only applies when `pi-lean-search` is installed.
+
+> The legacy `browserToggle.defaultEnabled` key is **removed in 0.4.0** and
+> no longer read. If you pinned it, move the value into the matching
+> `toolsetDefaults` entry above.
 
 ---
 
