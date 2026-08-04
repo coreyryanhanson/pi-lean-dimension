@@ -167,6 +167,20 @@ function navFailure(
 }
 
 /**
+ * Load saved storage state for a named/session profile (if any).
+ * Returns undefined when there's no profile or the file is unreadable.
+ */
+function loadProfileStorageState(profileName: string | undefined): unknown {
+	if (!profileName) return undefined;
+	try {
+		return loadStorageState(profileName) ?? undefined;
+	} catch {
+		// Corrupt/unreadable file — proceed with fresh state
+		return undefined;
+	}
+}
+
+/**
  * Get or create an interactive session for the given task.
  *
  * If a session already exists, returns it. If no session exists but
@@ -215,17 +229,7 @@ async function requireInteractiveSession(taskId: string): Promise<{
 	}
 
 	// ── Load saved storage state for the profile (if any) ────────────
-	let loadedStorageState: unknown;
-	if (lastNav.profileName) {
-		try {
-			const loaded = loadStorageState(lastNav.profileName);
-			if (loaded !== null) {
-				loadedStorageState = loaded;
-			}
-		} catch {
-			// Corrupt/unreadable file — proceed with fresh state
-		}
-	}
+	const loadedStorageState = loadProfileStorageState(lastNav.profileName);
 
 	// Navigate — plugin loads its own storage state if needed
 	const navOptions: { signal?: AbortSignal; storageState?: unknown } = {};
@@ -497,17 +501,7 @@ export async function navigate(
 	}
 
 	// ── Load saved storage state for the profile (if any) ────────────
-	let loadedStorageState: unknown;
-	if (resolvedProfileName !== undefined) {
-		try {
-			const loaded = loadStorageState(resolvedProfileName);
-			if (loaded !== null) {
-				loadedStorageState = loaded;
-			}
-		} catch {
-			// Corrupt/unreadable file — proceed with fresh state
-		}
-	}
+	const loadedStorageState = loadProfileStorageState(resolvedProfileName);
 
 	const navOptions: {
 		signal?: AbortSignal;
