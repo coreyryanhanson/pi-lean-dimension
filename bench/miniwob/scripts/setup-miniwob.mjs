@@ -19,8 +19,8 @@
  * Usage:
  *   npm run setup:miniwob                                            # default path
  *   node bench/miniwob/scripts/setup-miniwob.mjs                # same (direct)
- *   MINIWOB_HTML_ROOT=/opt/miniwob node …setup-miniwob.mjs      # custom path
- *   node bench/miniwob/scripts/setup-miniwob.mjs /custom/path
+ *   MINIWOB_HTML_ROOT=/path/to/miniwob/html node …setup-miniwob.mjs  # verify existing html dir (no-op)
+ *   node bench/miniwob/scripts/setup-miniwob.mjs /path/to/miniwob/html   # same (direct)
  *
  * ── Attribution ────────────────────────────────────────────────
  *
@@ -74,10 +74,28 @@ function currentCommit(cwd) {
 // ─── Main ────────────────────────────────────────────────────────
 
 function main() {
-	// Resolve target directory (env > positional > default)
-	const envRoot = process.env.MINIWOB_HTML_ROOT;
-	const positionalArg = process.argv[2];
-	const checkoutRoot = resolve(positionalArg ?? envRoot ?? DEFAULT_ROOT);
+	// `MINIWOB_HTML_ROOT` / positional arg name the html directory directly
+	// (suite convention — see miniwob-suite-helper.ts). Only the default is
+	// a checkout root whose html lives at <root>/miniwob/html.
+	const override = process.argv[2] ?? process.env.MINIWOB_HTML_ROOT;
+	const checkoutRoot = resolve(DEFAULT_ROOT);
+
+	// ── Explicit html root — verify it exists, no cloning to custom paths ──
+	if (override) {
+		const htmlDir = resolve(override);
+		if (!existsSync(htmlDir)) {
+			die(
+				`HTML root not found: ${htmlDir}.\n` +
+					`  MINIWOB_HTML_ROOT must point at an existing html directory ` +
+					`(the suite reads it directly, e.g. ` +
+					`${join(checkoutRoot, "miniwob", "html")}).\n` +
+					`  Unset MINIWOB_HTML_ROOT to clone into the default location.`,
+			);
+		}
+		info(`MiniWoB++ HTML root already present at ${htmlDir}. Nothing to do.`);
+		process.exit(0);
+	}
+
 	const htmlDir = join(checkoutRoot, "miniwob", "html");
 
 	// ── Existing .git checkout — verify html/ presence + pinned commit ──
