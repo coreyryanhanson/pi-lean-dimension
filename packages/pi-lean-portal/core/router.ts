@@ -121,12 +121,12 @@ function formatDialogEvents(events: DialogEvent[]): string {
 	if (events.length === 0) return "";
 
 	const lines = events.map((d) => {
-		const prefix =
-			d.type === "alert" ? "📢" : d.type === "confirm" ? "❓" : "💬";
-		return `${prefix} [${d.type}] ${d.message} (auto-${d.handledAs})`;
+		const prefix = { alert: "📢", confirm: "❓", crash: "💥" }[d.type] ?? "💬";
+		const handled = d.handledAs ? ` (auto-${d.handledAs})` : "";
+		return `${prefix} [${d.type}] ${d.message}${handled}`;
 	});
 
-	return "\n\n--- Auto-dismissed dialogs ---\n" + lines.join("\n");
+	return "\n\n--- Page events (dialogs, crashes) ---\n" + lines.join("\n");
 }
 
 /**

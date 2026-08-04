@@ -449,12 +449,12 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				this.getOrCreateCache(taskId).set(ref, node);
 			}
 
-			// Collect recent auto-dismissed dialog events (last 10)
+			// Collect recent dialog/crash events (last 10)
 			const rawDialogs = getDialogLog(taskId);
 			const dialogEvents = rawDialogs.slice(-10).map((d) => ({
 				type: d.type,
 				message: d.message,
-				handledAs: d.handledAs,
+				...(d.handledAs ? { handledAs: d.handledAs } : {}),
 			}));
 
 			return {
