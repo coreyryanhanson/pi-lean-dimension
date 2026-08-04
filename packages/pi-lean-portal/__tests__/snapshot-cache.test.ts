@@ -233,11 +233,7 @@ describe("removeAllSnapshotFiles()", () => {
 		expect(existsSync(r2!.path)).toBe(false);
 	});
 
-	it("is safe to call when no files exist", () => {
-		expect(() => removeAllSnapshotFiles()).not.toThrow();
-	});
-
-	it("is safe to call multiple times", () => {
+	it("is safe to call repeatedly when no files exist", () => {
 		removeAllSnapshotFiles();
 		removeAllSnapshotFiles();
 		expect(() => removeAllSnapshotFiles()).not.toThrow();
@@ -265,27 +261,11 @@ describe("formatCacheNotice()", () => {
 		expect(notice).not.toContain("Full snapshot cached at");
 	});
 
-	it("returns empty string when snapshot was not truncated", () => {
-		const cacheResult: CacheResult = {
-			path: "/tmp/pi-lean-portal/snapshot-test-abc123-0.txt",
-			fingerprint: "abc123",
-		};
-		const notice = formatCacheNotice(cacheResult, 100, false);
-		expect(notice).toBe("");
-	});
-
-	it("returns empty string when snapshot is short even if truncated flag is true", () => {
-		// This guards against the internal check in formatCacheNotice
-		const cacheResult: CacheResult = {
-			path: "/tmp/pi-lean-portal/snapshot-test-abc123-0.txt",
-			fingerprint: "abc123",
-		};
-		const notice = formatCacheNotice(cacheResult, 2000, true);
-		expect(notice).toBe("");
-	});
-
-	it("returns empty string when not truncated and cacheResult is null", () => {
-		const notice = formatCacheNotice(null, 100, false);
+	it.each([
+		[100, false],
+		[2000, true],
+	])("returns empty string for non-cache notice input %#", (snapshotLength, truncated) => {
+		const notice = formatCacheNotice(null, snapshotLength, truncated);
 		expect(notice).toBe("");
 	});
 
