@@ -130,6 +130,43 @@ function formatDialogEvents(events: DialogEvent[]): string {
 }
 
 /**
+ * Navigate result as returned to the agent — the base `NavigateResult`
+ * plus the backend that served the request (and the bot-warning flag).
+ */
+export type NavResult = NavigateResult & {
+	backendUsed: string;
+	botDetectionWarning?: boolean;
+};
+
+/**
+ * Build a failed navigate result with the shared failure shape.
+ *
+ * Success paths construct their own object (they carry snapshot content,
+ * dialog/profile metadata); every failure path funnels through here so the
+ * base shape can't drift.
+ */
+function navFailure(
+	backendUsed: string,
+	url: string,
+	extra?: {
+		error?: string | undefined;
+		title?: string;
+		botDetectionWarning?: boolean | undefined;
+	},
+): NavResult {
+	return {
+		success: false,
+		url,
+		title: extra?.title ?? "",
+		snapshot: "",
+		elementCount: 0,
+		backendUsed,
+		...(extra?.error ? { error: extra.error } : {}),
+		...(extra?.botDetectionWarning ? { botDetectionWarning: true } : {}),
+	};
+}
+
+/**
  * Get or create an interactive session for the given task.
  *
  * If a session already exists, returns it. If no session exists but
@@ -379,9 +416,7 @@ function compactInteractionResult(
 export async function navigate(
 	url: string,
 	options: NavigateOptions = {},
-): Promise<
-	NavigateResult & { backendUsed: string; botDetectionWarning?: boolean }
-> {
+): Promise<NavResult> {
 	const strategy = options.strategy ?? "auto";
 	const timeoutMs = (options.timeout ?? 30) * 1000;
 	const taskId = options.taskId ?? "default";
@@ -389,19 +424,7 @@ export async function navigate(
 	// Resolve the plugin from the strategy
 	const resolved = pluginRegistry.resolveStrategy(strategy);
 	if (!resolved.plugin) {
-		const stratResult: NavigateResult & {
-			backendUsed: string;
-			botDetectionWarning?: boolean;
-		} = {
-			success: false,
-			url,
-			title: "",
-			snapshot: "",
-			elementCount: 0,
-			backendUsed: strategy,
-		};
-		if (resolved.error) stratResult.error = resolved.error;
-		return stratResult;
+		return navFailure(strategy, url, { error: resolved.error });
 	}
 	const plugin = resolved.plugin;
 
@@ -410,18 +433,9 @@ export async function navigate(
 	try {
 		normalizedUrl = new URL(url).href;
 	} catch {
-		return {
-			success: false,
-			url,
-			title: "",
-			snapshot: "",
-			elementCount: 0,
+		return navFailure(plugin.name, url, {
 			error: `Invalid URL: ${url}`,
-			backendUsed: plugin.name,
-		} as NavigateResult & {
-			backendUsed: string;
-			botDetectionWarning?: boolean;
-		};
+		});
 	}
 
 	// ── Resolve profile mode ───────────────────────────────────
@@ -452,18 +466,9 @@ export async function navigate(
 		try {
 			sanitizeProfileName(profileInput);
 		} catch (err) {
-			return {
-				success: false,
-				url: normalizedUrl,
-				title: "",
-				snapshot: "",
-				elementCount: 0,
+			return navFailure(plugin.name, normalizedUrl, {
 				error: `Invalid profile name: ${err instanceof Error ? err.message : String(err)}`,
-				backendUsed: plugin.name,
-			} as NavigateResult & {
-				backendUsed: string;
-				botDetectionWarning?: boolean;
-			};
+			});
 		}
 		resolvedProfileName = profileInput;
 	}
@@ -554,22 +559,14 @@ export async function navigate(
 			await plugin.cleanup(taskId).catch(() => {});
 			sessionManager.removeSession(taskId);
 			removeSnapshotFiles(taskId);
-			return {
-				success: false,
-				url: result.url,
+			return navFailure(plugin.name, result.url, {
 				title: result.title,
-				snapshot: "",
-				elementCount: 0,
 				error:
 					"Page appears to be blocked by anti-automation protection. " +
 					"Retry `browser-navigate` with a stealth backend name from the `strategy` parameter's listed backends, " +
 					"or try `web-fetch` for the raw HTML (it skips JS fingerprinting but loses interactivity).",
-				backendUsed: plugin.name,
 				botDetectionWarning: true,
-			} as NavigateResult & {
-				backendUsed: string;
-				botDetectionWarning?: boolean;
-			};
+			});
 		}
 
 		const fp = session.currentSnapshotFingerprint!;
@@ -609,10 +606,7 @@ export async function navigate(
 				)
 			: false;
 
-		const successResult: NavigateResult & {
-			backendUsed: string;
-			botDetectionWarning?: boolean;
-		} = {
+		const successResult: NavResult = {
 			success: true,
 			url: result.url,
 			title: result.title,
@@ -639,20 +633,10 @@ export async function navigate(
 	sessionManager.removeSession(taskId);
 	removeSnapshotFiles(taskId);
 
-	const failResult: NavigateResult & {
-		backendUsed: string;
-		botDetectionWarning?: boolean;
-	} = {
-		success: false,
-		url: result.url || normalizedUrl,
-		title: "",
-		snapshot: "",
-		elementCount: 0,
-		backendUsed: plugin.name,
-	};
-	if (result.error) failResult.error = result.error;
-	if (result.botDetected) failResult.botDetectionWarning = true;
-	return failResult;
+	return navFailure(plugin.name, result.url || normalizedUrl, {
+		error: result.error,
+		botDetectionWarning: result.botDetected,
+	});
 }
 
 // ─── Snapshot (current page) ────────────────────────────────────────
