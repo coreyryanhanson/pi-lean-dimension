@@ -36,12 +36,12 @@ const BODY_ONLY_PATTERNS: RegExp[] = BOT_SIGNALS.bodyOnlyPatterns.map(
 const HTML_SIGNALS = BOT_SIGNALS.htmlSignals;
 
 /**
- * Check if page text content suggests a bot block.
+ * Check page text (title or body) against BLOCK_SIGNALS.
  */
-function checkBodyText(bodyText: string): boolean {
-	if (!bodyText) return false;
+function checkBlockSignals(text: string): boolean {
+	if (!text) return false;
 
-	const lower = bodyText.toLowerCase();
+	const lower = text.toLowerCase();
 	for (const signal of BLOCK_SIGNALS) {
 		if (lower.includes(signal)) {
 			return true;
@@ -115,10 +115,10 @@ export function checkPage(
 	html?: string,
 ): boolean {
 	// Check title first (often contains "Attention Required!" etc.)
-	if (checkBodyText(title)) return true;
+	if (checkBlockSignals(title)) return true;
 
 	// Check body against challenge phrases
-	if (checkBodyText(bodyText)) return true;
+	if (checkBlockSignals(bodyText)) return true;
 
 	// Check body against CDN-specific patterns (reference #, etc.)
 	if (checkBodyOnlyText(bodyText)) return true;
