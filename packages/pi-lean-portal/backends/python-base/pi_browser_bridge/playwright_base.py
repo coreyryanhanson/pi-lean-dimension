@@ -79,7 +79,6 @@ except ImportError:
 # ─── Default timeout ──────────────────────────────────────────────────
 
 DEFAULT_NAVIGATION_TIMEOUT_MS: int = 30_000
-DEFAULT_INTERACTION_TIMEOUT_MS: int = 10_000
 
 
 # ─── Nav-settle constants (loaded from shared browser-data.json) ──────

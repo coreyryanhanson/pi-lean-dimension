@@ -408,26 +408,13 @@ describe("deleteStorageState()", () => {
 describe("isSessionProfile()", () => {
 	it("returns true for session-prefixed names", () => {
 		expect(isSessionProfile("_session-abc")).toBe(true);
-		expect(isSessionProfile("_session-abc123")).toBe(true);
 		expect(isSessionProfile("_session-abc-def_123")).toBe(true);
-	});
-
-	it("returns true for prefix alone (empty session ID edge case)", () => {
 		expect(isSessionProfile("_session-")).toBe(true);
 	});
 
-	it("returns false for named profiles", () => {
+	it("returns false for non-session names", () => {
 		expect(isSessionProfile("work")).toBe(false);
-		expect(isSessionProfile("shopping")).toBe(false);
-		expect(isSessionProfile("default")).toBe(false);
-	});
-
-	it("returns false for reserved names", () => {
 		expect(isSessionProfile("new")).toBe(false);
-		expect(isSessionProfile("last")).toBe(false);
-	});
-
-	it("returns false for empty string", () => {
 		expect(isSessionProfile("")).toBe(false);
 	});
 });

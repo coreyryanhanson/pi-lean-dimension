@@ -2,7 +2,7 @@
  * Plugin Config Loader — reads browser.plugins from settings.json,
  * validates entries, detects plugin type, and provides typed PluginConfig[].
  *
- * Config is read once at startup. Hot-reload is future work.
+ * Config is read once at startup.
  */
 
 import { existsSync } from "node:fs";

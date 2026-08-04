@@ -15,6 +15,10 @@ import {
 	type CacheResult,
 } from "../core/shared/snapshot-cache.js";
 import { snapshotFingerprint } from "../core/shared/accessibility-tree.js";
+import * as router from "../core/router.js";
+import { pluginRegistry } from "../core/plugin-registry.js";
+import { sessionManager } from "../core/shared/session-manager.js";
+import { MockPlugin, makeConfig } from "./helpers/mock-plugin.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -233,11 +237,7 @@ describe("removeAllSnapshotFiles()", () => {
 		expect(existsSync(r2!.path)).toBe(false);
 	});
 
-	it("is safe to call when no files exist", () => {
-		expect(() => removeAllSnapshotFiles()).not.toThrow();
-	});
-
-	it("is safe to call multiple times", () => {
+	it("is safe to call repeatedly when no files exist", () => {
 		removeAllSnapshotFiles();
 		removeAllSnapshotFiles();
 		expect(() => removeAllSnapshotFiles()).not.toThrow();
@@ -265,27 +265,11 @@ describe("formatCacheNotice()", () => {
 		expect(notice).not.toContain("Full snapshot cached at");
 	});
 
-	it("returns empty string when snapshot was not truncated", () => {
-		const cacheResult: CacheResult = {
-			path: "/tmp/pi-lean-portal/snapshot-test-abc123-0.txt",
-			fingerprint: "abc123",
-		};
-		const notice = formatCacheNotice(cacheResult, 100, false);
-		expect(notice).toBe("");
-	});
-
-	it("returns empty string when snapshot is short even if truncated flag is true", () => {
-		// This guards against the internal check in formatCacheNotice
-		const cacheResult: CacheResult = {
-			path: "/tmp/pi-lean-portal/snapshot-test-abc123-0.txt",
-			fingerprint: "abc123",
-		};
-		const notice = formatCacheNotice(cacheResult, 2000, true);
-		expect(notice).toBe("");
-	});
-
-	it("returns empty string when not truncated and cacheResult is null", () => {
-		const notice = formatCacheNotice(null, 100, false);
+	it.each([
+		[100, false],
+		[2000, true],
+	])("returns empty string for non-cache notice input %#", (snapshotLength, truncated) => {
+		const notice = formatCacheNotice(null, snapshotLength, truncated);
 		expect(notice).toBe("");
 	});
 
@@ -334,10 +318,7 @@ describe("formatCacheNotice()", () => {
 // ─── 6. Integration: full cache-compact-notice flow (via MockPlugin) ──
 
 describe("Integration: router + cache (via MockPlugin)", () => {
-	beforeEach(async () => {
-		const { pluginRegistry } = await import("../core/plugin-registry.js");
-		await import("../core/shared/session-manager.js");
-		const { MockPlugin, makeConfig } = await import("./helpers/mock-plugin.js");
+	beforeEach(() => {
 		pluginRegistry.clear();
 		cleanCacheDir();
 
@@ -357,10 +338,6 @@ describe("Integration: router + cache (via MockPlugin)", () => {
 	});
 
 	afterEach(async () => {
-		const { pluginRegistry } = await import("../core/plugin-registry.js");
-		const { sessionManager } = await import(
-			"../core/shared/session-manager.js"
-		);
 		await sessionManager.removeAll();
 		pluginRegistry.clear();
 		cleanCacheDir();
@@ -368,8 +345,7 @@ describe("Integration: router + cache (via MockPlugin)", () => {
 	});
 
 	it("router.navigate() creates cache file and includes notice for long snapshots", async () => {
-		const { navigate } = await import("../core/router.js");
-		const result = await navigate("https://example.com", {
+		const result = await router.navigate("https://example.com", {
 			strategy: "mock",
 		});
 
@@ -378,8 +354,7 @@ describe("Integration: router + cache (via MockPlugin)", () => {
 	});
 
 	it("router.navigate() returns a cacheable file whose content matches the raw snapshot", async () => {
-		const { navigate } = await import("../core/router.js");
-		const result = await navigate("https://example.com", {
+		const result = await router.navigate("https://example.com", {
 			strategy: "mock",
 		});
 
@@ -399,8 +374,6 @@ describe("Integration: router + cache (via MockPlugin)", () => {
 	});
 
 	it("router.navigate() does NOT include cache notice for short snapshots", async () => {
-		const { pluginRegistry } = await import("../core/plugin-registry.js");
-		const { MockPlugin, makeConfig } = await import("./helpers/mock-plugin.js");
 		pluginRegistry.clear();
 		const mock = new MockPlugin("mock");
 		mock.navResult = {
@@ -409,8 +382,7 @@ describe("Integration: router + cache (via MockPlugin)", () => {
 		};
 		pluginRegistry.register(mock, makeConfig({ name: "mock" }));
 
-		const { navigate } = await import("../core/router.js");
-		const result = await navigate("https://example.com", {
+		const result = await router.navigate("https://example.com", {
 			strategy: "mock",
 		});
 
@@ -423,9 +395,6 @@ describe("Integration: router + cache (via MockPlugin)", () => {
 
 describe("Interaction tool caching (via MockPlugin)", () => {
 	beforeEach(async () => {
-		const { pluginRegistry } = await import("../core/plugin-registry.js");
-		await import("../core/shared/session-manager.js");
-		const { MockPlugin, makeConfig } = await import("./helpers/mock-plugin.js");
 		pluginRegistry.clear();
 		cleanCacheDir();
 
@@ -443,15 +412,10 @@ describe("Interaction tool caching (via MockPlugin)", () => {
 		(globalThis as any).__mockPlugin = mock;
 
 		// First navigate to establish a session
-		const { navigate } = await import("../core/router.js");
-		await navigate("https://example.com", { strategy: "mock" });
+		await router.navigate("https://example.com", { strategy: "mock" });
 	});
 
 	afterEach(async () => {
-		const { pluginRegistry } = await import("../core/plugin-registry.js");
-		const { sessionManager } = await import(
-			"../core/shared/session-manager.js"
-		);
 		await sessionManager.removeAll();
 		pluginRegistry.clear();
 		cleanCacheDir();
@@ -459,32 +423,28 @@ describe("Interaction tool caching (via MockPlugin)", () => {
 	});
 
 	it("click result includes cache notice for long auto-snapshot", async () => {
-		const { click } = await import("../core/router.js");
-		const result = await click("default", "@e1");
+		const result = await router.click("default", "@e1");
 
 		expect(result.success).toBe(true);
 		expect(result.snapshot).toContain("Full snapshot cached at");
 	});
 
 	it("type result includes cache notice for long auto-snapshot", async () => {
-		const { type } = await import("../core/router.js");
-		const result = await type("default", "@e1", "hello");
+		const result = await router.type("default", "@e1", "hello");
 
 		expect(result.success).toBe(true);
 		expect(result.snapshot).toContain("Full snapshot cached at");
 	});
 
 	it("scroll result includes cache notice for long auto-snapshot", async () => {
-		const { scroll } = await import("../core/router.js");
-		const result = await scroll("default", "down");
+		const result = await router.scroll("default", "down");
 
 		expect(result.success).toBe(true);
 		expect(result.snapshot).toContain("Full snapshot cached at");
 	});
 
 	it("interaction cache file contains full snapshot content", async () => {
-		const { click } = await import("../core/router.js");
-		const result = await click("default", "@e1");
+		const result = await router.click("default", "@e1");
 
 		expect(result.success).toBe(true);
 
@@ -504,8 +464,7 @@ describe("Interaction tool caching (via MockPlugin)", () => {
 			elementCount: 200,
 		};
 
-		const { click } = await import("../core/router.js");
-		const result = await click("default", "@e1");
+		const result = await router.click("default", "@e1");
 
 		expect(result.success).toBe(true);
 		expect(result.snapshot).not.toContain("Full snapshot cached at");

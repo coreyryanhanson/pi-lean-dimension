@@ -11,12 +11,12 @@
 import type { Page } from "playwright";
 
 export interface DialogLogEntry {
-	type: "alert" | "confirm" | "prompt" | "beforeunload";
+	type: "alert" | "confirm" | "prompt" | "beforeunload" | "crash";
 	message: string;
 	/** Default value for prompt dialogs */
 	defaultValue?: string;
-	/** How the dialog was handled */
-	handledAs: "accepted" | "dismissed";
+	/** How the dialog was handled; absent for non-dialog events like crash */
+	handledAs?: "accepted" | "dismissed";
 	timestamp: number;
 }
 
@@ -102,9 +102,8 @@ export function installDialogHandlers(taskId: string, page: Page): void {
 	// Handle page crashes
 	page.on("crash", () => {
 		dialogLog.push({
-			type: "alert",
+			type: "crash",
 			message: "⚠ Page crashed",
-			handledAs: "dismissed",
 			timestamp: Date.now(),
 		});
 	});

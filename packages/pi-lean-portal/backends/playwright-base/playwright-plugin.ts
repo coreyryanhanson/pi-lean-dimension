@@ -12,7 +12,7 @@
  * - Launch errors are wrapped with engine-specific install hints.
  */
 
-import type { Browser, BrowserContext, Page } from "playwright";
+import type { Browser, BrowserContext, Locator, Page } from "playwright";
 import {
 	parseSnapshot,
 	buildLocator,
@@ -449,12 +449,12 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				this.getOrCreateCache(taskId).set(ref, node);
 			}
 
-			// Collect recent auto-dismissed dialog events (last 10)
+			// Collect recent dialog/crash events (last 10)
 			const rawDialogs = getDialogLog(taskId);
 			const dialogEvents = rawDialogs.slice(-10).map((d) => ({
 				type: d.type,
 				message: d.message,
-				handledAs: d.handledAs,
+				...(d.handledAs ? { handledAs: d.handledAs } : {}),
 			}));
 
 			return {
@@ -686,10 +686,18 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		);
 	}
 
-	// ── Interaction ────────────────────────────────────────────
-
-	async click(taskId: string, ref: string): Promise<InteractionResult> {
-		const page = this.requirePage(taskId, "click");
+	/**
+	 * Resolve a @ref to its page + locator, or return a failed InteractionResult.
+	 * Handles the shared session/cache/locator preamble for interaction tools.
+	 */
+	private _resolveLocator(
+		taskId: string,
+		ref: string,
+		op: string,
+	):
+		| { page: Page; locator: Locator; node: AriaCachedNode }
+		| InteractionResult {
+		const page = this.requirePage(taskId, op);
 		if (!page) {
 			return { success: false, error: "No active session" };
 		}
@@ -698,7 +706,7 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		const node = this.getOrCreateCache(taskId).get(key);
 
 		if (!node) {
-			this._log("click", {
+			this._log(op, {
 				taskId,
 				ref,
 				role: "(none)",
@@ -714,7 +722,7 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 
 		const locator = buildLocator(page, node);
 		if (!locator) {
-			this._log("click", {
+			this._log(op, {
 				taskId,
 				ref,
 				role: node.role,
@@ -727,6 +735,18 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				error: `Could not build locator for ${ref} (role: ${node.role})`,
 			};
 		}
+
+		return { page, locator, node };
+	}
+
+	// ── Interaction ────────────────────────────────────────────
+
+	async click(taskId: string, ref: string): Promise<InteractionResult> {
+		const resolved = this._resolveLocator(taskId, ref, "click");
+		if (!("page" in resolved)) {
+			return resolved;
+		}
+		const { page, locator, node } = resolved;
 
 		return this._logOp(
 			"click",
@@ -775,44 +795,11 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		ref: string,
 		text: string,
 	): Promise<InteractionResult> {
-		const page = this.requirePage(taskId, "type");
-		if (!page) {
-			return { success: false, error: "No active session" };
+		const resolved = this._resolveLocator(taskId, ref, "type");
+		if (!("page" in resolved)) {
+			return resolved;
 		}
-
-		const key = ref.startsWith("@") ? ref.slice(1) : ref;
-		const node = this.getOrCreateCache(taskId).get(key);
-
-		if (!node) {
-			this._log("type", {
-				taskId,
-				ref,
-				role: "(none)",
-				name: "(none)",
-				result: "fail",
-				error: `Element ${ref} not found in accessibility tree`,
-			});
-			return {
-				success: false,
-				error: `Element ${ref} not found in accessibility tree. Refresh with browser-snapshot first.`,
-			};
-		}
-
-		const locator = buildLocator(page, node);
-		if (!locator) {
-			this._log("type", {
-				taskId,
-				ref,
-				role: node.role,
-				name: node.name,
-				result: "fail",
-				error: `Could not build locator (role: ${node.role})`,
-			});
-			return {
-				success: false,
-				error: `Could not build locator for ${ref}`,
-			};
-		}
+		const { page, locator, node } = resolved;
 
 		return this._logOp(
 			"type",

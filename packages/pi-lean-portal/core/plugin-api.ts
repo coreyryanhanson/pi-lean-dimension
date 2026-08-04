@@ -43,11 +43,11 @@ export const DEFAULT_CAPABILITIES: PluginCapabilities = {
  * the agent without polluting the accessibility tree text.
  */
 export interface DialogEvent {
-	/** Dialog type as reported by the browser */
+	/** Event type as reported by the browser (dialog types or "crash") */
 	type: string;
 	message: string;
-	/** How the dialog was handled (always "accepted" for auto-dismiss) */
-	handledAs: "accepted" | "dismissed";
+	/** How a dialog was handled; absent for non-dialog events like crash */
+	handledAs?: "accepted" | "dismissed";
 }
 
 /**

@@ -24,9 +24,9 @@
 		"release:major": "node scripts/release.mjs major"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "^0.78.1",
+		"@earendil-works/pi-ai": "^0.83.0",
 		"@earendil-works/pi-coding-agent": "^0.83.0",
-		"@earendil-works/pi-tui": "^0.78.1",
+		"@earendil-works/pi-tui": "^0.83.0",
 		"@types/node": "^25.9.1",
 		"@types/turndown": "^5.0.6",
 		"shx": "^0.4.0",

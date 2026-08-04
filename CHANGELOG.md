@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Crash events now surface in navigate results** — `DialogEvent`
+  gained a `"crash"` type and `handledAs` became optional (absent for
+  non-dialog events). The router renders these under a renamed
+  "Page events (dialogs, crashes)" footer with a 💥 prefix, so agents
+  learn about page crashes the same way they learn about auto-dismissed
+  dialogs.
+
 ## [0.4.0] - 2026-08-02
 
 ### Changed
@@ -380,5 +389,4 @@ packages for web browsing and search.
 - **Navigation guides:** Four built-in pattern guides (bot-detection,
   cookie-consent, pagination, search) plus user-authored site guides via
   `web-learn`.
-- **Lockstep versioning:** All three packages share v0.1.0. Switch to
-  independent versioning planned after stabilization.
+- **Lockstep versioning:** All three packages share v0.1.0.
