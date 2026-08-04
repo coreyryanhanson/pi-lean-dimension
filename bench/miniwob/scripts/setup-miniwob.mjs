@@ -34,7 +34,7 @@ import { execSync } from "node:child_process";
 
 // ─── Config ──────────────────────────────────────────────────────
 
-/** Pinned MiniWoB++ commit (matches the plan, helpers, and suite). */
+/** Pinned MiniWoB++ commit. */
 const PINNED_COMMIT = "7fd85d71a4b60325c6585396ec4f48377d049838";
 
 /** GitHub repository URL. */

@@ -201,7 +201,7 @@ Notes:
 
 - **`pythonPath` must be absolute.** A relative `pythonPath` is not
   resolved against `USER_BACKENDS_DIR` (that nicety is intentionally
-  out of scope — see the stealth plan's "Out of scope" list). Point it
+  out of scope). Point it
   at `<user-backends>/camoufox-py/.venv/bin/python`.
 - **`dir`** is resolved against the user-backends root (multi-root
   discovery: package `backends/` → `USER_BACKENDS_DIR` → absolute). A
