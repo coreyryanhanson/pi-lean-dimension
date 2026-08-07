@@ -3,12 +3,15 @@
 > Compact instruction file for an agent working on this repository.
 >
 > **This file owns monorepo-level truth only.** For portal internals (the
-> `BrowserPlugin` interface, router dispatch, profile/cookie persistence
-> mechanics, snapshot cache, nav-settle, bot-detection, `BROWSER_DEBUG`, the
-> full constraints & debt list), see
+> `BrowserPlugin` interface, router dispatch, status bar `browser` slot,
+> profile/cookie persistence mechanics, guides, key-tools table, engine
+> parity, snapshot cache, nav-settle, bot-detection, `BROWSER_DEBUG`, the
+> `backends/` vs `core/` boundary, per-file test lists, and the full
+> constraints & debt list), see
 > [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md).
-> The search and dimension packages have small stub `AGENTS.md` files that
-> point back here.
+> For the search-owned `search` status bar slot, see
+> [`packages/pi-lean-search/AGENTS.md`](packages/pi-lean-search/AGENTS.md).
+> The dimension package has a small stub `AGENTS.md` that points back here.
 
 ## What This Is
 
@@ -107,19 +110,11 @@ pi-lean-dimension/                       (monorepo root)
 
 ## Architecture (suite-level overview)
 
-All interactive backends implement the `BrowserPlugin` interface (`packages/pi-lean-portal/core/plugin-api.ts`) — 19 methods (18 required + 1 optional). The 12 registered browser tools map to 12 tool-facing plugin methods; the cookie/storage methods are router-facing. Capabilities (`PluginCapabilities`) advertise quirks the router checks at dispatch time.
+Portal dispatches through a `PluginRegistry` + typed `BrowserPlugin` interface (`packages/pi-lean-portal/core/plugin-api.ts`); `web-fetch` is stateless. All backends implement the same 19-method interface, so the 12 browser tools are backend-agnostic. Backend config lives under `browser.plugins` in `~/.pi/agent/settings.json` (merged with `.pi/settings.json`).
 
-Plugin loading reads `browser.plugins` from `~/.pi/agent/settings.json` (global, merged with `.pi/settings.json` project-local). Each entry is `{name, dir, enabled, config}`; `dir` maps to `backends/<dir>/`, entry point auto-detected (`index.ts` = Node, `bridge.py` = Python). Default config: chromium + firefox enabled, chromium-py + firefox-py disabled.
+**Shipped backends (config-driven):** `chromium` (Node, enabled), `firefox` (Node, enabled), `chromium-py` (Python, disabled), `firefox-py` (Python, disabled). User-installed stealth backends (e.g. Camoufox) are never shipped, never auto-downloaded, and loaded only when explicitly listed with an absolute `pythonPath` — see `packages/pi-lean-portal/AGENTS.md` ("Stealth backends") and `packages/pi-lean-portal/contributed/README.md`.
 
-**Active plugins (config-driven):**
-
-- **`chromium`** — Node/Playwright (thin subclass of `PlaywrightPluginBase`), enabled by default. Reference Node backend.
-- **`firefox`** — Node/Playwright (thin subclass of `PlaywrightPluginBase`), enabled by default. Same contract as chromium.
-- **`chromium-py`** — Python/Playwright (thin subclass of `PlaywrightBridge`), disabled by default. Python parity reference. Shared logic in `python-base/`.
-- **`firefox-py`** — Python/Playwright (thin subclass of `PlaywrightBridge`), disabled by default. Python parity reference. Shared logic in `python-base/`.
-- **User-installed stealth backends (not shipped)** — patched/fingerprint-managed browser binaries (e.g. Camoufox) installed by the user under `~/.pi/agent/pi-lean-portal/user-backends/<name>-py/`. Never in the npm tarball, never auto-downloaded (no plugin marketplace — trusted user code). Loaded only when explicitly listed in `browser.plugins` with an absolute `pythonPath`; never in the default fallback list. The shipped example template is Camoufox at `packages/pi-lean-portal/contributed/camoufox-py/` (docs-only, source repo only). See `packages/pi-lean-portal/AGENTS.md` ("Stealth backends") and `packages/pi-lean-portal/contributed/README.md` for the install flow and quirks schema.
-
-> For the `BrowserPlugin` method list, router dispatch responsibilities, profile/cookie persistence mechanics, snapshot cache, nav-settle, bot-detection tiers, `browser-inspect` internals, and the full constraints & debt list, see [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md).
+> For the `BrowserPlugin` method list, router dispatch, the status bar `browser` slot, profile/cookie persistence, guides, key-tools table, engine parity, snapshot cache, nav-settle, bot-detection tiers, `browser-inspect` internals, the `backends/` vs `core/` boundary, and the full constraints & debt list, see [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md). The search-owned `search` status bar slot is documented in [`packages/pi-lean-search/AGENTS.md`](packages/pi-lean-search/AGENTS.md).
 
 ### Registered Tools (13 total with search)
 
@@ -138,58 +133,6 @@ Toggle state is persisted via `pi.appendEntry("web-toggle-state", ...)` per-sess
 **Defaults for new sessions** are resolved by the `pi-tool-masking` library, not portal/search code: `initBrowserToggle` passes the packaged `ToolsetSpec` (with its own `defaultEnabled`) straight to `defineToolset`, and the library's restore reads the `toolsetDefaults` block from merged Pi settings (`~/.pi/agent/settings.json` + `.pi/settings.json`) before falling back to the packaged default. Keys: `toolset-state:pi-lean-dimension.web`, `toolset-state:pi-lean-dimension.web-learn`, `toolset-state:pi-lean-dimension.search` (search key only honored when `pi-lean-search` is installed). The legacy `browserToggle.defaultEnabled` key was **removed in 0.4.0** and is no longer read — the migration warning that bridged it is gone too.
 
 The toggle also manages a `SIBLING_TOOL_NAMES` set populated with `"web-search"`. `/web on|off` operates on the union of `BROWSER_TOOL_NAMES ∪ SIBLING_TOOL_NAMES`. Discovery uses **exact-name `Set.has()` membership** — no regex, no false positives on third-party `web-*` tools.
-
-### Status Bar (glyph slots)
-
-Portal manages two status bar slots:
-
-**`browser`** — shows the browser tool toggle state:
-
-- `● idle` (accent/blue) — browser tools enabled
-- `● idle` (success/green) — learn mode enabled
-- `○ web off` — browser tools disabled
-
-**`search`** — shows the search tool toggle + SearXNG health (search-owned):
-
-- `● searxng` (accent/blue) — healthy and reachable
-- `● searxng` (warning/yellow) — server up but pipeline degraded
-- `● searxng` (error/red) — unreachable
-- `○ searxng` — search tools off (portal sets this on `/web off`)
-
-The `search` slot is only shown when `pi-lean-search` is installed. Search probes SearXNG reachability on `session_start` and `/searxng-status` and sets the glyph color. Portal writes the `○` off state when `/web off` is called.
-
-### Profile & Cookie Management (overview)
-
-- **Storage state** is persisted to `~/.pi/agent/pi-lean-portal/browser-state/<profile-name>/storage-state.json` via `core/shared/storage-state.ts`.
-- **Save-before-renavigate**: both Chromium and Python plugins call `_persistState()` before closing/reusing a context with a persistent profile, so cookies set during a session survive re-navigate, crash recovery, `/reload`, and `/resume`.
-- **Atomic writes + concurrency safety**: `saveStorageState()` writes a temp file then renames atomically; concurrent writers merge at the cookie and localStorage level so two agents sharing a named profile don't clobber each other.
-- **Session profiles** (`profile="session"`, the default) are scoped to one pi conversation under `_session-<piSessionId>`. **Named profiles** (`profile="shopping"`) are shared across conversations and agents. Conversation-scoped default set via `/web profile <name>` (or `/web profile none` / `/web profile session`), survives `/reload`/`/resume`.
-- **Cookie operations** (`getCookies`, `addCookies`, `clearCookies`) delegate to the browser plugin's Playwright `context.cookies()` / `context.clearCookies()`.
-
-> For the in-memory fallback, re-navigate semantics, and the Chromium vs Python context-reuse difference, see [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md).
-
-### Guides (`core/guides.ts`)
-
-4 builtin pattern guides (`bot-detection`, `cookie-consent`, `pagination`, `search`). Site guides are user-authored — place a `.md` file with YAML frontmatter in `~/.pi/agent/pi-lean-portal/web-guides/` — and auto-register via their `domains` field. Caches invalidate on `web-learn` calls. Guides surface via an applicable-guide footer and badge; all matching guides are shown together with no priority suppression.
-
-### Key Tools
-
-| Tool | Use Case | State | Speed |
-|------|----------|-------|-------|
-| `web-fetch` | Static page → Markdown, no JS needed | Stateless | Fast |
-| `browser-navigate` | Interactive page → accessibility tree with @e refs | Stateful session | Slower |
-| `browser-inspect` | Element queries + text extraction with @e ref annotations | Stateful session | Fast (sync cache) |
-| `web-guide` | Get navigation guidance for a site or pattern | Stateless | Instant |
-| `web-learn` | Save or update navigation guidance for a site | Stateless | Instant |
-| `web-search` (search) | Web search via SearXNG | Stateless | Medium |
-
-`web-fetch` uses plain `fetch()` + `node-html-parser` + `turndown`. Returns ~4000 chars inline, spills to temp file when larger.
-
-### Engine Parity Note
-
-Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees in the **same YAML format**, so the shared parser in `core/shared/accessibility-tree.ts` works identically for both. The two engines may report **different role sets and props** for the same DOM. The contract test suite uses threshold assertions (`elementCount > 0`) rather than exact equality, so this should pass without false positives. If any fixture shows a meaningful divergence, document it here rather than papering over it.
-
-**User-Agent drift (Python backends):** The Node Firefox backend dynamically probes the browser's UA at lazy init (probe-then-cache). The Python Firefox backend uses a hardcoded fallback UA string (`rv:135.0`). This string will drift as Firefox releases newer versions. If you use the Python Firefox backend for UA-sensitive sites, update the hardcoded UA string in `backends/firefox-py/bridge.py` to match the installed Firefox version.
 
 ## Testing
 
@@ -212,29 +155,7 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 | MiniWoB behavioral | `bench/miniwob/suites/` | 8 | 130 tasks × 4 + user-backends + smoke* | Chromium + Firefox + Python + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 29 | No |
 
-**Portal structural (22 files):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, browser-status, session-manager, browser-data, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, probe-user-backend, ship-manifest
-
-**Python bridge unit tests (6 files, pytest):** test_accessibility, test_bot_detection, test_transport, test_browser_data, test_py_bridges, test_playwright_base_quirks (the stealth-quirk flags: `_fingerprint_managed_context`, `_skip_default_viewport`, `_scroll_via_wheel`, `_eval_prefix`)
-
-**Portal per-backend contract tests (8 files):** chromium (auto-skip), chromium-py (auto-skip), chromium-py-persistence (auto-skip), cookie-persistence (auto-skip), firefox (auto-skip), firefox-py (auto-skip), firefox-py-persistence (auto-skip), run-contributed-suites (auto-skip; discovers every user-managed stealth backend under `user-backends/` and runs the shared contract + persistence + parity + quirks suites against each, gated by `CONTRIB_RUN=1`)
-
-**MiniWoB behavioral tests (`bench/miniwob/suites/`, 8 files):**
-
-- `miniwob-trivial.test.ts` — 130 MiniWoB++ tasks × chromium (13 run, 117 skip)
-- `miniwob-firefox.test.ts` — 130 tasks × firefox (13 run, 117 skip)
-- `miniwob-chromium-py.test.ts` — 130 tasks × chromium-py (13 run, 117 skip)
-- `miniwob-firefox-py.test.ts` — 130 tasks × firefox-py (13 run, 117 skip)
-- `miniwob-user-backends.test.ts` — discovers user-managed Python backends (no-op in bare CI; registers 130 tasks × discovered backends when installed)
-- `adapter-smoke.test.ts` — end-to-end runMiniwobTask via real Chromium + `plugin.evaluate` episode lifecycle
-- `inspect-csp-smoke.test.ts` — `browser-inspect` CSP/eval-boundary smoke against a live browser
-- `inspect-eval-smoke.test.ts` — `browser-inspect` eval-path smoke against a live browser
-
-**Shared test utilities** (`packages/pi-lean-portal/__tests__/helpers/`):
-
-- `plugin-contract.ts` — `runContractTests(name, factory, opts?)` validates any BrowserPlugin
-- `mock-plugin.ts` — MockPlugin for structural contract validation
-- `test-server.ts` — `startTestServer()` returns a local HTTP server for integration tests
-- `mock-python-bridge.py` — Python bridge stub used by python-adapter tests
+Per-file detail for the portal-owned test lists (structural, python bridge, per-backend contract, shared test utilities) lives in [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md) ("Testing (portal detail)"). MiniWoB suite detail is in the MiniWoB Integration section below.
 
 ### MiniWoB Integration
 
@@ -252,6 +173,8 @@ plugin factory:
 - **`miniwob-firefox.test.ts`** — Firefox (Node)
 - **`miniwob-chromium-py.test.ts`** — Chromium-Py (Python bridge)
 - **`miniwob-firefox-py.test.ts`** — Firefox-Py (Python bridge)
+
+Plus the supporting suites: **`miniwob-user-backends.test.ts`** (discovers user-managed Python backends — no-op in bare CI; registers 130 tasks × discovered backends when installed), **`adapter-smoke.test.ts`** (end-to-end `runMiniwobTask` via real Chromium + `plugin.evaluate` episode lifecycle), **`inspect-csp-smoke.test.ts`** (`browser-inspect` CSP/eval-boundary smoke), and **`inspect-eval-smoke.test.ts`** (`browser-inspect` eval-path smoke).
 
 - **13 tasks run** with trivial solvers — 3 confident (assert reward > 0)
   and 10 best-effort (pipeline smoke tests).
@@ -378,12 +301,3 @@ the `structural` job runs (fast, no browser required).
 - `isolatedModules: true` — each file treated as a separate module; cross-file type analysis limited
 - `noUncheckedSideEffectImports: true` — side-effect imports must be used or suppressed
 - `moduleDetection: "force"` — every file is a module (no global augmentations)
-
-## `backends/` vs `core/` Boundaries
-
-- `backends/` — plugin-specific implementations (Node or Python)
-- `core/` — framework: plugin API, registry, config loader, router, shared utilities
-- `core/shared/` — utilities used by both framework and plugins
-- Plugins import from `../../core/plugin-api.js` and `../../core/shared/*.js`
-- The router imports from `../../core/plugin-api.js` and `../../core/shared/*.js`
-- `browser-cookies.ts`, `browser-profile.ts`, `browser-status.ts` live at the portal package root and import from `core/` — they're command handlers, not plugins.

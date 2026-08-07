@@ -3,9 +3,9 @@
 > SearXNG search leaf of the [pi-lean-dimension](../../AGENTS.md) monorepo.
 >
 > **This file is a stub.** For the suite overview, install matrix, dev
-> commands, registered tools/commands summary, status bar slots, testing
-> strategy, and TypeScript quirks, see [`../../AGENTS.md`](../../AGENTS.md).
-> For portal internals, see [`../pi-lean-portal/AGENTS.md`](../pi-lean-portal/AGENTS.md).
+> commands, registered tools/commands summary, testing strategy, and
+> TypeScript quirks, see [`../../AGENTS.md`](../../AGENTS.md). For portal
+> internals, see [`../pi-lean-portal/AGENTS.md`](../pi-lean-portal/AGENTS.md).
 
 ## What this package is
 
@@ -14,12 +14,7 @@
 - Registers **no `/web` command** — portal owns `/web` outright. Search is a
   silent leaf; portal discovers `web-search` by exact-name `Set.has()`
   membership and toggles it via `/web on|off`.
-- Manages the **`search` status bar slot** with health-colored glyphs
-  (`● searxng` accent/blue when healthy, warning/yellow when degraded,
-  error/red when unreachable). Probes SearXNG reachability on `session_start`
-  and `/searxng-status`. Portal writes the `○ searxng` off state when
-  `/web off` is called — search overrides with the health-colored glyph on
-  the next probe.
+- Manages the **`search` status bar slot** (see "Status Bar" below).
 
 ## Files
 
@@ -41,6 +36,17 @@ Search reads **exclusively** from Pi settings — never environment variables:
   "searxng": { "url": "http://localhost:8888" }
 }
 ```
+
+## Status Bar (`search` slot)
+
+Search owns the `search` status bar slot, shown only when `pi-lean-search` is installed:
+
+- `● searxng` (accent/blue) — healthy and reachable
+- `● searxng` (warning/yellow) — server up but pipeline degraded
+- `● searxng` (error/red) — unreachable
+- `○ searxng` — search tools off
+
+Search probes SearXNG reachability on `session_start` and `/searxng-status` and sets the glyph color. Portal writes the `○ searxng` off state when `/web off` is called — search overrides with the health-colored glyph on the next probe. (The `browser` slot is owned by `pi-lean-portal`; see that package's `AGENTS.md`.)
 
 ## Graceful degradation
 

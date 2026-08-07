@@ -5,10 +5,9 @@
 > **This file is additive only.** It covers portal internals not obvious from
 > the monorepo overview. For the suite overview, install matrix, full
 > directory layout, dev commands (`npm test`, `npm run test:ci`, release
-> scripts), registered tools/commands summary, status bar slots, profile &
-> cookie management overview, guides, key tools table, engine parity note,
-> testing strategy, TypeScript quirks, and the `backends/` vs `core/`
-> boundary convention, see [`../../AGENTS.md`](../../AGENTS.md).
+> scripts), registered tools/commands summary, toggle-state persistence,
+> testing split principle + summary table, MiniWoB integration, CI pipeline,
+> and TypeScript quirks, see [`../../AGENTS.md`](../../AGENTS.md).
 >
 > Entry point: `index.ts` — imports & registers tool definitions + lifecycle,
 > calls `initBrowserToggle(pi)`.
@@ -35,6 +34,16 @@ getStorageState     — profile storage for session restore
 The 12 registered tools map to 12 tool-facing plugin methods. The cookie/storage methods (`getCookies`, `addCookies`, `clearCookies`, `getStorageState`) are router-facing, not tool-mapped. Element cache access (`getElementCache`) is used internally by `browser-inspect`. The lifecycle methods (`init`, `cleanupAll`) are framework-facing. Total interface: 19 methods (18 required + 1 optional).
 
 Capabilities (`PluginCapabilities`) advertise quirks. The router checks them at dispatch time.
+
+## Status Bar (`browser` slot)
+
+Portal manages the `browser` status bar slot, showing the browser tool toggle state:
+
+- `● idle` (accent/blue) — browser tools enabled
+- `● idle` (success/green) — learn mode enabled
+- `○ web off` — browser tools disabled
+
+(The `search` slot is owned by `pi-lean-search`; see that package's `AGENTS.md`.)
 
 ## Browser launch hook
 
@@ -83,6 +92,10 @@ Stealth backends are **never in the default fallback list**. When
 (`chromium`, `firefox`, `chromium-py`, `firefox-py`) are loaded. A
 fresh install must not emit validation errors for plugins the user
 never asked for. Tested in `__tests__/plugin-config-browser.test.ts`.
+
+### Plugin config entries
+
+`browser.plugins` (in `~/.pi/agent/settings.json`, merged with `.pi/settings.json`) is an array of `{name, dir, enabled, config}`. `dir` maps to `backends/<dir>/`; the entry point is auto-detected (`index.ts` = Node, `bridge.py` = Python). Default config: chromium + firefox enabled, chromium-py + firefox-py disabled.
 
 ### Discovery: multi-root, absolute short-circuit
 
@@ -183,17 +196,63 @@ All tool calls dispatch through the router. Key responsibilities:
   - **In-memory fallback** (Chromium): `_persistState()` returns the raw state it just saved; `getOrCreateContext()` uses it as `options?.storageState ?? savedState`, so cookies survive the very next re-navigate even when no disk copy existed before.
   - The router also loads storage state in `requireInteractiveSession()` when restoring from `lastNav.profileName`.
 
-## Profile & Cookie persistence mechanics
-
-(See `../../AGENTS.md` for the user-facing overview; this section is the implementation detail.)
+## Profile & Cookie persistence
 
 - **Storage state** is persisted to `~/.pi/agent/pi-lean-portal/browser-state/<profile-name>/storage-state.json` via `core/shared/storage-state.ts`.
-- **Save-before-renavigate**: both Chromium and Python plugins call `_persistState()` before closing/reusing a context with a persistent profile. This ensures cookies set during a session (e.g. consent dialogs, login) survive `browser-navigate` re-calls, crash recovery, `/reload`, and `/resume`.
-- **Atomic writes + concurrency safety** (`storage-state.ts`): `saveStorageState()` writes to a temp file then renames atomically, preventing half-write races. Concurrent writers merge at the cookie level (`name+domain+path` key) and localStorage level (`origin+name` key), so two agents sharing a named profile don't clobber each other's data.
-- **Session profiles** (`profile="session"`) are scoped to one pi conversation, stored under `_session-<piSessionId>`. Default profile is now `"session"` (changed from `"none"`), so conversations persist state automatically.
-- **Named profiles** (`profile="shopping"`, `profile="work"`) are shared across conversations and agents.
-- **Conversation-scoped default profile** set via `/web profile <name>` (or `/web profile none` / `/web profile session`), survives `/reload`/`/resume`.
+- **Save-before-renavigate**: both Chromium and Python plugins call `_persistState()` before closing/reusing a context with a persistent profile, so cookies set during a session (e.g. consent dialogs, login) survive `browser-navigate` re-calls, crash recovery, `/reload`, and `/resume`.
+- **Atomic writes + concurrency safety** (`storage-state.ts`): `saveStorageState()` writes a temp file then renames atomically, preventing half-write races. Concurrent writers merge at the cookie level (`name+domain+path` key) and localStorage level (`origin+name` key), so two agents sharing a named profile don't clobber each other's data.
+- **Session profiles** (`profile="session"`, the default) are scoped to one pi conversation under `_session-<piSessionId>`. **Named profiles** (`profile="shopping"`, `profile="work"`) are shared across conversations and agents. Conversation-scoped default set via `/web profile <name>` (or `/web profile none` / `/web profile session`), survives `/reload`/`/resume`.
 - **Cookie operations** (`getCookies`, `addCookies`, `clearCookies`) delegate to the browser plugin's Playwright `context.cookies()` / `context.clearCookies()`.
+
+For the in-memory fallback, re-navigate semantics, and the Chromium vs Python context-reuse difference, see **Known Constraints & Debt** below.
+
+## Guides (`core/guides.ts`)
+
+4 builtin pattern guides (`bot-detection`, `cookie-consent`, `pagination`, `search`). Site guides are user-authored — place a `.md` file with YAML frontmatter in `~/.pi/agent/pi-lean-portal/web-guides/` — and auto-register via their `domains` field. Caches invalidate on `web-learn` calls. Guides surface via an applicable-guide footer and badge; all matching guides are shown together with no priority suppression.
+
+## Key Tools
+
+| Tool | Use Case | State | Speed |
+|------|----------|-------|-------|
+| `web-fetch` | Static page → Markdown, no JS needed | Stateless | Fast |
+| `browser-navigate` | Interactive page → accessibility tree with @e refs | Stateful session | Slower |
+| `browser-inspect` | Element queries + text extraction with @e ref annotations | Stateful session | Fast (sync cache) |
+| `web-guide` | Get navigation guidance for a site or pattern | Stateless | Instant |
+| `web-learn` | Save or update navigation guidance for a site | Stateless | Instant |
+
+`web-fetch` uses plain `fetch()` + `node-html-parser` + `turndown`. Returns ~4000 chars inline, spills to temp file when larger. (`web-search` is owned by `pi-lean-search` — see that package's `AGENTS.md`.)
+
+## Engine Parity Note
+
+Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees in the **same YAML format**, so the shared parser in `core/shared/accessibility-tree.ts` works identically for both. The two engines may report **different role sets and props** for the same DOM. The contract test suite uses threshold assertions (`elementCount > 0`) rather than exact equality, so this should pass without false positives. If any fixture shows a meaningful divergence, document it here rather than papering over it.
+
+**User-Agent drift (Python backends):** The Node Firefox backend dynamically probes the browser's UA at lazy init (probe-then-cache). The Python Firefox backend uses a hardcoded fallback UA string (`rv:135.0`). This string will drift as Firefox releases newer versions. If you use the Python Firefox backend for UA-sensitive sites, update the hardcoded UA string in `backends/firefox-py/bridge.py` to match the installed Firefox version.
+
+## `backends/` vs `core/` Boundaries
+
+- `backends/` — plugin-specific implementations (Node or Python)
+- `core/` — framework: plugin API, registry, config loader, router, shared utilities
+- `core/shared/` — utilities used by both framework and plugins
+- Plugins import from `../../core/plugin-api.js` and `../../core/shared/*.js`
+- The router imports from `../../core/plugin-api.js` and `../../core/shared/*.js`
+- `browser-cookies.ts`, `browser-profile.ts`, `browser-status.ts` live at the portal package root and import from `core/` — they're command handlers, not plugins.
+
+## Testing (portal detail)
+
+The monorepo root owns the test split principle and the summary counts table; this section is the per-file detail for tests that live in this package.
+
+**Portal structural (22 files):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, browser-status, session-manager, browser-data, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, probe-user-backend, ship-manifest
+
+**Python bridge unit tests (6 files, pytest):** test_accessibility, test_bot_detection, test_transport, test_browser_data, test_py_bridges, test_playwright_base_quirks (the stealth-quirk flags: `_fingerprint_managed_context`, `_skip_default_viewport`, `_scroll_via_wheel`, `_eval_prefix`)
+
+**Portal per-backend contract tests (8 files):** chromium (auto-skip), chromium-py (auto-skip), chromium-py-persistence (auto-skip), cookie-persistence (auto-skip), firefox (auto-skip), firefox-py (auto-skip), firefox-py-persistence (auto-skip), run-contributed-suites (auto-skip; discovers every user-managed stealth backend under `user-backends/` and runs the shared contract + persistence + parity + quirks suites against each, gated by `CONTRIB_RUN=1`)
+
+**Shared test utilities** (`__tests__/helpers/`):
+
+- `plugin-contract.ts` — `runContractTests(name, factory, opts?)` validates any BrowserPlugin
+- `mock-plugin.ts` — MockPlugin for structural contract validation
+- `test-server.ts` — `startTestServer()` returns a local HTTP server for integration tests
+- `mock-python-bridge.py` — Python bridge stub used by python-adapter tests
 
 ## Known Constraints & Debt
 
