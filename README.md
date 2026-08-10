@@ -50,8 +50,10 @@ the toolset's packaged default. Omit a key to use the packaged default; the
 | Mode | Command | What you get | Requires |
 |---|---|---|---|
 | **A — Browser** (recommended) | `pi install npm:pi-lean-portal` | 12 browser tools + `/web` command | `npx playwright install chromium firefox` |
-| **B — Full suite** | `pi install npm:pi-lean-dimension` | 13 tools (browser + search) + `/web` | Playwright browsers + SearXNG server |
+| **B — Full suite** | `pi install npm:pi-lean-dimension` | 16 tools (browser + search + API) + `/web` + `/api` | Playwright browsers + SearXNG server |
 | **C — Search only** | `pi install npm:pi-lean-search` | `web-search` tool only | SearXNG server |
+| **D — Host only (API)** | `pi install npm:pi-lean-host` | 3 API tools + `/api` command | none |
+| **E — Host + browser** | `pi install npm:pi-lean-host` + `npm:pi-lean-portal` | browser tools + API tools + co-install projection | Playwright browsers |
 
 Notes the table doesn't cover:
 
@@ -74,9 +76,10 @@ Notes the table doesn't cover:
 |---|---|---|
 | `pi-lean-portal` | Extension | Interactive browser + `/web` command owner. **12 tools + 1 command.** |
 | `pi-lean-search` | Extension | SearXNG search tool (`web-search`). **1 tool + 1 command** (`/searxng-status`). |
-| `pi-lean-dimension` | Umbrella meta-package | Bundles portal + search for one-command install. |
+| `pi-lean-host` | Extension | Declarative HTTP API client (`api-guide`, `api-fetch`, `api-learn`). **3 tools + 1 command** (`/api`). |
+| `pi-lean-dimension` | Umbrella meta-package | Bundles portal + search + host for one-command install. |
 
-### Tools (13 total with search)
+### Tools (16 total with search + host)
 
 | Tool | Package | Purpose |
 |---|---|---|
@@ -93,6 +96,9 @@ Notes the table doesn't cover:
 | `web-guide` | portal | Navigation guidance for a site or pattern |
 | `web-learn` | portal | Save/update navigation guidance |
 | `web-search` | search | Web search via SearXNG |
+| `api-guide` | host | Browse or inspect API guides |
+| `api-fetch` | host | Execute an API operation from a guide |
+| `api-learn` | host | Write or update an API guide |
 
 ### Commands
 
@@ -100,13 +106,15 @@ Notes the table doesn't cover:
 |---|---|---|
 | `/web on\|off\|learn\|cookies\|profile\|status` | portal | Unified toggle and management |
 | `/searxng-status` | search | Test SearXNG connection and update status glyph |
+| `/api on\|off\|learn\|status\|helpers` | host | Independent API tools toggle and management |
 
 ### Status bar
 
-When search is installed, two independent glyphs appear:
+When host is installed alongside portal and search, three independent glyphs appear:
 
 - `● idle` (browser) — browser tools enabled
 - `● searxng` (search) — SearXNG health (accent=healthy, yellow=degraded, red=unreachable)
+- `● api` (host) — API tools enabled (accent=on, success=learn, ○=off)
 
 ---
 

@@ -5,13 +5,14 @@
 > **This file is a stub.** For the suite overview, install matrix, dev
 > commands, and testing strategy, see [`../../AGENTS.md`](../../AGENTS.md).
 > For the bundled children's internals, see
-> [`../pi-lean-portal/AGENTS.md`](../pi-lean-portal/AGENTS.md) and
-> [`../pi-lean-search/AGENTS.md`](../pi-lean-search/AGENTS.md).
+> [`../pi-lean-portal/AGENTS.md`](../pi-lean-portal/AGENTS.md),
+> [`../pi-lean-search/AGENTS.md`](../pi-lean-search/AGENTS.md), and
+> [`../pi-lean-host/AGENTS.md`](../pi-lean-host/AGENTS.md).
 
 ## What this package is
 
-**A codeless manifest package.** It bundles `pi-lean-portal` and
-`pi-lean-search` into a single `pi install` command via
+**A codeless manifest package.** It bundles `pi-lean-portal`,
+`pi-lean-search`, and `pi-lean-host` into a single `pi install` command via
 `bundledDependencies` + `node_modules/...` paths in `pi.extensions`:
 
 ```jsonc
@@ -19,15 +20,16 @@
   "pi": {
     "extensions": [
       "./node_modules/pi-lean-portal/index.ts",
-      "./node_modules/pi-lean-search/index.ts"
+      "./node_modules/pi-lean-search/index.ts",
+      "./node_modules/pi-lean-host/index.ts"
     ]
   },
-  "bundledDependencies": ["pi-lean-portal", "pi-lean-search"]
+  "bundledDependencies": ["pi-lean-portal", "pi-lean-search", "pi-lean-host"]
 }
 ```
 
-One `pi install npm:pi-lean-dimension` loads both extensions under a single
-settings entry. `/web` registers **once** (owned by the bundled
+One `pi install npm:pi-lean-dimension` loads all three extensions under a
+single settings entry. `/web` registers **once** (owned by the bundled
 `pi-lean-portal` — no `/web:1`/`/web:2` suffix). This is the full-suite
 power-user install; it requires a running SearXNG server + URL config for
 search to function (the browser works immediately; `web-search`

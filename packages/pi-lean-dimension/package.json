@@ -1,7 +1,7 @@
 {
 	"name": "pi-lean-dimension",
 	"version": "0.4.0",
-	"description": "Pi extension. The full Pi web-tools suite in one install — interactive browsing (pi-lean-portal) plus SearXNG search (pi-lean-search), unified under a /web toggle that removes the tools from context when switched off.",
+	"description": "Pi extension. The full Pi web-tools suite in one install — interactive browsing (pi-lean-portal), SearXNG search (pi-lean-search), and declarative HTTP API client (pi-lean-host), unified under a /web and /api toggle.",
 	"keywords": [
 		"pi-package",
 		"pi-extension",
@@ -28,15 +28,18 @@
 	"pi": {
 		"extensions": [
 			"./node_modules/pi-lean-portal/index.ts",
-			"./node_modules/pi-lean-search/index.ts"
+			"./node_modules/pi-lean-search/index.ts",
+			"./node_modules/pi-lean-host/index.ts"
 		]
 	},
 	"dependencies": {
 		"pi-lean-portal": "^0.4.0",
-		"pi-lean-search": "^0.4.0"
+		"pi-lean-search": "^0.4.0",
+		"pi-lean-host": "^0.4.0"
 	},
 	"bundledDependencies": [
 		"pi-lean-portal",
-		"pi-lean-search"
+		"pi-lean-search",
+		"pi-lean-host"
 	]
 }

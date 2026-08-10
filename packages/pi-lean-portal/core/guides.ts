@@ -34,6 +34,8 @@ export interface Guide {
 	domains?: string[];
 	/** Pattern guides only: signal that triggers this guide (e.g. "botDetected", "dialogDetected"). */
 	triggerSignal?: "botDetected" | "dialogDetected";
+	/** Presentation-ordering hint ("web" | "api"); omitted = "web". Peer-package (host) projections set "api". */
+	kind?: "web" | "api";
 }
 
 /** An applicable guide for the current page, with presentation fields copied. */
@@ -48,6 +50,8 @@ export interface ApplicableGuide {
 	reason: string;
 	/** Category from the underlying Guide. */
 	category: GuideCategory;
+	/** Presentation-ordering hint propagated from the underlying Guide (omitted = "web"). */
+	kind?: "web" | "api";
 }
 
 /**
@@ -58,6 +62,10 @@ export function sortApplicableGuides(
 ): ApplicableGuide[] {
 	return [...guides].sort((a, b) => {
 		if (a.category !== b.category) return a.category === "pattern" ? -1 : 1;
+		// Host-first: within the same category, kind: "api" before kind: "web".
+		const ak = a.kind === "api" ? 0 : 1;
+		const bk = b.kind === "api" ? 0 : 1;
+		if (ak !== bk) return ak - bk;
 		return a.shortName.localeCompare(b.shortName);
 	});
 }
@@ -290,7 +298,9 @@ let _testGuideOverrides: Record<string, Guide> | null = null;
  * User-authored guides override builtin guides on name collision.
  */
 export function getGuideContent(): Record<string, Guide> {
-	const base = { ...BUILTIN_GUIDES, ...loadUserGuides() };
+	// Merge: peer-provider output > builtin, user > peer.
+	const peer = collectProviderGuides();
+	const base = { ...BUILTIN_GUIDES, ...peer, ...loadUserGuides() };
 	if (_testGuideOverrides) {
 		return { ...base, ..._testGuideOverrides };
 	}
@@ -307,8 +317,46 @@ export function _setGuideContentForTest(content?: Record<string, Guide>): void {
 	_testGuideOverrides = content ?? null;
 }
 
+// ── Peer-package guide providers ─────────────────────────────────
+
+const _guideProviders: Array<() => Record<string, Guide>> = [];
+
+/**
+ * Register a peer-package guide provider. The provider is called on every
+ * getGuideContent() call (always fresh) and its output is merged below
+ * user guides and above builtin guides. A throwing provider is skipped —
+ * one bad peer doesn't block the store.
+ */
+export function registerGuideProvider(
+	provider: () => Record<string, Guide>,
+): void {
+	_guideProviders.push(provider);
+}
+
+/** @internal Clear all peer-package providers (test helper). */
+export function _clearGuideProviders(): void {
+	_guideProviders.length = 0;
+}
+
+/** Collect + merge all peer-package provider output. */
+function collectProviderGuides(): Record<string, Guide> {
+	const out: Record<string, Guide> = {};
+	for (const provider of _guideProviders) {
+		try {
+			const result = provider();
+			for (const [name, guide] of Object.entries(result)) {
+				out[name] = guide;
+			}
+		} catch {
+			// A failing peer provider is skipped — degrade gracefully.
+		}
+	}
+	return out;
+}
+
 /** Format guide listing grouped by category, with icon/shortName and trigger info. */
 export function formatGuideList(): string {
+	const api: string[] = [];
 	const sites: string[] = [];
 	const patterns: string[] = [];
 
@@ -317,24 +365,32 @@ export function formatGuideList(): string {
 			? ` — ${g.icon} ${g.shortName}, fires on ${g.triggerSignal}`
 			: "";
 		const entry = `  ${name} (${g.source}, updated ${g.updated})${trigger}`;
-		if (g.category === "site") {
+		if (g.kind === "api") {
+			api.push(entry);
+		} else if (g.category === "site") {
 			sites.push(entry);
 		} else {
 			patterns.push(entry);
 		}
 	}
 
-	return [
-		"Available guides:\n",
+	const sections: string[] = ["Available guides:\n"];
+	if (api.length > 0) {
+		sections.push("API guides:", ...api.sort(), "");
+	}
+	sections.push(
 		"Site guides:",
 		...sites.sort(),
 		"",
 		"Pattern guides:",
 		...patterns.sort(),
 		"",
+	);
+	sections.push(
 		'Source: "builtin" = shipped with extension, "user" = loaded from ~/.pi/agent/pi-lean-portal/web-guides/.',
 		'Call web-guide guide="<name>" for guidance.',
-	].join("\n");
+	);
+	return sections.join("\n");
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -371,6 +427,7 @@ export function resolveApplicableGuides(
 				shortName: guide.shortName,
 				reason: SIGNAL_REASONS["botDetected"],
 				category: "pattern",
+				kind: guide.kind ?? "web",
 			});
 		} else if (guide.triggerSignal === "dialogDetected" && dialogDetected) {
 			result.push({
@@ -379,6 +436,7 @@ export function resolveApplicableGuides(
 				shortName: guide.shortName,
 				reason: SIGNAL_REASONS["dialogDetected"],
 				category: "pattern",
+				kind: guide.kind ?? "web",
 			});
 		}
 	}
@@ -392,16 +450,23 @@ export function resolveApplicableGuides(
 		return sortApplicableGuides(result);
 	}
 
-	const guideName = buildDomainMap()[hostname];
-	if (guideName) {
+	// 2. Domain site guides — all matching guides for the hostname (a domain
+	//    may have both an API guide and a web guide; sortApplicableGuides puts
+	//    kind:"api" before kind:"web").
+	for (const guideName of buildDomainMap()[hostname] ?? []) {
 		const guide = content[guideName];
 		if (guide) {
+			const kind = guide.kind ?? "web";
 			result.push({
 				name: guideName,
 				icon: guide.icon,
 				shortName: guide.shortName,
-				reason: `site guide for ${hostname}`,
+				reason:
+					kind === "api"
+						? `API guide for ${hostname}`
+						: `site guide for ${hostname}`,
 				category: guide.category,
+				kind,
 			});
 		}
 	}
@@ -422,9 +487,13 @@ export function formatGuideFooter(guides: ApplicableGuide[]): string {
 		"📖 Guides available for this page — call web-guide to review before interacting (once each per conversation):",
 	];
 
+	let addedApiHeader = false;
 	let addedSiteHeader = false;
 	for (const g of guides) {
-		if (g.category === "site" && !addedSiteHeader) {
+		if (g.kind === "api" && !addedApiHeader) {
+			lines.push("  API:");
+			addedApiHeader = true;
+		} else if (g.category === "site" && g.kind !== "api" && !addedSiteHeader) {
 			lines.push("  Site:");
 			addedSiteHeader = true;
 		}
@@ -445,8 +514,8 @@ export function formatGuideFooter(guides: ApplicableGuide[]): string {
  * by getGuideContent() that have a `domains` field.
  * Derives from the single source of truth (getGuideContent).
  */
-export function buildDomainMap(): Record<string, string> {
-	const map: Record<string, string> = {};
+export function buildDomainMap(): Record<string, string[]> {
+	const map: Record<string, string[]> = {};
 	for (const [name, guide] of Object.entries(getGuideContent())) {
 		if (
 			guide.category === "site" &&
@@ -454,7 +523,7 @@ export function buildDomainMap(): Record<string, string> {
 			guide.domains.length > 0
 		) {
 			for (const domain of guide.domains) {
-				map[domain] = name;
+				(map[domain] ??= []).push(name);
 			}
 		}
 	}

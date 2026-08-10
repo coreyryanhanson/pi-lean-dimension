@@ -15,15 +15,16 @@
 
 ## What This Is
 
-An npm-workspaces monorepo containing three packages:
+An npm-workspaces monorepo containing four packages:
 
 - **`pi-lean-portal`** — Interactive web browsing (owns `/web` command). **12 tools + 1 command.**
 - **`pi-lean-search`** — SearXNG search tool (`web-search`), wired into portal's `/web` toggle. **1 tool + 1 command** (`/searxng-status`).
-- **`pi-lean-dimension`** — Umbrella meta-package that bundles portal + search (codeless manifest).
+- **`pi-lean-host`** — Declarative HTTP API client (`api-guide`, `api-fetch`, `api-learn`, `/api` namespace). **3 tools + 1 command.**
+- **`pi-lean-dimension`** — Umbrella meta-package that bundles portal + search + host (codeless manifest).
 
 The MiniWoB++ evaluation harness was dissolved out of the workspaces and lives at `bench/miniwob/` — it is research tooling, not a pi extension.
 
-With search installed, the suite totals **13 tools + 2 commands** (portal + search only). Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool. Portal entrypoint: `packages/pi-lean-portal/index.ts`.
+With search + host installed, the suite totals **16 tools + 3 commands** (portal + search + host). Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool + declarative HTTP API helpers. Portal entrypoint: `packages/pi-lean-portal/index.ts`. Host entrypoint: `packages/pi-lean-host/index.ts`.
 
 ## Developer Commands
 
@@ -110,17 +111,19 @@ pi-lean-dimension/                       (monorepo root)
 
 ## Architecture (suite-level overview)
 
-Portal dispatches through a `PluginRegistry` + typed `BrowserPlugin` interface (`packages/pi-lean-portal/core/plugin-api.ts`); `web-fetch` is stateless. All backends implement the same 19-method interface, so the 12 browser tools are backend-agnostic. Backend config lives under `browser.plugins` in `~/.pi/agent/settings.json` (merged with `.pi/settings.json`).
+Portal dispatches through a `PluginRegistry` + typed `BrowserPlugin` interface; `web-fetch` is stateless. All backends implement the same 19-method interface, so the 12 browser tools are backend-agnostic.
 
 **Shipped backends (config-driven):** `chromium` (Node, enabled), `firefox` (Node, enabled), `chromium-py` (Python, disabled), `firefox-py` (Python, disabled). User-installed stealth backends (e.g. Camoufox) are never shipped, never auto-downloaded, and loaded only when explicitly listed with an absolute `pythonPath` — see `packages/pi-lean-portal/AGENTS.md` ("Stealth backends") and `packages/pi-lean-portal/contributed/README.md`.
 
 > For the `BrowserPlugin` method list, router dispatch, the status bar `browser` slot, profile/cookie persistence, guides, key-tools table, engine parity, snapshot cache, nav-settle, bot-detection tiers, `browser-inspect` internals, the `backends/` vs `core/` boundary, and the full constraints & debt list, see [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md). The search-owned `search` status bar slot is documented in [`packages/pi-lean-search/AGENTS.md`](packages/pi-lean-search/AGENTS.md).
 
-### Registered Tools (13 total with search)
+### Registered Tools (16 total with search + host)
 
 **Portal (12):** web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
 
 **Search (1):** web-search
+
+**Host (3):** api-guide, api-fetch, api-learn
 
 ### Registered Commands
 
@@ -128,9 +131,11 @@ Portal dispatches through a `PluginRegistry` + typed `BrowserPlugin` interface (
 
 **Search:** `/searxng-status` — test the full SearXNG search pipeline and update the status bar glyph.
 
+**Host:** `/api on|off|learn|status|helpers` — `/api on` (API tools enabled), `/api off` (all disabled), `/api learn` (API tools + api-learn enabled for guide authoring), `/api status` (show active guides and helpers), `/api helpers [domain]` (list/view helper source).
+
 Toggle state is persisted via `pi.appendEntry("web-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`. Three-field schema: `{browserToolsEnabled, learnToolsEnabled, defaultProfile}`.
 
-**Defaults for new sessions** are resolved by the `pi-tool-masking` library, not portal/search code: `initBrowserToggle` passes the packaged `ToolsetSpec` (with its own `defaultEnabled`) straight to `defineToolset`, and the library's restore reads the `toolsetDefaults` block from merged Pi settings (`~/.pi/agent/settings.json` + `.pi/settings.json`) before falling back to the packaged default. Keys: `toolset-state:pi-lean-dimension.web`, `toolset-state:pi-lean-dimension.web-learn`, `toolset-state:pi-lean-dimension.search` (search key only honored when `pi-lean-search` is installed). The legacy `browserToggle.defaultEnabled` key was **removed in 0.4.0** and is no longer read — the migration warning that bridged it is gone too.
+**Defaults for new sessions** are resolved by the `pi-tool-masking` library, not portal/search/host code: `initBrowserToggle` and `initApiToggle` pass the packaged `ToolsetSpec` (with its own `defaultEnabled`) straight to `defineToolset`, and the library's restore reads the `toolsetDefaults` block from merged Pi settings (`~/.pi/agent/settings.json` + `.pi/settings.json`) before falling back to the packaged default. Keys: `toolset-state:pi-lean-dimension.web`, `toolset-state:pi-lean-dimension.web-learn`, `toolset-state:pi-lean-dimension.search` (search key only honored when `pi-lean-search` is installed), `toolset-state:pi-lean-dimension.api`, `toolset-state:pi-lean-dimension.api-learn` (host keys only honored when `pi-lean-host` is installed). Packaged defaults: web on / web-learn off, search on, api on / api-learn off. The legacy `browserToggle.defaultEnabled` key was **removed in 0.4.0** and is no longer read — the migration warning that bridged it is gone too.
 
 The toggle also manages a `SIBLING_TOOL_NAMES` set populated with `"web-search"`. `/web on|off` operates on the union of `BROWSER_TOOL_NAMES ∪ SIBLING_TOOL_NAMES`. Discovery uses **exact-name `Set.has()` membership** — no regex, no false positives on third-party `web-*` tools.
 
@@ -143,6 +148,7 @@ The toggle also manages a `SIBLING_TOOL_NAMES` set populated with `"web-search"`
 - **Portal structural tests** (`pi-lean-portal`): framework internals (router dispatch, registry, config loading, snapshot cache, nav-settle, storage state, accessibility parsing, url safety, plugin contract validation, browser toggle, fetch backend, python adapter). These are mocked unit tests — no real browser or MiniWoB content required.
 - **Python bridge unit tests** (`pi-lean-portal/backends/python-base/tests/`): pure-logic pytest tests for the shared `pi_browser_bridge` library (accessibility, bot-detection, JSON-RPC transport, chromium-py/firefox-py routing, `PlaywrightBridge` stealth-quirk flags). Use fakes/mocks; the `playwright` import is lazily guarded, so they need only `pytest>=9.0` — no Playwright wheel, no browser binaries. Run via `npm run test:py-bridge`; wired into the `structural` CI job.
 - **MiniWoB behavioral tests** (`bench/miniwob/suites/`): behavioral evaluation against real browser engines (MiniWoB tasks, browser interaction pipeline verification). These require a live browser and MiniWoB++ content.
+- **Host recipe-validity tests** (`api-guides/<domain>/*.test.ts`): per-recipe endpoint coverage and helper transform tests co-located with their guide. Transform tests run in bare CI; live endpoint tests opt in via `HOST_INTEGRATION=1`. Excluded from the npm tarball.
 - **Per-backend contract tests** (in `pi-lean-portal`): verify each backend (chromium, firefox, chromium-py, firefox-py, etc.) against the `BrowserPlugin` interface contract. Require their respective browser engine.
 
 ### Test file summary
@@ -154,6 +160,7 @@ The toggle also manages a `SIBLING_TOOL_NAMES` set populated with `"web-search"`
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 8 | varies | Per-backend (auto-skip) |
 | MiniWoB behavioral | `bench/miniwob/suites/` | 8 | 130 tasks × 4 + user-backends + smoke* | Chromium + Firefox + Python + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 29 | No |
+| Host recipe-validity | `api-guides/<domain>/*.test.ts` | 2 | ~30 | No (live: `HOST_INTEGRATION=1`) |
 
 Per-file detail for the portal-owned test lists (structural, python bridge, per-backend contract, shared test utilities) lives in [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md) ("Testing (portal detail)"). MiniWoB suite detail is in the MiniWoB Integration section below.
 

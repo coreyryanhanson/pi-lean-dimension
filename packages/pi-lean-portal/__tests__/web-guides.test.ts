@@ -613,7 +613,7 @@ describe("buildDomainMap", () => {
 
 	it("includes fixtures from guides with domains field", () => {
 		const map = buildDomainMap();
-		expect(map["_internal-test.example"]).toBe("_builtin-test-fixture");
+		expect(map["_internal-test.example"]).toContain("_builtin-test-fixture");
 	});
 
 	it("excludes pattern guides (no domains field)", () => {
@@ -621,7 +621,7 @@ describe("buildDomainMap", () => {
 		// Pattern guides should not appear as domain entries
 		for (const [name] of Object.entries(getGuideContent())) {
 			if (getGuideContent()[name]?.category === "pattern") {
-				expect(Object.values(map)).not.toContain(name);
+				expect(Object.values(map).flat()).not.toContain(name);
 			}
 		}
 	});
