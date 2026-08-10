@@ -202,7 +202,7 @@ export default function (pi: ExtensionAPI) {
 	const searchToolset = defineToolset(pi, SEARCH_WEB_SPEC);
 
 	// ── Co-activation: mirror pi-lean-dimension.web changed events ─
-	// Listen on changed ONLY, not restored (§10.1).
+	// Listen on changed ONLY, not restored.
 	//
 	// Focus-mode guard: while allowlist focus holds the line, skip
 	// co-activation. The focus set is authoritative, so a web `changed` event

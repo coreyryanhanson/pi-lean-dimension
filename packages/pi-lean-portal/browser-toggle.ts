@@ -174,7 +174,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 		handler: async (args, ctx) => {
 			const cmd = args.trim().toLowerCase();
 
-			// Focus-mode guard (§13.2): refuse actuating subcommands while the
+			// Focus-mode guard: refuse actuating subcommands while the
 			// library holds the line — either inclusion mode or allowlist focus
 			// (an upstream pi-tool-masking consumer). Either way a sibling
 			// toggle must not write a focus-indistinguishable {enabled} entry.

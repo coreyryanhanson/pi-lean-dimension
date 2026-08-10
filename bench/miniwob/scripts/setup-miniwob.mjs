@@ -99,7 +99,7 @@ function main() {
 	const htmlDir = join(checkoutRoot, "miniwob", "html");
 
 	// ── Existing .git checkout — verify html/ presence + pinned commit ──
-	// (§1.7 hardening: a stale or partial checkout should be repaired,
+	// (hardening: a stale or partial checkout should be repaired,
 	//  not silently trusted. Drift from PINNED_COMMIT warns but proceeds.)
 	if (existsSync(join(checkoutRoot, ".git"))) {
 		if (!existsSync(htmlDir)) {
