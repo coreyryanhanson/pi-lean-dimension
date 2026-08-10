@@ -24,7 +24,6 @@ import {
 	callHelper,
 	getAllHelpers,
 	readHelperSource,
-	isHelperDisabled,
 	getDisabledHelperDomains,
 } from "../core/local-helpers.js";
 import {
@@ -235,7 +234,7 @@ describe("callHelper — load / call guard", () => {
 			expect(result.disabled).toBe(true);
 			expect(result.error).toContain("disabled");
 		}
-		expect(isHelperDisabled("load-error")).toBe(true);
+		expect(getDisabledHelperDomains()).toContain("load-error");
 	});
 
 	it("returns disabled error on subsequent calls to a disabled helper", async () => {
@@ -263,7 +262,7 @@ describe("callHelper — load / call guard", () => {
 			expect(result.disabled).toBe(true);
 			expect(result.error).toContain("disabled");
 		}
-		expect(isHelperDisabled("call-error")).toBe(true);
+		expect(getDisabledHelperDomains()).toContain("call-error");
 	});
 
 	it("healthy helper transforms params", async () => {
@@ -287,18 +286,16 @@ describe("callHelper — load / call guard", () => {
 		if (!result.ok) {
 			expect(result.disabled).toBe(true);
 		}
-		expect(isHelperDisabled("no-default")).toBe(true);
+		expect(getDisabledHelperDomains()).toContain("no-default");
 	});
 
 	it("resetDisabledHelpers clears the disabled set", async () => {
 		writeFixtureHelper("resettable", FIXTURE_LOAD_ERROR);
 
 		await callHelper("resettable", "op", {});
-		expect(isHelperDisabled("resettable")).toBe(true);
 		expect(getDisabledHelperDomains()).toContain("resettable");
 
 		resetDisabledHelpers();
-		expect(isHelperDisabled("resettable")).toBe(false);
 		expect(getDisabledHelperDomains()).not.toContain("resettable");
 	});
 });

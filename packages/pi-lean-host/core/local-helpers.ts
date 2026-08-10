@@ -129,13 +129,6 @@ export function readHelperSource(domain: string): string | null {
 }
 
 /**
- * Check if a helper is disabled for this session.
- */
-export function isHelperDisabled(domain: string): boolean {
-	return disabledHelpers.has(domain);
-}
-
-/**
  * Return the list of disabled helper domains.
  */
 export function getDisabledHelperDomains(): string[] {
