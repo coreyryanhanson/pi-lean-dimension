@@ -1,5 +1,5 @@
 /**
- * HTTP transport layer — per-domain undici Agent with caching and retry.
+ * HTTP transport layer — undici Agent with caching and retry.
  *
  * Provides `fetchUrl()` with:
  *  - ETag-based conditional requests (304 → cached body)
