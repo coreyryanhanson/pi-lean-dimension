@@ -1,0 +1,5 @@
+{
+  "status": 200,
+  "body": "{\"OAI-PMH\":{\"responseDate\":\"2026-07-25T12:00:02Z\",\"request\":{\"@_verb\":\"ListRecords\",\"@_resumptionToken\":\"def456\"},\"ListRecords\":{\"record\":[{\"id\":5,\"title\":\"Record 5\"},{\"id\":6,\"title\":\"Record 6\"}]}}}",
+  "_note": "Final page — no resumptionToken element → pagination stops."
+}

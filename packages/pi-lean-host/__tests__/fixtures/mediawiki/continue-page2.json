@@ -1,0 +1,5 @@
+{
+  "status": 200,
+  "body": "{\"continue\":{},\"query\":{\"recentchanges\":[{\"title\":\"Page C\",\"type\":\"edit\"}]}}",
+  "_note": "Last page — empty continue → pagination stops."
+}

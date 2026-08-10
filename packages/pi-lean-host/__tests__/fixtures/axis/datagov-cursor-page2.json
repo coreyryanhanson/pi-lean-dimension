@@ -1,0 +1,5 @@
+{
+  "status": 200,
+  "body": "{\"after\":\"Wzg1LjMyNTgwNiwyNSwiMTZhODE5YjgtNDQzNi00YjNiLTg2N2ItNzBiMTI5OTg4ZDNiIl0=\",\"results\":[{\"_score\":87.09666,\"description\":\"<p>Public Water Systems (PWS) submit their annual reports with rate information using the Electronic Annual Report (EAR) submission process on the Drinking Water Information Clearinghouse (DRINC) port\"},{\"_score\":85.325806,\"description\":\"<p>The is a curated dataset of information for all public water systems (PWS) in California, including the name, location and some general informaiton for each PWS.  The source of the data <a href=\\\"ht\"}]}",
+  "_note": "Captured from cursor follow-up of page 1 on 2026-07-20. Trimmed to results[]._score/description, after"
+}
