@@ -57,6 +57,8 @@ export interface FetchResult {
 	body: string;
 	/** True when the result came from cache (no network request). */
 	cached: boolean;
+	/** Final URL after redirects — present only when at least one hop occurred. */
+	finalUrl?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -199,6 +201,7 @@ async function singleGet(
 	status: number;
 	headers: Record<string, string>;
 	rawBody: Buffer;
+	finalUrl: string;
 }> {
 	if (timeoutMs <= 0) throw new Error("Request timeout");
 	const ac = new AbortController();
@@ -213,10 +216,15 @@ async function singleGet(
 			signal: ac.signal,
 			dispatcher,
 		});
+		// The redirect interceptor records the hop chain in context.history;
+		// its last entry is where the response actually came from. No history
+		// (no interceptor / no redirect) means the URL is unchanged.
+		const history = (resp.context as { history?: URL[] } | null)?.history;
 		return {
 			status: resp.statusCode,
 			headers: parseHeaders(resp.headers),
 			rawBody: await collectBody(resp.body),
+			finalUrl: history?.at(-1) ? String(history.at(-1)) : url,
 		};
 	} finally {
 		clearTimeout(timer);
@@ -238,6 +246,7 @@ async function getWithGuardedRedirects(
 	status: number;
 	headers: Record<string, string>;
 	rawBody: Buffer;
+	finalUrl: string;
 }> {
 	let current = url;
 	for (let hops = 0; hops <= MAX_REDIRECTS; hops++) {
@@ -347,6 +356,7 @@ export async function fetchUrl(
 				status,
 				headers: respHeaders,
 				rawBody,
+				finalUrl,
 			} = opts?.guardRedirects
 				? await getWithGuardedRedirects(url, reqHeaders, startTime, timeout)
 				: await singleGet(url, reqHeaders, remaining, redirectAgent);
@@ -364,6 +374,7 @@ export async function fetchUrl(
 						headers: respHeaders,
 						body: entry.body,
 						cached: true,
+						...(finalUrl !== url ? { finalUrl } : {}),
 					};
 				}
 				// No cached entry → fall through to process body.
@@ -392,7 +403,13 @@ export async function fetchUrl(
 				cache.set(key, entry);
 			}
 
-			return { status, headers: respHeaders, body, cached: false };
+			return {
+				status,
+				headers: respHeaders,
+				body,
+				cached: false,
+				...(finalUrl !== url ? { finalUrl } : {}),
+			};
 		} catch (err) {
 			const e = err instanceof Error ? err : new Error(String(err));
 			// Don't retry on timeout/abort, oversized bodies, or SSRF

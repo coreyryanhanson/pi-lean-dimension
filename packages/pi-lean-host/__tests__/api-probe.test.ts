@@ -1,5 +1,5 @@
 /**
- * api-probe structural tests — pure shape logic, no network.
+ * api-probe structural tests — pure shape logic, no external network.
  *
  * Covers the plan's unit-test list:
  *  - envelope → paginate + itemsPath
@@ -8,12 +8,17 @@
  *  - representative-ID pick
  *  - pagination marker → style guess (via emitDraft)
  *
- * The tool's live path is a request-spender (dev/discovery aid) — no
- * HOST_INTEGRATION live suite, matching its role.
+ * One deterministic loopback exception: a localhost 301 → final-URL test
+ * that exercises the real transport (redirect-follow + finalUrl capture),
+ * since that behavior is only observable through an actual undici request.
+ * No HOST_INTEGRATION (external) live suite — matching the tool's role as a
+ * dev/discovery aid.
  */
 
 import { describe, it, expect } from "vitest";
-import { summarize, emitDraft } from "../tools/api-probe.js";
+import { summarize, emitDraft, probe } from "../tools/api-probe.js";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 
 describe("summarize", () => {
 	it("maps an envelope with an array-valued key to paginate + itemsPath", () => {
@@ -123,5 +128,34 @@ describe("emitDraft (marker → style guess)", () => {
 		const shape = summarize([{ id: 42, name: "x" }]);
 		const draft = emitDraft("/users", {}, shape);
 		expect(draft).toContain("# representative id: id=42");
+	});
+});
+
+describe("probe redirect handling (live localhost)", () => {
+	it("follows a 301 and reports the final URL + parsed body (the /packs → /packs/ case)", async () => {
+		const server = http.createServer((req, res) => {
+			if (req.url === "/packs") {
+				res.writeHead(301, { Location: "/packs/" });
+				res.end();
+				return;
+			}
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ data: [{ id: 1 }], meta: { total: 1 } }));
+		});
+		await new Promise<void>((r) => server.listen(0, r));
+		const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+		try {
+			const result = await probe(base, "/packs");
+			expect(result.status).toBe(200);
+			expect(result.ok).toBe(true);
+			expect(result.url).toBe(`${base}/packs`);
+			expect(result.finalUrl).toBe(`${base}/packs/`);
+			expect(result.shape?.topLevel).toBe("object");
+			expect(result.shape?.suggestedItemsPath).toBe("data");
+			expect(result.draft).toContain("path: /packs");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+		}
 	});
 });

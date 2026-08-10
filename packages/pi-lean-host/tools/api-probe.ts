@@ -54,6 +54,8 @@ export interface ShapeSummary {
 
 export interface ProbeResult {
 	url: string;
+	/** Final URL after redirects (equals `url` when no hop occurred). */
+	finalUrl: string;
 	status: number;
 	ok: boolean;
 	shape: ShapeSummary | null;
@@ -216,6 +218,7 @@ async function fetchOne(
 	const url = buildUrl(apiHost, path, params);
 	const res = await fetchUrl(url, { headers: { accept }, fresh: true });
 	const raw = res.body.slice(0, 800);
+	const finalUrl = res.finalUrl ?? url;
 
 	if (res.status >= 400) {
 		const note =
@@ -224,6 +227,7 @@ async function fetchOne(
 				: `${res.status}`;
 		return {
 			url,
+			finalUrl,
 			status: res.status,
 			ok: false,
 			shape: null,
@@ -239,6 +243,7 @@ async function fetchOne(
 	} catch {
 		return {
 			url,
+			finalUrl,
 			status: res.status,
 			ok: true,
 			shape: null,
@@ -251,6 +256,7 @@ async function fetchOne(
 	const shape = summarize(data);
 	return {
 		url,
+		finalUrl,
 		status: res.status,
 		ok: true,
 		shape,
@@ -399,6 +405,7 @@ export const apiProbeTool = defineTool({
 				content: [{ type: "text", text: formatProbeResult(result) }],
 				details: {
 					url: result.url,
+					finalUrl: result.finalUrl,
 					status: result.status,
 					ok: result.ok,
 					shape: result.shape,
@@ -467,6 +474,7 @@ function formatProbeResult(r: ProbeResult): string {
 	const lines: string[] = [];
 	lines.push(`🔬 api-probe — ${r.url}`);
 	lines.push(`  status: ${r.status}`);
+	if (r.finalUrl !== r.url) lines.push(`  final url: ${r.finalUrl}`);
 	if (r.note) lines.push(`  note: ${r.note}`);
 	if (r.shape) {
 		const s = r.shape;
