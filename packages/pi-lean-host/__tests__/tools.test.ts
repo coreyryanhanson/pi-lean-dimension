@@ -25,6 +25,7 @@ import {
 } from "../tools/api-fetch.js";
 import { apiLearnTool } from "../tools/api-learn.js";
 import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
+import { parseApiGuide } from "../core/parse-api-guide.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Test server for API endpoints
@@ -702,6 +703,23 @@ describe("api-learn", () => {
 		expect(text).toContain("operations");
 		expect(text).toContain("Required fields");
 		expect(text).toContain("Key defaults");
+	});
+
+	// Regression for issue 1a/1b: the worked example must copy-paste cleanly
+	// into api-learn (closing --- delimiter present) and demonstrate dateParams.
+	it("worked example validates and documents dateParams", async () => {
+		const text = contentText(await callLearn());
+		const m = text.match(/```yaml\n([\s\S]*?)```/);
+		expect(m).not.toBeNull();
+		const example = m![1];
+		const parsed = parseApiGuide(example, { filename: "boe.es" });
+		expect(parsed.ok).toBe(true);
+		if (parsed.ok) {
+			const diary = parsed.guide.operations.find(
+				(o) => o.name === "searchDiary",
+			)!;
+			expect(diary.dateParams).toEqual({ date: "yyyy-mm-dd" });
+		}
 	});
 
 	it("validates and writes a valid recipe", async () => {

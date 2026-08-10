@@ -66,6 +66,8 @@ operations:
     via: restGet
     path: /diario/{date}
     accept: json
+    dateParams:    # normalize a date param/path token before sending
+      date: yyyy-mm-dd
     params:
       limit:
         default: 50
@@ -82,6 +84,7 @@ operations:
       cursorParam: cursor
       cursorPath: pagination.nextCursor
       itemsPath: results
+---
 `;
 
 // ═══════════════════════════════════════════════════════════════════
@@ -149,6 +152,13 @@ export const apiLearnTool = defineTool({
 				"## Optional fields (multi-recipe disambiguation)",
 				`  \`organization\`  — org identity across guides (use the org's registrable domain, e.g. archive.org)`,
 				`  \`description\`    — one-line API summary (≤${DESCRIPTION_MAX} chars); the primary signal when several guides share a domain`,
+				"",
+				"## Optional fields (operation-level)",
+				`  \`dateParams\`  — normalize date params/path tokens before sending: map name → iso8601 | yyyymmdd | yyyy-mm-dd`,
+				`  \`helper\`      — true → call this domain's local helper.ts for this op`,
+				`  \`transform\`   — true → run the helper.ts \`transform\` export on the parsed response`,
+				`  \`passthrough\` — true → forward undeclared caller params onto the query string`,
+				`  \`parse\`       — op-level responseShape override (format/charset) for this operation`,
 				"",
 				"Call api-learn({domain: '...', recipe: '...'}) to save the guide, then api-fetch({domain, operation: '...'}) to verify.",
 			].join("\n");

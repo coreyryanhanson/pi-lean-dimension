@@ -301,6 +301,9 @@ export function emitDraft(
 	];
 
 	if (shape.suggestedVia === "paginate") {
+		lines.push(
+			"    # unverified — pagination params are guessed from response keys; confirm the API accepts them",
+		);
 		const style =
 			shape.paginationMarkers.includes("page") ||
 			shape.paginationMarkers.includes("per_page")

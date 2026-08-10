@@ -89,6 +89,7 @@ describe("emitDraft (marker → style guess)", () => {
 		expect(draft).toContain("style: page");
 		expect(draft).toContain("pageParam: page");
 		expect(draft).toContain("pageSizeParam: per_page");
+		expect(draft).toContain("# unverified");
 	});
 
 	it("guesses offset-limit style otherwise", () => {
@@ -101,6 +102,7 @@ describe("emitDraft (marker → style guess)", () => {
 		expect(draft).toContain("style: offset-limit");
 		expect(draft).toContain("pageParam: offset");
 		expect(draft).toContain("pageSizeParam: limit");
+		expect(draft).toContain("# unverified");
 	});
 
 	it("does not re-declare path tokens in the emitted params", () => {
