@@ -631,7 +631,7 @@ body
 		expect(err.found).toBe("an array");
 	});
 
-	it("path param re-declared in params → ParseError", () => {
+	it("path param with required/default in params → ParseError", () => {
 		const raw = `---
 domains: [x.com]
 apiHost: https://api.x.com
@@ -648,6 +648,134 @@ body
 		const err = expectErr(raw);
 		expect(err.field).toBe("operations[0].params.id");
 		expect(err.expected).toContain("inferred from {token}");
+		// The rejection message offers the docs-only alternative now.
+		expect(err.fix).toContain("params.id.description");
+	});
+
+	it("accepts a docs-only description on a path param token", () => {
+		const raw = `---
+domains: [x.com]
+apiHost: https://api.x.com
+operations:
+  - name: get
+    via: restGet
+    path: /things/{id}
+    params:
+      id:
+        description: UUID of the thing.
+---
+body
+`;
+		const guide = expectOk(raw);
+		const op = guide.operations[0]!;
+		// Docs stored separately — the token is NOT a query param.
+		expect(op.pathParamDocs).toEqual({ id: "UUID of the thing." });
+		expect(op.params["id"]).toBeUndefined();
+		expect(op.pathParams).toEqual(["id"]);
+	});
+
+	it("accepts multiple path-param descriptions alongside query params", () => {
+		const raw = `---
+domains: [x.com]
+apiHost: https://api.x.com
+operations:
+  - name: get
+    via: restGet
+    path: /packs/{pack_code}/cards/{card_code}
+    params:
+      pack_code:
+        description: "The pack code, e.g. 'Core'."
+      card_code:
+        description: "The card's code, e.g. '01001'."
+      q:
+        description: Search term.
+---
+body
+`;
+		const guide = expectOk(raw);
+		const op = guide.operations[0]!;
+		expect(op.pathParamDocs).toEqual({
+			pack_code: "The pack code, e.g. 'Core'.",
+			card_code: "The card's code, e.g. '01001'.",
+		});
+		expect(op.params["q"]?.description).toBe("Search term.");
+		expect(op.params["pack_code"]).toBeUndefined();
+	});
+
+	it("rejects a non-string path-param description", () => {
+		const raw = `---
+domains: [x.com]
+apiHost: https://api.x.com
+operations:
+  - name: get
+    via: restGet
+    path: /things/{id}
+    params:
+      id:
+        description: 123
+---
+body
+`;
+		const err = expectErr(raw);
+		expect(err.field).toBe("operations[0].params.id.description");
+		expect(err.expected).toContain("a string");
+	});
+
+	it("rejects a path param token carrying a non-description key", () => {
+		const raw = `---
+domains: [x.com]
+apiHost: https://api.x.com
+operations:
+  - name: get
+    via: restGet
+    path: /things/{id}
+    params:
+      id:
+        default: 1
+---
+body
+`;
+		const err = expectErr(raw);
+		expect(err.field).toBe("operations[0].params.id");
+		expect(err.expected).toContain("docs-only");
+	});
+
+	it("rejects a bare path param token (null spec)", () => {
+		const raw = `---
+domains: [x.com]
+apiHost: https://api.x.com
+operations:
+  - name: get
+    via: restGet
+    path: /things/{id}
+    params:
+      id:
+---
+body
+`;
+		const err = expectErr(raw);
+		expect(err.field).toBe("operations[0].params.id");
+		expect(err.expected).toContain("docs-only");
+		expect(err.found).toContain("null");
+	});
+
+	it("rejects an explicitly empty path-param mapping", () => {
+		const raw = `---
+domains: [x.com]
+apiHost: https://api.x.com
+operations:
+  - name: get
+    via: restGet
+    path: /things/{id}
+    params:
+      id: {}
+---
+body
+`;
+		const err = expectErr(raw);
+		expect(err.field).toBe("operations[0].params.id");
+		expect(err.expected).toContain("docs-only");
+		expect(err.found).toContain("empty");
 	});
 
 	it("captures param description hints", () => {

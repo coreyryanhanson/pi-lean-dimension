@@ -534,6 +534,10 @@ function validateOperation(
 	// params (query params only)
 	const paramsRaw = o["params"];
 	const params: Record<string, QueryParamSpec> = {};
+	// Docs-only descriptions for path-param tokens (see api-guide-types
+	// `Operation.pathParamDocs`): declared as `params.<token>.description`
+	// in the recipe, surfaced via api-guide, never sent as a query param.
+	const pathParamDocs: Record<string, string> = {};
 	if (paramsRaw !== undefined) {
 		if (
 			paramsRaw === null ||
@@ -550,17 +554,48 @@ function validateOperation(
 		for (const [key, spec] of Object.entries(
 			paramsRaw as Record<string, unknown>,
 		)) {
-			// No re-declaration: a path param token must not appear in params.
+			// A path-param token may declare only a docs-only `description`
+			// (`params.<token>.description`); `required`/`default` are
+			// rejected — the value is filled from `{token}` in `path`.
 			if (pathParams.includes(key)) {
-				return fail(
-					file,
-					fieldPath(`params.${key}`),
-					"omitted (path params are inferred from {token} in path)",
-					"re-declared as a query param",
-					{
-						fix: `Remove the params.${key} block — {${key}} is already a path param`,
-					},
-				);
+				if (spec === null || typeof spec !== "object" || Array.isArray(spec)) {
+					return fail(
+						file,
+						fieldPath(`params.${key}`),
+						"a docs-only mapping (params.<token>.description)",
+						describeFound(spec),
+						{
+							fix: `Write params.${key}.description to document the {${key}} path token — it is filled from {${key}} in the path, not the query string`,
+						},
+					);
+				}
+				const s = spec as Record<string, unknown>;
+				const onlyDescription =
+					Object.keys(s).length === 1 && "description" in s;
+				if (!onlyDescription) {
+					return fail(
+						file,
+						fieldPath(`params.${key}`),
+						"a docs-only mapping (params.<token>.description only — path params are inferred from {token} in path)",
+						Object.keys(s).length === 0
+							? "an empty mapping"
+							: `key(s): ${Object.keys(s).join(", ")}`,
+						{
+							fix: `Keep only params.${key}.description — {${key}} is a path param, filled from {${key}} in the path, not the query string`,
+						},
+					);
+				}
+				const desc = s["description"];
+				if (typeof desc !== "string") {
+					return fail(
+						file,
+						fieldPath(`params.${key}.description`),
+						"a string",
+						describeFound(desc),
+					);
+				}
+				pathParamDocs[key] = desc;
+				continue;
 			}
 			if (spec === null || typeof spec !== "object" || Array.isArray(spec)) {
 				return fail(
@@ -739,6 +774,7 @@ function validateOperation(
 		accept,
 		params,
 		pathParams,
+		...(Object.keys(pathParamDocs).length > 0 ? { pathParamDocs } : {}),
 		...(helper !== undefined ? { helper } : {}),
 		...(transform !== undefined ? { transform } : {}),
 		...(passthrough !== undefined ? { passthrough } : {}),

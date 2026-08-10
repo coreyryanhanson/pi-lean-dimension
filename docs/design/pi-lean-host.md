@@ -632,6 +632,9 @@ operations:
       limit:
         default: 50
         # required: true           # default false
+      date:                        # OPTIONAL docs-only channel for a {date} path token:
+        description: Diary date, yyyy-mm-dd form.   # {date} is filled from the path,
+                                    # never a query param; rendered via api-guide
     # dateParams:                  # OPTIONAL: param → target date format; ISO dates
     #   from: yyyymmdd             # auto-converted in buildQueryParams before serialization.
     #                              # Formats: iso8601 | yyyymmdd | yyyy-mm-dd. Query params only;
@@ -677,7 +680,7 @@ operations:
 | `operations[].via` | op | — | executor: `restGet` \| `paginate` |
 | `operations[].path` | op | — | relative path; `{token}` = inferred path param |
 | `operations[].accept` | op | `json` | `json` \| `xml` — request-side `Accept` header (distinct from `responseShape.format`, the response-side parser selection; they usually match but need not) |
-| `operations[].params` | op | `{}` | query params; `{ required?: bool, default?: value }` per key |
+| `operations[].params` | op | `{}` | query params; `{ required?: bool, default?: value, description?: string }` per key. Path tokens may carry ONLY a docs-only `description` (`params.<token>.description`), routed to `Operation.pathParamDocs` (surfaced via api-guide, never sent as a query param) |
 | `operations[].dateParams` | op | — | OPTIONAL `{param: format}` mapping; normalizes ISO dates to `iso8601` \| `yyyymmdd` \| `yyyy-mm-dd` in `buildQueryParams` (query params only; path-param dates stay in `helper.ts`) |
 | `operations[].helper` | op | `false` | OPTIONAL boolean — `true` runs this domain's local user-helper (the `helper.ts` in the guide's `api-guides/<domain>/` folder; bundled recipes may carry `true` as a worked example, inert until the domain folder is copied) |
 | `operations[].passthrough` | op | `false` | OPTIONAL boolean — `true` forwards caller-supplied params not declared in `params` onto the query string as-is. For APIs with an open param surface (Infogami `/query.json`, CKAN, OAI-PMH) where the caller supplies type-specific keys at query time. Default `false`: closed contract — extras dropped so the agent gets a predictable request, not a silent miss on an undeclared key |

@@ -210,6 +210,14 @@ function renderGuideDetail(
 		lines.push(`  ${op.name}`);
 		lines.push(`    via: ${op.via}`);
 		lines.push(`    path: ${op.path}`);
+		// Path-param docs — `{token}` semantics (format, example values).
+		// Declared as `params.<token>.description`; shown next to the path
+		// line since the token lives in the path, not the query string.
+		if (op.pathParamDocs && Object.keys(op.pathParamDocs).length > 0) {
+			for (const [token, desc] of Object.entries(op.pathParamDocs)) {
+				lines.push(`      {${token}}: ${desc.replace(/\s+/g, " ").trim()}`);
+			}
+		}
 		const pathParamSet = new Set(op.pathParams);
 		const qParams = Object.entries(op.params).filter(
 			([k]) => !pathParamSet.has(k),

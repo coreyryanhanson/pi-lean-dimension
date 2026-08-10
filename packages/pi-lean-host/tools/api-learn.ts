@@ -66,9 +66,13 @@ operations:
     via: restGet
     path: /diario/{date}
     accept: json
-    dateParams:    # normalize a date param/path token before sending
-      date: yyyy-mm-dd
+    dateParams:    # normalize a date QUERY param before sending (path tokens aren't reached by dateParams)
+      since: yyyy-mm-dd
     params:
+      date:        # docs-only — describes the {date} path token; never a query param
+        description: Diary date in yyyy-mm-dd form (e.g. 2026-07-15).
+      since:
+        description: Lower-bound publication date; ISO YYYY-MM-DD auto-converted to yyyy-mm-dd.
       limit:
         default: 50
     parse:
@@ -154,9 +158,10 @@ export const apiLearnTool = defineTool({
 				`  \`description\`    — one-line API summary (≤${DESCRIPTION_MAX} chars); the primary signal when several guides share a domain`,
 				"",
 				"## Optional fields (operation-level)",
-				`  \`dateParams\`  — normalize date params/path tokens before sending: map name → iso8601 | yyyymmdd | yyyy-mm-dd`,
+				`  \`dateParams\`  — normalize date QUERY params before sending: map name → iso8601 | yyyymmdd | yyyy-mm-dd (path tokens are documented via params.<token>.description; core dateParams does not reach path tokens)`,
 				`  \`helper\`      — true → call this domain's local helper.ts for this op`,
 				`  \`transform\`   — true → run the helper.ts \`transform\` export on the parsed response`,
+				`  \`params.<token>.description\` — docs-only description for a {token} path param (format, e.g. 'yyyy-mm-dd'); never sent as a query param, shown in api-guide`,
 				`  \`passthrough\` — true → forward undeclared caller params onto the query string`,
 				`  \`parse\`       — op-level responseShape override (format/charset) for this operation`,
 				"",

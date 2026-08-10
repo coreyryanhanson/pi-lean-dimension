@@ -123,6 +123,13 @@ export interface Operation {
 	/** Path-param names inferred from `{token}` tokens in `path`. */
 	pathParams: string[];
 	/**
+	 * Docs-only descriptions for path-param tokens, declared as
+	 * `params.<token>.description` in the recipe. Never sent as query params —
+	 * the token is filled from `{token}` in `path` at call time. Surfaced to
+	 * the model via api-guide only.
+	 */
+	pathParamDocs?: Record<string, string>;
+	/**
 	 * Whether this operation uses the domain's local helper (coarse, pre-call).
 	 * A `true` value means call `<guidesDir>/<domain>/helper.ts` for this op.
 	 */

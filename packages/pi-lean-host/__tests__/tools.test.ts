@@ -238,6 +238,14 @@ operations:
       pageSizeParam: limit
       pageSize: 50
       itemsPath: data
+
+  - name: get
+    via: restGet
+    path: /items/{fecha}
+    accept: json
+    params:
+      fecha:      # docs-only — {fecha} is a path token, never a query param
+        description: Exact item date, YYYYMMDD form (a full day).
 ---
 Date format: all dates are YYYYMMDD. Use titulo: for title search.
 `;
@@ -655,6 +663,8 @@ describe("api-guide", () => {
 		// Per-param hints reach the model...
 		expect(text).toContain("q: Full-text search term");
 		expect(text).toContain("fecha: Date in YYYYMMDD form");
+		// ...path-param docs render next to the path line...
+		expect(text).toMatch(/{fecha}: Exact item date/);
 		// ...and so does the guide's prose (date format / field semantics).
 		expect(text).toContain("— Guide notes —");
 		expect(text).toContain("Date format: all dates are YYYYMMDD");
@@ -705,20 +715,26 @@ describe("api-learn", () => {
 		expect(text).toContain("Key defaults");
 	});
 
-	// Regression for issue 1a/1b: the worked example must copy-paste cleanly
-	// into api-learn (closing --- delimiter present) and demonstrate dateParams.
-	it("worked example validates and documents dateParams", async () => {
+	// Regression for issues 1a/1b/2a: the worked example must copy-paste
+	// cleanly (closing ---), demonstrate dateParams on a query param, and
+	// document path tokens via the docs-only params.<token>.description.
+	it("worked example validates and documents param channels", async () => {
 		const text = contentText(await callLearn());
 		const m = text.match(/```yaml\n([\s\S]*?)```/);
 		expect(m).not.toBeNull();
-		const example = m![1];
+		const example = m![1]!;
 		const parsed = parseApiGuide(example, { filename: "boe.es" });
 		expect(parsed.ok).toBe(true);
 		if (parsed.ok) {
 			const diary = parsed.guide.operations.find(
 				(o) => o.name === "searchDiary",
 			)!;
-			expect(diary.dateParams).toEqual({ date: "yyyy-mm-dd" });
+			expect(diary.dateParams).toEqual({ since: "yyyy-mm-dd" });
+			expect(diary.pathParamDocs).toEqual({
+				date: "Diary date in yyyy-mm-dd form (e.g. 2026-07-15).",
+			});
+			// The path token must NOT leak into query params.
+			expect(diary.params["date"]).toBeUndefined();
 		}
 	});
 
