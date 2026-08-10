@@ -15,8 +15,6 @@
  *
  * Reuses the same `transport.ts` pipeline as api-fetch (UA, charset, 429
  * retry, ETag cache) — the sanctioned way to reach even WAF'd hosts.
- *
- * Run the self-check: `npx tsx packages/pi-lean-host/tools/api-probe.ts`
  */
 
 import { defineTool } from "@earendil-works/pi-coding-agent";
@@ -28,7 +26,6 @@ import {
 	fillPathTemplate,
 	joinUrl,
 } from "../core/path-template.js";
-import { pathToFileURL } from "node:url";
 import { contentText, renderExpandedText } from "./utils.js";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -500,65 +497,4 @@ function formatProbeResult(r: ProbeResult): string {
 		lines.push(r.raw);
 	}
 	return lines.join("\n");
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Self-check — runnable: npx tsx packages/pi-lean-host/tools/api-probe.ts
-// ═══════════════════════════════════════════════════════════════════
-
-function demo(): void {
-	const assert = (cond: boolean, msg: string) => {
-		if (!cond) throw new Error(`api-probe self-check FAILED: ${msg}`);
-		console.log(`  ✓ ${msg}`);
-	};
-
-	const envelope = summarize({
-		offset: 0,
-		limit: 30,
-		endOfRecords: false,
-		results: [{ id: 42, name: "x" }],
-	});
-	assert(envelope.suggestedVia === "paginate", "envelope → paginate");
-	assert(
-		envelope.suggestedItemsPath === "results",
-		"envelope itemsPath = results",
-	);
-	assert(
-		envelope.representativeId?.field === "id",
-		"representative id captured",
-	);
-	assert(
-		envelope.paginationMarkers.includes("offset"),
-		"offset marker detected",
-	);
-
-	const bare = summarize([{ sha: "abc" }, { sha: "def" }]);
-	assert(bare.suggestedVia === "paginate", "bare array → paginate");
-	assert(
-		bare.suggestedItemsPath === "$",
-		"bare array itemsPath = $ (root sentinel)",
-	);
-	assert(bare.representativeId?.field === "sha", "bare array rep id = sha");
-
-	const single = summarize({ login: "octocat", id: 583231 });
-	assert(single.suggestedVia === "restGet", "single object → restGet");
-	assert(single.suggestedItemsPath === "", "single object has no itemsPath");
-
-	// Contract change: {token} substituted in the URL, not re-declared as a query param.
-	const url = buildUrl(
-		"https://api.github.com",
-		"/repos/{owner}/{repo}/branches",
-		{ owner: "octocat", repo: "Hello-World", per_page: 30 },
-	);
-	assert(
-		url ===
-			"https://api.github.com/repos/octocat/Hello-World/branches?per_page=30",
-		"templated path substituted; path tokens excluded from query",
-	);
-
-	console.log("api-probe self-check passed (10/10).");
-}
-
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-	demo();
 }
