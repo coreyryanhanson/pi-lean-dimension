@@ -172,9 +172,9 @@ read**, **network read**, **local write**, and **network read (exploratory)**:
 ### 1. `api-guide` — Inspect the Guide Store (local read)
 
 ```text
-api-guide                       → list all available API guides (catalog)
-api-guide domain="boe.es"       → guide detail, or a disambiguation menu
-api-guide domain="boe.es" guide="BOE"  → selected guide (when multiple claim the domain)
+api-guide → list all available API guides (catalog)
+api-guide domain="en.wikipedia.org" → disambiguation menu (two guides claim the domain)
+api-guide domain="en.wikipedia.org" guide="Wikipedia REST" → selected guide
 ```
 
 - No parameters → the full catalog (collapsed by `organization:`).
@@ -189,14 +189,14 @@ broken field instead of re-authoring from scratch.
 ### 2. `api-fetch` — Execute a Guided Operation (network read)
 
 ```text
-api-fetch domain="boe.es" operation="searchDiary" params={date:"2026-07-15"}
-api-fetch domain="boe.es" operation="listConsolidada" gatherAll=true
+api-fetch domain="en.wikipedia.org" operation="getPageSummary" params={title:"Albert_Einstein"}
+api-fetch domain="en.wikipedia.org" operation="searchPages" params={srsearch:"climate"} gatherAll=true
 ```
 
 **Parameters:**
 
-- `domain` — a domain registered in a guide (e.g. `"boe.es"`).
-- `operation` — an operation name from the guide (e.g. `"searchDiary"`).
+- `domain` — a domain registered in a guide (e.g. `"en.wikipedia.org"`).
+- `operation` — an operation name from the guide (e.g. `"getPageSummary"`).
 - `params` (optional) — path and query parameter values for the operation.
 - `gatherAll` (optional) — `true` paginates to gather all items up to the
   guide's `gatherAllMax` ceiling (default `1000`, overridable per-guide and
@@ -554,13 +554,18 @@ openlibrary.org     resources.data.gov    services.dnb.de      web.archive.org
 www.federalregister.gov   www.wikidata.org
 ```
 
-To use one, copy the whole domain folder into your own directory:
+To use them, copy the guides into your own directory from a shallow clone of
+the feature branch ([browse the folder on GitHub](https://github.com/coreyryanhanson/pi-lean-dimension/tree/feat/pi-lean-host-package/packages/pi-lean-host/api-guides)):
 
 ```bash
-cp -r node_modules/pi-lean-host/api-guides/boe.es ~/.pi/agent/pi-lean-host/api-guides/
-# or from a clone of the repo:
-cp -r packages/pi-lean-host/api-guides/boe.es ~/.pi/agent/pi-lean-host/api-guides/
+git clone --depth 1 --branch feat/pi-lean-host-package \
+  https://github.com/coreyryanhanson/pi-lean-dimension.git /tmp/pi-lean-dimension
+cp -r /tmp/pi-lean-dimension/packages/pi-lean-host/api-guides/* \
+  ~/.pi/agent/pi-lean-host/api-guides/
 ```
+
+To grab a single domain instead of all of them, copy just its folder
+(e.g. `.../api-guides/en.wikipedia.org`).
 
 Only then does it load and execute. A recipe may carry
 `operation.helper: true` plus an accompanying `helper.ts` in its domain
@@ -585,7 +590,7 @@ classification.
   Learn: ❌ off
 
   Guides: 2 active
-  Domains: boe.es, www.boe.es, archive.org
+  Domains: en.wikipedia.org, boe.es, www.boe.es
   Helpers: 1 present
   ⚠ Disabled: boe.es
   Run /api helpers to list them.
