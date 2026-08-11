@@ -6,8 +6,8 @@
 > For the suite overview and TypeScript quirks (nodenext `.js` imports,
 > `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `isolatedModules`,
 > `moduleDetection: force`), see [`../../AGENTS.md`](../../AGENTS.md). For the
-> design docs, see [`../../docs/design/api-secrets-roadmap.md`](../../docs/design/api-secrets-roadmap.md)
-> and [`../../docs/design/api-helper-escape-valve.md`](../../docs/design/api-helper-escape-valve.md).
+> design docs, see [`docs/design/api-secrets-roadmap.md`](docs/design/api-secrets-roadmap.md)
+> and [`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md).
 >
 > Note: the monorepo root `AGENTS.md` predates this package and does not yet
 > list it — trust this file for host-specific commands and structure.
@@ -146,12 +146,12 @@ Each guide dir ships its own co-located tests (`endpoint-coverage.test.ts`,
 
 ## Design docs
 
-- [`../../docs/design/api-secrets-roadmap.md`](../../docs/design/api-secrets-roadmap.md)
+- [`docs/design/api-secrets-roadmap.md`](docs/design/api-secrets-roadmap.md)
   — deferred secrets-store track: the two-threat model (at-rest vs
   transcript/output-channel exfiltration), the Secret Service primary / plaintext
   fallback decision, and the checklist for the first keyed-guide build.
-- [`../../docs/design/api-helper-escape-valve.md`](../../docs/design/api-helper-escape-valve.md)
+- [`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md)
   — escape-valve policy (built-in vs local-helper classification, the 15-recipe
   spread, rejected candidates).
-- [`../../docs/design/api-hardening-and-proof-recipes.md`](../../docs/design/api-hardening-and-proof-recipes.md)
+- [`docs/design/api-hardening-and-proof-recipes.md`](docs/design/api-hardening-and-proof-recipes.md)
   — hardening + proof-recipe work.

@@ -7,7 +7,7 @@
 > rationale, evidence, and the escape-valve upgrade rules.
 >
 > Inherits the per-guide workflow from
-> [`packages/pi-lean-host/api-guides/CONTRIBUTING.md`](../../packages/pi-lean-host/api-guides/CONTRIBUTING.md):
+> [`packages/pi-lean-host/api-guides/CONTRIBUTING.md`](../../api-guides/CONTRIBUTING.md):
 > one guide per turn, plan file before YAML, read the official docs with the
 > browser tools, no inference in lieu of documentation.
 
@@ -35,7 +35,7 @@ the plan file is where the full surface is recorded.
 **Out of scope:** anything that creates, updates, deletes, uploads,
 authorizes, or mutates state. Write/mutation/auth-admin endpoints are
 dropped in the plan file with a one-line reason, per the
-[CONTRIBUTING.md](../../packages/pi-lean-host/api-guides/CONTRIBUTING.md)
+[CONTRIBUTING.md](../../api-guides/CONTRIBUTING.md)
 docs-reading rules.
 
 ## Sprints
@@ -66,7 +66,7 @@ proof). Honor that order when sequencing serially.
 `data-api.ecb.europa.eu`, and a DNB recheck, land the authoritative docs
 locally and write a comprehensive `endpoint-coverage-plan.md` per domain —
 *before* any core code or `guide.md` is touched. This applies the
-[CONTRIBUTING.md](../../packages/pi-lean-host/api-guides/CONTRIBUTING.md)
+[CONTRIBUTING.md](../../api-guides/CONTRIBUTING.md)
 docs-reading workflow to the four new domains, with the bar set to
 "every read-only endpoint family, not a curated subset."
 
@@ -92,7 +92,7 @@ the resolved canonical URL + retrieval date in the plan file — docs drift.
 
 ### 0.2 — Download the docs with the web tools
 
-**Tool priority (inherited from [CONTRIBUTING.md](../../packages/pi-lean-host/api-guides/CONTRIBUTING.md)):**
+**Tool priority (inherited from [CONTRIBUTING.md](../../api-guides/CONTRIBUTING.md)):**
 
 1. **`web-fetch`** first — fast, stateless, Markdown. Good for
    server-rendered HTML (arXiv's user-manual, NCBI Bookshelf, most of these).

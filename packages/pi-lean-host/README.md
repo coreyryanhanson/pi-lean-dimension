@@ -556,7 +556,7 @@ Only then does it load and execute. A recipe may carry
 subdir as a worked example — but it stays inert until you copy the folder.
 See [`api-guides/CONTRIBUTING.md`](./api-guides/CONTRIBUTING.md) for authoring
 a bundled recipe, and
-[`../../docs/design/api-helper-escape-valve.md`](../../docs/design/api-helper-escape-valve.md)
+[`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md)
 for the per-recipe quirk breakdown and the built-in vs local-helper
 classification.
 
@@ -742,8 +742,8 @@ machine; the package does not aim to make that easy.
 > [pi-lean-dimension](https://github.com/coreyryanhanson/pi-lean-dimension)
 > web-tools suite. For the deferred secrets-store track (the two-threat
 > model and the first-keyed-guide build checklist), see
-> [`docs/design/api-secrets-roadmap.md`](../../docs/design/api-secrets-roadmap.md).
+> [`docs/design/api-secrets-roadmap.md`](docs/design/api-secrets-roadmap.md).
 > For the helper escape-valve policy and the 15-recipe spread, see
-> [`docs/design/api-helper-escape-valve.md`](../../docs/design/api-helper-escape-valve.md).
+> [`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md).
 >
 > License: AGPL-3.0-only

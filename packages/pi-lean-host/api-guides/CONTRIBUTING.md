@@ -52,7 +52,7 @@ be zipped into row objects (MediaWiki `opensearch`, Wayback CDX), a fat
 Current guides with a helper: `boe.es`, `earthquake.usgs.gov`,
 `en.wikipedia.org-action`, `web.archive.org` — each closes a real gap the
 recipe surface couldn't. The decision criteria live in
-  [`../../docs/design/api-helper-escape-valve.md`](../../docs/design/api-helper-escape-valve.md);
+  [`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md);
 read it before adding another.
 
 Transform contract: `(data, ctx) => unknown`, declared via `transform: true`

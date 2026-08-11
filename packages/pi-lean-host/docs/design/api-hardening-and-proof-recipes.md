@@ -21,19 +21,20 @@
    fix on every `max_results=1` call — and is a compelling scholarly axis on
    its own) and `gitlab.com` (proves root-array + `page`-style pagination
    live, and settles the header-pagination question with evidence).
-4. **A planned Batch 3 completes the proof:** PubMed E-utilities
+3. **A planned Batch 3 completes the proof:** PubMed E-utilities
    (single-record fix on a third independent API) and ECB SDMX
    (namespaced-XML hard proof) are a scheduled phase, not optional — and
    the first release waits for it (see "Batches & order").
-5. **One recipe addendum:** DNB SRU's 200-OK `<diagnostics>` envelope that
+4. **One recipe addendum:** DNB SRU's 200-OK `<diagnostics>` envelope that
    silently swallows errors.
-4. **Parked with justification:** CSV response format; header-aware
+5. **Parked with justification:** CSV response format; header-aware
    pagination style. Neither is built until a shipped recipe forces it.
 
 ## Background
 
 The escape-valve doc classifies every quirk the 14 bundled recipes surface:
 32 built-in, 6 local-helper. Its "when to upgrade" rules:
+
 1. A second independent API exhibits the same quirk.
 2. The fix is a small, well-understood change to a single function.
 3. The local-helper workaround is fragile.
@@ -255,7 +256,7 @@ the upgrade rules require it.
   the guide dir, never in `packages/pi-lean-host/__tests__/`.
 - Per-guide `endpoint-coverage-plan.md` files are drafted per guide before
   any `guide.md` edits, per
-  [CONTRIBUTING.md](../../packages/pi-lean-host/api-guides/CONTRIBUTING.md).
+  [CONTRIBUTING.md](../../api-guides/CONTRIBUTING.md).
 
 ## Out of scope / deliberate omissions
 
