@@ -175,7 +175,12 @@ export const apiFetchTool = defineTool({
 					content: [
 						{
 							type: "text",
-							text: formatHelperDisabled(helperResult.error, domain, operation),
+							text: formatHelperDisabled(
+								helperResult.error,
+								helperDirName,
+								domain,
+								operation,
+							),
 						},
 					],
 					details: {
@@ -534,13 +539,17 @@ function formatAmbiguousOperation(
 
 function formatHelperDisabled(
 	message: string,
+	helperDirName: string,
 	domain: string,
 	operation: string,
 ): string {
+	// dirName (not routing `domain`) is where the helper file lives —
+	// they diverge in the multi-recipe case; naming `domain` sends the
+	// user to the wrong file.
 	const lines: string[] = [
 		`⚠ api-fetch error for '${domain}' / '${operation}':`,
 		`  ${message}`,
-		`  Domain helper: ${domain}`,
+		`  Helper directory: ${helperDirName}`,
 		"",
 		"Call api-guide({domain: …}) to review the guide, or fix the helper file and restart the session.",
 	];
