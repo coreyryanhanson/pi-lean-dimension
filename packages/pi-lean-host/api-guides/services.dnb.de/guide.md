@@ -269,6 +269,18 @@ harmless on strict servers.
   (`Titel=Test`, `dnb.ti=Wasser`) with SRU diagnostic
   `info:srw/diagnostic/1/16` ("Unsupported index"). Use a bare term
   (`query=Wasser`). Verified 2026-07-18.
+- **200-OK `<diagnostics>` envelope (verified live 2026-08-10):** SRU
+  errors arrive as **HTTP 200 with a `<diagnostics>` element and no
+  `<records>`** — *not* a non-2xx status. Because `itemsPath`
+  (`searchRetrieveResponse.records.record`) then resolves to `undefined`,
+  the search returns `items: [], totalFetched: 0` — **indistinguishable
+  from a genuine zero-results query**, so the diagnostic is silently
+  swallowed. An empty result set against these endpoints may mean a real
+  `no hits`, or an indexed/unsupported query the catalogue rejected. If a
+  search legitimately expected hits and returns empty, re-check the CQL
+  for an indexed term (→ the `1/16` diagnostic above) — the docs document
+  this envelope at "What happens if a parameter in the URL request is
+  incorrect or not supported?"
 - **Charset is UTF-8** (not non-UTF-8). The axis-B criterion is "XML **and/or**
   non-UTF-8"; DNB covers the XML half. The transport's charset-decoding path is
   still exercised because every response carries `Content-Type: text/xml;

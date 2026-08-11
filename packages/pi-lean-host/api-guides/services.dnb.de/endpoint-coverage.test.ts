@@ -113,6 +113,24 @@ describe("DNB SRU catalogue searches", () => {
 		}),
 		20_000,
 	);
+
+	itWhen(
+		"searchZdb with an indexed query surfaces the 200-OK diagnostics swallow (totalFetched 0)",
+		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
+			// C1 (design doc Workstream C): an indexed query ZDB rejects
+			// (info:srw/diagnostic/1/16) returns HTTP 200 with a <diagnostics>
+			// element and no <records>; itemsPath resolves to undefined and
+			// paginate yields items: [], totalFetched: 0 — indistinguishable
+			// from a genuine zero-results query. This assertion documents the
+			// swallowed-error case explicitly (recipe-level, no core change).
+			const result = (await fetchOp(guidesDir, "searchZdb", {
+				query: "Titel=Wasser",
+			})) as { items: unknown[]; totalFetched: number };
+			expect(result.items).toEqual([]);
+			expect(result.totalFetched).toBe(0);
+		}),
+		20_000,
+	);
 });
 
 // ═══════════════════════════════════════════════════════════════════
