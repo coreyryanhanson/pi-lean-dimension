@@ -80,7 +80,8 @@ Or skip the authoring and **copy a bundled reference recipe** (see
 > discovery, guided execution — runs with no browser package installed.
 > Co-installing portal is planned to unlock two additive features
 > (navigate-footer surfacing and probe-authoring via `web-fetch`) in a
-> **future release** — neither is present in 0.1.0 nor load-bearing.
+> **future release**. Host-side projection code is present but inert
+> until portal ships the receiving global (`__piLeanPortalRegisterGuideProvider`).
 
 ---
 
@@ -155,8 +156,8 @@ starts from the `toolsetDefaults` block in merged Pi settings (see
 default (`on` for `api`, `off` for `api-learn`).
 
 The status bar shows an `api` glyph (independent of the `browser`/`search`
-slots). It appears only when `/api` is on **and** a host guide is active for
-the current domain, so it isn't always-on noise. Off-state: `○ api`.
+slots). It reads `● api` when `/api` is on (colored to reflect learn state)
+and `○ api` when off.
 
 ---
 
@@ -206,7 +207,8 @@ api-fetch domain="boe.es" operation="listConsolidada" gatherAll=true
 routed by directory name, not the routing `domain`). The agent never sees a
 URL, never sees a header, never sees the auth scheme. Output is an inline
 preview (~4000 chars) with larger responses spilled to a temp file under
-`/tmp/pi-lean-host/` — `read` it with offset/limit for specific sections.
+`/tmp/pi-lean-host/` (overridable via `PI_HOST_TEMP_DIR`) — `read` it with
+offset/limit for specific sections.
 
 When no guide exists for the domain, the call **fails informatively** and
 points at `api-guide({})` (to list guided domains) and `api-learn` (to author
@@ -220,7 +222,7 @@ api-learn domain="boe.es" recipe="---\nkind: api\n…"   → writes the guide to
 ```
 
 - No parameters → a complete worked-example recipe (the BOE shape, exercising
-  every supported field) plus a concise field reference. Read once at
+  the core fields) plus a concise field reference. Read once at
   authoring time, never carried on executing turns.
 - `{domain, recipe}` → validates the recipe string **before** touching disk,
   then writes to `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`,
@@ -243,7 +245,7 @@ real transport (same UA, charset, 429-retry, ETag cache as `api-fetch` — the
 sanctioned way to reach even WAF'd hosts), summarizes the JSON shape, suggests
 `via` / `itemsPath` / pagination style, echoes a representative record id, and
 emits a **draft YAML operation block** to paste straight into a recipe. On 404
-it auto-tries `/v1/` and `/v2/` prefixes (disable with `tryPrefixes=false`).
+it auto-tries `/v1` and `/v2` prefixes (disable with `tryPrefixes=false`).
 
 `api-probe` only **suggests** — it never writes the guide. The operation must
 still be traceable to your plan source (the API docs or a working curl
@@ -326,24 +328,26 @@ laws (capped at 1000 by the op override). The `boe-datefmt` helper formats the
 
 | Field | Level | Default | Purpose |
 |---|---|---|---|
-| `kind` | guide | `"web"` | ordering hint on the portal projection (`"api"` sorts host guides first) |
+| `kind` | guide | `"api"` | the guide type; defaults to `"api"` and is omittable. Values like `"web"` are rejected for API guides. |
 | `domains` | guide | — | discovery keys (plural bare aliases) |
 | `icon` / `shortName` / `updated` | guide | `📖` / filename / today | presentation slice (portal + `api-guide`) |
 | `apiHost` | guide | — | execution root: scheme + host + base path; the version prefix lives here |
 | `organization` | guide | — | optional org identity (registrable domain); catalog grouping + disambiguation. Recipe-slice only |
 | `description` | guide | — | optional one-line summary (≤200 chars); primary disambiguation signal for multi-guide domains |
+| `docs` | guide | — | optional canonical API documentation URL (http/https); surfaced in api-guide detail |
 | `verified` | guide | creation date | drift signal — **defaulted, not enforced** |
 | `gatherAllMax` | guide / op | `1000` | `gatherAll` ceiling; an op can override |
 | `auth.kind` | guide | `none` | strategy seam — **v1 realizes only `none`** (others error) |
+| `auth.headers` | guide | — | optional extra headers merged into every request (e.g. X-Api-Key: DEMO_KEY) |
 | `pagination.style` | guide / op | required when `via: paginate` | `offset-limit` \| `nextLink` \| `cursor` \| `page` \| `resumptionToken` \| `tokenBag` |
 | `pagination.itemsPath` | guide / op | — | JSON path to the items array in the body |
 | `pagination.totalCountPath` | guide / op | — | optional, any style → server-reported total surfaced as `serverTotal` / `server total: N` |
-| `responseShape.format` | guide / op | `json` | `json` \| `xml` → drives `parseResponse` |
+| `responseShape.format` | guide / op | `json` | `json` \| `xml` \| `text` → drives `parseResponse` (`text` is raw passthrough) |
 | `responseShape.charset` | guide / op | `utf-8` | `utf-8` \| `auto` (sniff from headers) |
 | `operations[].name` | op | — | the `operation` arg `api-fetch` takes |
 | `operations[].via` | op | — | executor: `restGet` \| `paginate` |
 | `operations[].path` | op | — | relative path; `{token}` = inferred path param (no re-declaration) |
-| `operations[].accept` | op | `json` | `json` \| `xml` — request-side `Accept` header (distinct from `responseShape.format`) |
+| `operations[].accept` | op | `json` | `json` \| `xml` \| `<any media-type string>` — request-side `Accept` header (distinct from `responseShape.format`) |
 | `operations[].params` | op | `{}` | query params; `{ required?, default?, description? }` per key |
 | `operations[].dateParams` | op | — | optional `{param: format}` → normalizes ISO dates to `iso8601` \| `yyyymmdd` \| `yyyy-mm-dd` (query params only) |
 | `operations[].helper` | op | `false` | `true` runs this domain's local helper for the op |
@@ -481,7 +485,7 @@ Authoring is via `api-learn` in learn mode, or hand-editing the file.
 ## Pagination Styles
 
 `paginate` follows the style declared in the recipe. Six styles cover the
-patterns the bundled 15-recipe spread pressure-tested:
+patterns the bundled 18-recipe spread pressure-tested:
 
 | Style | What it sends | Key fields |
 |-------|---------------|------------|
@@ -507,7 +511,7 @@ operation overrides them with its own block.
 Agents mangle encodings constantly; `parseResponse` fixes it once. Declared
 per-guide (top-level `responseShape`) and overridable per-op (`parse:`):
 
-- `format: json | xml` — XML is converted to JSON via `fast-xml-parser`.
+- `format: json | xml | text` — XML is converted to JSON via `fast-xml-parser`; `text` is raw passthrough.
 - `charset: utf-8 | auto` — `auto` sniffs from response headers (essential
   for Latin-1 / ISO-8859-1 APIs like BOE).
 - `accept` (request-side, on each operation) is declared **independently**
@@ -595,8 +599,8 @@ classification.
 Covers toggle state, active guide count, the domain list, and helper health
 (disabled helpers surface with a `⚠`). When `pi-lean-portal` and
 `pi-lean-search` are also installed, the status bar shows three independent
-glyphs: `● idle` (browser), `● searxng` (search), and `● api` (host — only
-when `/api` is on and a host guide is active for the current domain).
+glyphs: `● idle` (browser), `● searxng` (search), and `● api` (host — when
+`/api` is on).
 
 ---
 
@@ -638,11 +642,12 @@ are no secrets or endpoints to configure. `apiHost` and operation paths live
 
 ## Co-Installing with `pi-lean-portal`
 
-> **Planned for a future release — not in 0.1.0.** Portal integration is
+> **Planned for a future release.** Portal integration is
 > being developed on the `pi-lean-host-integration` branch (0.5.0-track
 > code, continuously rebased onto this package branch). The projection and
-> navigate-footer surfacing described below are what that track delivers;
-> they do not ship in the 0.1.0 early release.
+> navigate-footer surfacing described below are what that track delivers.
+> Host-side projection code is present but inert until portal ships the
+> receiving global (`__piLeanPortalRegisterGuideProvider`).
 
 Portal is fully optional. When co-installed, host registers a **projection**
 of its user-authored `ApiGuide`s with portal's guide-source registry at load
@@ -757,7 +762,7 @@ machine; the package does not aim to make that easy.
 > web-tools suite. For the deferred secrets-store track (the two-threat
 > model and the first-keyed-guide build checklist), see
 > [`docs/design/api-secrets-roadmap.md`](docs/design/api-secrets-roadmap.md).
-> For the helper escape-valve policy and the 15-recipe spread, see
+> For the helper escape-valve policy and the 18-recipe spread, see
 > [`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md).
 >
 > License: AGPL-3.0-only

@@ -21,8 +21,8 @@
 - Registers the **`/api`** command with `on|off|learn|status/helpers`
   subcommands — an independent peer toggle that composes freely with
   portal's `/web` (additive-on / filter-off semantics).
-- Manages the **`api` status bar glyph**, shown only when `/api` is on and a
-  host guide is active for the current domain. Off-state: `○ api`.
+- Manages the **`api` status bar glyph**, shown as `● api` when `/api` is on
+  (colored by learn state) and `○ api` when off.
 - Declares `pi-lean-portal` as an **optional peer dependency**. Host-only
   installs are valid. When co-installed, host registers a recipe-stripped
   `projectToGuide()` projection with portal's guide provider registry
@@ -151,7 +151,7 @@ Each guide dir ships its own co-located tests (`endpoint-coverage.test.ts`,
   transcript/output-channel exfiltration), the Secret Service primary / plaintext
   fallback decision, and the checklist for the first keyed-guide build.
 - [`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md)
-  — escape-valve policy (built-in vs local-helper classification, the 15-recipe
+  — escape-valve policy (built-in vs local-helper classification, the 18-recipe
   spread, rejected candidates).
 - [`docs/design/api-hardening-and-proof-recipes.md`](docs/design/api-hardening-and-proof-recipes.md)
   — hardening + proof-recipe work.
