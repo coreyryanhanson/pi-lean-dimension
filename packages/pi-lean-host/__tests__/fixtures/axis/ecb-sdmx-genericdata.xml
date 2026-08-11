@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<message:GenericData xmlns:message="http://www.sdmx.org/resources/sdmxml/schemas/v2_1/message" xmlns:generic="http://www.sdmx.org/resources/sdmxml/schemas/v2_1/data/generic" xmlns:common="http://www.sdmx.org/resources/sdmxml/schemas/v2_1/common">
+  <message:Header>
+    <message:ID>IDREF</message:ID>
+    <message:Test>false</message:Test>
+    <message:Prepared>2026-08-10T00:00:00</message:Prepared>
+    <message:Sender>
+      <common:Name>European Central Bank</common:Name>
+    </message:Sender>
+  </message:Header>
+  <message:DataSet>
+    <generic:Series>
+      <generic:Obs>
+        <generic:ObsDimension value="EUR"/>
+        <generic:ObsValue value="0.9"/>
+      </generic:Obs>
+      <generic:Obs>
+        <generic:ObsDimension value="USD"/>
+        <generic:ObsValue value="1.1"/>
+      </generic:Obs>
+    </generic:Series>
+  </message:DataSet>
+</message:GenericData>

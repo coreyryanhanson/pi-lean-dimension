@@ -78,6 +78,10 @@ any extra headers a recipe needs can be declared there without promoting the
 auth kind to `static-key`. This covers the `DEMO_KEY` pattern and any future
 pre-shared header without keyed-auth complexity.
 
+**Session / cookie continuity** is a separate capability with its own
+analysis and deferral decision — see
+[`api-stateful-sessions.md`](./api-stateful-sessions.md).
+
 ### 6. Pagination edge signals
 
 | Signal | Classification | Rationale | Recipes |

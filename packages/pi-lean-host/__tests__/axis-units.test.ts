@@ -286,3 +286,133 @@ describe("framework axis D — ETag header on restGet", () => {
 		10_000,
 	);
 });
+
+// ── Axis E — A1 XML single-record array normalization (eutils) ─────
+
+describe("framework axis E — A1 single-record XML boxing", () => {
+	it("esearch retmax=1 boxes a single <Id> into an array", async () => {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { parseApiGuide } = await import("../core/parse-api-guide.js");
+		const { paginate } = await import("../core/helpers.js");
+
+		const xmlBody = readFileSync(
+			join(FIXTURE_DIR, "eutils-esearch-retmax1.xml"),
+			"utf-8",
+		);
+		vi.mocked(fetchUrl).mockResolvedValue({
+			status: 200,
+			headers: { "content-type": "text/xml;charset=UTF-8" },
+			body: xmlBody,
+			cached: false,
+		});
+
+		const parsed = parseApiGuide(`---
+kind: api
+domains:
+  - eutils.ncbi.nlm.nih.gov
+apiHost: https://eutils.ncbi.nlm.nih.gov
+auth:
+  kind: none
+responseShape:
+  format: xml
+  charset: utf-8
+operations:
+  - name: esearch
+    via: paginate
+    path: /entrez/eutils/esearch.fcgi
+    pagination:
+      style: offset-limit
+      itemsPath: eSearchResult.IdList.Id
+      pageParam: retstart
+      pageSizeParam: retmax
+      pageSize: 1
+      totalCountPath: eSearchResult.Count
+    params:
+      db:
+        default: pubmed
+      term:
+        required: true
+---
+`);
+		if (!parsed.ok) throw new Error("guide failed to parse");
+		const guide = parsed.guide;
+		const op = guide.operations.find((o) => o.name === "esearch")!;
+
+		const result = await paginate(
+			guide.apiHost,
+			op,
+			{ term: "cancer", retmax: 1 },
+			guide,
+			{ skipSsrfGuard: true },
+		);
+
+		// A1 proof: the single <Id> is boxed into a one-element array,
+		// not dropped (pre-fix it resolved to a scalar → `break`, empty).
+		expect(result.items.length).toBe(1);
+		expect(result.items[0]).toBe(42572859);
+		expect(result.totalFetched).toBe(1);
+		expect(result.serverTotal).toBe(3);
+	}, 10_000);
+});
+
+// ── Axis F — A2 namespaced XML (ECB SDMX shape) ────────────────────
+
+describe("framework axis F — A2 namespaced XML prefix stripping", () => {
+	it("prefix-free itemsPath resolves on message:/generic:-prefixed XML", async () => {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { parseApiGuide } = await import("../core/parse-api-guide.js");
+		const { paginate } = await import("../core/helpers.js");
+
+		const xmlBody = readFileSync(
+			join(FIXTURE_DIR, "ecb-sdmx-genericdata.xml"),
+			"utf-8",
+		);
+		vi.mocked(fetchUrl).mockResolvedValue({
+			status: 200,
+			headers: { "content-type": "text/xml;charset=UTF-8" },
+			body: xmlBody,
+			cached: false,
+		});
+
+		const parsed = parseApiGuide(`---
+kind: api
+domains:
+  - data-api.ecb.europa.eu
+apiHost: https://data-api.ecb.europa.eu
+auth:
+  kind: none
+responseShape:
+  format: xml
+  charset: utf-8
+operations:
+  - name: getExchangeRates
+    via: paginate
+    path: /service/data/EXR
+    pagination:
+      style: offset-limit
+      itemsPath: GenericData.DataSet.Series.Obs
+      pageParam: startPeriod
+      pageSizeParam: endPeriod
+      pageSize: 1
+    params:
+      format:
+        default: sdmx-ml
+---
+`);
+		if (!parsed.ok) throw new Error("guide failed to parse");
+		const guide = parsed.guide;
+		const op = guide.operations.find((o) => o.name === "getExchangeRates")!;
+
+		const result = await paginate(guide.apiHost, op, {}, guide, {
+			skipSsrfGuard: true,
+		});
+
+		// A2 proof: prefix-free itemsPath resolves on prefix-everywhere XML.
+		expect(result.items.length).toBe(2);
+		const first = result.items[0] as Record<string, unknown>;
+		// Inner fields are also unprefixed (removeNSPrefix is global).
+		const obsValue = first["ObsValue"] as Record<string, unknown> | undefined;
+		expect(obsValue).toBeTruthy();
+		expect(obsValue!["@_value"]).toBe(0.9);
+	}, 10_000);
+});
