@@ -381,6 +381,24 @@ async function createTestServer(): Promise<TestContext> {
 			return;
 		}
 
+		if (pathname === "/api/latin1-no-charset") {
+			// ISO-8859-1 bytes for áéíóú, served with NO charset parameter —
+			// the transport must fall back to the caller's fallbackCharset.
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end(Buffer.from([0xe1, 0xe9, 0xed, 0xf3, 0xfa]));
+			return;
+		}
+
+		if (pathname === "/api/utf8-with-charset") {
+			// Real UTF-8 bytes for áéíóú, served WITH charset=utf-8 — the
+			// header charset must win even if a fallbackCharset is supplied.
+			res.writeHead(200, {
+				"Content-Type": "application/json; charset=utf-8",
+			});
+			res.end(Buffer.from("áéíóú", "utf-8"));
+			return;
+		}
+
 		if (pathname === "/api/cache-test") {
 			const count = requestCounts.get(pathname) ?? 0;
 			res.writeHead(200, {
@@ -1676,6 +1694,44 @@ describe("ssrfGuard — IPv4-mapped IPv6 (M1)", () => {
 // ═══════════════════════════════════════════════════════════════════
 // fetchUrl guardRedirects (M3) — redirect-target SSRF guarding
 // ═══════════════════════════════════════════════════════════════════
+
+describe("fetchUrl — fallbackCharset", () => {
+	let ctx: TestContext;
+
+	beforeAll(async () => {
+		ctx = await createTestServer();
+	});
+	afterAll(async () => {
+		await ctx.stop();
+	});
+
+	it("falls back to fallbackCharset when the response omits a charset", async () => {
+		// Server serves ISO-8859-1 bytes with no charset parameter.
+		const { body } = await fetchUrl(`${ctx.serverUrl}/api/latin1-no-charset`, {
+			fallbackCharset: "iso-8859-1",
+			fresh: true,
+		});
+		expect(body).toBe("áéíóú");
+	});
+
+	it("uses utf-8 by default when no fallbackCharset is supplied", async () => {
+		const { body } = await fetchUrl(`${ctx.serverUrl}/api/latin1-no-charset`, {
+			fresh: true,
+		});
+		expect(body).not.toBe("áéíóú");
+		expect(body).toBe("�����");
+	});
+
+	it("header charset wins over fallbackCharset", async () => {
+		// Server declares charset=utf-8; supplying a latin-1 fallback must
+		// NOT override it — the header charset always wins.
+		const { body } = await fetchUrl(`${ctx.serverUrl}/api/utf8-with-charset`, {
+			fallbackCharset: "iso-8859-1",
+			fresh: true,
+		});
+		expect(body).toBe("áéíóú");
+	});
+});
 
 describe("fetchUrl — guardRedirects (M3)", () => {
 	let ctx: TestContext;

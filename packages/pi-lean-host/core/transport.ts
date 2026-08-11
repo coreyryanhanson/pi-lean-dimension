@@ -49,6 +49,11 @@ export interface FetchOptions {
 	 *  header would attach to the redirect. Agent-supplied URLs don't need
 	 *  this (the agent already has bash). */
 	guardRedirects?: boolean;
+	/** Charset to decode the body with when the response's Content-Type
+	 *  header omits one. Honors a guide's `responseShape.charset` for APIs
+	 *  that serve e.g. ISO-8859-1 bytes without a charset parameter. An
+	 *  explicit header charset always takes precedence. */
+	fallbackCharset?: string;
 }
 
 export interface FetchResult {
@@ -115,7 +120,10 @@ function evictCacheIfNeeded(): void {
  */
 function cacheKey(url: string, opts?: FetchOptions): string {
 	const accept = opts?.headers?.accept;
-	return accept ? `${url}\x00accept=${accept}` : url;
+	const cs = opts?.fallbackCharset ?? "";
+	const suffix =
+		(accept ? `\x00accept=${accept}` : "") + (cs ? `\x00cs=${cs}` : "");
+	return suffix ? `${url}${suffix}` : url;
 }
 
 function parseHeaders(
@@ -390,7 +398,7 @@ export async function fetchUrl(
 			// ── decode & cache (2xx only) ───────────────────────
 			const contentType = respHeaders["content-type"] ?? "";
 			const charsetMatch = contentType.match(/charset\s*=\s*([^\s;]+)/i);
-			const charset = charsetMatch?.[1] ?? "utf-8";
+			const charset = charsetMatch?.[1] ?? opts?.fallbackCharset ?? "utf-8";
 			const body = decodeBuffer(rawBody, charset);
 
 			if (status >= 200 && status < 300 && !hasAuthHeaders) {

@@ -47,8 +47,7 @@ in `parseResponse`.
 | Charset | Classification | Rationale | Recipes |
 |---------|---------------|-----------|---------|
 | UTF-8 | **built-in** | Default in transport. `TextDecoder` with `utf-8` fallback. | All recipes |
-| `auto` (sniff from Content-Type) | **built-in** | Transport already decodes using charset from `Content-Type` header. | All recipes (exercised on every request) |
-| Any IANA charset | **built-in** | `TextDecoder` supports all standard IANA charsets. Transport already passes the decoded charset. | (no recipe exercises a non-UTF-8 charset — see note) |
+| Any IANA charset | **built-in** | `TextDecoder` supports all standard IANA charsets. Transport uses the recipe's `charset` as a fallback when the Content-Type header omits one; an explicit header charset wins. | (no recipe exercises a non-UTF-8 charset — see note) |
 
 **Note:** No bundled recipe was found whose API returns a non-UTF-8 charset
 while being no-auth, CI-reachable, and permissively licensed. The `charset`

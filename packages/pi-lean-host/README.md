@@ -343,7 +343,7 @@ laws (capped at 1000 by the op override). The `boe-datefmt` helper formats the
 | `pagination.itemsPath` | guide / op | — | JSON path to the items array in the body |
 | `pagination.totalCountPath` | guide / op | — | optional, any style → server-reported total surfaced as `serverTotal` / `server total: N` |
 | `responseShape.format` | guide / op | `json` | `json` \| `xml` \| `text` → drives `parseResponse` (`text` is raw passthrough) |
-| `responseShape.charset` | guide / op | `utf-8` | `utf-8` \| `auto` (sniff from headers) |
+| `responseShape.charset` | guide / op | `utf-8` | `utf-8` or any IANA charset name (e.g. `iso-8859-1`); used as a fallback when the response's Content-Type header omits a charset — an explicit header charset wins |
 | `operations[].name` | op | — | the `operation` arg `api-fetch` takes |
 | `operations[].via` | op | — | executor: `restGet` \| `paginate` |
 | `operations[].path` | op | — | relative path; `{token}` = inferred path param (no re-declaration) |
@@ -370,7 +370,7 @@ routes each operation through the one its `via` names:
   helper follows it. Returns `{items, next?, serverTotal?}` so the agent can
   stop or continue, plus a `gatherAll` flag for the "just get me everything"
   case with a hard ceiling.
-- **`parseResponse`** — XML→JSON, charset fixing, declared per-endpoint.
+- **`parseResponse`** — XML→JSON, declared per-endpoint (charset decoding happens in the transport).
   Agents mangle encodings constantly; fix it once here.
 
 `restPost`/mutations are **not** in scope for v1 — the target APIs are
@@ -512,8 +512,7 @@ Agents mangle encodings constantly; `parseResponse` fixes it once. Declared
 per-guide (top-level `responseShape`) and overridable per-op (`parse:`):
 
 - `format: json | xml | text` — XML is converted to JSON via `fast-xml-parser`; `text` is raw passthrough.
-- `charset: utf-8 | auto` — `auto` sniffs from response headers (essential
-  for Latin-1 / ISO-8859-1 APIs like BOE).
+- `charset: utf-8 | <IANA name>` — the transport decodes using the response's Content-Type charset, falling back to this value when the header omits one (essential for Latin-1 / ISO-8859-1 APIs like BOE that serve bytes without a charset parameter). An explicit header charset always wins.
 - `accept` (request-side, on each operation) is declared **independently**
   from `responseShape.format` (response-side) — they usually match but an API
   may return XML regardless of `Accept`, so they're separate fields.

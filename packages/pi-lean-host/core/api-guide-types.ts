@@ -87,7 +87,7 @@ export interface PaginationConfig {
 // ═══════════════════════════════════════════════════════════════════
 
 export type ResponseFormat = "json" | "xml" | "text";
-/** Response charset: "utf-8" (default), "auto" (sniff from headers), or any IANA charset name (e.g. "iso-8859-1"). */
+/** Response charset: "utf-8" (default) or any IANA charset name (e.g. "iso-8859-1"). Used by the transport as a fallback when the response's Content-Type header omits a charset; an explicit header charset always wins. */
 export type ResponseCharset = string;
 
 export interface ResponseShape {

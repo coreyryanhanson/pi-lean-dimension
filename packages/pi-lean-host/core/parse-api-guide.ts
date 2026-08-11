@@ -372,7 +372,7 @@ function validateResponseShape(
 			return fail(
 				file,
 				`${fieldPrefix}.charset`,
-				"a string (utf-8 | auto | IANA charset name)",
+				"a string (utf-8 | IANA charset name)",
 				describeFound(charsetRaw),
 			);
 		}

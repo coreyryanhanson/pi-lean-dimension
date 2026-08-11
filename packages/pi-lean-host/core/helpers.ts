@@ -246,11 +246,11 @@ const xmlParser = new XMLParser({
 /**
  * Parse a response body according to the guide's response shape.
  *
- * The body is assumed to have been correctly decoded to a JavaScript
- * string by the transport layer (which uses the charset from the
- * response's Content-Type header). The `charset` field in the
- * response shape is a hint for documentation / authoring; actual
- * charset decoding happens in the transport, not here.
+ * The body is already decoded to a JavaScript string by the transport
+ * layer, which uses the response's Content-Type charset with the recipe's
+ * `shape.charset` as a fallback when the header omits one (an explicit
+ * header charset wins). `parseResponse` itself does no decoding — the
+ * `charset` field is consumed by the transport, not here.
  *
  * @param body    The response body string (correctly decoded).
  * @param shape   The response shape (format dictates XML vs JSON parsing).
@@ -336,10 +336,12 @@ function fetchWithOpts(
 	fresh: boolean | undefined,
 	extraHeaders?: Record<string, string>,
 	guardRedirects?: boolean,
+	fallbackCharset?: string,
 ): ReturnType<typeof fetchUrl> {
 	const opts: FetchOptions = { headers: { accept, ...extraHeaders } };
 	if (fresh !== undefined) opts.fresh = fresh;
 	if (guardRedirects) opts.guardRedirects = true;
+	if (fallbackCharset) opts.fallbackCharset = fallbackCharset;
 	return fetchUrl(url, opts);
 }
 
@@ -427,12 +429,17 @@ export async function restGet(
 	// else passes through as-is (e.g. application/atom+xml, */*).
 	const accept = expandAccept(operation.accept);
 
-	// 6. Fetch.
+	// 6. Fetch. Pass the effective shape's charset as a transport fallback
+	//    for servers that omit a Content-Type charset (e.g. legacy Latin-1
+	//    APIs); an explicit header charset always wins.
+	const shape = operation.parse ?? guide.responseShape;
 	const result = await fetchWithOpts(
 		url,
 		accept,
 		opts?.fresh,
 		guide.auth.headers,
+		undefined,
+		shape.charset,
 	);
 
 	// 7. Check HTTP status before attempting to parse the body.
@@ -440,8 +447,7 @@ export async function restGet(
 	// "Unexpected HTTP 400: El parámetro fecha..." message.
 	checkResponseStatus({ ...result, url });
 
-	// 8. Parse response (use op-level parse override or guide-level responseShape).
-	const shape = operation.parse ?? guide.responseShape;
+	// 8. Parse response using the effective shape resolved above.
 	let data = parseResponse(result.body, shape);
 
 	// 9. Post-response transform (optional). When api-fetch supplied a
@@ -624,6 +630,7 @@ export async function paginate(
 			opts?.fresh,
 			guide.auth.headers,
 			guardThisFetch,
+			shape.charset,
 		);
 
 		// Check HTTP status before attempting to parse.
