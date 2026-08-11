@@ -301,6 +301,13 @@ function buildUrl(
 /**
  * Check auth.kind and branch accordingly.
  * v1 realizes only `none`; any other kind throws a structured error.
+ *
+ * This dispatch is a deliberate seam, not dead code: keeping the field +
+ * dispatch now makes the future keyed-auth build additive (a new `kind`
+ * behind this same `if`/`throw`) rather than a retrofit of every `restGet`/
+ * `paginate` call site and the guide schema. Do not inline "none" into the
+ * callers to "simplify" — that burns the additive path. See
+ * `docs/design/api-secrets-roadmap.md` for the build-out plan.
  */
 function checkAuth(auth: ApiGuide["auth"]): void {
 	const kind = auth.kind;

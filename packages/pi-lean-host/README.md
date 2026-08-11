@@ -740,10 +740,10 @@ machine; the package does not aim to make that easy.
 
 > `pi-lean-host` is part of the
 > [pi-lean-dimension](https://github.com/coreyryanhanson/pi-lean-dimension)
-> web-tools suite. For the full design rationale (recipes-over-runtime, the
-> trust tiers, the peer-toggle decision, the deferred secrets track), see
-> [`docs/design/pi-lean-host.md`](../../docs/design/pi-lean-host.md). For the
-> helper escape-valve policy and the 15-recipe spread, see
+> web-tools suite. For the deferred secrets-store track (the two-threat
+> model and the first-keyed-guide build checklist), see
+> [`docs/design/api-secrets-roadmap.md`](../../docs/design/api-secrets-roadmap.md).
+> For the helper escape-valve policy and the 15-recipe spread, see
 > [`docs/design/api-helper-escape-valve.md`](../../docs/design/api-helper-escape-valve.md).
 >
 > License: AGPL-3.0-only
