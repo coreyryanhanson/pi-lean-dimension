@@ -153,5 +153,3 @@ Each guide dir ships its own co-located tests (`endpoint-coverage.test.ts`,
   spread, rejected candidates).
 - [`../../docs/design/api-hardening-and-proof-recipes.md`](../../docs/design/api-hardening-and-proof-recipes.md)
   — hardening + proof-recipe work.
-- [`../../docs/design/api-probe-tool.md`](../../docs/design/api-probe-tool.md)
-  — probe plan (note: doc says "proposed"; the tool is now shipped).

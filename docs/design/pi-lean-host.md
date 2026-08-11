@@ -168,7 +168,7 @@ helper only when a real guide needs one, behind a real auth-review gate.
 
 ## The agent-facing tools
 
-Three tools, split by side-effect boundary, symmetric with the `web-*`
+Four tools, split by side-effect boundary, symmetric with the `web-*`
 family. The earlier one-tool design (arity-polymorphic `api-fetch` returning
 catalog / guide detail / execute result) was a vestige of when host lived
 under the `/web` toggle and minimizing the tool count mattered. With host as
@@ -180,13 +180,15 @@ the natural boundaries:
 | `api-guide` | Introspect the guide store — `({})` → catalog (collapsed by `organization:`), `({domain})` → guide detail or disambiguation menu when multiple guides claim the domain, `({domain, guide})` → selected guide detail | `/api on` | `web-guide` |
 | `api-fetch` | Execute a guided operation — `({domain, operation, params?, gatherAll?})` → result. `gatherAll` is read from the top level, with a fallback to `params.gatherAll` (stripped before it can leak onto a `passthrough` query string); on a non-paginated (`restGet`) op a truthy `gatherAll` emits a `gatherAll ignored — … is not paginated` notice rather than silently returning one page | `/api on` | `web-fetch` |
 | `api-learn` | Submit/overwrite a guide recipe — `({domain, recipe})` → writes to disk | `/api learn` only | `web-learn` |
+| `api-probe` | Discover the shape of a not-yet-guided API endpoint — `({apiHost, path, params?, tryPrefixes?})` → shape summary + draft YAML op block. Suggests only; never writes the guide | `/api learn` only | — |
 
-The three functions are **local read** (guide store), **network read**
-(execute against target API), and **local write** (submit recipe). Each tool
+The functions are **local read** (guide store), **network read** (execute
+against target API), **local write** (submit recipe), and a second **network
+read** gated to learn mode (shape discovery before a guide exists). Each tool
 owns exactly one. A tool that mixes local-read and network-read (the old
 arity-polymorphic `api-fetch` doing detail+execute) hides whether a call hits
 the network behind an arity guess; a tool that mixes read and write hides
-whether a call mutates state. Three tools eliminates both ambiguities. The
+whether a call mutates state. Four tools eliminates both ambiguities. The
 one benign polymorphism that remains — `api-guide({})` catalog vs
 `api-guide({domain})` detail (vs `api-guide({domain, guide})` selecting one
 of several guides claiming a domain) — is read/read, all local, the same "list mode
@@ -956,14 +958,20 @@ web family, no extra command, no session machinery.
    to a recipe, writes it via `api-learn`, verifies with `api-fetch`. A
    single working call teaches the base URL, the Accept header that works,
    the response shape — most of a recipe from one data point.
-3. **Probe-and-verify (needs portal, last resort).** Use `web-fetch` to hit
-   endpoints blindly, read responses, build a candidate recipe, write it
-   via `api-learn`, verify with `api-fetch`. This *is* possible — the
-   rigidity is overstated: you can vary params, observe 400-vs-200, read
-   error bodies, discover pagination tokens in a response. But it's the
-   last resort, not the default, because reading the docs is cheaper than
-   probing the API, and good APIs almost always have docs. This is the only
-   authoring path that needs an unguided HTTP tool.
+3. **Probe-and-verify (host-native via `api-probe`, last resort).** The
+   `api-probe` tool (gated to `/api learn`) fetches a not-yet-guided endpoint
+   over the same `transport.ts` pipeline as `api-fetch` — UA, charset,
+   429-retry, ETag, and WAF handling for free, no portal needed — and returns
+   a shape summary plus a copy-paste-ready draft YAML op block. It **suggests;
+   it never writes the guide**: the "cite the source" gate stays human. The
+   authoring family is `api-probe` (discover shape → draft) → `api-learn`
+   (validate schema + save) → `api-fetch` (execute the saved op). `api-probe`
+   takes a templated `path` + `params` dict (not a literal URL) so the draft is
+   true copy-paste, mirroring the parser's rule that path params are inferred
+   from `{token}` in `path` and not re-declared. This is the last resort, not
+   the default, because reading the docs is cheaper than probing the API, and
+   good APIs almost always have docs. A portal-dependent variant — `web-fetch`
+   to hit endpoints blindly — remains available when portal is co-installed.
 4. **OpenAPI/Swagger import (deferred to v1.1).** When a machine-readable
    spec exists, a spec→recipe transformer is mechanical — the case where
    APIs are *less* rigid than browsers, since the contract is structured
@@ -1230,8 +1238,9 @@ additive rather than a retrofit.
   `helper.ts` in the domain subdir) as worked examples; they do not execute
   until copied into the user's own dirs.
 - **GET-read only** — no mutation helper.
-- **Three tools, one side-effect boundary each** (`api-guide` local read,
-  `api-fetch` network read, `api-learn` local write). Do not collapse them.
+- **Four tools, one side-effect boundary each** (`api-guide` local read,
+  `api-fetch` network read, `api-learn` local write, `api-probe` network read
+  gated to learn). Do not collapse them.
 - The **`auth.kind` seam** (field + dispatch, `none` realized, others
   error). Dropping it to "simplify" burns the one thing the design built on
   purpose for the keyed track.
