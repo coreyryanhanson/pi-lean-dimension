@@ -42,12 +42,40 @@ describe("ssrfGuard", () => {
 		const result = ssrfGuard("http://10.0.0.1/admin");
 		expect(result.ok).toBe(false);
 		expect((result as { ok: false; reason: string }).reason).toContain(
-			"private network",
+			"internal network",
 		);
 	});
 
 	it("rejects 127.0.0.1 (loopback)", () => {
 		expectRejected("http://127.0.0.1/");
+	});
+
+	it("rejects any 127.0.0.0/8 loopback (not just .1)", () => {
+		expectRejected("http://127.0.0.2/");
+		expectRejected("http://127.255.255.254/");
+	});
+
+	it("rejects link-local 169.254.0.0/16 (not just metadata IP)", () => {
+		expectRejected("http://169.254.169.253/");
+	});
+
+	it("rejects IPv6 loopback ::1 exactly", () => {
+		expectRejected("http://[::1]/");
+	});
+
+	it("allows public IPv6 that merely contains ::1 mid-string", () => {
+		expect(ssrfGuard("http://[2001:db8::1:2:3]/").ok).toBe(true);
+	});
+
+	it("allows public IPv6 that merely contains ::ffff: mid-string", () => {
+		expect(ssrfGuard("http://[2001:db8::ffff:1]/").ok).toBe(true);
+	});
+
+	it("rejects IPv6 link-local fe80::/10 and unique-local fc00::/7", () => {
+		expectRejected("http://[fe80::1]/");
+		expectRejected("http://[febf::1]/");
+		expectRejected("http://[fc00::1]/");
+		expectRejected("http://[fd12:3456::1]/");
 	});
 
 	it("rejects 192.168.x.x (private network)", () => {
