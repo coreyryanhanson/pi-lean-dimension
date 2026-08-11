@@ -20,6 +20,13 @@
 > SearXNG search, install
 > [`pi-lean-search`](https://www.npmjs.com/package/pi-lean-search).
 
+> ⚠️ **Early release (0.1.0).** The API tools here work today, but this is a
+> development preview. The recipe schema, tool surfaces, and guide format are
+> still settling as we test more APIs to finalize the shape — **future
+> compatibility is not guaranteed** until the package reaches lockstep with
+> `pi-lean-dimension` 0.5.0. Guides authored against 0.1.0 may need revision
+> as the schema firms up.
+
 ---
 
 ## Table of Contents
@@ -71,8 +78,9 @@ Or skip the authoring and **copy a bundled reference recipe** (see
 > `pi-lean-portal` as an *optional* peer dependency and has zero static
 > imports from it. The core loop — authoring via docs/example, on-demand
 > discovery, guided execution — runs with no browser package installed.
-> Co-installing portal unlocks two additive features (navigate-footer
-> surfacing and probe-authoring via `web-fetch`); neither is load-bearing.
+> Co-installing portal is planned to unlock two additive features
+> (navigate-footer surfacing and probe-authoring via `web-fetch`) in a
+> **future release** — neither is present in 0.1.0 nor load-bearing.
 
 ---
 
@@ -629,6 +637,12 @@ are no secrets or endpoints to configure. `apiHost` and operation paths live
 ---
 
 ## Co-Installing with `pi-lean-portal`
+
+> **Planned for a future release — not in 0.1.0.** Portal integration is
+> being developed on the `pi-lean-host-integration` branch (0.5.0-track
+> code, continuously rebased onto this package branch). The projection and
+> navigate-footer surfacing described below are what that track delivers;
+> they do not ship in the 0.1.0 early release.
 
 Portal is fully optional. When co-installed, host registers a **projection**
 of its user-authored `ApiGuide`s with portal's guide-source registry at load
