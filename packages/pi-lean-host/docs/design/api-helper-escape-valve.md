@@ -1,6 +1,6 @@
 # API Helper Escape-Valve Policy
 
-> Classifies every quirk class the 15 no-auth bundled recipes surface as
+> Classifies every quirk class the 19 no-auth bundled recipes surface as
 > **built-in** (realized in the reviewed helper set, every recipe gets it) vs
 > **local-helper** (per-API, user-authored, ships as an accompanying
 > `helper.ts` in the domain subdir). Rationale per decision. The recipe
@@ -22,7 +22,7 @@ that exercise it.
 | `offset-limit` | **built-in** | Universal baseline — every open-data API offers it. | BOE (boe.es), MusicBrainz (musicbrainz.org), DNB (services.dnb.de), Open Library (openlibrary.org), GBIF (api.gbif.org), GitHub (api.github.com) |
 | `nextLink` | **built-in** | Server-supplied next URL is the second most common pattern. One code path (`advancePagination`) with SSRF guard. | LoC (loc.gov), datos.gob.es, Federal Register (<www.federalregister.gov>) |
 | `cursor` | **built-in** | Opaque cursor string is common in search APIs. One code path. | Data.gov (resources.data.gov) |
-| `page` | **built-in** | Incrementing page number with fixed size; simple variant of offset-limit. | (no recipe uses it yet — code supports it) |
+| `page` | **built-in** | Incrementing page number with fixed size; simple variant of offset-limit. | GitLab (gitlab.com — `listProjects`, `listProjectIssues`) |
 | `resumptionToken` | **built-in** | OAI-PMH opaque single-token cursor: echo the token from each page into a named query param on the next request. Reuses `resolveJsonPath` + the existing per-page param loop. | DNB (services.dnb.de — `oaiListRecords`, `oaiListIdentifiers`) |
 | `tokenBag` | **built-in** | Multi-key continuation bag (Wikimedia `continue` dict): read a declared set of response keys and merge them into the next request's query params under the same names. Reuses `resolveJsonPath` per key. | Wikimedia Action API (en.wikipedia.org-action — `listRecentChanges`) |
 
@@ -31,16 +31,14 @@ that exercise it.
 | Format | Classification | Rationale | Recipes |
 |--------|---------------|-----------|---------|
 | JSON (`application/json`) | **built-in** | Most common format. `JSON.parse` in `parseResponse`. | All recipes |
-| XML (`application/xml`, `text/xml`) | **built-in** | `fast-xml-parser` in `parseResponse`. Requires `responseShape.format: xml` and an XML-capable `accept`. | DNB (services.dnb.de), MusicBrainz XML op (musicbrainz.org), BOE getConsolidada (boe.es) |
+| XML (`application/xml`, `text/xml`) | **built-in** | `fast-xml-parser` in `parseResponse` with `removeNSPrefix: true` (element-name prefixes stripped → stable local names across XML providers). Requires `responseShape.format: xml` and an XML-capable `accept`. | DNB (services.dnb.de), MusicBrainz XML op (musicbrainz.org), BOE getConsolidada (boe.es), arXiv (arxiv.org — Atom), ECB SDMX (data-api.ecb.europa.eu), PubMed E-utilities (eutils.ncbi.nlm.nih.gov) |
 
-**Known gap — single-record XML edge:** When an XML response returns exactly
-one record, `fast-xml-parser` yields an object instead of an array.
-`resolveJsonPath` then sees a non-array and stops pagination. This is a
-`parseResponse` generalization target that remains **local-helper** for now
-— no bundled recipe was found where the XML endpoint ever returns a
-single-record page with a broad-enough query. If a real API forces this
-edge in practice, it should be upgraded to **built-in** with array-normalization
-in `parseResponse`.
+**Single-record XML edge (built-in, resolved):** When an XML response
+returns exactly one record, `fast-xml-parser` yields an object instead of
+an array. `paginate` now normalizes a non-null, non-array `itemsPath` result
+into a single-element array before the exhaustion check, so a lone record
+pages correctly. Exercised by arXiv (`max_results=1`), PubMed E-utilities
+(`retmax=1`), and ECB SDMX (single-observation series).
 
 ### 3. Character sets / charset decoding
 
@@ -87,7 +85,7 @@ analysis and deferral decision — see
 | Signal | Classification | Rationale | Recipes |
 |--------|---------------|-----------|---------|
 | Empty items array → stop | **built-in** | `paginate` breaks when `pageItems` is empty. | All paginated recipes |
-| Non-array items path → stop | **built-in** | `paginate` breaks when `resolveJsonPath` returns a non-array. | All paginated recipes (also catches the single-record XML edge above) |
+| Non-array items path → wrap-and-continue | **built-in** | `paginate` wraps a non-null, non-array `itemsPath` result into a single-element array; pagination only stops on `null`/`undefined` (genuine absence). | All paginated recipes (single-record XML edge now handled — see §2) |
 | `endOfRecords: true` boolean | **local-helper** | Only one recipe needed this (GBIF). Not common enough for a built-in pagination style. Recipe documents the termination signal in the guide prose; no helper needed for the list op. | GBIF (api.gbif.org) |
 | `total_pages` / `count` ceiling | **built-in** (server total) / **local-helper** (stop signal) | The framework's `totalCountPath` (any pagination style) surfaces the server's reported total — `count` / `total_count` / `numFound` / `completeListSize` / `search.hits` — as `serverTotal` in the `paginate` result and in the `api-fetch` footer (`server total: N`, `remaining: …`), no helper needed. What stays **local-helper** is using such a field as the *termination* signal instead of an empty-items / next-link break — the paginator still stops on an empty page or absent next cursor, so a guide that wants a count-bounded stop declares the path only for surfacing, not for loop control. | Federal Register (<www.federalregister.gov> — `count`/`total_pages` surfacable via `totalCountPath`), GitHub (`total_count` on `/search/*`), Open Library (`numFound`), GBIF (`count`), LoC (`search.hits`), Archive.org (`response.numFound`), DNB (`@_completeListSize` via OAI resumption token) |
 | `Link` header pagination (RFC 5988) | **local-helper** | The only recipe with header-based pagination is GitHub. A helper that parses `Link` headers must inspect the response, which neither helper valve can do: the pre-call `default export` runs before the request and only reshapes params; the post-response `transform` named export (§12) sees the parsed body but not headers. Promoting this to built-in would require a header-aware pagination style. Deferred. | GitHub (api.github.com) |
@@ -97,7 +95,7 @@ analysis and deferral decision — see
 
 | Signal | Classification | Rationale | Recipes |
 |--------|---------------|-----------|---------|
-| HTTP 429 with retry-after | **built-in** | Transport retries with exponential backoff + `Retry-After` support. | (exercised by any rate-limited API) |
+| HTTP 429 with retry-after | **built-in** | Transport retries with exponential backoff + `Retry-After` support (both delay-seconds and HTTP-date forms; a past/already-expired date falls back to backoff). | (exercised by any rate-limited API) |
 | `X-RateLimit-*` headers | **local-helper** | Informational only — the transport doesn't parse them. The agent reads them from response headers. No structural change needed. | GitHub (api.github.com), MusicBrainz (musicbrainz.org) |
 
 ### 8. Caching / conditional requests
@@ -156,7 +154,7 @@ row above.)
 | Class | Count | Built-in | Local-helper |
 |-------|-------|----------|-------------|
 | Pagination styles | 7 | offset-limit, nextLink, cursor, page, resumptionToken, tokenBag | header (Link) |
-| Response formats | 2 | JSON, XML | (none — single-record XML edge pending) |
+| Response formats | 2 | JSON, XML | (none) |
 | Charsets | 3 | UTF-8, auto, any IANA | (none) |
 | Content negotiation | 3 | Accept header shorthands, free-form media types | Query-param content negotiation (just defaults) |
 | Auth | 3 | none, none+headers, real keyed (future) | User-Agent policy |
@@ -167,7 +165,7 @@ row above.)
 | Data transforms | 3 | declarable date normalization (dateParams) | per-API date transforms (path params, non-standard), query DSL wraps |
 | Helper contract | 5 | sig (params,ctx)=>params, pre-call, async, one-per-guide, post-response transform (gated) | per-param binding |
 
-**Total:** ~35 quirk classes classified. 32 built-in, 6 local-helper.
+**Total:** ~35 quirk classes classified. 33 built-in, 5 local-helper.
 
 ## When to upgrade a local-helper quirk to built-in
 
@@ -188,9 +186,9 @@ helper rather than papering over it.
 
 ## Recipes and their axes (reference)
 
-The 15-recipe spread (baseline + 4 axis recipes + 10 generalization-pool
+The 19-recipe spread (baseline + 4 axis recipes + 14 generalization-pool
 recipes). Axis recipes (A–D) fire the *named* helper decisions; pool
-recipes (P1–P10) surface the structural quirks the axis framework doesn't
+recipes (P1–P14) surface the structural quirks the axis framework doesn't
 name (diversity dimensions G1–G12). G11 (rate-limit headers) is a bonus on
 GitHub and MusicBrainz; G12 (UA requirement) on MusicBrainz. Each owns a
 distinct helper decision — no two overlap.
@@ -212,8 +210,12 @@ distinct helper decision — no two overlap.
 | datos.gob.es | P8: JSON-LD | G8 | ES / es | linked-data envelope (`_about`/`definition`) |
 | openlibrary.org | P9: mixed naming | G9 | US / en | numFound + num_found aliased |
 | archive.org | P10: non-list | G10 | US / en | single-resource fetch, no pagination, mixed scalar typing |
+| arxiv.org | P11: Atom single-record | — | US / en | XML Atom feed, single-record edge (A1 proof), `removeNSPrefix` |
+| data-api.ecb.europa.eu | P12: SDMX namespaced XML | — | EU / en | SDMX 2.1 XML w/ `message:`/`str:` namespaces (`removeNSPrefix` hard proof, A2) |
+| eutils.ncbi.nlm.nih.gov | P13: XML single-record confirm | — | US / en | XML, single-record edge (A1 confirm), offset-limit (`retstart`/`retmax`) |
+| gitlab.com | P14: page pagination | — | US / en | `page` pagination style, `perPage`+`page` params |
 
-**Spread:** 5 countries (ES, US, DE, DK, CH) + a multilingual (CJK/Arabic/
+**Spread:** 6 countries/orgs (ES, US, DE, DK, CH, EU) + a multilingual (CJK/Arabic/
 Cyrillic) response; 3 languages (es, en, de) plus any Wikimedia edition.
 UTF-8 only across the set — no no-auth permissively-licensed non-UTF-8 API
 was found; the `parseResponse` charset path is still exercised because every
@@ -230,7 +232,7 @@ decisions (e.g. Axis D only fires with an ETag) are auditable.
 | data.europa.eu hub-search | offset-limit (same axis as BOE) |
 | data.gov.uk CKAN | offset-limit (same axis as BOE) |
 | NYC Open Data (Socrata) | offset-limit (same axis as BOE) |
-| ECB SDMX API | complex path construction, 404 on test |
+| ~~ECB SDMX API~~ | ~~complex path construction, 404 on test~~ — **revisited; now shipped as `data-api.ecb.europa.eu`** (5 ops, SDMX 2.1, `removeNSPrefix` proof) |
 | BnF SRU | endpoint unreachable / timeout |
 | LoC SRU | Cloudflare challenge — not CI-reachable |
 | INE Spain | 404 on tested endpoint |

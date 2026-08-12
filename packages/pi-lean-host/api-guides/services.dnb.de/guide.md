@@ -235,7 +235,10 @@ via `fast-xml-parser`:
 ```
 
 `itemsPath: searchRetrieveResponse.records.record` resolves against the XML-converted JSON. Pagination
-is SRU offset-limit via `startRecord` / `maximumRecords`.
+is SRU offset-limit via `startRecord` / `maximumRecords`. The parser strips
+element-name prefixes (`removeNSPrefix: true`), so the Dublin Core fields
+shown as `<dc:title>`/`<dc:creator>` in the raw XML above appear as `title`/`creator`
+(local names) in the parsed JSON — access them unprefixed.
 
 ### `oaiListRecords` / `oaiListIdentifiers` — OAI-PMH harvesting
 
@@ -285,12 +288,12 @@ harmless on strict servers.
   non-UTF-8"; DNB covers the XML half. The transport's charset-decoding path is
   still exercised because every response carries `Content-Type: text/xml;
   charset=UTF-8` that must be decoded before `fast-xml-parser` runs.
-- **Single-record edge:** when a page returns exactly one record,
-  `fast-xml-parser` yields `searchRetrieveResponse.records.record` as an
-  **object** rather than an array. The built-in `resolveJsonPath` then sees
-  a non-array and stops pagination. With `maximumRecords: 2` and a broad query (e.g. `Wasser` → 1915
-  hits) pages are full; the edge only bites with 1-result pages. Noted as a
-  `parseResponse` generalization target (array-normalization).
+- **Single-record edge (handled by the framework):** when a page returns
+  exactly one record, `fast-xml-parser` yields
+  `searchRetrieveResponse.records.record` as an **object** rather than an
+  array. `paginate` now normalizes a non-null, non-array `itemsPath` result
+  into a single-element array before the exhaustion check, so a lone record
+  pages correctly — no guide-level workaround needed.
 
 ## Terms
 

@@ -17,9 +17,6 @@ operations:
     via: paginate
     path: /esearch.fcgi
     accept: xml
-    parse:
-      format: xml
-      charset: utf-8
     gatherAllMax: 1000
     pagination:
       style: offset-limit
