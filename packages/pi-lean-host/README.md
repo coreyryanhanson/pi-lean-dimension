@@ -20,11 +20,11 @@
 > SearXNG search, install
 > [`pi-lean-search`](https://www.npmjs.com/package/pi-lean-search).
 
-> ⚠️ **Early release (0.1.0).** The API tools here work today, but this is a
+> ⚠️ **Early release (0.1.1).** The API tools here work today, but this is a
 > development preview. The recipe schema, tool surfaces, and guide format are
 > still settling as we test more APIs to finalize the shape — **future
 > compatibility is not guaranteed** until the package reaches lockstep with
-> `pi-lean-dimension` 0.5.0. Guides authored against 0.1.0 may need revision
+> `pi-lean-dimension` 0.5.0. Guides authored against 0.1.x may need revision
 > as the schema firms up.
 
 ---
@@ -485,7 +485,7 @@ Authoring is via `api-learn` in learn mode, or hand-editing the file.
 ## Pagination Styles
 
 `paginate` follows the style declared in the recipe. Six styles cover the
-patterns the bundled 17-recipe spread pressure-tested:
+patterns the bundled 19-recipe spread pressure-tested:
 
 | Style | What it sends | Key fields |
 |-------|---------------|------------|
@@ -542,15 +542,16 @@ you know you're in disambiguation territory.
 
 ## Bundled Reference Recipes
 
-The repo ships **17 reference recipes** under `api-guides/` (GitHub only —
+The repo ships **21 reference recipes** under `api-guides/` (GitHub only —
 **not in the npm tarball, never auto-loaded**). They are inert worked
 examples spanning the no-auth axes the helper set was validated against:
 
 ```
-api.gbif.org        api.github.com        archive.org          archive.org-wayback
-boe.es              datos.gob.es          earthquake.usgs.gov  en.wikipedia.org
-en.wikipedia.org-action   loc.gov        musicbrainz.org      openlibrary.org
-resources.data.gov  services.dnb.de       web.archive.org      www.federalregister.gov
+api.gbif.org             api.github.com           archive.org              archive.org-wayback
+arxiv.org                boe.es                   data-api.ecb.europa.eu   datos.gob.es
+earthquake.usgs.gov      en.wikipedia.org         en.wikipedia.org-action  eutils.ncbi.nlm.nih.gov
+gitlab.com               loc.gov                  musicbrainz.org          openlibrary.org
+resources.data.gov       services.dnb.de          web.archive.org          www.federalregister.gov
 www.wikidata.org
 ```
 
@@ -766,7 +767,7 @@ machine; the package does not aim to make that easy.
 > web-tools suite. For the deferred secrets-store track (the two-threat
 > model and the first-keyed-guide build checklist), see
 > [`docs/design/api-secrets-roadmap.md`](docs/design/api-secrets-roadmap.md).
-> For the helper escape-valve policy and the 17-recipe spread, see
+> For the helper escape-valve policy and the 19-recipe spread, see
 > [`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md).
 >
 > License: AGPL-3.0-only
