@@ -149,9 +149,12 @@ env var) prevents it on its own.
 ### Storage choice interacts with prompt-leak only via "agent's natural reach"
 
 - **Plaintext-in-guide (`auth.headers` today)** — WORST. `api-guide`
-  actively surfaces guide content to the agent, so a real key in
-  `auth.headers` is one tool call from context. This is why `auth.headers`
-  stays literal-only and the keyed path is separate (§Auth contract).
+  surfaces only `auth.kind` to the agent (`tools/api-guide.ts:199`), not
+  `auth.headers`, so the leak is **not** one `api-guide` tool call away —
+  the real vector is bash: the agent has `cat`, and a real key committed
+  in `auth.headers` is one shell command from context. Same conclusion,
+  honester mechanism. This is why `auth.headers` stays literal-only and
+  the keyed path is separate (§Auth contract).
 - **Env var** — bad. The agent has bash; `env` / `printenv` reaches it.
 - **`0600` file outside the project tree** — better. The agent has bash
   (a *determined* agent can `cat` it), but has no *natural reason* to look
@@ -237,10 +240,13 @@ the guide.**
   in the guide.
 - **`auth.secretQueryRefs: Record<paramName, secretName>`**: parallel for
   query-param injection (`?key=<secret>`).
-- **`requires: string[]`**: declares the secret names the guide expects
-  (e.g. `requires: [apiKey]` for static-key; `requires: [username,
-  password]` for cookie-login). The footer and `api-login` read this to
-  know what to look for in the store. **No `scopes` field.**
+- **`auth.requires: string[]`**: declares the secret names the guide
+  expects (e.g. `auth.requires: [apiKey]` for static-key;
+  `auth.requires: [username, password]` for cookie-login). Lives under
+  the `auth` block alongside `auth.secretRefs` / `auth.secretQueryRefs` /
+  `auth.cookie-login` (not a top-level guide field), because it names
+  auth secrets. The footer and `api-login` read this to know what to look
+  for in the store. **No `scopes` field.**
 - **`auth.cookie-login`**: the login flow block for `kind: cookie-login`.
   Reuses op request-shape vocabulary (`path`, `accept`, `body`) plus which
   secrets fill which body fields. Cookies are auto-captured into the
@@ -260,20 +266,37 @@ the guide.**
     `cookie-login` block is rejected when `kind` ≠ `cookie-login`; for
     `kind: static-key` the `cookie-login` block is rejected; for
     `kind: cookie-login` the `cookie-login` block is **required**.
-  - **`requires` ↔ referenced names:** every secret name appearing in
-    `secretRefs`, `secretQueryRefs`, or the `cookie-login` body-field map
-    must be declared in `requires` (catches a typo'd `apiKey`/`api_key`
-    mismatch at parse time, not at fetch time). `requires` names with no
-    referrer are allowed (documentation-only listing is harmless).
+  - **`auth.requires` ↔ referenced names:** every secret name appearing
+    in `secretRefs`, `secretQueryRefs`, or the `cookie-login` body-field
+    map must be declared in `auth.requires` (catches a typo'd
+    `apiKey`/`api_key` mismatch at parse time, not at fetch time).
+    `auth.requires` names with no referrer are allowed (documentation-only
+    listing is harmless).
+  - **`secretQueryRefs` ↔ operation `params` collision:** a secret
+    param name (a key of `auth.secretQueryRefs`) that also appears in
+    any operation's `params` map is a parse error. The agent must not be
+    able to supply a value for a param that is secretly injected —
+    either the agent's value collides with the secret or silently
+    overrides it, both unsafe. The guide author marks the param
+    `secretQueryRefs`-only; the agent never sees it as a settable param.
+    (Path-injected secrets, when shipped, get the same rule against
+    path-template fields.)
   - `secretRefs` / `secretQueryRefs` are `Record<string, string>`
     (headerName/paramName → secretName), validated the same way as
     `auth.headers` today. Empty maps are allowed (= no injection).
 
 ### Output-channel audit for `secretQueryRefs`
 
-Header secrets never touch the URL or the params map, so they never
-reach an output path. **Query-param secrets do**, through **two**
-parallel channels that must both be defended:
+Header secrets never touch the URL or the params map, so they avoid
+the two query-param channels below. They are **not** however
+output-channel-clean by construction: a server may echo the auth
+header in a **response** header (e.g. `X-Api-Key: <value>` echoed
+back), and `api-fetch` emits the full response headers as
+`details.headers` (`tools/api-fetch.ts:243`, restGet branch). That is
+a third output surface — the **response-header echo** — and it is
+covered by the output-channel audit for `secretRefs` (§Risks, §Output-channel
+audit tests), not by the `secretQueryRefs` design. **Query-param secrets**
+add two further parallel channels that must both be defended:
 
 1. **The URL** — surfaced in every result/error emit site
    (`formatRequestLine`, `details.request.url`, `renderResult`,
@@ -372,7 +395,7 @@ consumer each, which is the wrong abstraction. What *is* shared:
 
 1. **The secret-name source of truth** — URL scrubbing needs the
    `secretQueryRefs` keys for the guide; the listing needs the guide's
-   `requires` + the store's filenames. One registry, two consumers.
+   `auth.requires` + the store's filenames. One registry, two consumers.
 2. **The auth-status helper** (§Login op & lifecycle) — the footer's
    "credential present / absent" branches are the presence check a
    `/api secrets` listing wants. `/api secrets <domain>` is the footer's
@@ -560,6 +583,16 @@ the full login response body.
   the error.
 - **Reuses op request-shape vocabulary** (`path`/`accept`/`body`) so there
   is no new request-shape schema to learn.
+- **Executor location:** the login POST runs through a new
+  `postRequest(url, body, headers, opts)` in `core/transport.ts`, sibling
+  to `fetchUrl` — same transport layer (UA, charset, 429-retry, timeout);
+  the GET-only `restGet`/`paginate` are not retrofitted to emit a POST.
+  `Set-Cookie` capture into the jar happens here, in the transport, where
+  response headers are visible (the helper contract is header-blind,
+  §Existing seams). `api-login`'s tool handler resolves the
+  `auth.cookie-login` block, reads secrets from the store, builds the
+  body, and calls `postRequest`; it returns the status line, never the
+  response body.
 
 ### Why no framework-auto-login
 
@@ -627,17 +660,51 @@ just the honest description of where the jar lives.
   Update the `guardRedirects` doc comment in `transport.ts` to note
   auth-bearing requests are also forced into the guarded path (for
   header-leak prevention, not initial-URL SSRF).
+- **Auth headers on redirects → stripped on cross-domain.** The forced
+  `getWithGuardedRedirects` one-liner above closes the SSRF-to-internal
+  case (the guard blocks loopback/RFC1918/metadata redirect targets),
+  but `getWithGuardedRedirects` today forwards `reqHeaders` — including a
+  store-injected `Authorization` — to **every** redirect hop
+  (`transport.ts:104-127`, `singleGet` called per hop with the original
+  header set). A 302 from `api.example.com` to a **public** partner host
+  (`api.partner.com`) would carry the auth header to the partner domain
+  with no check: the SSRF guard passes it (public host), but the header
+  has leaked cross-domain. The fix is a **host-match gate inside the
+  guarded redirect loop**: before forwarding `reqHeaders` to the next
+  hop, drop any store-injected `secretRefs` headers (and the
+  `Authorization` / `Cookie` pair) when the redirect target's hostname
+  differs from the request URL's hostname. Literal `auth.headers` stay
+  (they are guide-level, intended for the routing domain);
+  store-injected secrets are caller-scoped and must not follow a
+  cross-domain redirect. Same strict-host-match rule as the cookie jar
+  (§Cookie jar), so one hostname comparison governs both. Update the
+  `guardRedirects` doc comment to note auth-bearing requests are also
+  forced into the guarded path (for header-leak prevention, not
+  initial-URL SSRF) and that the guarded path strips injected secrets
+  on cross-domain hops.
 - **Cookies on redirects → scoped by domain — stripped on cross-domain**,
-  mirroring the auth-header cross-domain rule. Prevents a session cookie
-  leaking to a cross-domain redirect target. (Implementation detail: eTLD+1
-  scoping vs strict host-match is settled at build time; the rule is
-  cross-domain stripping either way.)
+  mirroring the auth-header cross-domain rule above. Prevents a session
+  cookie leaking to a cross-domain redirect target. (Implementation
+  detail: eTLD+1 scoping vs strict host-match is settled at build time;
+  the rule is cross-domain stripping either way.)
 
 ## Risks
 
 - **Accidental key leak via 401 body / error echo / debug log → flows to
   inference server.** PRIMARY. The output-channel audit must catch every
   path. This is the most-skippable-under-deadline threat; name it in the PR.
+- **Response-header echo via `details.headers`.** `api-fetch` emits the
+  full response headers as `details.headers` (`tools/api-fetch.ts:243`,
+  restGet branch). A server that echoes the auth header in a **response**
+  header (e.g. `X-Api-Key: <value>` echoed back, or a `WWW-Authenticate`
+  echo that includes the value) leaks the secret to the session file on
+  the first authenticated fetch. This is a `secretRefs` (header-secrets)
+  output-channel concern, distinct from the `secretQueryRefs` URL/params
+  channels — header secrets avoid the URL and params map but still
+  traverse this surface. The output-channel audit must scrub or filter
+  any response header whose value matches a known secret, or (simpler,
+  fail-closed) drop `details.headers` entirely for auth-bearing requests.
+  Add a test asserting no secret value appears in `details.headers`.
 - **Plaintext-in-guide (`auth.headers`) is an active prompt-leak risk if
   used for real keys.** Must NOT be the keyed path. The `0600`-file store
   - `secretRefs`/`secretQueryRefs` are separate from guide content, and
@@ -666,24 +733,40 @@ just the honest description of where the jar lives.
   that 302s to an internal host would leak the header unguarded. Fixed by
   forcing `getWithGuardedRedirects` when `hasAuthHeaders` in `fetchUrl`
   (§Cache / SSRF / redirect rules) — a one-liner, not a header-set change.
+  That closes the **SSRF-to-internal** case. The **cross-domain-to-public**
+  case (a 302 to `api.partner.com` carrying the injected `Authorization`)
+  is a separate leak: the SSRF guard passes public hosts, so the guarded
+  loop alone does not stop it. Fixed by the host-match gate inside the
+  guarded loop that strips store-injected `secretRefs` headers on
+  cross-domain hops (§Cache / SSRF / redirect rules) — the same
+  strict-host-match rule the cookie jar uses.
 
 ## Validation / testing notes
 
 Carried by the implementation, not separately designed here:
 
 - **Parser/validator tests** for the new auth fields: `auth.kind:
-  cookie-login`, `auth.secretRefs`, `auth.secretQueryRefs`, `requires`,
-  `auth.cookie-login`. Literal-vs-reference is a schema distinction.
-  Concretely assert the §Auth contract rules: kind↔field consistency
-  (`secretRefs` rejected on `kind: none`; `cookie-login` block required
-  on `kind: cookie-login`, rejected otherwise; `oauth2` rejected at parse
-  with the "not yet implemented" fix), and `requires` ↔ referenced-name
-  validation (a `secretRefs`/`secretQueryRefs`/`cookie-login` body-field
-  name not in `requires` is a parse error).
+  cookie-login`, `auth.secretRefs`, `auth.secretQueryRefs`,
+  `auth.requires`, `auth.cookie-login`. Literal-vs-reference is a schema
+  distinction. Concretely assert the §Auth contract rules: kind↔field
+  consistency (`secretRefs` rejected on `kind: none`; `cookie-login`
+  block required on `kind: cookie-login`, rejected otherwise; `oauth2`
+  rejected at parse with the "not yet implemented" fix),
+  `auth.requires` ↔ referenced-name validation (a
+  `secretRefs`/`secretQueryRefs`/`cookie-login` body-field name not in
+  `auth.requires` is a parse error), and the `secretQueryRefs` ↔
+  operation `params` collision rule (a secret param name also in an
+  op's `params` map is a parse error).
 - **Output-channel audit tests** — the security-critical path. Assert no
   result or error path echoes a secret value: a 401 body, a request-header
-  echo, a debug log, and the login response body are all scrubbed. This is
-  the work most likely to be skipped under deadline; ship it with the
+  echo, a debug log, the login response body, and a **response-header
+  echo in `details.headers`** (`tools/api-fetch.ts:243`) are all scrubbed.
+  The response-header case is the one a server that echoes the auth
+  header (e.g. `X-Api-Key: <value>` in the response) would leak to the
+  session file; assert no secret value appears in `details.headers` for
+  an auth-bearing request (scrub matching headers, or drop
+  `details.headers` entirely for auth-bearing requests). This is the
+  work most likely to be skipped under deadline; ship it with the
   first keyed guide, not "later."
 - **Query-param secret output-channel tests** (for `secretQueryRefs`) —
   the two channels in §Output-channel audit, both security-critical:
@@ -720,12 +803,18 @@ Carried by the implementation, not separately designed here:
   nudge-provision), via the shared auth-status helper, covering both
   `api-guide` and `api-fetch`. Include the `cookie-login` "no session yet"
   branch (credential present, jar empty → prompt `api-login`).
-- **SSRF verification** — two cases: (a) a malicious `nextUrl` carrying
+- **SSRF verification** — three cases: (a) a malicious `nextUrl` carrying
   a store-injected `Authorization` is blocked by the `nextLink` guard
   (existing path); (b) a `restGet` carrying an injected `Authorization`
   that 302s to an internal host is blocked because `hasAuthHeaders` forces
-  the guarded redirect path (the new one-liner in `fetchUrl`). Assert the
-  auth header does not reach the internal host in either case.
+  the guarded redirect path (the new one-liner in `fetchUrl`); (c) a
+  `restGet` carrying an injected `Authorization` that 302s to a **public**
+  cross-domain host (`api.partner.com`) has the store-injected `secretRefs`
+  headers stripped at the cross-domain hop (the new host-match gate in the
+  guarded loop, §Cache / SSRF / redirect rules) — assert the auth header
+  does not reach the partner host. In (a) and (b) assert the auth header
+  does not reach the internal host; in (c) assert the literal `auth.headers`
+  (guide-level) may still forward while store-injected secrets do not.
 - **A real keyed guide + a real cookie-login guide** as production
   validation. The auth-injection code path is untested until a keyed guide
   exercises it; do not ship the store without a guide that uses it.
