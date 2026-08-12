@@ -105,6 +105,21 @@ This kills two whole classes of recurring mistakes before they exist:
   bundled recipes are inert, the only code that ever runs is code you
   explicitly placed in your own directory.
 
+### Why not just a skill?
+
+A skill is prose the agent re-interprets each turn; this plugin is a fixed
+executor it calls through. For a single clean endpoint you call
+occasionally, a few skill lines are the lazier answer. It earns its keep
+where re-derived curl goes wrong — **pagination to exhaustion** (cursor,
+nextLink, OAI-PMH tokens, Wikimedia continuation dicts walked in one call by
+reviewed code), **charset traps** (Latin-1 APIs serving bytes without a
+charset parameter — fixed once in the transport, not re-applied and
+forgotten), and **in-process TypeScript helpers** that transform params or
+responses directly (a skill can only instruct the agent to write and run
+that code). A skill is also always in context; the guide store loads on
+demand. A skill is pure text with no in-process eval, whereas a loaded
+`helper.ts` runs with the agent's privileges.
+
 ### Three tiers of code, separated by trust
 
 | Tier | Where it lives | Who writes it | Ships in tarball? | Trust |
