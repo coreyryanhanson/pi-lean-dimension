@@ -291,3 +291,78 @@ Key findings recorded for the next implementer:
   (`SW=Goethe`, `WOE=Goethe`) — unlike ZDB, the DNB main catalogue and GND
   authorities accept indexed CQL queries.
 - **No helper needed** — `helper.ts` / `helper.test.ts` untouched, per plan.
+
+---
+
+## Addendum — SRU 200-OK `<diagnostics>` envelope (Sprint 0.5 recheck, 2026-08-10)
+
+> Evidence for Sprint 3's C1 addendum (`api-hardening-and-proof-recipes.md`
+> Workstream C). Recipe-level, **no core change** — same family as GitHub's
+> `incomplete_results`.
+
+### Docs reconfirmation
+
+Refetched the canonical SRU docs page (retrieval date **2026-08-10**, HTTP
+200 via `web-fetch`):
+
+- `https://www.dnb.de/EN/Professionell/Metadatendienste/Datenbezug/SRU/sru_node.html`
+- The guide's `docs:` URL is still the same, and still **does document** the
+  200-OK error envelope, under "What happens if a parameter in the URL
+  request is incorrect or not supported?":
+
+  > The SRU interface delivers an error diagnosis in XML (diagnostic)
+  > depending on the standard.
+
+  followed by the `<diagnostics>`/`<diag:diagnostic>`…`</diagnostics>`
+  example (`<diag:uri>info:srw/diagnostic/1/8</diag:uri>` — "Unsupported
+  parameter"). So the 200-OK `<diagnostics>` shape is **documented**, not
+  just observable.
+
+### Live probe (confirms the swallow)
+
+An *unsupported-index* query against the ZDB catalogue — the exact
+`info:srw/diagnostic/1/16` path the guide's `searchZdb` `query` doc already
+warns about — returns **HTTP 200** with a `<diagnostics>` element and **no
+`<records>`** (probe 2026-08-10):
+
+```text
+GET /sru/zdb?version=1.1&operation=searchRetrieve&query=Titel%3DWasser&maximumRecords=2&recordSchema=oai_dc
+→ HTTP 200
+<searchRetrieveResponse …>
+  <version>1.1</version>
+  <diagnostics>
+    <diag:diagnostic …>
+      <diag:uri>info:srw/diagnostic/1/16</diag:uri>
+      <diag:details>Unsupported index</diag:details>
+      <diag:message>Titel</diag:message>
+    </diag:diagnostic>
+  </diagnostics>
+</searchRetrieveResponse>
+```
+
+With the current `itemsPath` (`searchRetrieveResponse.records.record`), this
+makes `records` resolve to `undefined`; `paginate`'s `else { break }` branch
+fires and the op returns `items: [], totalFetched: 0` — **indistinguishable
+from a genuine zero-results query**, so the diagnostic is silently
+swallowed.
+
+### Sprint 3 implications (C1)
+
+- Add a prose note to `guide.md` explaining the 200-OK `<diagnostics>`
+  envelope and that an error response can arrive as HTTP 200 with an empty
+  result set.
+- Add a live coverage assertion against a known diagnostic-triggering query
+  (an indexed query ZDB rejects, e.g. `query=Titel=Wasser`) that
+  documents the `totalFetched === 0` behavior — making the swallowed-error
+  case explicit rather than silent.
+- **Not** a helper transform: surfacing is a documentation + assertion
+  concern, per the design doc's "recipe-level, not framework" rule. (If a
+  future guide wants the diagnostic payload surfaced to the agent
+  front-and-center, that is a candidate for the parked post-response
+  `transform` mechanism — deferred, not built here.)
+
+### Scope check
+
+Recheck surfaced **no new documented read-only endpoint** the guide missed;
+no `guide.md` operation changes from this recheck beyond the C1 prose note
+(scheduled for Sprint 3).

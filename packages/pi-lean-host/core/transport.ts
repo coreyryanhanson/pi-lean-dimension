@@ -182,14 +182,25 @@ function parseMaxAge(headers: Record<string, string>): number | null {
 	return m ? parseInt(m[1]!, 10) * 1000 : null;
 }
 
-function waitForRetry(
+/**
+ * Compute the delay before a retry. Prefers Retry-After: delay-seconds;
+ * falls back to parsing an HTTP-date form. If the date is in the past
+ * (clock skew / already-expired) or absent, uses exponential backoff —
+ * never a negative or zero delay.
+ */
+export function waitForRetry(
 	headers: Record<string, string>,
 	attempt: number,
 ): number {
 	const raw = headers["retry-after"];
 	if (raw) {
 		const secs = parseInt(raw, 10);
-		if (!isNaN(secs) && secs > 0) return secs * 1000;
+		if (!Number.isNaN(secs) && secs > 0) return secs * 1000;
+		const dateMs = Date.parse(raw);
+		if (!Number.isNaN(dateMs)) {
+			const delta = dateMs - Date.now();
+			if (delta > 0) return delta;
+		}
 	}
 	// Exponential backoff: 1s, 2s, 4s, …
 	return Math.min(1000 * 2 ** attempt, 30_000);

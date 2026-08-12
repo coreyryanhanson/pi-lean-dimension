@@ -235,7 +235,10 @@ via `fast-xml-parser`:
 ```
 
 `itemsPath: searchRetrieveResponse.records.record` resolves against the XML-converted JSON. Pagination
-is SRU offset-limit via `startRecord` / `maximumRecords`.
+is SRU offset-limit via `startRecord` / `maximumRecords`. The parser strips
+element-name prefixes (`removeNSPrefix: true`), so the Dublin Core fields
+shown as `<dc:title>`/`<dc:creator>` in the raw XML above appear as `title`/`creator`
+(local names) in the parsed JSON — access them unprefixed.
 
 ### `oaiListRecords` / `oaiListIdentifiers` — OAI-PMH harvesting
 
@@ -269,16 +272,28 @@ harmless on strict servers.
   (`Titel=Test`, `dnb.ti=Wasser`) with SRU diagnostic
   `info:srw/diagnostic/1/16` ("Unsupported index"). Use a bare term
   (`query=Wasser`). Verified 2026-07-18.
+- **200-OK `<diagnostics>` envelope (verified live 2026-08-10):** SRU
+  errors arrive as **HTTP 200 with a `<diagnostics>` element and no
+  `<records>`** — *not* a non-2xx status. Because `itemsPath`
+  (`searchRetrieveResponse.records.record`) then resolves to `undefined`,
+  the search returns `items: [], totalFetched: 0` — **indistinguishable
+  from a genuine zero-results query**, so the diagnostic is silently
+  swallowed. An empty result set against these endpoints may mean a real
+  `no hits`, or an indexed/unsupported query the catalogue rejected. If a
+  search legitimately expected hits and returns empty, re-check the CQL
+  for an indexed term (→ the `1/16` diagnostic above) — the docs document
+  this envelope at "What happens if a parameter in the URL request is
+  incorrect or not supported?"
 - **Charset is UTF-8** (not non-UTF-8). The axis-B criterion is "XML **and/or**
   non-UTF-8"; DNB covers the XML half. The transport's charset-decoding path is
   still exercised because every response carries `Content-Type: text/xml;
   charset=UTF-8` that must be decoded before `fast-xml-parser` runs.
-- **Single-record edge:** when a page returns exactly one record,
-  `fast-xml-parser` yields `searchRetrieveResponse.records.record` as an
-  **object** rather than an array. The built-in `resolveJsonPath` then sees
-  a non-array and stops pagination. With `maximumRecords: 2` and a broad query (e.g. `Wasser` → 1915
-  hits) pages are full; the edge only bites with 1-result pages. Noted as a
-  `parseResponse` generalization target (array-normalization).
+- **Single-record edge (handled by the framework):** when a page returns
+  exactly one record, `fast-xml-parser` yields
+  `searchRetrieveResponse.records.record` as an **object** rather than an
+  array. `paginate` now normalizes a non-null, non-array `itemsPath` result
+  into a single-element array before the exhaustion check, so a lone record
+  pages correctly — no guide-level workaround needed.
 
 ## Terms
 

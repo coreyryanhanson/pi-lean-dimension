@@ -126,6 +126,8 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `portal-projection`, `render-result`, `response-spill`, `host-only-boundary`,
   `axis-units` (nextLink/XML/cursor/ETag via mocked transport; fixtures in
   `__tests__/fixtures/axis/`), `transform-{restget,paginate,render}`,
+  `transport` (A3 Retry-After HTTP-date / exponential-backoff parsing — no
+  recipe can reliably force a 429, so the unit test is the proof),
   `api-probe`, `ship-manifest` (tarball coverage + asserts `api-guides/` is
   excluded from the npm tarball).
 
@@ -154,4 +156,10 @@ Each guide dir ships its own co-located tests (`endpoint-coverage.test.ts`,
   — escape-valve policy (built-in vs local-helper classification, the 18-recipe
   spread, rejected candidates).
 - [`docs/design/api-hardening-and-proof-recipes.md`](docs/design/api-hardening-and-proof-recipes.md)
-  — hardening + proof-recipe work.
+  — hardening + proof-recipe work (three core fixes + four proof recipes).
+- [`docs/design/api-hardening-sprint-plan.md`](docs/design/api-hardening-sprint-plan.md)
+  — executable sprint breakdown for the hardening design doc (the how/when).
+- [`docs/design/api-stateful-sessions.md`](docs/design/api-stateful-sessions.md)
+  — transport-capability note for stateful/session APIs (core is stateless
+  per-request; the cookie-jar gap is contained and deferred until a recipe
+  forces it).

@@ -241,6 +241,9 @@ const xmlParser = new XMLParser({
 	textNodeName: "#text",
 	parseAttributeValue: true,
 	trimValues: true,
+	// A2: strip element-name prefixes (message:GenericData → GenericData) so
+	// itemsPath/totalCountPath use stable local names across XML providers.
+	removeNSPrefix: true,
 });
 
 /**
@@ -656,7 +659,13 @@ export async function paginate(
 		}
 
 		// Extract items from this page.
-		const pageItems = resolveJsonPath(data, pagCfg.itemsPath);
+		let pageItems = resolveJsonPath(data, pagCfg.itemsPath);
+		// A1: normalize a single XML record (or scalar) into an array so the
+		// declared list path always yields an array even with one element
+		// (e.g. arXiv max_results=1, PubMed retmax=1 box a single record).
+		if (pageItems != null && !Array.isArray(pageItems)) {
+			pageItems = [pageItems];
+		}
 		if (Array.isArray(pageItems)) {
 			if (pageItems.length === 0) break; // empty page → exhaustion
 			// Apply the post-response transform per item. A throwing transform
