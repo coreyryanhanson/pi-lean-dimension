@@ -14,7 +14,7 @@
 This doc supersedes:
 
 - **`api-secrets-roadmap.md`** — the secrets-store decision is now concrete
-  (env-var/prompt input → `0600` file store; §Secrets store). The roadmap's
+  (dialog / file-write input → `0600` file store; §Secrets store). The roadmap's
   "Secret Service primary, plaintext fallback" is retired in favor of an
   honest headless default; the output-channel exfiltration threat is
   promoted to the **dominant** threat and the at-rest threat demoted to
@@ -62,10 +62,21 @@ This doc supersedes:
 The design is additive to seams that already exist on purpose:
 
 - **Auth dispatch point.** `AuthKind = "none" | "static-key" | "oauth2"`
-  (`core/api-guide-types.ts`). `checkAuth()` realizes only `none`; the other
-  two throw "not supported." This slice realizes `static-key` and adds a
-  fourth kind, `cookie-login`. The seam makes the build additive, not a
-  retrofit.
+  (`core/api-guide-types.ts`). `checkAuth(auth)` (`core/helpers.ts:315`)
+  realizes only `none`; the other two throw "not supported." This slice
+  realizes `static-key` and adds a fourth kind, `cookie-login`. The seam
+  makes the build additive, not a retrofit.
+  **Contract change for `cookie-login` (named, not hand-waved):** today
+  `checkAuth` is `(auth) => void` and branches only on `kind`. For
+  `cookie-login`, a fetch with no live session in the jar must not reach
+  the network — so `checkAuth` gains the request's jar + domain and
+  verifies a session exists for `cookie-login` (throw a recoverable
+  "call api-login" error, which the footer also surfaces). New signature:
+  `checkAuth(auth, ctx)` where `ctx = { jar, domain }` (`domain` = request
+  URL hostname, §Cookie jar). `none`/`static-key` ignore `ctx`; only
+  `cookie-login` reads the jar. The throw is the single place that enforces
+  "no authenticated fetch without a session," so every `restGet`/`paginate`
+  caller is covered by construction — no per-call-site guard.
 - **`auth.headers` already merged into every fetch** (`helpers.ts`) — the
   **plaintext-in-guide** path for demo keys (`X-Api-Key: DEMO_KEY`). This
   stays as-is for literal values safe to commit. It is **not** the path for
@@ -75,11 +86,17 @@ The design is additive to seams that already exist on purpose:
   filenames. Auth-header-bearing responses are already excluded from cache
   (the `hasAuthHeaders` gate) because they are private to the caller. The
   cookie jar follows the same privacy rule.
-- **SSRF guard already load-bearing.** `guardRedirects` SSRF-checks each
-  redirect target for server-supplied URLs (`nextLink`), because a
-  malicious `nextUrl` could carry an auth header to an internal host.
-  Store-injected `Authorization` amplifies this; the guard must cover the
-  **merged** header set, not just `auth.headers`.
+- **SSRF guard already load-bearing, but only opted into for `nextLink`.**
+  `guardRedirects` SSRF-checks each redirect target for server-supplied
+  URLs (`nextLink`), because a malicious `nextUrl` could carry an auth
+  header to an internal host. The guard is a hostname check (`ssrfGuard`
+  inspects the redirect-target URL, not the request headers), so the
+  question that matters is "does this request guard its redirects?" — and
+  today only `paginate`'s `nextLink` branch opts in (`restGet` passes
+  `undefined`). Store-injected `Authorization` on a `restGet` that 302s
+  to an internal host would leak the header with no check. The fix is a
+  one-line change in `fetchUrl` (§Cache / SSRF / redirect rules), not a
+  header-set concern.
 - **Helper contract is header-blind.** The pre-call helper transforms
   params→params; the gated post-response `transform` sees the parsed body
   only. Neither can inspect response headers, so `Set-Cookie` parsing
@@ -231,20 +248,132 @@ the guide.**
 - **Parser/validator** enforces: literal-vs-reference is a **schema
   distinction** (a header in `auth.headers` and a key in `auth.secretRefs`
   are different fields), not a string-parsing convention. Easy to
-  document, validate, and surface in the footer.
+  document, validate, and surface in the footer. Concretely, `validateAuth`
+  (`core/parse-api-guide.ts:389`) gains these rules (all fail-closed with a
+  `fix:` hint):
+  - `auth.kind` must be one of `none | static-key | cookie-login` (extend
+    `KNOWN_AUTH_KINDS`; `oauth2` stays in the TS type but is **rejected at
+    parse time** as "not yet implemented," matching today's `checkAuth`
+    throw — the type seam and the parse set diverge on purpose).
+  - **Kind↔field consistency:** `secretRefs` / `secretQueryRefs` are
+    rejected when `kind: none` (a none guide has no secrets); the
+    `cookie-login` block is rejected when `kind` ≠ `cookie-login`; for
+    `kind: static-key` the `cookie-login` block is rejected; for
+    `kind: cookie-login` the `cookie-login` block is **required**.
+  - **`requires` ↔ referenced names:** every secret name appearing in
+    `secretRefs`, `secretQueryRefs`, or the `cookie-login` body-field map
+    must be declared in `requires` (catches a typo'd `apiKey`/`api_key`
+    mismatch at parse time, not at fetch time). `requires` names with no
+    referrer are allowed (documentation-only listing is harmless).
+  - `secretRefs` / `secretQueryRefs` are `Record<string, string>`
+    (headerName/paramName → secretName), validated the same way as
+    `auth.headers` today. Empty maps are allowed (= no injection).
+
+### URL redaction for `secretQueryRefs` (output-channel audit)
+
+Header secrets never touch the URL, so they never reach an output path.
+**Query-param secrets do** — the URL is surfaced to the agent in every
+result/error emit site (`formatRequestLine`, `details.request.url`,
+`renderResult`, `formatHelperError`, `PaginateResult.urls`), so an
+unscrubbed `?key=<real-value>` is a direct prompt-leak and contradicts
+the PRIMARY defense above. Redaction is therefore **mandatory** for
+`secretQueryRefs`, not optional.
+
+**Design — redact once at the capture point, never carry the real URL
+past the fetch layer.** The secret-bearing fetch uses the real URL;
+the URL stored in the result/error object is the redacted copy. Every
+emit site is covered by construction, with no per-site scrubbing:
+
+```ts
+function redactSecretParams(url: string, secretParamNames: Set<string>): string {
+  const u = new URL(url);
+  for (const k of [...u.searchParams.keys()]) {
+    if (secretParamNames.has(k)) u.searchParams.set(k, "***");
+  }
+  return u.toString();
+}
+```
+
+The set of secret param names is the keys of the guide's
+`auth.secretQueryRefs`. Lives next to `buildUrl` in `core/helpers.ts`;
+the redacted URL is what `result.url` / `result.urls` / `err.url`
+carry.
+
+**No conflict with the cache:** secret-bearing requests already skip
+caching (`hasAuthHeaders` → skip, extended to injected auth in §Cache /
+SSRF / redirect rules), so the redacted URL is never used as a cache
+key.
+
+**Two edge cases named, not hand-waved:**
+
+- **Scope is query params only.** Path-injected secrets
+  (`secretPathRefs`, a future field) have no clean param boundary and a
+  harder redaction story; this slice does not ship them. If a future
+  slice does, it brings its own redaction design — do not assume this
+  `redactSecretParams` covers it.
+- **Server-supplied `nextUrl` may itself echo the secret param.** The
+  redactor must run on `result.urls` entries (paginate) too, not just
+  the initial `buildUrl` output. Cheap; just don't forget it at the
+  `nextUrl` capture point.
+
+### `/api secrets <domain>` reuse — the registry + footer, not the redactor
+
+A `/api secrets <domain>` listing shows secret **names** (`apiKey`,
+`username`) and presence, never the value, so it does **not** call
+`redactSecretParams` — a shared "redaction module" would have one real
+consumer each, which is the wrong abstraction. What *is* shared:
+
+1. **The secret-name source of truth** — URL scrubbing needs the
+   `secretQueryRefs` keys for the guide; the listing needs the guide's
+   `requires` + the store's filenames. One registry, two consumers.
+2. **The auth-status helper** (§Login op & lifecycle) — the footer's
+   "credential present / absent" branches are the presence check a
+   `/api secrets` listing wants. `/api secrets <domain>` is the footer's
+   presence logic lifted into a standalone command. That is the genuine
+   reuse, and it is already in this design.
+
+### `/api` command surface — the `secrets` subcommand
+
+`/api secrets <domain>` is a **new subcommand** on the existing `/api`
+command (`core/api-toggle.ts` switch, today `on | off | learn | status |
+helpers | bare`). It is interactive capture (§Transcript-safe capture),
+not a toolset actuation, so:
+
+- **Focus-mode guard: not applied.** The guard refuses only the
+  actuating subcommands (`on`/`off`/`learn`) while `pi-tool-masking`
+  holds the line (`isFocusHolding()`, `api-toggle.ts:32`). `secrets` is a
+  peer of the already-unguarded `status`/`helpers`/bare branches — it
+does not write a `{enabled}` entry, so it cannot blur a sibling toggle's
+  focus.
+- **Help text + AGENTS.md.** Add `secrets` to the `/api` help block (the
+  `default:` branch's line list) and to the command list in
+  `packages/pi-lean-host/AGENTS.md` ("Registers the `/api` command with
+  `on|off|learn|status/helpers` subcommands" → add `secrets`).
+- **Headless no-op.** `ctx.hasUI` false → the subcommand prints the
+  direct-file-write instructions (§Secrets store) instead of prompting;
+  it must not crash or hang waiting on a dialog that will never come.
 
 ## Secrets store
 
-**Env-var/prompt input → `0600` file store, keyed by domain.**
+**Dialog / file-write input → `0600` file store, keyed by domain.** No
+env-var middleman — `PI_LEAN_HOST_KEY_<DOMAIN>` is dropped entirely.
 
-- **Entry.** The secret enters via an env var
-  (`PI_LEAN_HOST_KEY_<DOMAIN>`) or a `/api secrets <domain>` prompt.
-- **Persistence.** Persisted to
-  `~/.pi/agent/pi-lean-host/secrets/<domain>.json` at mode `0600`.
-- **Read.** `api-fetch` reads the file at fetch time, **never the env at
-  fetch time.** The env is an input channel only, not the store.
-- **Zero native deps.** No D-Bus, no Rust addon. The agent has no reason
-  to touch env at fetch time.
+- **Entry (interactive — TUI/RPC).** `/api secrets <domain>` captures the
+  value via `ctx.ui.input(title, placeholder)` (unmasked, single-line;
+  §Transcript-safe capture), writes it directly to the store, and returns
+  a metadata-only status line (`secret stored for <domain>`). Works in
+  TUI and RPC via the `extension_ui` request/response sub-protocol.
+- **Entry (headless — print/JSON/CI).** `ctx.hasUI` is false in
+  print/JSON mode, so the dialog is unavailable there. The deployment
+  writes the `0600` file directly before pi starts (a one-line
+  `install -m 600` + `cat >` step or a tiny CLI helper). No env involved.
+- **Persistence.** `~/.pi/agent/pi-lean-host/secrets/<domain>.json` at
+  mode `0600`. The file is the single store; both input channels write to
+  it.
+- **Read.** `api-fetch` reads the file at fetch time. The value never
+  enters the agent's context as a string (code-injects; §Threat model).
+- **Zero native deps.** No D-Bus, no Rust addon, no process-env surface
+  for the agent to `env | grep`.
 - **Swappable seam.** The store backend is an interface; an `@napi-rs/keyring`
   backend (the maintained `keytar` successor) is an additive upgrade later
   without a retrofit, following the same discipline as `AuthKind`. On
@@ -252,17 +381,62 @@ the guide.**
   daemon" and fall back to the file anyway, so the file is the honest
   default and at-rest strength is not the budget priority.
 
+### Transcript-safe capture via `ctx.ui` dialogs
+
+**Verified against pi source:** `ctx.ui` dialogs (`input`, `editor`,
+`custom`) are a **request/response sub-protocol**, not user messages. They
+never flow through the `input` event, `before_agent_start`, or become
+`UserMessage` entries. The session file stores `UserMessage` /
+`AssistantMessage` / `ToolResultMessage` / `BashExecutionMessage` / custom
+`appendEntry` records — dialog responses are not among them. The
+extension receives the value as a JS string and **decides whether it
+enters agent context.** `examples/extensions/question.ts` demonstrates
+the pattern: it captures `result.answer` via `ctx.ui.custom()`, then
+*chooses* to put it in the tool result `content`. For `/api secrets`, the
+command captures → writes to the `0600` file → returns only `secret
+stored for <domain>`; the value never touches a tool result, `pi.sendMessage()`,
+or `pi.sendUserMessage()`.
+
+**Three caveats:**
+
+1. **No masked/secret input mode.** `ctx.ui.input()` has no `secret: true`;
+   typed text is visible on screen in TUI. This is a shoulder-surf /
+   screen-recording risk, **not** a transcript risk — the value is
+   transcript-safe either way. Masking is additive later via a `custom()`
+   component if the shoulder-surf concern materializes. Read-only key
+   scoping (§Read-only & scopes) limits the blast radius of a shoulder-surfed
+   key, making unmasked input acceptable for this slice.
+2. **Headless modes can't prompt.** `ctx.hasUI` is false in print/JSON
+   mode → `ctx.ui.input()` is a no-op. This is why the headless path uses
+   direct file write, not a dialog.
+3. **RPC clients receive the raw value** in `extension_ui_response.value`.
+   The client could log it — that is the client's concern, outside pi's
+   transcript control.
+
 At-rest is largely moot on this surface; the budget goes to the
 output-channel audit.
 
 ## Cookie jar
 
-**Ephemeral, per-session, in-memory, keyed by domain.**
+**Ephemeral, per-session, in-memory, keyed by request URL hostname.**
 
 - The login POST runs once per session (triggered by the footer →
   `api-login`; §Login op & lifecycle). Cookies land in the jar and are
   attached as `Cookie` to subsequent `restGet`/`paginate` calls against
   the same domain.
+- **Jar key = the request URL's hostname** (e.g. `api.example.com`), not
+  the guide's routing `domains` field and not `apiHost`. Three values can
+  differ — `domains: [example.com]` routes, `apiHost: api.example.com`
+  is the execution root, and a redirect target may be a third host — so
+  the jar must key on the host the cookie was actually set for. `Set-Cookie`
+  with a `Domain=` attribute widens within the PSL; bare host cookies are
+  host-only. **Scope rule (this slice):** attach a cookie to a request
+  only when the jar key (set-by host) equals the request URL hostname
+  (strict host-match). eTLD+1 widening is deferred — strict host-match is
+  the smaller, safer default and covers the dominant "login on
+  `api.example.com`, reads on `api.example.com`" case. Cross-domain
+  stripping on redirects (§Cache / SSRF / redirect rules) falls out of
+  the same rule for free.
 - **Nothing persists.** Cookies vanish on shutdown. No at-rest concern
   this slice.
 - Matches the existing stateless-per-request philosophy with the smallest
@@ -290,7 +464,7 @@ duplicated):
 | No auth needed | (nothing) |
 | Auth needed + credential present + session valid | `auth: ok` |
 | Auth needed + credential present + no session (cookie-login) | prompt the agent to call `api-login` |
-| Auth needed + credential **absent** | nudge the user to provision via `/api secrets <domain>` or `PI_LEAN_HOST_KEY_<DOMAIN>` |
+| Auth needed + credential **absent** | nudge the user to provision via `/api secrets <domain>` (interactive) or by writing the `0600` file directly (headless) |
 
 The footer is **metadata, never the value.** It is safe under the
 output-channel audit. The absent-credential branch is worded to steer the
@@ -302,6 +476,15 @@ the full login response body.
 
 ### `api-login` tool (5th host tool)
 
+- **Toolset membership:** `api-login` joins `HOST_API_SPEC`
+  (`core/api-toggle.ts:46`, `names: Set([api-guide, api-fetch])` → add
+  `api-login`), **not** the learn spec. It is needed in the plain "on"
+  state (an authenticated fetch may require a login first); putting it in
+  `HOST_API_LEARN_SPEC` would leave it disabled exactly when an auth guide
+  needs it. `/api off` cascades it off via the spec's `requires:` chain,
+  same as today. The package tool count goes 4 → 5; update
+  `packages/pi-lean-host/AGENTS.md` ("Registers **4 tools**" → 5, tool
+  list) and the `api-login` registration in `tools/index.ts`.
 - **Params:** one required (`domain`) + optional guide selector for
   multi-recipe domains. Minimal schema — the heavy parts (login path,
   body, secret names) live in the guide's `auth.cookie-login` block, not
@@ -340,10 +523,34 @@ guide.
   `hasAuthHeaders` gate. Additive rule: `hasAuthHeaders || hasCookies →
   skip cache`. Any request carrying a `Cookie` (from the jar) or an
   injected `Authorization` (from `secretRefs`) skips the cache.
-- **Store-injected auth headers → covered by `guardRedirects`** on
-  `nextLink` + redirect targets. **Verification item:** confirm the guard
-  runs on the final **merged** header set (injected + literal), not just
-  `auth.headers`. Not a new mechanism.
+- **Auth-bearing requests → forced guarded redirects.** Today
+  `guardRedirects` is opt-in and only `paginate`'s `nextLink` branch sets
+  it; a `restGet` carrying a store-injected `Authorization` that 302s to
+  an internal host would follow the redirect with the header attached and
+  no SSRF check. The fix is one line in `fetchUrl`: force
+  `getWithGuardedRedirects` whenever `hasAuthHeaders` (already computed
+  for the cache gate) is true, in addition to the existing
+  `opts?.guardRedirects` opt-in:
+
+  ```ts
+  } = opts?.guardRedirects || hasAuthHeaders
+      ? await getWithGuardedRedirects(url, reqHeaders, startTime, timeout)
+      : await singleGet(url, reqHeaders, remaining, redirectAgent);
+  ```
+
+  `hasAuthHeaders` fires on any non-`accept` header, which covers literal
+  `auth.headers` *and* store-injected `secretRefs` in one test — the
+  "merged header set" concern is handled by construction (the flag is
+  source-agnostic). The guard itself inspects redirect-target hostnames,
+  not headers, so the old "confirm the guard runs on the merged header
+  set" framing is dropped: the real question was always whether guarding
+  is *enabled* for the request, and for `restGet` it wasn't. No behavior
+  change for public/keyless requests (`hasAuthHeaders` is false →
+  auto-follow path unchanged); only auth-bearing requests switch to the
+  manual guarded loop, and only an actual redirect incurs its cost.
+  Update the `guardRedirects` doc comment in `transport.ts` to note
+  auth-bearing requests are also forced into the guarded path (for
+  header-leak prevention, not initial-URL SSRF).
 - **Cookies on redirects → scoped by domain — stripped on cross-domain**,
   mirroring the auth-header cross-domain rule. Prevents a session cookie
   leaking to a cross-domain redirect target. (Implementation detail: eTLD+1
@@ -359,6 +566,12 @@ guide.
   used for real keys.** Must NOT be the keyed path. The `0600`-file store
   - `secretRefs`/`secretQueryRefs` are separate from guide content, and
   the parser/validator keeps literal-vs-reference a schema distinction.
+- **Query-param secrets leak via every URL emit path** (request line,
+  `details.request.url`, TUI render, error echo, paginate `urls`).
+  `secretQueryRefs` ships **only with** capture-point URL redaction
+  (§URL redaction); without it the field is a PRIMARY-defense violation.
+  Path-injected secrets are out of scope this slice precisely because
+  their redaction story is harder.
 - **Helper contract can't see headers → `Set-Cookie` parsing must be
   built-in** to the transport, not a local-helper quirk.
 - **Read-only scoping helps but doesn't stop private-data read or quota
@@ -367,8 +580,11 @@ guide.
   wording steers to out-of-band channels; cannot fully prevent.
 - **Footer must be metadata-only** (no credential value, no full login
   response body). Enforced by the shared auth-status helper.
-- **Store-injected `Authorization` on a `nextLink`/redirect path.**
-  Verify the SSRF guard covers the injected header, not just `auth.headers`.
+- **Store-injected `Authorization` following a `restGet` redirect.**
+  Today `guardRedirects` is `nextLink`-only, so an auth-bearing `restGet`
+  that 302s to an internal host would leak the header unguarded. Fixed by
+  forcing `getWithGuardedRedirects` when `hasAuthHeaders` in `fetchUrl`
+  (§Cache / SSRF / redirect rules) — a one-liner, not a header-set change.
 
 ## Validation / testing notes
 
@@ -377,21 +593,48 @@ Carried by the implementation, not separately designed here:
 - **Parser/validator tests** for the new auth fields: `auth.kind:
   cookie-login`, `auth.secretRefs`, `auth.secretQueryRefs`, `requires`,
   `auth.cookie-login`. Literal-vs-reference is a schema distinction.
+  Concretely assert the §Auth contract rules: kind↔field consistency
+  (`secretRefs` rejected on `kind: none`; `cookie-login` block required
+  on `kind: cookie-login`, rejected otherwise; `oauth2` rejected at parse
+  with the "not yet implemented" fix), and `requires` ↔ referenced-name
+  validation (a `secretRefs`/`secretQueryRefs`/`cookie-login` body-field
+  name not in `requires` is a parse error).
 - **Output-channel audit tests** — the security-critical path. Assert no
   result or error path echoes a secret value: a 401 body, a request-header
   echo, a debug log, and the login response body are all scrubbed. This is
   the work most likely to be skipped under deadline; ship it with the
   first keyed guide, not "later."
+- **URL redaction tests** (for `secretQueryRefs`) — assert the redacted
+  URL (`?key=***`) is what every emit site carries: `formatRequestLine`,
+  `details.request.url`, `renderResult`, `formatHelperError`, and
+  `PaginateResult.urls` — including a server-supplied `nextUrl` that
+  itself contains the secret param (the `nextUrl` capture point must
+  redact, not just `buildUrl`). Negative: a non-secret query param stays
+  intact.
 - **Cookie jar tests** — `Set-Cookie` capture, `Cookie` attach on
   subsequent calls, cross-domain stripping on redirects, non-cacheability
   of cookie-bearing responses.
 - **`api-login` tests** — store-injected credentials (never agent params),
   status-line output (never the response body), cookies land in the jar.
+- **`checkAuth` session-guard tests** — for `kind: cookie-login`, a fetch
+  with no live session in the jar throws the recoverable "call api-login"
+  error and never reaches the network; `none`/`static-key` ignore the jar
+  and pass through. Covers both `restGet` and `paginate` callers (one guard,
+  two callers).
+- **Cookie-jar scope tests** — `Set-Cookie` capture under the request URL
+  hostname key; `Cookie` attached only on strict host-match; a bare
+  host-only cookie is not sent to a sibling host (`api.example.com` ≠
+  `www.example.com`); cross-domain redirect strips the cookie (same rule).
 - **Footer tests** — all four states (none / auth-ok / call-api-login /
   nudge-provision), via the shared auth-status helper, covering both
-  `api-guide` and `api-fetch`.
-- **SSRF verification** — a malicious `nextUrl` carrying a store-injected
-  `Authorization` is blocked by `guardRedirects` on the merged header set.
+  `api-guide` and `api-fetch`. Include the `cookie-login` "no session yet"
+  branch (credential present, jar empty → prompt `api-login`).
+- **SSRF verification** — two cases: (a) a malicious `nextUrl` carrying
+  a store-injected `Authorization` is blocked by the `nextLink` guard
+  (existing path); (b) a `restGet` carrying an injected `Authorization`
+  that 302s to an internal host is blocked because `hasAuthHeaders` forces
+  the guarded redirect path (the new one-liner in `fetchUrl`). Assert the
+  auth header does not reach the internal host in either case.
 - **A real keyed guide + a real cookie-login guide** as production
   validation. The auth-injection code path is untested until a keyed guide
   exercises it; do not ship the store without a guide that uses it.
