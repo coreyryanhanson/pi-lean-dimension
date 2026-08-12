@@ -1,6 +1,6 @@
 {
 	"name": "pi-lean-host",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Pi extension. Declarative HTTP API client — fetch structured data from REST APIs with recipe-based guides, no browser needed. Host-only installs are valid, or co-install with pi-lean-portal for API guide surfacing alongside web navigation.",
 	"keywords": [
 		"pi-package",
