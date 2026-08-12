@@ -269,20 +269,37 @@ the guide.**
     (headerName/paramName → secretName), validated the same way as
     `auth.headers` today. Empty maps are allowed (= no injection).
 
-### URL redaction for `secretQueryRefs` (output-channel audit)
+### Output-channel audit for `secretQueryRefs`
 
-Header secrets never touch the URL, so they never reach an output path.
-**Query-param secrets do** — the URL is surfaced to the agent in every
-result/error emit site (`formatRequestLine`, `details.request.url`,
-`renderResult`, `formatHelperError`, `PaginateResult.urls`), so an
-unscrubbed `?key=<real-value>` is a direct prompt-leak and contradicts
-the PRIMARY defense above. Redaction is therefore **mandatory** for
-`secretQueryRefs`, not optional.
+Header secrets never touch the URL or the params map, so they never
+reach an output path. **Query-param secrets do**, through **two**
+parallel channels that must both be defended:
 
-**Design — redact once at the capture point, never carry the real URL
-past the fetch layer.** The secret-bearing fetch uses the real URL;
-the URL stored in the result/error object is the redacted copy. Every
-emit site is covered by construction, with no per-site scrubbing:
+1. **The URL** — surfaced in every result/error emit site
+   (`formatRequestLine`, `details.request.url`, `renderResult`,
+   `formatHelperError`, `PaginateResult.urls`). An unscrubbed
+   `?key=<real-value>` here is a direct prompt-leak.
+2. **The params map** — `restGet` returns `params: query` and `paginate`
+   returns `params: effectiveParams` (`core/helpers.ts`), and `api-fetch`
+   emits that map as `details.request.params` (`tools/api-fetch.ts`).
+   `AgentToolResult.details` is **not** injected into the model's context
+   (only `content` is), so this is not a *prompt*-leak — but `details` is
+   the documented channel for *session-file / log* persistence, which is
+   exactly the transcript surface the PRIMARY defense (§Threat model)
+   spends its capture design keeping the secret out of. A raw secret in
+   `details.request.params` on every authenticated fetch defeats that
+   protection on the first call.
+
+Redaction is therefore **mandatory** for `secretQueryRefs`, and the two
+channels need **two different defenses**, not one.
+
+**Design — two channels, two defenses.**
+
+*Channel 1 (URL): redact once at the capture point, never carry the
+real URL past the fetch layer.* The secret-bearing fetch uses the real
+URL; the URL stored in the result/error object is the redacted copy.
+Every URL emit site is covered by construction, with no per-site
+scrubbing:
 
 ```ts
 function redactSecretParams(url: string, secretParamNames: Set<string>): string {
@@ -299,6 +316,34 @@ The set of secret param names is the keys of the guide's
 the redacted URL is what `result.url` / `result.urls` / `err.url`
 carry.
 
+*Channel 2 (params): inject the secret **below** the returned params
+map, never into it.* This is the load-bearing rule and the place a
+naive implementation of "merge the secret into the params map before
+`buildUrl`" would leak. `buildQueryParams` produces the agent-derived
+query — that is what `result.params` carries and what `api-fetch` emits
+as `details.request.params`. The secret query param is injected
+**after** that, in one of two equivalent ways, and the map that gets
+returned is the pre-injection one:
+
+- **(a) inside `buildUrl`** — pass the secret map as a separate
+    argument and merge it there, so the returned `query`/`effectiveParams`
+    variable never holds the secret; or
+- **(b) into a secret-only map merged between `buildQueryParams` and
+    `fetchWithOpts`** but not assigned back to the returned variable.
+
+Either keeps `result.params` agent-derived by construction — no
+redaction function needed for this channel, because the secret is
+never in the map to begin with. **Do not** merge the secret into the
+`query`/`effectiveParams` variable and then try to scrub it on the way
+out; that is the fragile path and it leaves the secret in `details`.
+
+This is a **return-contract change** to `restGet`/`paginate`: the
+`params` field becomes "agent-supplied params" (not "effective request
+params including secrets"). Today only `api-fetch.ts` reads `result.params`
+(into `details.request.params`, lines 242 and 292), so the blast radius
+is those two call sites, and the new semantics is the one the threat
+model already requires.
+
 **No conflict with the cache:** secret-bearing requests already skip
 caching (`hasAuthHeaders` → skip, extended to injected auth in §Cache /
 SSRF / redirect rules), so the redacted URL is never used as a cache
@@ -313,8 +358,10 @@ key.
   `redactSecretParams` covers it.
 - **Server-supplied `nextUrl` may itself echo the secret param.** The
   redactor must run on `result.urls` entries (paginate) too, not just
-  the initial `buildUrl` output. Cheap; just don't forget it at the
-  `nextUrl` capture point.
+  the initial `buildUrl` output. Cleanest: redact at the `urls.push(url)`
+  site (`helpers.ts`) so the real URL never enters the array, matching
+  the "never carry the real URL past the fetch layer" principle rather
+  than scrubbing the array after the fact.
 
 ### `/api secrets <domain>` reuse — the registry + footer, not the redactor
 
@@ -341,7 +388,7 @@ not a toolset actuation, so:
 
 - **Focus-mode guard: not applied.** The guard refuses only the
   actuating subcommands (`on`/`off`/`learn`) while `pi-tool-masking`
-  holds the line (`isFocusHolding()`, `api-toggle.ts:32`). `secrets` is a
+  holds the line (`isFocusHolding()`, `api-toggle.ts:39`). `secrets` is a
   peer of the already-unguarded `status`/`helpers`/bare branches — it
 does not write a `{enabled}` entry, so it cannot blur a sibling toggle's
   focus.
@@ -439,6 +486,15 @@ output-channel audit.
   the same rule for free.
 - **Nothing persists.** Cookies vanish on shutdown. No at-rest concern
   this slice.
+- **`Path`/`Secure`/`HttpOnly` attributes are intentionally ignored this
+  slice.** Strict host-match (above) ignores `Path`, which is more
+  permissive — a cookie set on `/login` is sent to `/api/...` on the same
+  host, which is the login-then-read case this slice exists to serve.
+  `HttpOnly` is irrelevant (no browser / no JS engine reading the jar).
+  `Secure` is less relevant than the transport's scheme control — and
+  `fetchUrl` already governs scheme. These omissions are deliberate for v1;
+  if a recipe forces `Path` scoping or `Secure`-only attachment, that recipe
+  brings the narrowing design.
 - Matches the existing stateless-per-request philosophy with the smallest
   change (~an additive jar in `transport.ts` plus `Set-Cookie` capture).
 - **Cost:** re-login each session. Acceptable; the login is one explicit
@@ -492,6 +548,12 @@ the full login response body.
 - **Behavior:** resolve the guide's `auth.cookie-login` block → read the
   required secrets from the `0600` store (code-injects; never agent-supplied
   params) → POST the login → capture `Set-Cookie` into the ephemeral jar.
+  **Non-`cookie-login` guides error out:** calling `api-login` for a guide
+  whose `auth.kind` is `none` or `static-key` returns a clear "this guide does
+  not use cookie-login auth" error (the `auth.cookie-login` block is absent or
+  kind-disallowed by the parser, §Auth contract). No silent no-op — the
+  caller learns login does not apply rather than assuming a session was
+  established.
 - **Output:** a **status line, not the response body.** Login responses
   can echo credentials or session tokens; surfacing the body would violate
   the output-channel audit. The output is e.g. `logged in to <domain>` or
@@ -511,11 +573,25 @@ when to re-login from the error signature.
 
 ### Session resume
 
-The explicit tool solves the resume/expiry case the framework-auto path
-would have left awkward: a resumed session that lost the in-memory jar can
-re-establish by calling `api-login`, without re-invoking the guide. The
-agent learns the recovery action from the footer, not from re-reading the
-guide.
+The explicit tool solves the expiry case the framework-auto path would
+have left awkward: a session whose cookies have expired (or whose jar was
+never populated) can re-establish by calling `api-login`, without
+re-invoking the guide. The agent learns the recovery action from the
+footer, not from re-reading the guide.
+
+Note that the jar is a module-level map in `transport.ts`, and pi reuses
+the cached extension factory across `/resume` (re-invoking the entry
+function with the same module-level state, as the existing
+`resetToggleModuleState()` / `resetDisabledHelpers()` resets in `index.ts`
+attest). So an in-memory jar that is not explicitly cleared **survives
+`/resume`** — a resumed session keeps its cookies for the lifetime of the
+process, and `api-login` is only needed when they have actually expired
+(or were never obtained). This is behavior, not a guarantee: we do not
+reset the jar on resume (no `resetCookieJar()` alongside the existing
+resets), and we do not persist it, so a fresh process or an explicit
+`/api off`→`on` cycle starts empty. Cookies tend to expire, so the
+recovery path is the one that matters in practice; the persistence is
+just the honest description of where the jar lives.
 
 ## Cache / SSRF / redirect rules
 
@@ -566,12 +642,17 @@ guide.
   used for real keys.** Must NOT be the keyed path. The `0600`-file store
   - `secretRefs`/`secretQueryRefs` are separate from guide content, and
   the parser/validator keeps literal-vs-reference a schema distinction.
-- **Query-param secrets leak via every URL emit path** (request line,
-  `details.request.url`, TUI render, error echo, paginate `urls`).
-  `secretQueryRefs` ships **only with** capture-point URL redaction
-  (§URL redaction); without it the field is a PRIMARY-defense violation.
-  Path-injected secrets are out of scope this slice precisely because
-  their redaction story is harder.
+- **Query-param secrets leak via two output paths, not one.** The URL
+  (request line, `details.request.url`, TUI render, error echo, paginate
+  `urls`) AND the params map (`result.params` → `details.request.params` →
+  session file). `secretQueryRefs` ships **only with** both defenses from
+  §Output-channel audit — URL redaction at the capture point **and**
+  secret injection below the returned params map. The params channel is
+  the one a naive "merge the secret into the params map before `buildUrl`"
+  implementation leaks to the session file on every authenticated fetch;
+  without both, the field is a PRIMARY-defense violation. Path-injected
+  secrets are out of scope this slice precisely because their redaction
+  story is harder.
 - **Helper contract can't see headers → `Set-Cookie` parsing must be
   built-in** to the transport, not a local-helper quirk.
 - **Read-only scoping helps but doesn't stop private-data read or quota
@@ -604,13 +685,23 @@ Carried by the implementation, not separately designed here:
   echo, a debug log, and the login response body are all scrubbed. This is
   the work most likely to be skipped under deadline; ship it with the
   first keyed guide, not "later."
-- **URL redaction tests** (for `secretQueryRefs`) — assert the redacted
-  URL (`?key=***`) is what every emit site carries: `formatRequestLine`,
-  `details.request.url`, `renderResult`, `formatHelperError`, and
-  `PaginateResult.urls` — including a server-supplied `nextUrl` that
-  itself contains the secret param (the `nextUrl` capture point must
-  redact, not just `buildUrl`). Negative: a non-secret query param stays
-  intact.
+- **Query-param secret output-channel tests** (for `secretQueryRefs`) —
+  the two channels in §Output-channel audit, both security-critical:
+  - *URL channel:* assert the redacted URL (`?key=***`) is what every
+    emit site carries: `formatRequestLine`, `details.request.url`,
+    `renderResult`, `formatHelperError`, and `PaginateResult.urls` —
+    including a server-supplied `nextUrl` that itself contains the secret
+    param (the `nextUrl` capture point must redact, not just `buildUrl`).
+    Negative: a non-secret query param stays intact.
+  - *Params channel (the one a naive impl misses):* assert
+    `result.params` from `restGet` and `paginate`, and therefore
+    `details.request.params` in `api-fetch`'s result, **never contains the
+    secret value** for a guide with `secretQueryRefs`. The secret key must
+    be absent from the returned map entirely (not present-but-redacted) —
+    the defense is injection-below-the-returned-map, not post-hoc
+    scrubbing. This test is the proof that the return-contract change to
+    `restGet`/`paginate` actually holds; without it the leak is silent
+    (no type error, no runtime error) and ships to the session file.
 - **Cookie jar tests** — `Set-Cookie` capture, `Cookie` attach on
   subsequent calls, cross-domain stripping on redirects, non-cacheability
   of cookie-bearing responses.
