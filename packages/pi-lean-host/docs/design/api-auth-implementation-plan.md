@@ -84,12 +84,20 @@ blocker that unblocks all keyed-guide development.
 - `<domain> <name>`: manual entry, escape valve for the chicken-and-egg
   case; name validated against `requires ∪ optional` when a guide is
   registered, free-form otherwise.
+- `--delete` modifier: `/api secrets <domain> <name> --delete` drops one
+  secret (no confirm — a typed name is deliberate); `/api secrets
+  <domain> --delete` drops every secret for the domain (interactive
+  `ctx.ui.custom()` confirm when `ctx.hasUI`). Removing the last entry
+  unlinks the now-empty file so the domain exits `listDomains()` / the
+  no-arg list. `--delete` is reserved and cannot be a secret name.
 - All entry via `ctx.ui.input()`; returns metadata-only status line, the
   value never touches a tool result / `pi.sendMessage` / session file.
-- Headless no-op: `ctx.hasUI` false → print direct-file-write
-  instructions, do not prompt or hang.
+- Headless: `ctx.hasUI` false → entry prints direct-file-write
+  instructions (no prompt); **deletion executes directly, no confirm**
+  (same never-hang contract). Neither path prompts or hangs.
 - Focus-mode guard: **not applied** (peer of `status`/`helpers`/bare, not
-  an actuation). Add to help block + `AGENTS.md` command list.
+  an actuation — entry nor deletion writes a `{enabled}` entry). Add to
+  help block + `AGENTS.md` command list.
 
 **Schema / parser / validator (`core/api-guide-types.ts`, `core/parse-api-guide.ts`)**
 
@@ -159,7 +167,11 @@ blocker that unblocks all keyed-guide development.
 ### Tests (acceptance proof)
 
 - Store: read/write/resolve, `0600` perms, lazy-mkdir-on-write-only,
-  names-only listing, missing file/dir handling.
+  names-only listing, missing file/dir handling; `--delete` single-name
+  (no confirm, prunes + unlinks last-entry file), whole-domain (confirm
+  when interactive, direct when headless), missing-name/domain fail-closed
+  no-mutation, empty-domain no-op-not-error, status/confirm never echoes
+  the value.
 - Parser/validator: every `validateAuth` rule above; `oauth2` rejected at
   parse; `static-key` realized.
 - Output-channel audit (header): no secret value in a 401 body slice, no
@@ -189,8 +201,13 @@ blocker that unblocks all keyed-guide development.
    `details.headers` (test 2 passes).
 5. The three SSRF cases (a/b/c) pass.
 6. Headless invocation of `/api secrets` prints file-write instructions
-   and does not hang.
-7. No existing `kind: none` guide breaks (`all-guides-parse` — widened
+   for entry and executes deletions directly (no confirm) for `--delete`,
+   and does not hang either way.
+7. `/api secrets <domain> --delete` (interactive) confirms before
+   removing all secrets for the domain; `/api secrets <domain> <name>
+   --delete` removes one without confirm; both unlink the file when it
+   empties and never echo the value.
+8. No existing `kind: none` guide breaks (`all-guides-parse` — widened
    to accept `static-key` guides — + full portal structural suite green).
 
 ### Out of scope (this sprint)
@@ -274,6 +291,42 @@ without pasting a key into the transcript.
   auth-bearing probes — otherwise a 401 body echoing the auth header
   value leaks the secret into agent context.
 
+**`api-probe` secret-name discovery (learn-only — the bootstrap gap)**
+
+- Problem: during authoring in `/api learn`, the agent has no
+  programmatic way to discover which secret names are already provisioned
+  for a domain. `/api secrets <domain>` is a **user-typed slash command**
+  (pi runs extension commands before agent processing; the agent never
+  invokes them), and the four registered tools surface no stored names.
+  This is a real chicken-and-egg gap: a user pre-stashes a key via the
+  manual-entry escape valve (`/api secrets <domain> <name>`) under a name
+  of their choosing, the agent invents its own `secretName` while
+  authoring, probes with the store miss-note, and never learns the right
+  name is sitting in the store.
+- Fix (one tool, two modes): add an optional `listSecrets: true` param
+  to `api-probe`, gated to learn mode (`learnToolsEnabled`). When set, the
+  probe short-circuits the fetch and returns the provisioned secret names
+  for `domain` (defaulting to `apiHost`'s hostname) via `listNames(domain)`
+  — names only, never values, reusing the store's existing names-only
+  contract. No new tool, no new plumbing: `api-probe` already takes the
+  `domain` param (this sprint) and already does store reads for its auth
+  injection.
+- Return shape: a `secrets` block on `ProbeResult` —
+  `{ domain, provisioned: string[], declared?: string[] }`. `declared` is
+  populated when a guide is already registered for the domain (from
+  `auth.requires ∪ auth.optional`), letting the agent see
+  provisioned-vs-declared gaps in one call. Absent a registered guide,
+  `declared` is omitted and only `provisioned` is returned. The fetch
+  fields (`url`/`status`/`shape`/`draft`/`raw`) are empty in list mode.
+- Learn gate is hard: `/api on` (non-learn) calls with `listSecrets:
+  true` are refused with a one-line "learn mode only" note. In normal use
+  the agent has no business enumerating the secrets store — discovery is
+  an authoring act, provisioning is a human act.
+- Output-channel reuse: list mode emits no URL, no params, no body — so
+  this sprint's `redactSecretParams` / inject-below-params / probe-local
+  body-scrub channels do not apply. The only emit is the names array,
+  which is names-only by the store contract.
+
 **Production validation: Etherscan V2 guide (A2)**
 
 - New `api-guides/api.etherscan.io/` recipe: query param `apikey=`,
@@ -302,6 +355,13 @@ without pasting a key into the transcript.
   redacted; **auth-bearing probe's `r.raw` 401-body slice contains no
   secret value** (probe-local body scrub, not the bypassed
   `checkResponseStatus` path).
+- `api-probe` list mode: `listSecrets: true` in learn mode returns
+  `provisioned` names for the domain (names only, no values); with a
+  registered guide, `declared` is populated and a provisioned-vs-declared
+  gap is visible in one call; the fetch fields are empty.
+- `api-probe` list-mode learn gate: `listSecrets: true` under `/api on`
+  (non-learn) is refused with the "learn mode only" note and does not
+  touch the store.
 - Error-path URL redaction: a `HelperError` from `restGet`/`paginate`
   carries the redacted URL on `err.url` (proves the redact-before-
   `checkResponseStatus` ordering), so `formatHelperError` renders
@@ -324,7 +384,13 @@ without pasting a key into the transcript.
    with the key injected from the store; on a store miss it reports the
    miss and fetches unauthenticated rather than failing or emitting the
    stale `auth:none` hint.
-6. Full structural suite + `all-guides-parse` green.
+6. In `/api learn`, `api-probe` with `listSecrets: true` surfaces the
+   provisioned secret names for a domain (and the declared names when a
+   guide is registered) without fetching — closing the bootstrap gap
+   where a user pre-stashed a key under a name the agent didn't pick.
+   Under `/api on` the same call is refused with the "learn mode only"
+   note.
+7. Full structural suite + `all-guides-parse` green.
 
 ### Out of scope (this sprint)
 
@@ -428,6 +494,13 @@ endpoint-coverage tests are `HOST_INTEGRATION=1`-gated and co-located
 under `api-guides/<domain>/` (the `boe.es` pattern). The output-channel
 audit tests use mocked transport (the existing `axis-units` /
 `transport` fixture pattern), not live endpoints.
+
+**The bootstrap gap is closed by `api-probe`, not by a new tool.** The
+agent's only programmatic path to the secrets store is `api-probe`'s
+learn-gated list mode — `/api secrets` is user-typed only (pi runs
+extension commands before agent processing; the agent never invokes
+them). Do not add a second secrets-discovery tool; one tool, two modes
+is the lazy shape.
 
 **Doc updates to land with the work:** `packages/pi-lean-host/AGENTS.md`
 command list (`/api secrets`), the `auth` schema fields, and the

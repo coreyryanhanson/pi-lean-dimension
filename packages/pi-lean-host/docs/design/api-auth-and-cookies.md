@@ -470,13 +470,16 @@ consumer each, which is the wrong abstraction. What *is* shared:
 
 ### `/api` command surface — the `secrets` subcommand
 
-`/api secrets [<domain> [<name>]]` is a **new subcommand** on the
-existing `/api` command (`core/api-toggle.ts` switch, today `on | off |
-learn | status | helpers | bare`). Three forms: no-arg lists
+`/api secrets [<domain> [<name>]] [--delete]` is a **new subcommand** on
+the existing `/api` command (`core/api-toggle.ts` switch, today `on | off |
+learn | status | helpers | bare`). Four forms: no-arg lists
 (§`/api secrets` no-arg list), `<domain>` is assisted entry or the
 per-domain detail view (§Secrets store), `<domain> <name>` is manual
-entry. It is interactive capture (§Transcript-safe capture), not a
-toolset actuation, so:
+entry, and `--delete` is destructive removal (detailed in the Removal
+bullet below). `--delete` is reserved and cannot be used as a secret
+name. It is
+interactive capture (§Transcript-safe capture), not a toolset actuation,
+so:
 
 - **Focus-mode guard: not applied.** The guard refuses only the
   actuating subcommands (`on`/`off`/`learn`) while `pi-tool-masking`
@@ -488,9 +491,10 @@ does not write a `{enabled}` entry, so it cannot blur a sibling toggle's
   `default:` branch's line list) and to the command list in
   `packages/pi-lean-host/AGENTS.md` ("Registers the `/api` command with
   `on|off|learn|status/helpers` subcommands" → add `secrets`).
-- **Headless no-op.** `ctx.hasUI` false → the subcommand prints the
-  direct-file-write instructions (§Secrets store) instead of prompting;
-  it must not crash or hang waiting on a dialog that will never come.
+- **Headless.** `ctx.hasUI` false → entry prints the direct-file-write
+  instructions (§Secrets store) instead of prompting; deletion executes
+  directly with no confirm (§Secrets store, Removal). Neither path prompts
+  or hangs waiting on a dialog that will never come.
 
 ## Secrets store
 
@@ -509,7 +513,9 @@ env-var middleman — `PI_LEAN_HOST_KEY_<DOMAIN>` is dropped entirely.
     `apiSecret (not set)` — the auth-status helper's presence check,
     reused); the user picks one, then `ctx.ui.input()` for the value.
     Re-selecting a `set` name overwrites — the rotate-key flow, no
-    separate command. **One secret per invocation** (no fill-all loop):
+    separate rotation command (removal is the one separate lifecycle
+    modifier; see `--delete` below). **One secret per invocation** (no
+    fill-all loop):
     a loop risks annoying a user who has already set some keys midway,
     and explicit re-invocation is cheap.
   - **Manual — `/api secrets <domain> <name>`.** The escape valve for the
@@ -524,6 +530,28 @@ env-var middleman — `PI_LEAN_HOST_KEY_<DOMAIN>` is dropped entirely.
   print/JSON mode, so the dialog is unavailable there. The deployment
   writes the `0600` file directly before pi starts (a one-line
   `install -m 600` + `cat >` step or a tiny CLI helper). No env involved.
+- **Removal — `--delete`.** Two shapes, both removing the `0600` file's
+  last entry and pruning the now-empty file (so the domain no longer
+  appears in `listDomains()` / the no-arg list):
+  - **Single — `/api secrets <domain> <name> --delete`.** Drops one
+    secret. The name is explicit, so this runs **without confirmation**
+    (mirroring the manual-entry asymmetry: a typed name is deliberate).
+    Missing name or missing domain → fail-closed error message, no
+    mutation. The value is never echoed in the confirmation/status line
+    (the same metadata-only contract as entry).
+  - **Whole-domain — `/api secrets <domain> --delete`.** Drops every
+    secret for the domain. This is broad enough to warrant an
+    **interactive confirm** (`ctx.ui.custom()` yes/no) when `ctx.hasUI`
+    is true; an empty or already-absent domain is a no-op with a status
+    line, not an error.
+  **Headless deletion** (`ctx.hasUI` false): **no confirmation, no hang**
+  — both shapes execute directly. This matches the entry contract (the
+  headless path never prompts) and the deployment reality (headless
+  stores are typically written and torn down by the deployment script,
+  not by a human at a confirm dialog). A scripted teardown that wants a
+  guard simply checks `listNames` before calling `--delete`.
+  Like entry, `--delete` is a peer of `status`/`helpers`/bare, so the
+  focus-mode guard does not apply (it writes no `{enabled}` entry).
 - **Persistence.** `~/.pi/agent/pi-lean-host/secrets/<domain>.json` at
   mode `0600`. The file is the single store; both input channels write to
   it. **Schema: a flat JSON object keyed by secret name → value**, e.g.
@@ -531,6 +559,9 @@ env-var middleman — `PI_LEAN_HOST_KEY_<DOMAIN>` is dropped entirely.
   the guide's `auth.secretRefs`/`auth.secretQueryRefs` ref maps, not by
   header/param name. A domain may hold several named secrets (injected
   into different headers/params); one file per domain holds them all.
+  **Pruning:** when `--delete` removes a domain's last entry, the now-empty
+  file is unlinked so the domain disappears from `listDomains()` / the
+  no-arg list — empty domain files are never left behind.
 - **Read.** `api-fetch` and `api-probe` (§api-probe — store-backed auth
   for the authoring loop) read the file at fetch/probe time. The value
   never enters the agent's context as a string (code-injects; §Threat
@@ -613,6 +644,7 @@ file selection: an optional `domain` parameter (defaults to the
 authoring and consumption after authoring share one store entry.
 `domain` is **agent-visible**: it is added to `api-probe`'s `Type.Object`
 parameter schema (today the probe takes only `apiHost` + `path` + `accept`
+
 - `tryPrefixes`), so the agent can override it when the API host's
 hostname is not the key under which the secret was provisioned (e.g.
 probing `api.github.com` against a `github.com` store entry).
@@ -683,6 +715,56 @@ a server-reflected secret, but that is the shared server-echo risk
 / redirect rules does not apply — the probe never caches. Redirect
 forcing (`hasAuth`) does apply and should be set when `auth` is
 non-empty, for the same SSRF reason as `api-fetch`.
+
+**Secret-name discovery — the bootstrap gap (learn-only list mode).**
+There is a second, separate gap in the authoring loop that store-backed
+auth does not close: the agent's chicken-and-egg problem when a user
+pre-provisions a key. `/api secrets <domain> <name>` (the manual-entry
+escape valve, §`/api` command surface) lets a user stash a key under a
+name of their choosing before any guide exists. The agent authoring the
+guide invents its own `secretName` (say `apiKey`), writes the inline
+`auth.secretRefs` ref map, probes — and on a store miss gets the miss-note
+from the path above. But the miss-note names the secret the agent asked
+for, not the one sitting in the store. The agent has **no programmatic
+way** to learn that `coingecko-key` is already provisioned, because the
+only names-listing surface (`/api secrets`) is a user-typed slash
+command: pi runs extension commands before agent processing, so the
+agent never invokes `/api secrets` — it can only call the four
+registered tools, none of which surface stored names.
+
+The fix is one tool, two modes — not a new tool. `api-probe` gains an
+optional `listSecrets: true` parameter, **gated to learn mode**
+(`learnToolsEnabled`). When set, the probe short-circuits the fetch and
+returns the provisioned secret names for `domain` (defaulting to the
+`apiHost` hostname) via the store's existing `listNames(domain)` — names
+only, never values, reusing the names-only contract the store already
+enforces. No new tool, no new plumbing: `api-probe` already takes the
+`domain` parameter (this slice) and already does store reads for its
+auth injection; list mode is a second mode on the same instrument.
+
+The return carries a `secrets` block on `ProbeResult`:
+`{ domain, provisioned: string[], declared?: string[] }`. `declared` is
+populated when a guide is already registered for the domain (from
+`auth.requires ∪ auth.optional`), so the agent sees provisioned-vs-
+declared gaps in one call — the same gap view `/api secrets <domain>`
+offers the human, now reachable by the authoring agent. Absent a
+registered guide, `declared` is omitted and only `provisioned` is
+returned (the common pre-guide case). The fetch fields
+(`url`/`status`/`shape`/`draft`/`raw`) are empty in list mode.
+
+The learn gate is **hard**, not advisory. `/api on` (non-learn) calls
+with `listSecrets: true` are refused with a one-line "learn mode only"
+note and do not touch the store. In normal use the agent has no business
+enumerating the secrets store: discovery is an authoring act,
+provisioning is a human act, and the split is the same one that gates
+`api-learn` and `api-probe` themselves to learn mode.
+
+List mode emits no URL, no params, no body — so the two output-channel
+defenses for `secretQueryRefs` (§Output-channel audit) and the
+probe-local 401-body scrub do not apply. The only emit is the names
+array, which is names-only by the store contract; there is no value to
+leak. This is why list mode is safe to expose to the agent at all, and
+why it does not need its own audit beyond the names-only invariant.
 
 ## Auth status footer (shared auth-status helper)
 
@@ -906,6 +988,16 @@ Carried by the implementation, not separately designed here:
   parse error), and the `secretQueryRefs` ↔
   operation `params` collision rule (a secret param name also in an
   op's `params` map is a parse error).
+- **Store lifecycle tests** — read/write/resolve, `0600` perms,
+  lazy-mkdir-on-write-only, names-only listing, missing file/dir handling;
+  and `--delete` removal: single-name delete (no confirm) prunes the
+  entry and unlinks the now-empty file so the domain exits
+  `listDomains()`; whole-domain delete (interactive confirm when
+  `ctx.hasUI`, direct execution when headless) removes the file; missing
+  name/domain on single-delete fails closed with no mutation; an empty
+  domain on whole-domain delete is a no-op status line, not an error;
+  and the delete status/confirm line never echoes the value (same
+  metadata-only contract as entry).
 - **Output-channel audit tests** — the security-critical path. Assert no
   result or error path echoes a secret value: a 401 body, a request-header
   echo, a debug log, and a **response-header
@@ -972,6 +1064,15 @@ Carried by the implementation, not separately designed here:
 - **A real keyed guide** as production validation. The auth-injection code
   path is untested until a keyed guide exercises it; do not ship the store
   without a guide that uses it.
+- **`api-probe` secret-name discovery (list mode)** — the bootstrap-gap
+  closure. Assert `listSecrets: true` in learn mode returns the
+  `provisioned` names for the domain (names only, no value ever appears);
+  with a registered guide, `declared` is populated and a
+  provisioned-vs-declared gap is visible in one call; absent a registered
+  guide, only `provisioned` is returned and the fetch fields are empty.
+  Assert the learn gate: `listSecrets: true` under `/api on` (non-learn)
+  is refused with the "learn mode only" note and does not read the store.
+  This is structural (no network) — list mode short-circuits the fetch.
 
 ## Deferred items (explicit)
 
