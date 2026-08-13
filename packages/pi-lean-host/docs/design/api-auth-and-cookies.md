@@ -288,6 +288,25 @@ the guide.**
     `secretQueryRefs`-only; the agent never sees it as a settable param.
     (Path-injected secrets, when shipped, get the same rule against
     path-template fields.)
+  - **`passthrough` ops are not banned by this rule — the defense is
+    runtime, in `buildQueryParams`.** The static `params` collision
+    check above only inspects the declared `params` map, but an op with
+    `passthrough: true` (`core/api-guide-types.ts`, forwarded in
+    `core/helpers.ts` `buildQueryParams`) accepts *any* caller-supplied
+    key not in that map onto the query string. A parse-time blanket ban
+    (`passthrough` ⊥ `secretQueryRefs`) would block the legitimate
+    combination — an open param surface *and* a secret query param on
+    the same op (CKAN, OAI-PMH) — for a problem that is a one-line
+    runtime guard. So `passthrough` + `secretQueryRefs` is **allowed**;
+    the guarantee is enforced in the passthrough branch of
+    `buildQueryParams`, which skips `secretQueryRefs` keys (code-injected,
+    not agent-settable) exactly as it already skips path params and
+    declared `params`. The agent's value for a secret name is silently
+    dropped *before* the returned map exists; the Channel 2 injection
+    fills it afterward. `restGet` and `paginate` both route through
+    `buildQueryParams`, so both branches are covered by construction —
+    no per-call-site defense. (See §Output-channel audit for
+    `secretQueryRefs`, Channel 2.)
   - `secretRefs` / `secretQueryRefs` are `Record<string, string>`
     (headerName/paramName → secretName), validated the same way as
     `auth.headers` today. Empty maps are allowed (= no injection).
@@ -335,6 +354,10 @@ scrubbing:
 function redactSecretParams(url: string, secretParamNames: Set<string>): string {
   const u = new URL(url);
   for (const k of [...u.searchParams.keys()]) {
+    // `set` replaces *all* values for `k`, so a multi-value `?k=a&k=b`
+    // param is fully redacted on the first enumeration of `k`; the
+    // second enumeration is a no-op. URLSearchParams has no per-value
+    // replace, and secret params are single-value by convention.
     if (secretParamNames.has(k)) u.searchParams.set(k, "***");
   }
   return u.toString();
@@ -353,7 +376,12 @@ naive implementation of "merge the secret into the params map before
 query — that is what `result.params` carries and what `api-fetch` emits
 as `details.request.params`. The secret query param is injected
 **after** that, in one of two equivalent ways, and the map that gets
-returned is the pre-injection one:
+returned is the pre-injection one. The same layer also closes the
+`passthrough` hole: the passthrough branch of `buildQueryParams` skips
+`secretQueryRefs` keys (code-injected, not agent-settable), so an agent
+that supplies a secret param name on a `passthrough` op has its value
+silently dropped before it can reach the query string or race the
+injection — see §Auth contract, `passthrough` ops.
 
 - **(a) inside `buildUrl`** — pass the secret map as a separate
     argument and merge it there, so the returned `query`/`effectiveParams`
@@ -400,7 +428,11 @@ header-only `hasAuthHeaders`.
 `/api secrets` (no argument) walks the store dir
 (`~/.pi/agent/pi-lean-host/secrets/*.json`) and lists every file that has
 at least one entry, with the stored secret **names** nested under each
-domain:
+domain. If the store dir does not exist yet (fresh install, nothing
+provisioned), the no-arg list prints `(no secrets stored)` and creates
+the directory lazily on the next *write* — the list itself never
+mkdirs, so a read-only `$HOME` or a dry-run `/api secrets` invocation
+never has side effects:
 
 ```text
 archive.org:
@@ -579,6 +611,51 @@ file selection: an optional `domain` parameter (defaults to the
 `apiHost` hostname) names the `<domain>.json` file — the same file
 `api-fetch` reads once the guide is written, so provisioning during
 authoring and consumption after authoring share one store entry.
+`domain` is **agent-visible**: it is added to `api-probe`'s `Type.Object`
+parameter schema (today the probe takes only `apiHost` + `path` + `accept`
+- `tryPrefixes`), so the agent can override it when the API host's
+hostname is not the key under which the secret was provisioned (e.g.
+probing `api.github.com` against a `github.com` store entry).
+
+**Store-miss path — report the miss, do not fail closed.** The inline
+`auth` block carries no `requires`/`optional` metadata (those are
+guide-level, and the guide does not exist yet), so the probe has no
+schema field that says what to do when a named secret is absent from
+the store. Three ways a miss happens: the `<domain>.json` file does
+not exist (author has not run `/api secrets <domain>` yet), the file
+exists but the secret-name key is wrong (`github_token` vs `token` —
+a typo the guide parser's `requires ∪ optional` consistency check
+would have caught, but the probe has no such check), or the `domain`
+resolved to a different file than where the secret was provisioned
+(e.g. probed `api.github.com` but provisioned under `github.com`).
+
+The probe does **not** fail closed on a miss (contrast `api-fetch`'s
+`auth.requires` absent → error before the request, §Auth contract):
+`api-probe` is a human-in-the-loop authoring tool, not a production
+fetch path, and the author is right there to read a clear note and
+re-provision — partial data mistaken for complete is not the failure
+mode it is for `api-fetch`. Instead the probe **fetches anyway with
+the missing header/param omitted** and reports the miss in the note.
+This requires distinguishing two cases in `fetchOne`'s status-note
+branch (`tools/api-probe.ts:222`, today a single `401 || 403` arm
+that always appends `(guide is auth:none)`):
+
+- **No `auth` block passed** → keep the existing wording: `401 —
+  requires authentication? (guide is auth:none)`. The probe genuinely
+  attempted no auth; the hint is accurate.
+- **`auth` block passed but a named secret did not resolve** → new
+  wording naming the miss: `401 — auth requested but secret
+  "<secretName>" not found in store for domain "<domain>"`. The
+  stale `(guide is auth:none)` text **must not** fire here — it is
+  now false (auth *was* attempted) and sends the agent toward the
+  anti-pattern this whole design exists to kill: pasting the key into
+  the probe's `params` (a transcript-exposed leak) or concluding the
+  endpoint is broken.
+
+The non-4xx miss is covered by the same `auth`-block presence check:
+a 200 with a missing secret is still a successful shape probe, but the
+note should record `auth: partial — secret "<name>" not in store` so
+the author notices before copying the ref map into `guide.md`.
 
 **The inline refs are the guide's auth draft.** The authoring loop is:
 probe with inline `auth.secretRefs`/`auth.secretQueryRefs` → confirm
@@ -710,8 +787,8 @@ fully prevent it. The footer must never include the credential value.
   case (the guard blocks loopback/RFC1918/metadata redirect targets),
   but `getWithGuardedRedirects` today forwards `reqHeaders` — including a
   store-injected `Authorization` — to **every** redirect hop
-  (`transport.ts:104-127`, `singleGet` called per hop with the original
-  header set). A 302 from `api.example.com` to a **public** partner host
+  (`transport.ts:259`, `singleGet` called per hop at `transport.ts:273`
+  with the original header set). A 302 from `api.example.com` to a **public** partner host
   (`api.partner.com`) would carry the auth header to the partner domain
   with no check: the SSRF guard passes it (public host), but the header
   has leaked cross-domain. The fix is a **host-match gate inside the
@@ -723,17 +800,22 @@ fully prevent it. The footer must never include the credential value.
   store-injected secrets are caller-scoped and must not follow a
   cross-domain redirect.
 
-  **Plumbing (the under-specified part):** `getWithGuardedRedirects`
-  receives all headers as one merged `reqHeaders` map (`transport.ts:104-127`,
-  `singleGet` called per hop with the original set) — it cannot, on its
-  own, tell a store-injected `secretRefs` header from a literal
-  `auth.headers` entry. The laziest plumbing that preserves the "literal
-  stays, injected goes" rule: `helpers.ts` passes a
-  `secretHeaderNames: Set<string>` alongside `reqHeaders` (populated from
-  the keys of the `secretRefs` map it just resolved from the store), and
-  the cross-domain hop strips `secretHeaderNames ∪ {"authorization"}`.
-  This is one extra set threaded through `fetchWithOpts` — same shape as
-  the `hasQuerySecret` boolean above, no new transport-layer type.
+**Plumbing (the under-specified part):** `getWithGuardedRedirects`
+(`transport.ts:259`) receives all headers as one merged `reqHeaders` map
+and calls `singleGet` per hop with that original set (`transport.ts:273`) —
+it cannot, on its own, tell a store-injected `secretRefs` header from a
+literal `auth.headers` entry. The laziest plumbing that preserves the
+"literal stays, injected goes" rule: `helpers.ts` passes a
+`secretHeaderNames: Set<string>` alongside `reqHeaders` (populated from
+the keys of the `secretRefs` map it just resolved from the store), and
+the cross-domain hop strips `secretHeaderNames ∪ {"authorization"}`.
+The threading is a new optional field on `FetchOptions`
+(`secretHeaderNames?: Set<string>`, alongside the existing `headers` /
+`guardRedirects` fields in `transport.ts`) rather than a new positional
+parameter on `fetchWithOpts` — `fetchUrl` already takes `opts?:
+FetchOptions`, so this adds a field, not a signature change. The
+`hasQuerySecret` boolean above is the same shape (`opts.hasQuerySecret?:
+boolean`) — two new `FetchOptions` fields, no new transport-layer type.
   `Authorization` is always stripped on cross-domain hops regardless of
   source (standard browser behavior), so a guide that sets a literal
   `Authorization` header and expects it to survive a cross-domain redirect
@@ -749,7 +831,7 @@ fully prevent it. The footer must never include the credential value.
 - **Accidental key leak via 401 body / error echo / debug log → flows to
   inference server.** PRIMARY. The output-channel audit must catch every
   path. The concrete code path to audit is `checkResponseStatus`
-  (`core/helpers.ts:369`): on a non-2xx it does `result.body.slice(0, 500)`
+  (`core/helpers.ts:361`; the `body.slice(0, 500)` is at line 369): on a non-2xx it does `result.body.slice(0, 500)`
   and embeds the slice in a `HelperError` message, which flows through
   `formatHelperError` (`tools/api-fetch.ts`) into the agent's tool-result
   `content` — the prompt channel. A 401 body that echoes the auth header
@@ -829,7 +911,7 @@ Carried by the implementation, not separately designed here:
   echo, a debug log, and a **response-header
   echo in `details.headers`** (`tools/api-fetch.ts:243`, restGet branch
   only) are all scrubbed. The 401-body case has a named code path:
-  `checkResponseStatus` (`core/helpers.ts:369`) does
+  `checkResponseStatus` (`core/helpers.ts:361`; slice at `:369`) does
   `result.body.slice(0, 500)` → `HelperError.message` →
   `formatHelperError` → agent tool-result `content`; assert the sliced
   body is scrubbed (or dropped) for auth-bearing requests so a 401 body
