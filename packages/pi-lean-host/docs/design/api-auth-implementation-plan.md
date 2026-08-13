@@ -101,6 +101,13 @@ blocker that unblocks all keyed-guide development.
   parse with "not yet implemented"); referenced-name consistency (every
   `secretRefs` name in `requires ∪ optional`; a name in **both** is an
   error); `oauth2` type seam stays, unrealized.
+- **Widen `__tests__/all-guides-parse.test.ts`** (currently asserts
+  `auth.kind === "none"` for every discovered guide). The first
+  `static-key` guide (CoinGecko) will break that assertion, so loosen it
+  to accept `kind ∈ {none, static-key}` (and, for auth-bearing guides,
+  assert the `secretRefs`/`requires`/`optional` shape instead of the
+  `none` invariant). Must land in this sprint alongside the CoinGecko
+  recipe, not as a follow-up.
 
 **Injection (`core/helpers.ts`, `tools/api-fetch.ts`)**
 
@@ -165,8 +172,8 @@ blocker that unblocks all keyed-guide development.
   → store-injected headers stripped, literal `auth.headers` may forward.
 - Footer: five states via the shared helper on both `api-guide` and
   `api-fetch`.
-- CoinGecko: parses cleanly (`all-guides-parse`); endpoint coverage under
-  `HOST_INTEGRATION=1`.
+- CoinGecko: parses cleanly (`all-guides-parse`, after the test widening
+  above); endpoint coverage under `HOST_INTEGRATION=1`.
 
 ### Acceptance criteria
 
@@ -183,8 +190,8 @@ blocker that unblocks all keyed-guide development.
 5. The three SSRF cases (a/b/c) pass.
 6. Headless invocation of `/api secrets` prints file-write instructions
    and does not hang.
-7. No existing `kind: none` guide breaks (`all-guides-parse` + full
-   portal structural suite green).
+7. No existing `kind: none` guide breaks (`all-guides-parse` — widened
+   to accept `static-key` guides — + full portal structural suite green).
 
 ### Out of scope (this sprint)
 
@@ -220,6 +227,12 @@ without pasting a key into the transcript.
   Covers every emit site: `formatRequestLine`, `details.request.url`,
   `renderResult`, `formatHelperError`, `PaginateResult.urls` — including
   server-supplied `nextUrl` (redact at the `urls.push` site).
+  **Redact *before* the error path, not only in the return value.**
+  `restGet`/`paginate` pass the raw URL into `checkResponseStatus`
+  (`core/helpers.ts:382`, `:630`), where it is stored on `HelperError.url`
+  and later rendered by `formatHelperError` → `formatRequestLine`. Compute
+  the redacted URL upstream of the `checkResponseStatus` call so the
+  secret-bearing URL never reaches the error object.
 - *Channel 2 (params):* inject the secret **below** the returned params
   map, never into it. Return-contract change: `restGet`/`paginate`
   `params` becomes "agent-supplied params." `api-fetch` emits
@@ -253,6 +266,13 @@ without pasting a key into the transcript.
   inject-below-params, at the probe's `fetchUrl` call site. Set
   `hasAuth`/force guarded redirects when `auth` non-empty. Probe already
   passes `fresh: true` (no cache concern).
+- **Body-scrub for auth-bearing probes.** `api-probe.ts:211` slices
+  `res.body.slice(0, 800)` into `r.raw` and emits it directly; the probe
+  has its own 401/403 branch at `:218` and **bypasses `checkResponseStatus`**,
+  so sprint 1's 401-body scrub does not cover it. Add a probe-local scrub
+  of known secret values from `r.raw` (or fail-closed body drop) for
+  auth-bearing probes — otherwise a 401 body echoing the auth header
+  value leaks the secret into agent context.
 
 **Production validation: Etherscan V2 guide (A2)**
 
@@ -279,7 +299,13 @@ without pasting a key into the transcript.
   `passthrough` + `secretQueryRefs` parses.
 - `api-probe`: inline `auth` injects from store; miss reported in note,
   not failed closed; stale `auth:none` text does not fire on a miss; URL
-  redacted.
+  redacted; **auth-bearing probe's `r.raw` 401-body slice contains no
+  secret value** (probe-local body scrub, not the bypassed
+  `checkResponseStatus` path).
+- Error-path URL redaction: a `HelperError` from `restGet`/`paginate`
+  carries the redacted URL on `err.url` (proves the redact-before-
+  `checkResponseStatus` ordering), so `formatHelperError` renders
+  `?key=***`, never the raw value.
 - Etherscan: parses cleanly; endpoint coverage under `HOST_INTEGRATION=1`.
 
 ### Acceptance criteria
