@@ -25,8 +25,14 @@ This doc supersedes:
 - **`api-stateful-sessions.md`** — **not superseded on the cookie rung.**
   Its rung 3 (additive cookie jar / login-POST) was initially in scope but
   is **deferred** by research-plan R5 (no real non-TOS-violating candidate;
-  §Auth status footer). This doc realizes static-key retrieval only and
-  leaves the cookie gap open.
+  §Auth status footer). Its rung 1 (opaque-token server-side session) is
+  **carried forward as supported today** — the server holds result-set
+  state, the client carries an opaque token as a query param across calls;
+  tokens are just params, so the stateless transport already supports it
+  with no core change and no auth-store involvement (the tokens are
+  public, not secrets). This doc realizes static-key retrieval, names the
+  opaque-token pattern as in-scope (§Goals & scope), and leaves the cookie
+  gap open.
 
 ## Goals & scope
 
@@ -35,6 +41,20 @@ This doc supersedes:
 - **Static-key retrieval** — keyed read APIs that authenticate via a header
   or query-param secret (e.g. `X-Api-Key`, `Authorization: Bearer`, `?key=`).
   Real credentials live in a store, never in the guide.
+- **Opaque-token server-side sessions (read-only)** — APIs where the server
+  holds result-set state and the client carries an opaque token as a query
+  param across calls (e.g. NCBI E-utilities History server: `esearch` with
+  `usehistory=y` returns `WebEnv`/`query_key`, then `esummary`/`efetch`
+  pass them back). **Already supported by the stateless transport — tokens
+  are just params**, no core change, no auth-store involvement (the tokens
+  are public, not secrets). A guide documents the two-step flow. Named
+  in-scope here so guide authors do not exclude it as "mutating": the
+  `usehistory` read flow uploads a result set to the server's History
+  server but retrieves records read-only — it is information retrieval
+  via server-side state, not a write/mutation of the underlying database.
+  (The separate `epost` op, which uploads an arbitrary UID set, *is* a
+  mutation and stays excluded.) See
+  [`api-stateful-sessions.md`](./api-stateful-sessions.md) rung 1.
 
 ### Deferred (named, not hand-waved)
 
@@ -659,9 +679,11 @@ Carried by the implementation, not separately designed here:
 - [`api-secrets-roadmap.md`](./api-secrets-roadmap.md) — superseded on
   storage choice and `scopes`; carried forward on output-channel audit and
   SSRF verification.
-- [`api-stateful-sessions.md`](./api-stateful-sessions.md) — **the cookie
-  rung is deferred (R5), not superseded** (§Auth status footer); this doc
-  leaves the cookie gap open and does not claim to close it.
+- [`api-stateful-sessions.md`](./api-stateful-sessions.md) — rung 1
+  (opaque-token server-side session) **carried forward as supported today**
+  (§Goals & scope; no core change — tokens are just params); **the cookie
+  rung (3) is deferred (R5), not superseded** (§Auth status footer); this
+  doc leaves the cookie gap open and does not claim to close it.
 - [`api-helper-escape-valve.md`](./api-helper-escape-valve.md) §5 —
   authentication / header injection (`auth.headers` seam; real keyed auth
   was out of scope; this doc brings it in scope).
