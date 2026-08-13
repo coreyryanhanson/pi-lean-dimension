@@ -207,7 +207,7 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 	pi.registerCommand("api", {
 		description:
 			"Enable/disable API tools. " +
-			"Usage: /api on | off | learn | status | helpers [domain] | secrets [domain [name]]",
+			"Usage: /api on | off | learn | status | helpers [domain] | secrets [domain [name] | --help]",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const trimmed = args.trim();
 			const parts = trimmed.split(/\s+/);

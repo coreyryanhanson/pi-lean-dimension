@@ -23,14 +23,17 @@ import {
 	mkdirSync,
 	readFileSync,
 	readdirSync,
+	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { assertSafeDomain } from "./guide-store.js";
 
-/** A secret store: read/write one name, list domain/name indexes. */
+/** A secret store: read/write/delete one name, list domain/name indexes. */
 export interface SecretStore {
 	read(domain: string, name: string): string | null;
 	write(domain: string, name: string, value: string): void;
+	delete(domain: string, name: string): void;
+	deleteDomain(domain: string): void;
 	listDomains(): string[];
 	listNames(domain: string): string[];
 }
@@ -85,6 +88,29 @@ export function createFileStore(dir: string): SecretStore {
 				// best-effort; file was already written
 			}
 		},
+		delete(domain, name) {
+			const p = domainPath(domain); // also asserts domain safety
+			assertSecretName(name);
+			if (!existsSync(p)) return;
+			const file = readFile(domain);
+			if (!Object.hasOwn(file, name)) return;
+			delete file[name];
+			if (Object.keys(file).length === 0) {
+				// Prune the empty file so the domain drops out of listDomains.
+				rmSync(p, { force: true });
+			} else {
+				writeFileSync(p, JSON.stringify(file, null, 2) + "\n", { mode: 0o600 });
+				try {
+					chmodSync(p, 0o600);
+				} catch {
+					// best-effort; file was already written
+				}
+			}
+		},
+		deleteDomain(domain) {
+			const p = domainPath(domain); // also asserts domain safety
+			if (existsSync(p)) rmSync(p, { force: true });
+		},
 		listDomains() {
 			if (!existsSync(dir)) return [];
 			return readdirSync(dir)
@@ -129,6 +155,12 @@ export function readSecret(domain: string, name: string): string | null {
 }
 export function writeSecret(domain: string, name: string, value: string): void {
 	_store.write(domain, name, value);
+}
+export function deleteSecret(domain: string, name: string): void {
+	_store.delete(domain, name);
+}
+export function deleteDomain(domain: string): void {
+	_store.deleteDomain(domain);
 }
 export function listDomains(): string[] {
 	return _store.listDomains();

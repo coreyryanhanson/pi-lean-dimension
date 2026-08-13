@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleSecretsSubcommand } from "../core/secrets-command.js";
 import {
+	listDomains,
 	listNames,
 	readSecret,
 	writeSecret,
@@ -31,6 +32,7 @@ function mockCtx(overrides: Record<string, unknown> = {}): any {
 		hasUI: true,
 		ui: {
 			input: vi.fn(async () => undefined),
+			confirm: vi.fn(async () => true),
 			notify: vi.fn(),
 		},
 		...overrides,
@@ -43,15 +45,49 @@ function notified(ctx: any): string {
 }
 
 describe("/api secrets — list", () => {
-	it("reports (no secrets stored) with file-write instructions when empty", async () => {
+	it("reports (no secrets stored) with a --help hint when empty (instructions moved to --help)", async () => {
 		const ctx = mockCtx();
 		await handleSecretsSubcommand("", ctx);
 		const text = notified(ctx);
 		expect(text).toContain("(no secrets stored)");
+		expect(text).toContain("--help");
+		// The full instructions block no longer clutters the bare list.
+		expect(text).not.toContain("/<domain>.json");
+	});
+
+	it("lists domains + names only, a single --help hint line, never values", async () => {
+		writeSecret("api.coingecko.com", "apiKey", "super-secret-value");
+		writeSecret("api.coingecko.com", "other", "another-secret");
+
+		const ctx = mockCtx();
+		await handleSecretsSubcommand("", ctx);
+		const text = notified(ctx);
+		expect(text).toContain("api.coingecko.com");
+		expect(text).toContain("apiKey");
+		expect(text).not.toContain("super-secret-value");
+		expect(text).not.toContain("another-secret");
+		expect(text).toContain("--help");
+	});
+});
+
+describe("/api secrets --help", () => {
+	it("prints usage + full file-write instructions", async () => {
+		const ctx = mockCtx();
+		await handleSecretsSubcommand("--help", ctx);
+		const text = notified(ctx);
+		expect(text).toContain("Usage: /api secrets");
 		expect(text).toContain("/<domain>.json");
 	});
 
-	it("lists domains + names only, never values", async () => {
+	it("accepts the bare 'help' alias", async () => {
+		const ctx = mockCtx();
+		await handleSecretsSubcommand("help", ctx);
+		expect(notified(ctx)).toContain("Usage: /api secrets");
+	});
+});
+
+describe("/api secrets <domain> — assisted entry", () => {
+	it("shows the detail view then prompts name + value", async () => {
 		writeSecret("api.coingecko.com", "apiKey", "super-secret-value");
 		writeSecret("api.coingecko.com", "other", "another-secret");
 
@@ -127,5 +163,98 @@ describe("/api secrets <domain> — assisted entry", () => {
 		const text = notified(ctx);
 		expect(text).toContain("k");
 		expect(text).not.toContain("secret-42");
+	});
+});
+
+describe("/api secrets <domain> <name> --delete", () => {
+	it("deletes a single secret without confirmation; value never resurfaces", async () => {
+		writeSecret("d.example", "k", "secret-42");
+
+		const ctx = mockCtx();
+		await handleSecretsSubcommand("d.example k --delete", ctx);
+
+		expect(ctx.ui.confirm).not.toHaveBeenCalled();
+		expect(readSecret("d.example", "k")).toBeNull();
+		const text = notified(ctx);
+		expect(text).toContain("Deleted secret 'k'");
+		expect(text).not.toContain("secret-42");
+	});
+
+	it("reports a missing name without deleting anything", async () => {
+		writeSecret("d.example", "keep", "1");
+
+		const ctx = mockCtx();
+		await handleSecretsSubcommand("d.example nope --delete", ctx);
+		expect(readSecret("d.example", "keep")).toBe("1");
+		expect(notified(ctx)).toContain("No secret 'nope'");
+	});
+
+	it("prunes the domain file after deleting the last secret", async () => {
+		writeSecret("d.example", "k", "1");
+		await handleSecretsSubcommand("d.example k --delete", mockCtx());
+		expect(listDomains()).toEqual([]);
+	});
+
+	it("headless works without prompting or hanging", async () => {
+		writeSecret("d.example", "k", "1");
+		const ctx = mockCtx({ hasUI: false });
+		await handleSecretsSubcommand("d.example k --delete", ctx);
+		expect(ctx.ui.input).not.toHaveBeenCalled();
+		expect(ctx.ui.confirm).not.toHaveBeenCalled();
+		expect(readSecret("d.example", "k")).toBeNull();
+	});
+});
+
+describe("/api secrets <domain> --delete", () => {
+	it("confirms, then deletes all secrets for a domain", async () => {
+		writeSecret("d.example", "a", "1");
+		writeSecret("d.example", "b", "2");
+
+		const ctx = mockCtx();
+		await handleSecretsSubcommand("d.example --delete", ctx);
+
+		expect(ctx.ui.confirm).toHaveBeenCalledTimes(1);
+		expect(readSecret("d.example", "a")).toBeNull();
+		expect(readSecret("d.example", "b")).toBeNull();
+		expect(notified(ctx)).toContain("Deleted all secrets for 'd.example'.");
+	});
+
+	it("aborts (nothing deleted) when the user declines the confirm", async () => {
+		writeSecret("d.example", "a", "1");
+		const ctx = mockCtx({
+			ui: { confirm: vi.fn(async () => false), notify: vi.fn() },
+		});
+
+		await handleSecretsSubcommand("d.example --delete", ctx);
+		expect(readSecret("d.example", "a")).toBe("1");
+		expect(notified(ctx)).toContain("Cancelled");
+	});
+
+	it("headless deletes all without prompting or hanging", async () => {
+		writeSecret("d.example", "a", "1");
+		const ctx = mockCtx({ hasUI: false });
+		await handleSecretsSubcommand("d.example --delete", ctx);
+		expect(ctx.ui.confirm).not.toHaveBeenCalled();
+		expect(readSecret("d.example", "a")).toBeNull();
+	});
+
+	it("reports when a domain has no secrets", async () => {
+		const ctx = mockCtx();
+		await handleSecretsSubcommand("empty.example --delete", ctx);
+		expect(notified(ctx)).toContain("No secrets stored");
+	});
+});
+
+describe("/api secrets --delete misuse", () => {
+	it("bare --delete without a domain is a usage warning", async () => {
+		const ctx = mockCtx();
+		await handleSecretsSubcommand("--delete", ctx);
+		expect(notified(ctx)).toContain("Usage");
+	});
+
+	it("--help wins over --delete", async () => {
+		const ctx = mockCtx();
+		await handleSecretsSubcommand("--delete --help", ctx);
+		expect(notified(ctx)).toContain("Usage: /api secrets");
 	});
 });

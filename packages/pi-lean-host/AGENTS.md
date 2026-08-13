@@ -21,10 +21,14 @@
 - Registers the **`/api`** command with `on|off|learn|status/helpers|secrets`
   subcommands — an independent peer toggle that composes freely with
   portal's `/web` (additive-on / filter-off semantics).
-  `/api secrets [domain [name]]` lists/provisions the per-domain secrets
-  store (`core/secrets-store.ts`, `~/.pi/agent/pi-lean-host/secrets/<domain>.json`,
-  0600, lazy-mkdir-on-write-only). Names only, never values; headless
-  invocation prints direct-file-write instructions. Peer of `status`/`helpers`/
+  `/api secrets [domain [name]]` lists/provisions/deletes the per-domain
+  secrets store (`core/secrets-store.ts`,
+  `~/.pi/agent/pi-lean-host/secrets/<domain>.json`, 0600,
+  lazy-mkdir-on-write-only). Names only, never values; headless
+  invocation prints direct-file-write instructions; `--help` shows full
+  usage + storage format (the bare list shows a one-line hint instead).
+  `--delete` removes all secrets for a `<domain>` (interactive confirm) or
+  a single `<domain> <name>` (no confirm). Peer of `status`/`helpers`/
   bare `/api` — the focus-mode guard does not apply.
 - Manages the **`api` status bar glyph**, shown as `● api` when `/api` is on
   (colored by learn state) and `○ api` when off.
@@ -120,7 +124,7 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   (built-in executor helpers), `local-helpers.ts` (user helper loader),
   `helpers-command.ts` (`/api helpers`), `secrets-store.ts` (per-domain
   secrets store — swappable `SecretStore` interface, 0600 file backend,
-  lazy-mkdir-on-write-only), `secrets-command.ts` (`/api secrets`),
+  lazy-mkdir-on-write-only, single-key + whole-domain delete), `secrets-command.ts` (`/api secrets`),
   `transport.ts` (shared fetch
   pipeline: UA, charset, 429-retry, ETag cache — the sanctioned way to reach
   even WAF'd hosts), `path-template.ts`, `ssrf-guard.ts`, `response-spill.ts`,

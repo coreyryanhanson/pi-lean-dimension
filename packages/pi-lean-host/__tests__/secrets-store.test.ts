@@ -17,6 +17,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	createFileStore,
+	deleteDomain,
+	deleteSecret,
 	listDomains,
 	listNames,
 	readSecret,
@@ -114,6 +116,49 @@ describe("secrets store — file backend", () => {
 	it("rejects malformed secret names", () => {
 		expect(() => writeSecret("d", "", "v")).toThrow(/secret name/i);
 		expect(() => writeSecret("d", "a/b", "v")).toThrow(/secret name/i);
+	});
+
+	describe("delete", () => {
+		it("deleteSecret removes a single key, keeps the rest", () => {
+			writeSecret("d", "a", "1");
+			writeSecret("d", "b", "2");
+			deleteSecret("d", "a");
+			expect(readSecret("d", "a")).toBeNull();
+			expect(readSecret("d", "b")).toBe("2");
+			expect(listNames("d")).toEqual(["b"]);
+		});
+
+		it("deleteSecret prunes the file when it empties the domain", () => {
+			writeSecret("d", "a", "1");
+			deleteSecret("d", "a");
+			expect(existsSync(join(dir, "d.json"))).toBe(false);
+			expect(listDomains()).toEqual([]);
+		});
+
+		it("deleteSecret on a missing name / missing file is a no-op", () => {
+			writeSecret("d", "a", "1");
+			expect(() => deleteSecret("d", "nope")).not.toThrow();
+			expect(() => deleteSecret("missing.example", "a")).not.toThrow();
+			expect(listDomains()).toEqual(["d"]);
+		});
+
+		it("deleteSecret rejects malformed names", () => {
+			expect(() => deleteSecret("d", "a/b")).toThrow(/secret name/i);
+		});
+
+		it("deleteDomain removes the whole domain", () => {
+			writeSecret("d", "a", "1");
+			writeSecret("d", "b", "2");
+			deleteDomain("d");
+			expect(readSecret("d", "a")).toBeNull();
+			expect(readSecret("d", "b")).toBeNull();
+			expect(listDomains()).toEqual([]);
+			expect(existsSync(join(dir, "d.json"))).toBe(false);
+		});
+
+		it("deleteDomain on a missing domain is a no-op", () => {
+			expect(() => deleteDomain("missing.example")).not.toThrow();
+		});
 	});
 });
 
