@@ -29,6 +29,7 @@ import {
 } from "pi-tool-masking";
 import type { ToolsetSpec } from "pi-tool-masking";
 import { handleHelpersSubcommand } from "./helpers-command.js";
+import { handleSecretsSubcommand } from "./secrets-command.js";
 import { loadAllGuides } from "./guide-store.js";
 import { getAllHelpers, getDisabledHelperDomains } from "./local-helpers.js";
 
@@ -206,7 +207,7 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 	pi.registerCommand("api", {
 		description:
 			"Enable/disable API tools. " +
-			"Usage: /api on | off | learn | status | helpers [domain]",
+			"Usage: /api on | off | learn | status | helpers [domain] | secrets [domain [name]]",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const trimmed = args.trim();
 			const parts = trimmed.split(/\s+/);
@@ -270,6 +271,13 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 					return;
 				}
 
+				case "secrets": {
+					// Peer of status/helpers/bare — read/write to the secrets store,
+					// not a toolset actuation, so the focus-mode guard does not apply.
+					await handleSecretsSubcommand(rest, ctx);
+					return;
+				}
+
 				default: {
 					const apiStatus = apiToolset.isEnabled(pi) ? "✅ on" : "❌ off";
 					const learnStatus = learnToolset.isEnabled(pi) ? "✅ on" : "❌ off";
@@ -283,6 +291,7 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 						`   /api off          disable all API tools`,
 						`   /api status       detailed status (guides, helpers)`,
 						`   /api helpers      list local helpers`,
+						`   /api secrets      list/provision stored secrets (names only)`,
 						`   /api              show this status`,
 					];
 

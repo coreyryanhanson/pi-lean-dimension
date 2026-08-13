@@ -35,6 +35,8 @@
 		"core/local-helpers.ts",
 		"core/helpers-command.ts",
 		"core/api-toggle.ts",
+		"core/secrets-store.ts",
+		"core/secrets-command.ts",
 		"core/portal-projection.ts",
 		"core/response-spill.ts",
 		"core/verify-ship-manifest.ts",

@@ -18,9 +18,14 @@
   `api-probe` is the shape-discovery tool for the authoring loop (fetch an
   exploratory path, summarize the JSON shape, emit a draft YAML op block);
   it never writes the guide.
-- Registers the **`/api`** command with `on|off|learn|status/helpers`
+- Registers the **`/api`** command with `on|off|learn|status/helpers|secrets`
   subcommands — an independent peer toggle that composes freely with
   portal's `/web` (additive-on / filter-off semantics).
+  `/api secrets [domain [name]]` lists/provisions the per-domain secrets
+  store (`core/secrets-store.ts`, `~/.pi/agent/pi-lean-host/secrets/<domain>.json`,
+  0600, lazy-mkdir-on-write-only). Names only, never values; headless
+  invocation prints direct-file-write instructions. Peer of `status`/`helpers`/
+  bare `/api` — the focus-mode guard does not apply.
 - Manages the **`api` status bar glyph**, shown as `● api` when `/api` is on
   (colored by learn state) and `○ api` when off.
 - Declares `pi-lean-portal` as an **optional peer dependency**. Host-only
@@ -113,7 +118,10 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `guide-loader.ts` + `guide-store.ts` (multi-valued domain map,
   `findGuidesByDomain` returns `{ guide, dirName }[]`), `helpers.ts`
   (built-in executor helpers), `local-helpers.ts` (user helper loader),
-  `helpers-command.ts` (`/api helpers`), `transport.ts` (shared fetch
+  `helpers-command.ts` (`/api helpers`), `secrets-store.ts` (per-domain
+  secrets store — swappable `SecretStore` interface, 0600 file backend,
+  lazy-mkdir-on-write-only), `secrets-command.ts` (`/api secrets`),
+  `transport.ts` (shared fetch
   pipeline: UA, charset, 429-retry, ETag cache — the sanctioned way to reach
   even WAF'd hosts), `path-template.ts`, `ssrf-guard.ts`, `response-spill.ts`,
   `api-toggle.ts` (`/api` toggle), `portal-projection.ts`,
@@ -123,6 +131,7 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
 - `__tests__/` — framework structural tests (no network): `smoke`,
   `parse-api-guide`, `all-guides-parse` (every bundled `guide.md` parses
   cleanly), `tools`, `helpers`, `local-helpers`, `api-toggle`,
+  `secrets-store`, `secrets-command`,
   `portal-projection`, `render-result`, `response-spill`, `host-only-boundary`,
   `axis-units` (nextLink/XML/cursor/ETag via mocked transport; fixtures in
   `__tests__/fixtures/axis/`), `transform-{restget,paginate,render}`,
