@@ -56,170 +56,48 @@ change (tokens are just params), expandable into shipped guides at any
 time — including as a warm-up before sprint 1 if capacity allows. It is
 listed in sprint 3 only because it proves nothing about the store.
 
-## Sprint 1 — Secrets store + header-auth vertical slice
+## Sprint 1 — Secrets store + header-auth vertical slice ✅ (shipped)
 
-**Goal:** a real keyed header-auth guide can be fetched end-to-end with
-the key value guaranteed never to enter agent context. This is the
-blocker that unblocks all keyed-guide development.
+**Goal met:** a keyed header-auth guide (CoinGecko) fetches end-to-end with
+the key value never entering agent context. Source of truth for the
+*what/how* — including the output-channel audit, fail-closed, and SSRF
+(a/b/c) guarantees — is [`api-auth-and-cookies.md`](./api-auth-and-cookies.md)
+and the code referenced below; the original plan text (in scope / tests /
+acceptance criteria) was condensed here on completion.
 
-### In scope
+**Shipped:**
 
-**Store (`core/secrets-store.ts`, new)**
++ `core/secrets-store.ts` — swappable `SecretStore` + `0600` file backend
+  at `~/.pi/agent/pi-lean-host/secrets/<domain>.json`; read/write/delete/
+  deleteDomain/list; lazy-mkdir-on-write-only; file pruning when a domain
+  empties.
++ `core/secrets-command.ts` (`/api secrets`) — list / `<domain>` assisted
+  entry (guide-aware, single-prompt or picker) / `<domain> <name>` manual
+  entry / `--delete` (single + whole-domain, interactive confirm) /
+  `--help`; headless prints file-write instructions and deletes without
+  confirm; names-only output, value never emitted.
++ `core/api-guide-types.ts` + `core/parse-api-guide.ts` — `auth.kind:
+  static-key` + `secretRefs`/`requires`/`optional`; `validateAuth` rules;
+  `oauth2` rejected at parse; `all-guides-parse` widened to accept
+  auth-bearing guides.
++ `core/auth.ts` — `resolveSecretHeaders` (store injection, fail-closed on
+  `requires` absent, proceed on `optional` absent) + `authStatusLine`
+  (5-state metadata footer on `api-guide` + `api-fetch`).
++ `core/transport.ts` + `core/helpers.ts` — `hasAuth`, `secretHeaderNames`
+  plumbed through `FetchOptions`, forced guarded redirects on auth,
+  `stripSecretHeaders` on cross-domain hops; 401-body scrub +
+  response-header-echo scrub in `checkResponseStatus`.
++ Recipe: `api-guides/coingecko.com/` (`x-cg-demo-api-key`, offset
+  pagination) + co-located `endpoint-coverage.test.ts`
+  (`HOST_INTEGRATION=1`).
 
-+ Swappable store interface; `0600`-file backend at
-  `~/.pi/agent/pi-lean-host/secrets/<domain>.json`.
-+ Flat JSON object keyed by secret name → value (matches the
-  `secretName` in `auth.secretRefs`/`auth.secretQueryRefs`).
-+ `readSecret(domain, name)`, `writeSecret(domain, name, value)`,
-  `listDomains()`, `listNames(domain)`. Lazy dir creation on write only;
-  reads/list never mkdir (read-only `$HOME` safety).
-+ No env-var middleman (`PI_LEAN_HOST_KEY_*` dropped).
+**Verified by:** `__tests__/secrets-store.test.ts`, `secrets-command.test.ts`,
+`auth.test.ts` (audit + SSRF a/b/c + fail-closed + footer), widened
+`all-guides-parse.test.ts`, plus the structural suite.
 
-**`/api secrets` subcommand (`core/api-toggle.ts` + new module)**
-
-+ No-arg list: store-driven (filenames + object keys), names only, never
-  values. `(no secrets stored)` when dir absent.
-+ `<domain>`: assisted entry — if the registered guide declares exactly
-  one secret name, prompt directly; if multiple, show a `ctx.ui.custom()`
-  picker with provisioned state. Also the per-domain detail view
-  (declared-vs-stored gaps via the auth-status helper).
-+ `<domain> <name>`: manual entry, escape valve for the chicken-and-egg
-  case; name validated against `requires ∪ optional` when a guide is
-  registered, free-form otherwise.
-+ `--delete` modifier: `/api secrets <domain> <name> --delete` drops one
-  secret (no confirm — a typed name is deliberate); `/api secrets
-  <domain> --delete` drops every secret for the domain (interactive
-  `ctx.ui.custom()` confirm when `ctx.hasUI`). Removing the last entry
-  unlinks the now-empty file so the domain exits `listDomains()` / the
-  no-arg list. `--delete` is reserved and cannot be a secret name.
-+ All entry via `ctx.ui.input()`; returns metadata-only status line, the
-  value never touches a tool result / `pi.sendMessage` / session file.
-+ Headless: `ctx.hasUI` false → entry prints direct-file-write
-  instructions (no prompt); **deletion executes directly, no confirm**
-  (same never-hang contract). Neither path prompts or hangs.
-+ Focus-mode guard: **not applied** (peer of `status`/`helpers`/bare, not
-  an actuation — entry nor deletion writes a `{enabled}` entry). Add to
-  help block + `AGENTS.md` command list.
-
-**Schema / parser / validator (`core/api-guide-types.ts`, `core/parse-api-guide.ts`)**
-
-+ Realize `auth.kind: "static-key"` in `checkAuth` (`core/helpers.ts:315`).
-+ Add `auth.secretRefs: Record<headerName, secretName>`,
-  `auth.requires: string[]`, `auth.optional: string[]`.
-+ `validateAuth` rules (all fail-closed with `fix:` hints): kind↔field
-  consistency (`secretRefs` rejected on `kind: none`; `oauth2` rejected at
-  parse with "not yet implemented"); referenced-name consistency (every
-  `secretRefs` name in `requires ∪ optional`; a name in **both** is an
-  error); `oauth2` type seam stays, unrealized.
-+ **Widen `__tests__/all-guides-parse.test.ts`** (currently asserts
-  `auth.kind === "none"` for every discovered guide). The first
-  `static-key` guide (CoinGecko) will break that assertion, so loosen it
-  to accept `kind ∈ {none, static-key}` (and, for auth-bearing guides,
-  assert the `secretRefs`/`requires`/`optional` shape instead of the
-  `none` invariant). Must land in this sprint alongside the CoinGecko
-  recipe, not as a follow-up.
-
-**Injection (`core/helpers.ts`, `tools/api-fetch.ts`)**
-
-+ `api-fetch` resolves `secretRefs` from the store at fetch time and
-  injects headers in code. Agent sees *that* a key is required and
-  *whether* present, never *what*.
-+ `requires` secret absent → fail closed **before the request** with the
-  provision-via-`/api secrets` message.
-+ `optional` secret absent → proceed unauthenticated (no error, no nudge).
-
-**Output-channel audit — header secrets (security-critical)**
-
-+ 401 body: scrub known secret values from the `result.body.slice(0, 500)`
-  excerpt in `checkResponseStatus` (`core/helpers.ts:361`, slice at
-  `:369`), or fail-closed drop the body excerpt for auth-bearing requests.
-+ Response-header echo: scrub/filter any response header whose value
-  matches a known secret in `details.headers` (restGet branch only,
-  `tools/api-fetch.ts:243`); or drop `details.headers` entirely for
-  auth-bearing `restGet`. (Paginate has no `details.headers` emit — not a
-  concern.)
-
-**Cache / SSRF / redirect rules (`core/transport.ts`, `core/helpers.ts`)**
-
-+ Introduce `hasAuth` (broader than `hasAuthHeaders`): true when any
-  non-`accept` header is present. Used for cache-skip and
-  redirect-forcing. (Query-param extension lands in sprint 2.)
-+ Force `getWithGuardedRedirects` in `fetchUrl` whenever `hasAuth` — the
-  one-liner from §Cache / SSRF / redirect rules. No behavior change for
-  keyless requests.
-+ Host-match gate inside the guarded loop: drop store-injected
-  `secretRefs` headers + `Authorization` on cross-domain redirect hops;
-  literal `auth.headers` stay. Plumb `secretHeaderNames: Set<string>` via
-  a new optional `FetchOptions` field.
-+ Update `guardRedirects` doc comment.
-
-**Auth status footer (shared helper)**
-
-+ One helper, used by both `api-guide` and `api-fetch`. Five states: no
-  auth / auth-ok / nudge-provision (required absent) / auth-ok-optional /
-  optional-not-provisioned. Metadata only, never the value.
-
-**Production validation: CoinGecko guide (A1)**
-
-+ New `api-guides/coingecko.com/` recipe: header `x-cg-demo-api-key`,
-  `auth.kind: static-key`, `auth.secretRefs`, `auth.requires: [api_key]`,
-  offset pagination (`per_page`/`page`). Demo plan, 100/min, zero cost.
-+ Co-located `endpoint-coverage.test.ts` (`HOST_INTEGRATION=1` gated).
-
-### Tests (acceptance proof)
-
-+ Store: read/write/resolve, `0600` perms, lazy-mkdir-on-write-only,
-  names-only listing, missing file/dir handling; `--delete` single-name
-  (no confirm, prunes + unlinks last-entry file), whole-domain (confirm
-  when interactive, direct when headless), missing-name/domain fail-closed
-  no-mutation, empty-domain no-op-not-error, status/confirm never echoes
-  the value.
-+ Parser/validator: every `validateAuth` rule above; `oauth2` rejected at
-  parse; `static-key` realized.
-+ Output-channel audit (header): no secret value in a 401 body slice, no
-  secret value in `details.headers` for an auth-bearing `restGet`.
-+ Fail-closed vs proceed: `requires` absent → pre-request error with the
-  provision message; `optional` absent → unauthenticated fetch succeeds.
-+ SSRF verification (a/b/c): (a) malicious `nextUrl` blocked by existing
-  `nextLink` guard; (b) auth-bearing `restGet` 302→internal blocked by
-  forced guarded path; (c) auth-bearing `restGet` 302→public cross-domain
-  → store-injected headers stripped, literal `auth.headers` may forward.
-+ Footer: five states via the shared helper on both `api-guide` and
-  `api-fetch`.
-+ CoinGecko: parses cleanly (`all-guides-parse`, after the test widening
-  above); endpoint coverage under `HOST_INTEGRATION=1`.
-
-### Acceptance criteria
-
-1. A user can run `/api secrets coingecko.com` (assisted), enter the
-   demo key, and `api-fetch` against the CoinGecko guide returns market
-   data with the key injected from the store — the key value never appears
-   in any tool result, session file, or emitted URL/header.
-2. With the key absent, `api-fetch` fails closed before the request with
-   the `/api secrets` provision message; the footer nudges the same.
-3. A mocked 401 body echoing the auth header value does not reach agent
-   context (test 1 of output-channel audit passes).
-4. A mocked response header echoing the auth header value does not reach
-   `details.headers` (test 2 passes).
-5. The three SSRF cases (a/b/c) pass.
-6. Headless invocation of `/api secrets` prints file-write instructions
-   for entry and executes deletions directly (no confirm) for `--delete`,
-   and does not hang either way.
-7. `/api secrets <domain> --delete` (interactive) confirms before
-   removing all secrets for the domain; `/api secrets <domain> <name>
-   --delete` removes one without confirm; both unlink the file when it
-   empties and never echo the value.
-8. No existing `kind: none` guide breaks (`all-guides-parse` — widened
-   to accept `static-key` guides — + full portal structural suite green).
-
-### Out of scope (this sprint)
-
-+ `auth.secretQueryRefs` and everything it forces (sprint 2).
-+ `api-probe` store-backed auth (sprint 2).
-+ The optional-auth keyed variants as shipped recipes (sprint 3); the
-  *mechanism* (`auth.optional` proceed-unauthenticated + footer) ships
-  here, the *proof recipes* ship in sprint 3.
-+ OS-keychain backend (deferred — additive seam).
+**Deferred to later sprints:** `secretQueryRefs` + everything it forces and
+`api-probe` store-backed auth → **sprint 2**; optional-auth keyed recipes →
+**sprint 3**; OS-keychain backend (additive seam).
 
 ## Sprint 2 — Query-param secrets + authoring-loop auth
 
