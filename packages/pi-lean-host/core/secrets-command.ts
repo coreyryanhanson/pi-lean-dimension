@@ -40,7 +40,7 @@ function fileWriteInstructions(): string {
 		"Secrets are stored per-domain as JSON (0600), one file per domain:\n" +
 		`  ${getSecretsDir()}/<domain>.json\n\n` +
 		"Each file maps secret name → value. To provision manually, write:\n" +
-		'  { "apiKey": "<value>" }\n' +
+		'  { "api_key": "<value>" }\n' +
 		"into `<domain>.json`, then run /api secrets <domain> to verify."
 	);
 }
@@ -194,7 +194,7 @@ async function assistedEntry(
 
 	const newName = await ctx.ui.input(
 		`Secret name for '${domain}'`,
-		"e.g. apiKey",
+		"e.g. api_key",
 	);
 	if (newName === undefined) return; // cancelled
 	const trimmedName = newName.trim();

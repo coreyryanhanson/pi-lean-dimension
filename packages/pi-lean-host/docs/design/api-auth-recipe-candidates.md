@@ -24,7 +24,7 @@ no planning narrative.
 
 ### CoinGecko — A1, static-key header
 
-- **Domain:** `api.coingecko.com`
+- **Domain:** `coingecko.com`
 - **Auth:** header `x-cg-demo-api-key` (demo) / `x-cg-pro-api-key` (Pro); a query-param form exists (`x_cg_demo_api_key`) but the guide uses the header so A1 stays distinct from Etherscan's A2
 - **Free tier:** demo plan, 100 calls/min, zero cost, email signup
 - **Pagination:** offset — `per_page` (default 100, range 1–250) + `page`

@@ -2,17 +2,17 @@
  * CoinGecko recipe validity tests — endpoint coverage + live fetch sanity.
  *
  * Verifies the authenticated header path end-to-end against the live API:
- * resolves the `apiKey` secret from the store, injects it as the
+ * resolves the `api_key` secret from the store, injects it as the
  * `x-cg-demo-api-key` header, and executes the keyed ops.
  *
  * Skipped in bare CI — opt in via HOST_INTEGRATION=1. Requires a
- * provisioned demo key at `/api secrets api.coingecko.com`.
+ * provisioned demo key at `/api secrets coingecko.com`.
  */
 
 import { describe, expect } from "vitest";
 import { withTempDirs, itWhen } from "../_shared/test-harness.js";
 
-const DOMAIN = "api.coingecko.com";
+const DOMAIN = "coingecko.com";
 
 describe("CoinGecko live integration (authenticated)", () => {
 	itWhen(
@@ -28,8 +28,8 @@ describe("CoinGecko live integration (authenticated)", () => {
 			const guide = loaded.guides[DOMAIN]!;
 			expect(guide.apiHost).toBe("https://api.coingecko.com/api/v3");
 			expect(guide.auth.kind).toBe("static-key");
-			expect(guide.auth.secretRefs).toEqual({ "x-cg-demo-api-key": "apiKey" });
-			expect(guide.auth.requires).toContain("apiKey");
+			expect(guide.auth.secretRefs).toEqual({ "x-cg-demo-api-key": "api_key" });
+			expect(guide.auth.requires).toContain("api_key");
 		}),
 	);
 

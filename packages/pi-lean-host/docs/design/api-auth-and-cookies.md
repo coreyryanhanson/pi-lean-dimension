@@ -235,13 +235,13 @@ the guide.**
 - **`auth.headers`**: **literal values only** — demo keys, rate-limit
   tokens safe to commit. Not the path for real credentials.
 - **`auth.secretRefs: Record<headerName, secretName>`**: store-backed
-  header injection. "Inject the secret named `apiKey` into header
+  header injection. "Inject the secret named `api_key` into header
   `X-Api-Key`." Value resolved from the `0600` store at fetch time, never
   in the guide.
 - **`auth.secretQueryRefs: Record<paramName, secretName>`**: parallel for
   query-param injection (`?key=<secret>`).
 - **`auth.requires: string[]`**: declares the secret names the guide
-  **hard-requires** (e.g. `auth.requires: [apiKey]` for static-key). If a
+  **hard-requires** (e.g. `auth.requires: [api_key]` for static-key). If a
   required secret is absent from the store, `api-fetch` **fails closed
   before the request** — no unauthenticated fetch that might return
   partial data the agent mistakes for complete. The error message tells
@@ -279,7 +279,7 @@ the guide.**
   - **`auth.requires`/`auth.optional` ↔ referenced names:** every secret
     name appearing in `secretRefs` or `secretQueryRefs` must be declared
     in `auth.requires` ∪ `auth.optional` (catches a typo'd
-    `apiKey`/`api_key` mismatch at parse time, not at fetch time). A name
+    `api_key`/`apikey` mismatch at parse time, not at fetch time). A name
     listed in **both** `requires` and `optional` is a parse error
     (ambiguous). Names in `requires` or `optional` with no referrer are
     allowed (documentation-only listing is harmless).
@@ -440,7 +440,7 @@ never has side effects:
 
 ```text
 archive.org:
-  - apiKey
+  - api_key
 github.com:
   - token
 ```
@@ -454,7 +454,7 @@ no-arg list's. Secret **values** are never shown — only names.
 
 ### `/api secrets <domain>` reuse — the registry + footer, not the redactor
 
-A `/api secrets <domain>` listing shows secret **names** (`apiKey`)
+A `/api secrets <domain>` listing shows secret **names** (`api_key`)
 and presence, never the value, so it does **not** call
 `redactSecretParams` — a shared "redaction module" would have one real
 consumer each, which is the wrong abstraction. What *is* shared:
@@ -513,7 +513,7 @@ env-var middleman — `PI_LEAN_HOST_KEY_<DOMAIN>` is dropped entirely.
     (`auth.requires ∪ auth.optional`), skip the picker and prompt for
     that name directly via `ctx.ui.input()` — the common case, one round
     trip. If it declares multiple, show a `ctx.ui.custom()` picker
-    listing each name with its provisioned state (`apiKey (set)` /
+    listing each name with its provisioned state (`api_key (set)` /
     `apiSecret (not set)` — the auth-status helper's presence check,
     reused); the user picks one, then `ctx.ui.input()` for the value.
     Re-selecting a `set` name overwrites — the rotate-key flow, no
@@ -559,7 +559,7 @@ env-var middleman — `PI_LEAN_HOST_KEY_<DOMAIN>` is dropped entirely.
 - **Persistence.** `~/.pi/agent/pi-lean-host/secrets/<domain>.json` at
   mode `0600`. The file is the single store; both input channels write to
   it. **Schema: a flat JSON object keyed by secret name → value**, e.g.
-  `{ "apiKey": "…", "apiSecret": "…" }` — keyed by the `secretName` in
+  `{ "api_key": "…", "api_secret": "…" }` — keyed by the `secretName` in
   the guide's `auth.secretRefs`/`auth.secretQueryRefs` ref maps, not by
   header/param name. A domain may hold several named secrets (injected
   into different headers/params); one file per domain holds them all.
@@ -726,7 +726,7 @@ auth does not close: the agent's chicken-and-egg problem when a user
 pre-provisions a key. `/api secrets <domain> <name>` (the manual-entry
 escape valve, §`/api` command surface) lets a user stash a key under a
 name of their choosing before any guide exists. The agent authoring the
-guide invents its own `secretName` (say `apiKey`), writes the inline
+guide invents its own `secretName` (say `api_key`), writes the inline
 `auth.secretRefs` ref map, probes — and on a store miss gets the miss-note
 from the path above. But the miss-note names the secret the agent asked
 for, not the one sitting in the store. The agent has **no programmatic

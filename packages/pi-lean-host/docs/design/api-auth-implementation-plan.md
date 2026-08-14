@@ -161,8 +161,8 @@ blocker that unblocks all keyed-guide development.
 
 **Production validation: CoinGecko guide (A1)**
 
-+ New `api-guides/api.coingecko.com/` recipe: header `x-cg-demo-api-key`,
-  `auth.kind: static-key`, `auth.secretRefs`, `auth.requires: [apiKey]`,
++ New `api-guides/coingecko.com/` recipe: header `x-cg-demo-api-key`,
+  `auth.kind: static-key`, `auth.secretRefs`, `auth.requires: [api_key]`,
   offset pagination (`per_page`/`page`). Demo plan, 100/min, zero cost.
 + Co-located `endpoint-coverage.test.ts` (`HOST_INTEGRATION=1` gated).
 
@@ -191,7 +191,7 @@ blocker that unblocks all keyed-guide development.
 
 ### Acceptance criteria
 
-1. A user can run `/api secrets api.coingecko.com` (assisted), enter the
+1. A user can run `/api secrets coingecko.com` (assisted), enter the
    demo key, and `api-fetch` against the CoinGecko guide returns market
    data with the key injected from the store — the key value never appears
    in any tool result, session file, or emitted URL/header.

@@ -1,7 +1,7 @@
 ---
 kind: api
 domains:
-  - api.coingecko.com
+  - coingecko.com
 shortName: CoinGecko
 icon: 🪙
 organization: coingecko
@@ -10,9 +10,9 @@ apiHost: https://api.coingecko.com/api/v3
 auth:
   kind: static-key
   secretRefs:
-    x-cg-demo-api-key: apiKey
+    x-cg-demo-api-key: api_key
   requires:
-    - apiKey
+    - api_key
 responseShape:
   format: json
   charset: utf-8
@@ -64,14 +64,14 @@ operations:
 
 CoinGecko's public API returns live prices, market rankings, and coin
 metadata. All endpoints here require a **demo API key** (`x-cg-demo-api-key`),
-provisioned via `/api secrets api.coingecko.com` (the store resolves the
-`apiKey` secret and injects the header for you — you never see or pass the
+provisioned via `/api secrets coingecko.com` (the store resolves the
+`api_key` secret and injects the header for you — you never see or pass the
 key value).
 
 The demo plan is free, needs no billing card, and allows ~100 calls/min with
 no credit balance. If the response returns `401`/`403` or a `"status":
 {"error_code": 401}` body, the key is missing or expired — re-provision via
-`/api secrets api.coingecko.com`.
+`/api secrets coingecko.com`.
 
 ## Operations
 

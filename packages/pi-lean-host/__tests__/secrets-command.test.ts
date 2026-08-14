@@ -57,14 +57,14 @@ describe("/api secrets — list", () => {
 	});
 
 	it("lists domains + names only, a single --help hint line, never values", async () => {
-		writeSecret("api.coingecko.com", "apiKey", "super-secret-value");
-		writeSecret("api.coingecko.com", "other", "another-secret");
+		writeSecret("d.example", "api_key", "super-secret-value");
+		writeSecret("d.example", "other", "another-secret");
 
 		const ctx = mockCtx();
 		await handleSecretsSubcommand("", ctx);
 		const text = notified(ctx);
-		expect(text).toContain("api.coingecko.com");
-		expect(text).toContain("apiKey");
+		expect(text).toContain("d.example");
+		expect(text).toContain("api_key");
 		expect(text).not.toContain("super-secret-value");
 		expect(text).not.toContain("another-secret");
 		expect(text).toContain("--help");
@@ -89,14 +89,14 @@ describe("/api secrets --help", () => {
 
 describe("/api secrets <domain> — assisted entry", () => {
 	it("shows the detail view then prompts name + value", async () => {
-		writeSecret("api.coingecko.com", "apiKey", "super-secret-value");
-		writeSecret("api.coingecko.com", "other", "another-secret");
+		writeSecret("d.example", "api_key", "super-secret-value");
+		writeSecret("d.example", "other", "another-secret");
 
 		const ctx = mockCtx();
 		await handleSecretsSubcommand("", ctx);
 		const text = notified(ctx);
-		expect(text).toContain("api.coingecko.com");
-		expect(text).toContain("apiKey");
+		expect(text).toContain("d.example");
+		expect(text).toContain("api_key");
 		expect(text).not.toContain("super-secret-value");
 		expect(text).not.toContain("another-secret");
 	});
@@ -107,13 +107,13 @@ describe("/api secrets <domain> <name> — manual entry", () => {
 		const ctx = mockCtx();
 		ctx.ui.input.mockResolvedValueOnce("demo-key-abc");
 
-		await handleSecretsSubcommand("api.coingecko.com apiKey", ctx);
+		await handleSecretsSubcommand("d.example api_key", ctx);
 
 		const promptTitle = ctx.ui.input.mock.calls[0]?.[0] as string;
-		expect(promptTitle).toContain("api.coingecko.com");
-		expect(promptTitle).toContain("apiKey");
-		expect(readSecret("api.coingecko.com", "apiKey")).toBe("demo-key-abc");
-		expect(notified(ctx)).toContain("Stored secret 'apiKey'");
+		expect(promptTitle).toContain("d.example");
+		expect(promptTitle).toContain("api_key");
+		expect(readSecret("d.example", "api_key")).toBe("demo-key-abc");
+		expect(notified(ctx)).toContain("Stored secret 'api_key'");
 		expect(notified(ctx)).not.toContain("demo-key-abc");
 	});
 
@@ -144,14 +144,14 @@ describe("/api secrets <domain> — assisted entry", () => {
 	it("shows the detail view then prompts name + value", async () => {
 		const ctx = mockCtx();
 		ctx.ui.input
-			.mockResolvedValueOnce("apiKey")
+			.mockResolvedValueOnce("api_key")
 			.mockResolvedValueOnce("demo-key-xyz");
 
-		await handleSecretsSubcommand("api.coingecko.com", ctx);
+		await handleSecretsSubcommand("d.example", ctx);
 
-		expect(readSecret("api.coingecko.com", "apiKey")).toBe("demo-key-xyz");
+		expect(readSecret("d.example", "api_key")).toBe("demo-key-xyz");
 		const text = notified(ctx);
-		expect(text).toContain("Secrets for 'api.coingecko.com'");
+		expect(text).toContain("Secrets for 'd.example'");
 		expect(text).not.toContain("demo-key-xyz");
 	});
 
@@ -169,18 +169,18 @@ describe("/api secrets <domain> — assisted entry", () => {
 	it("guide-aware: single declared secret name prompts its value directly", async () => {
 		const guidesDir = mkdtempSync(join(tmpdir(), "secrets-cmd-guides-"));
 		try {
-			mkdirSync(join(guidesDir, "api.coingecko.com"), { recursive: true });
+			mkdirSync(join(guidesDir, "d.example"), { recursive: true });
 			writeFileSync(
-				join(guidesDir, "api.coingecko.com", "guide.md"),
+				join(guidesDir, "d.example", "guide.md"),
 				`---
-domains: [api.coingecko.com]
-apiHost: https://api.coingecko.com/api/v3
+domains: [d.example]
+apiHost: https://d.example
 auth:
   kind: static-key
   secretRefs:
-    x-cg-demo-api-key: apiKey
+    x-cg-demo-api-key: api_key
   requires:
-    - apiKey
+    - api_key
 operations:
   - name: ping
     via: restGet
@@ -195,16 +195,16 @@ body
 
 			const ctx = mockCtx();
 			ctx.ui.input.mockResolvedValueOnce("demo-key-abc");
-			await handleSecretsSubcommand("api.coingecko.com", ctx);
+			await handleSecretsSubcommand("d.example", ctx);
 
 			// Single declared name → exactly ONE prompt, for the value.
 			expect(ctx.ui.input).toHaveBeenCalledTimes(1);
 			const prompt = ctx.ui.input.mock.calls[0]?.[0] as string;
-			expect(prompt).toContain("api.coingecko.com");
-			expect(prompt).toContain("apiKey");
-			expect(readSecret("api.coingecko.com", "apiKey")).toBe("demo-key-abc");
+			expect(prompt).toContain("d.example");
+			expect(prompt).toContain("api_key");
+			expect(readSecret("d.example", "api_key")).toBe("demo-key-abc");
 			const text = notified(ctx);
-			expect(text).toContain("Declared (guide): apiKey");
+			expect(text).toContain("Declared (guide): api_key");
 			expect(text).not.toContain("demo-key-abc");
 		} finally {
 			rmSync(guidesDir, { recursive: true, force: true });

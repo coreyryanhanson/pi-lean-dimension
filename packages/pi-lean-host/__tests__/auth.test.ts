@@ -96,8 +96,8 @@ function makeAuthGuide(serverUrl: string): ApiGuide {
 		gatherAllMax: 1000,
 		auth: {
 			kind: "static-key",
-			secretRefs: { "x-api-key": "apiKey" },
-			requires: ["apiKey"],
+			secretRefs: { "x-api-key": "api_key" },
+			requires: ["api_key"],
 		},
 		responseShape: { format: "json", charset: "utf-8" },
 		operations: [],
@@ -120,15 +120,15 @@ function authRecipe(
 	opts: { domain?: string; requires?: boolean; optional?: boolean } = {},
 ): string {
 	const domain = opts.domain ?? "auth.test";
-	const req = opts.requires === false ? "" : `  requires:\n    - apiKey\n`;
-	const opt = opts.optional ? `  optional:\n    - apiKey\n` : "";
+	const req = opts.requires === false ? "" : `  requires:\n    - api_key\n`;
+	const opt = opts.optional ? `  optional:\n    - api_key\n` : "";
 	return `---
 domains: [${domain}]
 apiHost: ${serverUrl}
 auth:
   kind: static-key
   secretRefs:
-    x-api-key: apiKey
+    x-api-key: api_key
 ${req}${opt}
 operations:
   - name: ping
@@ -164,8 +164,8 @@ beforeAll(async () => {
 	setSecretsDir(tmpSecretsDir);
 	// Domain `auth.test` IS provisioned with the key. `auth.partial` has the
 	// required key but no optional key.
-	writeSecret("auth.test", "apiKey", "S3CRET-VALUE");
-	writeSecret("auth.partial", "apiKey", "S3CRET-VALUE");
+	writeSecret("auth.test", "api_key", "S3CRET-VALUE");
+	writeSecret("auth.partial", "api_key", "S3CRET-VALUE");
 	invalidateCache();
 });
 
@@ -213,14 +213,14 @@ body
 	it("static-key with consistent secretRefs/requires parses", () => {
 		const r = parseAuthBlock(`  kind: static-key
   secretRefs:
-    x-api-key: apiKey
+    x-api-key: api_key
   requires:
-    - apiKey`);
+    - api_key`);
 		expect(r.ok).toBe(true);
 		if (r.ok) {
 			expect(r.guide.auth.kind).toBe("static-key");
-			expect(r.guide.auth.secretRefs).toEqual({ "x-api-key": "apiKey" });
-			expect(r.guide.auth.requires).toEqual(["apiKey"]);
+			expect(r.guide.auth.secretRefs).toEqual({ "x-api-key": "api_key" });
+			expect(r.guide.auth.requires).toEqual(["api_key"]);
 		}
 	});
 
@@ -229,7 +229,7 @@ body
   secretRefs:
     x-api-key: unknownName
   requires:
-    - apiKey`);
+    - api_key`);
 		expect(r.ok).toBe(false);
 		if (!r.ok) {
 			expect(r.error.field).toBe("auth.secretRefs.x-api-key");
@@ -240,11 +240,11 @@ body
 	it("a secret name in BOTH requires and optional → ParseError", () => {
 		const r = parseAuthBlock(`  kind: static-key
   secretRefs:
-    x-api-key: apiKey
+    x-api-key: api_key
   requires:
-    - apiKey
+    - api_key
   optional:
-    - apiKey`);
+    - api_key`);
 		expect(r.ok).toBe(false);
 		if (!r.ok) expect(r.error.field).toBe("auth.requires");
 	});
@@ -252,7 +252,7 @@ body
 	it("secretRefs with kind: none → ParseError (kind↔field consistency)", () => {
 		const r = parseAuthBlock(`  kind: none
   secretRefs:
-    x-api-key: apiKey`);
+    x-api-key: api_key`);
 		expect(r.ok).toBe(false);
 		if (!r.ok) expect(r.error.field).toBe("auth.secretRefs");
 	});
@@ -274,13 +274,13 @@ body
 describe("resolveSecretHeaders (store-backed injection)", () => {
 	const auth = {
 		kind: "static-key" as const,
-		secretRefs: { "x-api-key": "apiKey", "x-optional": "rateKey" },
-		requires: ["apiKey"],
-		optional: ["rateKey"],
+		secretRefs: { "x-api-key": "api_key", "x-optional": "rate_key" },
+		requires: ["api_key"],
+		optional: ["rate_key"],
 	};
 
 	it("resolves required + optional when both are provisioned", () => {
-		writeSecret("auth.test", "rateKey", "RATE");
+		writeSecret("auth.test", "rate_key", "RATE");
 		const res = resolveSecretHeaders(auth, "auth.test");
 		expect(res.headers["x-api-key"]).toBe("S3CRET-VALUE");
 		expect(res.headers["x-optional"]).toBe("RATE");
@@ -292,8 +292,8 @@ describe("resolveSecretHeaders (store-backed injection)", () => {
 		// domain auth.opt has no secrets at all
 		const res = resolveSecretHeaders(auth, "auth.opt");
 		expect(res.headers).toEqual({});
-		expect(res.absentRequired).toEqual(["apiKey"]);
-		expect(res.absentOptional).toEqual(["rateKey"]);
+		expect(res.absentRequired).toEqual(["api_key"]);
+		expect(res.absentOptional).toEqual(["rate_key"]);
 	});
 });
 
@@ -370,7 +370,7 @@ describe("cache/SSRF/redirect (header auth)", () => {
 
 describe("authStatusLine footer", () => {
 	const base = {
-		secretRefs: { "x-api-key": "apiKey", "x-rate": "rateKey" },
+		secretRefs: { "x-api-key": "api_key", "x-rate": "rate_key" },
 	} as const;
 
 	it("no-auth (kind none) → undefined", () => {
@@ -379,7 +379,7 @@ describe("authStatusLine footer", () => {
 
 	it("requires present → ok", () => {
 		const line = authStatusLine(
-			{ kind: "static-key", ...base, requires: ["apiKey"] },
+			{ kind: "static-key", ...base, requires: ["api_key"] },
 			"auth.test",
 		);
 		expect(line).toContain("auth: ok");
@@ -388,7 +388,7 @@ describe("authStatusLine footer", () => {
 
 	it("required absent → nudge-provision", () => {
 		const line = authStatusLine(
-			{ kind: "static-key", ...base, requires: ["apiKey"] },
+			{ kind: "static-key", ...base, requires: ["api_key"] },
 			"auth.missing",
 		);
 		expect(line).toContain("not provisioned");
@@ -400,23 +400,23 @@ describe("authStatusLine footer", () => {
 			{
 				kind: "static-key",
 				...base,
-				requires: ["apiKey"],
-				optional: ["rateKey"],
+				requires: ["api_key"],
+				optional: ["rate_key"],
 			},
-			"auth.partial", // has apiKey, not rateKey
+			"auth.partial", // has api_key, not rate_key
 		);
 		expect(line).toContain("optional");
 		expect(line).toContain("not provisioned");
 	});
 
 	it("requires + optional present → ok (optional)", () => {
-		writeSecret("auth.test", "rateKey", "RATE");
+		writeSecret("auth.test", "rate_key", "RATE");
 		const line = authStatusLine(
 			{
 				kind: "static-key",
 				...base,
-				requires: ["apiKey"],
-				optional: ["rateKey"],
+				requires: ["api_key"],
+				optional: ["rate_key"],
 			},
 			"auth.test",
 		);
@@ -519,7 +519,7 @@ describe("api-guide auth footer", () => {
 
 // Keep listNames import used (proves store write happened for this domain).
 describe("store sanity", () => {
-	it("auth.test has the provisioned apiKey", () => {
-		expect(listNames("auth.test")).toContain("apiKey");
+	it("auth.test has the provisioned api_key", () => {
+		expect(listNames("auth.test")).toContain("api_key");
 	});
 });

@@ -39,15 +39,15 @@ afterEach(() => {
 
 describe("secrets store — file backend", () => {
 	it("readSecret returns null for missing domain / missing name", () => {
-		expect(readSecret("api.coingecko.com", "apiKey")).toBeNull();
+		expect(readSecret("missing.example", "api_key")).toBeNull();
 	});
 
 	it("writeSecret then readSecret round-trips", () => {
-		writeSecret("api.coingecko.com", "apiKey", "demo-key-123");
-		expect(readSecret("api.coingecko.com", "apiKey")).toBe("demo-key-123");
+		writeSecret("d.example", "api_key", "demo-key-123");
+		expect(readSecret("d.example", "api_key")).toBe("demo-key-123");
 		// Other name in same domain, and other domain unaffected.
-		expect(readSecret("api.coingecko.com", "other")).toBeNull();
-		expect(readSecret("api.etherscan.io", "apiKey")).toBeNull();
+		expect(readSecret("d.example", "other")).toBeNull();
+		expect(readSecret("other.example", "api_key")).toBeNull();
 	});
 
 	it("writeSecret overwrites an existing name", () => {
