@@ -27,10 +27,8 @@ operations:
     params:
       page:
         description: >
-          1-based page number (GitLab is 1-based — the framework seeds this
-          op's first page from `default: 1`). Empty array `[]` past the last
-          page terminates.
-        default: 1
+          1-based page number. Empty array `[]` past the last page
+          terminates.
       per_page:
         description: Items per page (default 20, max 100 on GitLab.com; this op's wire value is set by the guide's pageSize — 10).
         default: 10
@@ -76,7 +74,6 @@ operations:
         description: Project ID or URL-encoded namespace path (e.g. `gitlab-org%2Fgitlab`).
       page:
         description: 1-based page number.
-        default: 1
       per_page:
         description: Items per page (wire value set by the guide's pageSize — 10).
         default: 10
@@ -143,12 +140,12 @@ project-relative `iid`.
 ## Pagination
 
 Both list ops use GitLab's default **page** style (`page` / `per_page`).
-`page` is **1-based** — the guide declares `default: 1` so the framework never
-sends `page=0`. GitLab returns a bare JSON **root array** (`[{...}]`) on every
-page; the ops' `itemsPath: $` resolves that root, and pagination **terminates
-on the empty array `[]`** past the last page (verified live 2026-08-11). Both
-list ops cap `gatherAll` at 1000 items (`gatherAllMax`) so an unfiltered
-walk cannot hammer the API or run into the 50k-offset limit below.
+`page` is **1-based** (the framework's page style seeds at 1). GitLab
+returns a bare JSON **root array** (`[{...}]`) on every page; the ops'
+`itemsPath: $` resolves that root, and pagination **terminates on the empty
+array `[]`** past the last page (verified live 2026-08-11). Both list ops
+cap `gatherAll` at 1000 items (`gatherAllMax`) so an unfiltered walk cannot
+hammer the API or run into the 50k-offset limit below.
 
 > **Header pagination decided, not needed:** GitLab sends `Link: rel="next"`
 > and `x-next-page`/`x-page`/`x-total` headers on responses, but because it

@@ -585,16 +585,19 @@ export async function paginate(
 
 	// Seed offset/page params.
 	if (style === "offset-limit" || style === "page") {
-		// Caller value, else the recipe's declared default for this page param,
-		// else 0. Some APIs are 1-based and reject offset=0 (USGS FDSN); a
-		// recipe expresses that as `params: { offset: { default: 1 } }`.
+		// Caller value, else the recipe's declared default for this page
+		// param, else the style's framework default: 0 for offset-limit (row
+		// offsets start at 0) and 1 for page (nearly all page-indexed APIs are
+		// 1-based; a rare 0-based page API overrides with
+		// `params: { page: { default: 0 } }`).
+		const fallback = style === "page" ? 1 : 0;
 		const rawPage =
 			params[pagCfg.pageParam!] ??
 			operation.params[pagCfg.pageParam!]?.default ??
-			0;
+			fallback;
 		page =
 			typeof rawPage === "number" ? rawPage : parseInt(String(rawPage), 10);
-		if (isNaN(page)) page = 0;
+		if (isNaN(page)) page = fallback;
 	}
 
 	// Compute effective params once — used for both per-page building and result transparency.

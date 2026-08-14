@@ -31,8 +31,7 @@ operations:
         description: Search query (required by the GitHub search endpoint).
         required: true
       page:
-        default: 1
-        description: 1-based page number. GitHub treats page=0 as invalid, so the paginator seeds at 1.
+        description: 1-based page number.
       per_page:
         description: Per-page count.
         default: 2
@@ -56,7 +55,6 @@ operations:
       direction:
         description: asc or desc.
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -89,7 +87,6 @@ operations:
       pageSize: 30
     params:
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -109,7 +106,6 @@ operations:
       anon:
         description: Set to 1 to include anonymous contributors.
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -129,7 +125,6 @@ operations:
       since:
         description: A repository ID. Only repositories with an ID greater than this are returned.
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -153,7 +148,6 @@ operations:
       direction:
         description: asc or desc.
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -179,7 +173,6 @@ operations:
       time_period:
         description: A GitHub username to filter activities by.
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -225,7 +218,6 @@ operations:
       until:
         description: Only commits before this ISO 8601 timestamp.
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -253,7 +245,6 @@ operations:
       pageSize: 30
     params:
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -271,7 +262,6 @@ operations:
       pageSize: 30
     params:
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -291,7 +281,6 @@ operations:
       protected:
         description: Set to true to return only protected branches.
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -325,7 +314,6 @@ operations:
       since:
         description: Only issues updated at or after this ISO 8601 timestamp.
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -355,7 +343,6 @@ operations:
       since:
         description: Only comments updated at or after this ISO 8601 timestamp.
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -384,7 +371,6 @@ operations:
       direction:
         description: asc or desc.
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -407,7 +393,6 @@ operations:
       pageSize: 30
     params:
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -425,7 +410,6 @@ operations:
       pageSize: 30
     params:
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -445,7 +429,6 @@ operations:
       since:
         description: Only comments updated at or after this ISO 8601 timestamp.
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -477,7 +460,6 @@ operations:
       order:
         description: asc or desc (default desc).
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -503,7 +485,6 @@ operations:
       order:
         description: asc or desc (default desc).
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -529,7 +510,6 @@ operations:
       order:
         description: asc or desc (default desc).
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -555,7 +535,6 @@ operations:
       order:
         description: asc or desc (default desc).
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -577,7 +556,6 @@ operations:
         description: Search query (required).
         required: true
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -606,7 +584,6 @@ operations:
       order:
         description: asc or desc (default desc).
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -632,7 +609,6 @@ operations:
       since:
         description: A user ID. Only users with an ID greater than this are returned.
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -657,7 +633,6 @@ operations:
       since:
         description: An org ID. Only orgs with an ID greater than this are returned.
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -675,7 +650,6 @@ operations:
       pageSize: 30
     params:
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -694,7 +668,6 @@ operations:
       pageSize: 30
     params:
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -747,7 +720,6 @@ operations:
       pageSize: 30
     params:
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -765,7 +737,6 @@ operations:
       pageSize: 30
     params:
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -783,7 +754,6 @@ operations:
       pageSize: 30
     params:
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -801,7 +771,6 @@ operations:
       pageSize: 30
     params:
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.
@@ -819,7 +788,6 @@ operations:
       pageSize: 30
     params:
       page:
-        default: 1
         description: 1-based page number.
       per_page:
         description: Per-page count.

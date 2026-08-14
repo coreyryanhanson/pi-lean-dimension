@@ -40,8 +40,7 @@ operations:
       price_change_percentage:
         description: Comma-separated time ranges for a % price-change field, e.g. "1h,24h,7d".
       page:
-        default: 1
-        description: Page through results (1-based — CoinGecko treats page 0 as page 1, which would duplicate the first page on gatherAll).
+        description: Page through results (1-based).
 
   - name: getCoin
     via: restGet
@@ -81,7 +80,6 @@ operations:
       id:
         description: The coin's market id (e.g. bitcoin). Passed as a path token.
       page:
-        default: 1
         description: Page through results (100 tickers per page).
       exchange_ids:
         description: Comma-separated exchange IDs to filter tickers (from /exchanges/list).
@@ -362,8 +360,7 @@ operations:
       pageSize: 100
     params:
       page:
-        default: 1
-        description: Page through results (1-based — CoinGecko treats page 0 as page 1, which would duplicate the first page on gatherAll).
+        description: Page through results (1-based).
 
   - name: getExchange
     via: restGet
@@ -383,7 +380,6 @@ operations:
       coin_ids:
         description: Filter tickers by coin IDs, comma-separated (from /coins/list).
       page:
-        default: 1
         description: Page through results (100 tickers per page).
       depth:
         default: false
@@ -431,7 +427,6 @@ operations:
         default: open_interest_btc_desc
         description: Sort order — open_interest_btc_desc (default), open_interest_btc_asc, name_asc, name_desc, trade_volume_24h_btc_desc, trade_volume_24h_btc_asc.
       page:
-        default: 1
         description: Page through results (1-based).
 
   - name: getDerivativesExchange
@@ -459,7 +454,6 @@ operations:
         default: h24_volume_usd_desc
         description: Sort order — h24_volume_usd_desc (default), h24_volume_usd_asc, h24_volume_native_desc, h24_volume_native_asc, floor_price_native_desc, floor_price_native_asc, market_cap_native_desc, market_cap_native_asc, market_cap_usd_desc, market_cap_usd_asc.
       page:
-        default: 1
         description: Page through results (1-based).
 
   - name: getNft
@@ -491,7 +485,6 @@ operations:
         default: 100
         description: Results per page.
       page:
-        default: 1
         description: Page through results.
 
   - name: getTreasuryByCoin
@@ -510,7 +503,6 @@ operations:
       coin_id:
         description: "Coin ID (e.g. bitcoin, ethereum). Passed as a path token."
       page:
-        default: 1
         description: Page through results (1-based).
 
   - name: getTreasuryByEntity
