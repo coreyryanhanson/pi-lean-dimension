@@ -20,6 +20,7 @@ import {
 	getCatalogText,
 } from "../core/guide-store.js";
 import { formatGuideListings, TODAY } from "../core/parse-api-guide.js";
+import { authStatusLine } from "../core/auth.js";
 import type { ApiGuide } from "../core/api-guide-types.js";
 
 export const apiGuideTool = defineTool({
@@ -197,6 +198,10 @@ function renderGuideDetail(
 	lines.push(`  Verified: ${guide.verified} · Updated: ${guide.updated}`);
 	if (guide.docs) lines.push(`  Docs: ${guide.docs}`);
 	lines.push(`  Auth: ${guide.auth.kind}`);
+	// Auth status footer — shared with api-fetch. Metadata only (names,
+	// never values); nudges provisioning when a required secret is absent.
+	const authStatus = authStatusLine(guide.auth, domain);
+	if (authStatus) lines.push(`  ${authStatus}`);
 	lines.push(
 		`  Response: ${guide.responseShape.format} (${guide.responseShape.charset})`,
 	);

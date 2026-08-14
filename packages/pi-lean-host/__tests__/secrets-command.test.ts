@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleSecretsSubcommand } from "../core/secrets-command.js";
@@ -15,6 +15,7 @@ import {
 	writeSecret,
 	setSecretsDir,
 } from "../core/secrets-store.js";
+import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
 
 let dir: string;
 
@@ -163,6 +164,51 @@ describe("/api secrets <domain> — assisted entry", () => {
 		const text = notified(ctx);
 		expect(text).toContain("k");
 		expect(text).not.toContain("secret-42");
+	});
+
+	it("guide-aware: single declared secret name prompts its value directly", async () => {
+		const guidesDir = mkdtempSync(join(tmpdir(), "secrets-cmd-guides-"));
+		try {
+			mkdirSync(join(guidesDir, "api.coingecko.com"), { recursive: true });
+			writeFileSync(
+				join(guidesDir, "api.coingecko.com", "guide.md"),
+				`---
+domains: [api.coingecko.com]
+apiHost: https://api.coingecko.com/api/v3
+auth:
+  kind: static-key
+  secretRefs:
+    x-cg-demo-api-key: apiKey
+  requires:
+    - apiKey
+operations:
+  - name: ping
+    via: restGet
+    path: /ping
+    accept: json
+---
+body
+`,
+			);
+			setUserGuidesDir(guidesDir);
+			invalidateCache();
+
+			const ctx = mockCtx();
+			ctx.ui.input.mockResolvedValueOnce("demo-key-abc");
+			await handleSecretsSubcommand("api.coingecko.com", ctx);
+
+			// Single declared name → exactly ONE prompt, for the value.
+			expect(ctx.ui.input).toHaveBeenCalledTimes(1);
+			const prompt = ctx.ui.input.mock.calls[0]?.[0] as string;
+			expect(prompt).toContain("api.coingecko.com");
+			expect(prompt).toContain("apiKey");
+			expect(readSecret("api.coingecko.com", "apiKey")).toBe("demo-key-abc");
+			const text = notified(ctx);
+			expect(text).toContain("Declared (guide): apiKey");
+			expect(text).not.toContain("demo-key-abc");
+		} finally {
+			rmSync(guidesDir, { recursive: true, force: true });
+		}
 	});
 });
 

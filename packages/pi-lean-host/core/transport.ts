@@ -43,12 +43,21 @@ export interface FetchOptions {
 	maxRetries?: number;
 	/** Skip cache (force fresh fetch). */
 	fresh?: boolean;
-	/** SSRF-check each redirect target before following it. Use only for
+	/** SSRF-check each redirect target before following it. Use it for
 	 *  server-supplied URLs (paginate nextLink) — a malicious API can 302
 	 *  to an internal host, and when auth headers ship the Authorization
 	 *  header would attach to the redirect. Agent-supplied URLs don't need
-	 *  this (the agent already has bash). */
+	 *  this (the agent already has bash). Forced on automatically for any
+	 *  auth-bearing request (hasAuth), so a keyed call is always guarded. */
 	guardRedirects?: boolean;
+	/**
+	 * Lowercased header names whose values are secrets injected from the
+	 * secrets store (kind: static-key). Stripped — along with `authorization`
+	 * — on cross-domain redirect hops so a secret can't leak to another host.
+	 * Only honored while the guarded-redirect path is active (forced for any
+	 * auth-bearing request, so this always applies to keyed calls).
+	 */
+	secretHeaderNames?: Set<string>;
 	/** Charset to decode the body with when the response's Content-Type
 	 *  header omits one. Honors a guide's `responseShape.charset` for APIs
 	 *  that serve e.g. ISO-8859-1 bytes without a charset parameter. An
@@ -250,17 +259,50 @@ async function singleGet(
 	}
 }
 
+/** Host of a URL, or null when unparseable — treated as cross-domain (strip). */
+function hostOf(url: string): string | null {
+	try {
+		return new URL(url).host;
+	} catch {
+		return null;
+	}
+}
+
 /**
- * Follow redirects manually, SSRF-checking each target. Used only for
- * server-supplied URLs (paginate nextLink). GET-only, so method is
- * preserved across 301/302/303/307/308 trivially. Returns the final
- * response; a redirect to a blocked host throws before it is fetched.
+ * Drop store-injected secret headers (plus `authorization`) from a request
+ * before it leaves the request's original host. Literal auth.headers (not in
+ * secretHeaderNames) survive. Used on cross-domain redirect hops only.
+ * Exported for the output-channel/SSRF structural tests (case c: cross-domain).
+ */
+export function stripSecretHeaders(
+	headers: Record<string, string>,
+	secretHeaderNames?: Set<string>,
+): Record<string, string> {
+	const drop = new Set<string>(["authorization"]);
+	if (secretHeaderNames)
+		for (const h of secretHeaderNames) drop.add(h.toLowerCase());
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(headers)) {
+		if (drop.has(k.toLowerCase())) continue;
+		out[k] = v;
+	}
+	return out;
+}
+
+/**
+ * Follow redirects manually, SSRF-checking each target. Used for
+ * server-supplied URLs (paginate nextLink) and — forced — any auth-bearing
+ * request. GET-only, so method is preserved across 301/302/303/307/308
+ * trivially. Returns the final response; a redirect to a blocked host
+ * throws before it is fetched. Store-injected secrets are stripped on
+ * cross-domain hops so a key can't attach to a different host.
  */
 async function getWithGuardedRedirects(
 	url: string,
 	reqHeaders: Record<string, string>,
 	startTime: number,
 	timeoutMs: number,
+	secretHeaderNames?: Set<string>,
 ): Promise<{
 	status: number;
 	headers: Record<string, string>;
@@ -268,11 +310,18 @@ async function getWithGuardedRedirects(
 	finalUrl: string;
 }> {
 	let current = url;
+	const originalHost = hostOf(url);
 	for (let hops = 0; hops <= MAX_REDIRECTS; hops++) {
+		// Strip store-injected secrets (and Authorization) once a hop leaves
+		// the request's original host — a secret must never cross domains.
+		const hopHeaders =
+			hostOf(current) !== originalHost
+				? stripSecretHeaders(reqHeaders, secretHeaderNames)
+				: reqHeaders;
 		const remaining = timeoutMs - (Date.now() - startTime);
 		const res = await singleGet(
 			current,
-			reqHeaders,
+			hopHeaders,
 			remaining,
 			noRedirectAgent,
 		);
@@ -337,6 +386,9 @@ export async function fetchUrl(
 	const hasAuthHeaders =
 		!!opts?.headers &&
 		Object.keys(opts.headers).some((h) => h.toLowerCase() !== "accept");
+	// Broader hasAuth gate (sprint 2 extends it to query-param secrets). For
+	// sprint 1 it equals hasAuthHeaders: any non-accept header = keyed call.
+	const hasAuth = hasAuthHeaders;
 
 	// ── cache hit ───────────────────────────────────────────────
 	const key = cacheKey(url, opts);
@@ -368,16 +420,24 @@ export async function fetchUrl(
 		if (remaining <= 0) throw new Error("Request timeout");
 
 		try {
-			// When guardRedirects is set, follow redirects manually and SSRF-
-			// check each target (server-supplied URLs only). Otherwise let
-			// undici auto-follow up to 5 redirects.
+			// Guarded redirects when explicitly requested (server-supplied
+			// nextLink) OR when the request is auth-bearing (hasAuth) — a keyed
+			// call is always SSRF-checked hop-by-hop and its secrets stripped on
+			// cross-domain redirects. Otherwise let undici auto-follow up to 5.
+			const useGuarded = (opts?.guardRedirects ?? false) || hasAuth;
 			const {
 				status,
 				headers: respHeaders,
 				rawBody,
 				finalUrl,
-			} = opts?.guardRedirects
-				? await getWithGuardedRedirects(url, reqHeaders, startTime, timeout)
+			} = useGuarded
+				? await getWithGuardedRedirects(
+						url,
+						reqHeaders,
+						startTime,
+						timeout,
+						opts?.secretHeaderNames,
+					)
 				: await singleGet(url, reqHeaders, remaining, redirectAgent);
 
 			// ── 304 Not Modified ────────────────────────────────

@@ -50,7 +50,23 @@ describe("all bundled guides parse correctly", () => {
 			// Sanity checks on the parsed guide
 			expect(result.guide.apiHost).toBeTruthy();
 			expect(result.guide.operations.length).toBeGreaterThan(0);
-			expect(result.guide.auth.kind).toBe("none");
+
+			// Auth: the corpus is now allowed to ship `static-key` guides (the
+			// realized keyed-auth mode). `none` and `static-key` both parse.
+			expect(["none", "static-key"]).toContain(result.guide.auth.kind);
+			const auth = result.guide.auth;
+			if (auth.kind === "static-key") {
+				// A keyed guide must declare a consistent secretRefs shape.
+				expect(auth.secretRefs).toBeDefined();
+				expect(Object.keys(auth.secretRefs!).length).toBeGreaterThan(0);
+				const declared = new Set([
+					...(auth.requires ?? []),
+					...(auth.optional ?? []),
+				]);
+				for (const secretName of Object.values(auth.secretRefs!)) {
+					expect(declared.has(secretName)).toBe(true);
+				}
+			}
 
 			// Every operation declares a supported via
 			for (const op of result.guide.operations) {

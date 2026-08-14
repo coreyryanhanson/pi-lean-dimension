@@ -20,6 +20,11 @@ import { Text } from "@earendil-works/pi-tui";
 import { restGet, paginate, HelperError } from "../core/helpers.js";
 import { findGuidesByDomain } from "../core/guide-store.js";
 import { callHelper, loadTransform } from "../core/local-helpers.js";
+import {
+	resolveSecretHeaders,
+	authStatusLine,
+	type SecretResolution,
+} from "../core/auth.js";
 import { formatGuideListings } from "../core/parse-api-guide.js";
 import { spillResponse, formatSpillNotice } from "../core/response-spill.js";
 import { contentText, renderExpandedText } from "./utils.js";
@@ -207,6 +212,48 @@ export const apiFetchTool = defineTool({
 			);
 		}
 
+		// 2.7 Authentication (kind: static-key): resolve store-injected secret
+		// headers up front so a missing required secret fails closed BEFORE any
+		// request is made. The value never leaves this scope — only header and
+		// secret NAMES ever surface to the agent.
+		let resolution: SecretResolution | undefined;
+		if (guide.auth.kind === "static-key") {
+			resolution = resolveSecretHeaders(guide.auth, domain);
+			if (resolution.absentRequired.length > 0) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`🔑 ${guide.shortName} requires a secret not yet provisioned: ` +
+								`${resolution.absentRequired.join(", ")}.\n` +
+								`Run /api secrets ${domain} to provision it, then retry this call.`,
+						},
+					],
+					details: {
+						error: "auth_required_not_provisioned",
+						domain,
+						operation,
+						missing: resolution.absentRequired,
+					},
+				};
+			}
+		}
+		const authOpts: {
+			authHeaders?: Record<string, string>;
+			secretHeaderNames?: Set<string>;
+			secretValues?: string[];
+		} = resolution
+			? {
+					authHeaders: resolution.headers,
+					secretHeaderNames: new Set(
+						Object.keys(resolution.headers).map((h) => h.toLowerCase()),
+					),
+					secretValues: Object.values(resolution.headers),
+				}
+			: {};
+		const authFooter = authStatusLine(guide.auth, domain);
+
 		// 3. Execute via the declared helper.
 		try {
 			const helperOpts = {
@@ -219,7 +266,7 @@ export const apiFetchTool = defineTool({
 					op,
 					executeParams,
 					guide,
-					undefined, // opts — restGet has no SSRF guard to bypass
+					authOpts, // opts — restGet has no SSRF bypass; auth headers injected here
 					transformFn ?? undefined,
 					helperDirName,
 				);
@@ -232,6 +279,7 @@ export const apiFetchTool = defineTool({
 				if (gatherAll) {
 					text += `\n⚠ gatherAll ignored — ${operation} is not paginated (via: restGet).`;
 				}
+				if (authFooter) text += `\n${authFooter}`;
 				return {
 					content: [{ type: "text", text }],
 					details: {
@@ -240,7 +288,9 @@ export const apiFetchTool = defineTool({
 						shortName: guide.shortName,
 						via: "restGet",
 						request: { method: "GET", url: result.url, params: result.params },
-						headers: result.headers,
+						// Output-channel audit: drop response headers that echo a known
+						// secret value (an auth-bearing server must not leak the key).
+						headers: scrubSecretHeaders(result.headers, authOpts.secretValues),
 					},
 				};
 			}
@@ -248,6 +298,7 @@ export const apiFetchTool = defineTool({
 			if (op.via === "paginate") {
 				const paginateOpts: Parameters<typeof paginate>[4] = {
 					...helperOpts,
+					...authOpts,
 				};
 				if (gatherAll !== undefined) paginateOpts.gatherAll = gatherAll;
 				const result = await paginate(
@@ -261,7 +312,7 @@ export const apiFetchTool = defineTool({
 				);
 				const firstUrl = result.urls[0] ?? "";
 				const serverTotal = result.serverTotal;
-				const text =
+				let text =
 					result.items.length === 0 && !result.failedItems
 						? [
 								`📦 0 item(s) fetched`,
@@ -279,6 +330,7 @@ export const apiFetchTool = defineTool({
 								serverTotal,
 								result.failedItems,
 							);
+				if (authFooter) text += `\n${authFooter}`;
 				return {
 					content: [{ type: "text", text }],
 					details: {
@@ -554,6 +606,25 @@ function formatHelperDisabled(
 		"Call api-guide({domain: …}) to review the guide, or fix the helper file and restart the session.",
 	];
 	return lines.join("\n");
+}
+
+/**
+ * Output-channel audit — response-header echo: drop any response header
+ * whose value contains a known store-injected secret. An auth-bearing
+ * server must not echo the key back into `details.headers`. Returns the
+ * original map unchanged when no secrets are in play.
+ */
+function scrubSecretHeaders(
+	headers: Record<string, string>,
+	secretValues?: string[],
+): Record<string, string> {
+	if (!secretValues || secretValues.length === 0) return headers;
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(headers)) {
+		if (secretValues.some((s) => s && v.includes(s))) continue;
+		out[k] = v;
+	}
+	return out;
 }
 
 function formatHelperError(

@@ -37,6 +37,7 @@
 		"core/api-toggle.ts",
 		"core/secrets-store.ts",
 		"core/secrets-command.ts",
+		"core/auth.ts",
 		"core/portal-projection.ts",
 		"core/response-spill.ts",
 		"core/verify-ship-manifest.ts",

@@ -21,13 +21,17 @@
 - Registers the **`/api`** command with `on|off|learn|status/helpers|secrets`
   subcommands — an independent peer toggle that composes freely with
   portal's `/web` (additive-on / filter-off semantics).
-  `/api secrets [domain [name]]` lists/provisions/deletes the per-domain
+   `/api secrets [domain [name]]` lists/provisions/deletes the per-domain
   secrets store (`core/secrets-store.ts`,
   `~/.pi/agent/pi-lean-host/secrets/<domain>.json`, 0600,
   lazy-mkdir-on-write-only). Names only, never values; headless
   invocation prints direct-file-write instructions; `--help` shows full
   usage + storage format (the bare list shows a one-line hint instead).
-  `--delete` removes all secrets for a `<domain>` (interactive confirm) or
+  `<domain>` assisted entry is guide-aware: a registered static-key guide
+  declaring one secret name prompts its value directly, multiple show a
+  picker, and the detail view surfaces declared-vs-stored gaps; `<domain>
+  <name>` is the manual escape valve (warns when the name isn't a declared
+  secret). `--delete` removes all secrets for a `<domain>` (interactive confirm) or
   a single `<domain> <name>` (no confirm). Peer of `status`/`helpers`/
   bare `/api` — the focus-mode guard does not apply.
 - Manages the **`api` status bar glyph**, shown as `● api` when `/api` is on
@@ -106,6 +110,22 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   ranges, and cloud metadata endpoints on **server-supplied** `nextLink` URLs
   in `paginate` only. Agent-supplied `restGet` URLs are **not** guarded (the
   agent has bash).
+- **Static-key auth** (`core/auth.ts` + schema): `auth.kind: static-key`
+  realizes `secretRefs` (`Record<headerName, secretName>`),
+  `requires: string[]`, `optional: string[]` (parser-enforced: every ref name
+  in `requires ∪ optional`, a name in both is an error, `oauth2` rejected at
+  parse). `api-fetch` resolves store secrets via `resolveSecretHeaders()` and
+  injects headers in code — the value never enters agent context; a missing
+  `requires` secret **fails closed before the request**; `optional` absent
+  proceeds unauthenticated. `hasAuth` (any non-accept header) forces the
+  guarded-redirect path in the transport, so an auth-bearing call is always
+  SSRF-checked hop-by-hop and store-injected headers + `Authorization` are
+  stripped on **cross-domain** redirect hops (literal `auth.headers` survive).
+  **Output-channel audit**: known secret values are scrubbed from 401 error
+  bodies (`checkResponseStatus`) and from `details.headers` on auth-bearing
+  `restGet`. Shared `authStatusLine()` footer renders five metadata-only
+  states on both `api-guide` and `api-fetch` (no-auth / ok / nudge-provision /
+  ok-optional / optional-not-provisioned).
 - **Response spill** (`core/response-spill.ts`): when `api-fetch` truncates,
   the full JSON is spilled to disk (max 8 files/session, oldest evicted;
   `cleanupAllSpill()` on `session_shutdown`).
@@ -124,7 +144,8 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   (built-in executor helpers), `local-helpers.ts` (user helper loader),
   `helpers-command.ts` (`/api helpers`), `secrets-store.ts` (per-domain
   secrets store — swappable `SecretStore` interface, 0600 file backend,
-  lazy-mkdir-on-write-only, single-key + whole-domain delete), `secrets-command.ts` (`/api secrets`),
+   lazy-mkdir-on-write-only, single-key + whole-domain delete), `secrets-command.ts` (`/api secrets`),
+  `auth.ts` (static-key secret resolution + shared auth-status footer),
   `transport.ts` (shared fetch
   pipeline: UA, charset, 429-retry, ETag cache — the sanctioned way to reach
   even WAF'd hosts), `path-template.ts`, `ssrf-guard.ts`, `response-spill.ts`,
@@ -135,7 +156,8 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
 - `__tests__/` — framework structural tests (no network): `smoke`,
   `parse-api-guide`, `all-guides-parse` (every bundled `guide.md` parses
   cleanly), `tools`, `helpers`, `local-helpers`, `api-toggle`,
-  `secrets-store`, `secrets-command`,
+   `secrets-store`, `secrets-command`, `auth` (static-key schema/injection/
+  output-channel audit/SSRF/footer structural tests),
   `portal-projection`, `render-result`, `response-spill`, `host-only-boundary`,
   `axis-units` (nextLink/XML/cursor/ETag via mocked transport; fixtures in
   `__tests__/fixtures/axis/`), `transform-{restget,paginate,render}`,

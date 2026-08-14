@@ -422,8 +422,15 @@ function validateAuth(
 			"auth.kind",
 			"one of: none | static-key | oauth2",
 			kindRaw,
-			{ fix: "Use `kind: none` (v1 realizes only none)" },
+			{ fix: "Use `kind: none` (public) or `kind: static-key` (keyed header)" },
 		);
+	}
+	// oauth2 is a declared seam, not realized — reject at parse so a recipe
+	// can't load an auth mode the transport can't honor.
+	if (kindRaw === "oauth2") {
+		return fail(file, "auth.kind", "one of: none | static-key", "oauth2", {
+			fix: "OAuth2 is not yet implemented. Use kind: none (public) or kind: static-key (keyed header) for now.",
+		});
 	}
 	// Parse optional headers (per-kind extra headers, e.g. X-Api-Key for DEMO_KEY).
 	let headers: Record<string, string> | undefined;
@@ -445,8 +452,111 @@ function validateAuth(
 		headers = headersRaw as Record<string, string>;
 	}
 
+	// static-key reference fields (secretRefs/requires/optional).
+	let secretRefs: Record<string, string> | undefined;
+	const refsRaw = a["secretRefs"];
+	if (refsRaw !== undefined) {
+		if (
+			refsRaw === null ||
+			typeof refsRaw !== "object" ||
+			Array.isArray(refsRaw) ||
+			Object.values(refsRaw).some((v) => typeof v !== "string")
+		) {
+			return fail(
+				file,
+				"auth.secretRefs",
+				"a YAML mapping of header name → secret name",
+				describeFound(refsRaw),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		secretRefs = refsRaw as Record<string, string>;
+	}
+
+	let requires: string[] | undefined;
+	const reqRaw = a["requires"];
+	if (reqRaw !== undefined) {
+		if (
+			!Array.isArray(reqRaw) ||
+			reqRaw.length === 0 ||
+			reqRaw.some((v) => typeof v !== "string")
+		) {
+			return fail(
+				file,
+				"auth.requires",
+				"a non-empty list of secret names",
+				describeFound(reqRaw),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		requires = reqRaw as string[];
+	}
+
+	let optional: string[] | undefined;
+	const optRaw = a["optional"];
+	if (optRaw !== undefined) {
+		if (
+			!Array.isArray(optRaw) ||
+			optRaw.length === 0 ||
+			optRaw.some((v) => typeof v !== "string")
+		) {
+			return fail(
+				file,
+				"auth.optional",
+				"a non-empty list of secret names",
+				describeFound(optRaw),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		optional = optRaw as string[];
+	}
+
+	// Fail-closed consistency rules.
+	if (kindRaw === "none" && (secretRefs || requires || optional)) {
+		return fail(
+			file,
+			"auth.secretRefs",
+			"absent when auth.kind is none",
+			"secretRefs/requires/optional with kind: none",
+			{
+				fix: "Use auth.kind: static-key to reference stored secrets, or remove the auth fields for a public API.",
+			},
+		);
+	}
+	if (secretRefs) {
+		const declared = new Set([...(requires ?? []), ...(optional ?? [])]);
+		for (const [headerName, secretName] of Object.entries(secretRefs)) {
+			if (!declared.has(secretName)) {
+				return fail(
+					file,
+					`auth.secretRefs.${headerName}`,
+					`a secret name declared in auth.requires or auth.optional`,
+					`"${secretName}" is not in requires/optional`,
+					{
+						fix: `Add "${secretName}" to auth.requires or auth.optional (or fix the reference).`,
+					},
+				);
+			}
+		}
+		const both = (requires ?? []).filter((n) => (optional ?? []).includes(n));
+		if (both.length > 0) {
+			return fail(
+				file,
+				"auth.requires",
+				"secret names not duplicated across requires and optional",
+				`in both: ${both.join(", ")}`,
+				{
+					fix: `Move "${both[0]}" to either requires or optional, not both.`,
+				},
+			);
+		}
+	}
+
 	const result: AuthConfig = { kind: kindRaw as AuthKind };
 	if (headers !== undefined) result.headers = headers;
+	if (secretRefs !== undefined) result.secretRefs = secretRefs;
+	if (requires !== undefined) result.requires = requires;
+	if (optional !== undefined) result.optional = optional;
 	return result;
 }
 

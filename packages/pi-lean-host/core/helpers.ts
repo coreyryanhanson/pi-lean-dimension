@@ -303,30 +303,27 @@ function buildUrl(
 
 /**
  * Check auth.kind and branch accordingly.
- * v1 realizes only `none`; any other kind throws a structured error.
+ * v1 realizes `none` and `static-key` (header injection is resolved by
+ * api-fetch and passed via opts.authHeaders — the store is not read here).
  *
  * This dispatch is a deliberate seam, not dead code: keeping the field +
  * dispatch now makes the future keyed-auth build additive (a new `kind`
  * behind this same `if`/`throw`) rather than a retrofit of every `restGet`/
- * `paginate` call site and the guide schema. Do not inline "none" into the
- * callers to "simplify" — that burns the additive path. See
+ * `paginate` call site and the guide schema. See
  * `docs/design/api-secrets-roadmap.md` for the build-out plan.
  */
 function checkAuth(auth: ApiGuide["auth"]): void {
 	const kind = auth.kind;
-	if (kind === "none") return; // no auth header needed
+	if (kind === "none" || kind === "static-key") return;
 
-	// V1 only realizes `none`. The seam exists; error informingly.
+	// oauth2 — unrealized seam. A parsed guide can't reach here (oauth2 is
+	// rejected at parse), but guard for hand-constructed guides/tests.
 	throw new HelperError(
 		"auth.kind",
 		`Auth kind "${kind}" is not supported in this version`,
-		"one of: none",
+		"one of: none | static-key",
 		kind,
-		kind === "static-key"
-			? "Static-key auth is not yet implemented. Use kind: none for public APIs."
-			: kind === "oauth2"
-				? "OAuth2 is not yet implemented. Use kind: none for public APIs."
-				: "Use auth.kind: none for public APIs",
+		"OAuth2 is not yet implemented. Use kind: none or kind: static-key.",
 	);
 }
 
@@ -340,11 +337,13 @@ function fetchWithOpts(
 	extraHeaders?: Record<string, string>,
 	guardRedirects?: boolean,
 	fallbackCharset?: string,
+	secretHeaderNames?: Set<string>,
 ): ReturnType<typeof fetchUrl> {
 	const opts: FetchOptions = { headers: { accept, ...extraHeaders } };
 	if (fresh !== undefined) opts.fresh = fresh;
 	if (guardRedirects) opts.guardRedirects = true;
 	if (fallbackCharset) opts.fallbackCharset = fallbackCharset;
+	if (secretHeaderNames) opts.secretHeaderNames = secretHeaderNames;
 	return fetchUrl(url, opts);
 }
 
@@ -358,11 +357,14 @@ function fetchWithOpts(
  * For XML error bodies (common in REST APIs), the `<text>` element is
  * extracted for a cleaner human message.
  */
-function checkResponseStatus(result: {
-	status: number;
-	body: string;
-	url?: string;
-}): void {
+function checkResponseStatus(
+	result: {
+		status: number;
+		body: string;
+		url?: string;
+	},
+	secretValues?: string[],
+): void {
 	if (result.status < 400) return;
 
 	// Cap the raw body to avoid flooding the error output.
@@ -371,6 +373,15 @@ function checkResponseStatus(result: {
 	const textMatch = result.body.match(/<text>([\s\S]*?)<\/text>/i);
 	if (textMatch) {
 		message = textMatch[1]!.trim();
+	}
+
+	// Output-channel audit: scrub known store-injected secret values from the
+	// error excerpt so a 401 body echoing an auth header can't leak the key
+	// into agent context.
+	if (secretValues && secretValues.length > 0) {
+		for (const v of secretValues) {
+			if (v && v.length > 0) message = message.split(v).join("***");
+		}
 	}
 
 	throw new HelperError(
@@ -390,6 +401,12 @@ function checkResponseStatus(result: {
 export interface RestGetOptions {
 	/** Skip cache — force fresh fetch. */
 	fresh?: boolean;
+	/** Store-injected secret headers (kind: static-key). Merged with guide.auth.headers. */
+	authHeaders?: Record<string, string>;
+	/** Lowercased injected header names — stripped on cross-domain redirects. */
+	secretHeaderNames?: Set<string>;
+	/** Store-injected secret values — scrubbed from error bodies (output-channel audit). */
+	secretValues?: string[];
 }
 
 /**
@@ -416,14 +433,16 @@ export async function restGet(
 	transformFn?: TransformFn,
 	dirName?: string,
 ): Promise<RestGetResult> {
-	// 1. Fill path template.
+	// Steps 1/2 unchanged: fill path, build query.
 	const resolvedPath = fillPathStrict(operation.path, params);
-
-	// 2. Build query params.
 	const query = buildQueryParams(operation, params);
 
 	// 3. Auth dispatch.
 	checkAuth(guide.auth);
+
+	// Merge store-injected secret headers with literal auth.headers. The
+	// injected names are tracked for cross-domain redirect stripping.
+	const extraHeaders = { ...guide.auth.headers, ...opts?.authHeaders };
 
 	// 4. Build URL.
 	const url = buildUrl(apiHost, resolvedPath, query);
@@ -440,15 +459,17 @@ export async function restGet(
 		url,
 		accept,
 		opts?.fresh,
-		guide.auth.headers,
+		extraHeaders,
 		undefined,
 		shape.charset,
+		opts?.secretHeaderNames,
 	);
 
 	// 7. Check HTTP status before attempting to parse the body.
 	// This turns "Invalid JSON response: <?xml..." into a clean
-	// "Unexpected HTTP 400: El parámetro fecha..." message.
-	checkResponseStatus({ ...result, url });
+	// "Unexpected HTTP 400: El parámetro fecha..." message. Secret values are
+	// scrubbed from the error excerpt so an auth-echo body can't leak a key.
+	checkResponseStatus({ ...result, url }, opts?.secretValues);
 
 	// 8. Parse response using the effective shape resolved above.
 	let data = parseResponse(result.body, shape);
@@ -492,6 +513,12 @@ export interface PaginateOptions {
 	fresh?: boolean;
 	/** Bypass the nextLink SSRF guard (for testing against local servers). */
 	skipSsrfGuard?: boolean;
+	/** Store-injected secret headers (kind: static-key). Merged with guide.auth.headers. */
+	authHeaders?: Record<string, string>;
+	/** Lowercased injected header names — stripped on cross-domain redirects. */
+	secretHeaderNames?: Set<string>;
+	/** Store-injected secret values — scrubbed from error bodies (output-channel audit). */
+	secretValues?: string[];
 }
 
 /**
@@ -541,6 +568,11 @@ export async function paginate(
 
 	// Auth dispatch — checked once up front (auth is constant per guide).
 	checkAuth(guide.auth);
+
+	// Merge store-injected secret headers with literal auth.headers once,
+	// reused for every page. Injected names are tracked for cross-domain
+	// redirect stripping.
+	const extraHeaders = { ...guide.auth.headers, ...opts?.authHeaders };
 
 	// State for the styles.
 	let cursor: string | undefined;
@@ -631,13 +663,15 @@ export async function paginate(
 			url,
 			accept,
 			opts?.fresh,
-			guide.auth.headers,
+			extraHeaders,
 			guardThisFetch,
 			shape.charset,
+			opts?.secretHeaderNames,
 		);
 
-		// Check HTTP status before attempting to parse.
-		checkResponseStatus({ ...result, url });
+		// Check HTTP status before attempting to parse. Secret values scrubbed
+		// from the error excerpt (output-channel audit).
+		checkResponseStatus({ ...result, url }, opts?.secretValues);
 
 		// Parse.
 		const data = parseResponse(result.body, shape);

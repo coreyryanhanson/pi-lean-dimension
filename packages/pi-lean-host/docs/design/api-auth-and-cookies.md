@@ -7,8 +7,12 @@
 > and [`api-stateful-sessions.md`](./api-stateful-sessions.md) (the stateful
 > ladder; its cookie rung stays open — see §Auth status footer).
 >
-> Status: **design complete; implementation not started.** Deferred items are
-> named, not hand-waved.
+> Status: **design complete; sprint 1 of the implementation plan has landed**
+> (secrets store + header-auth vertical slice, incl. the output-channel audit).
+> Deferred items are named, not hand-waved.
+>
+> Implementation plan (sprint order + acceptance criteria):
+> [`api-auth-implementation-plan.md`](./api-auth-implementation-plan.md).
 
 ## Supersedes note
 

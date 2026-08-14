@@ -7,7 +7,9 @@
 > Anchors development to the design doc's named seams; divides work into
 > three sprints ordered by **leak risk, not feature completeness**.
 >
-> Status: **plan; implementation not started.** Source of truth for the
+> Status: **sprint 1 implemented** (secrets store + header-auth vertical slice,
+> CoinGecko proof recipe, output-channel audit); sprints 2–3 pending. Source
+> of truth for the
 > *what/how* is [`api-auth-and-cookies.md`](./api-auth-and-cookies.md);
 > this doc adds the *when/order* and acceptance criteria.
 
@@ -64,52 +66,52 @@ blocker that unblocks all keyed-guide development.
 
 **Store (`core/secrets-store.ts`, new)**
 
-- Swappable store interface; `0600`-file backend at
++ Swappable store interface; `0600`-file backend at
   `~/.pi/agent/pi-lean-host/secrets/<domain>.json`.
-- Flat JSON object keyed by secret name → value (matches the
++ Flat JSON object keyed by secret name → value (matches the
   `secretName` in `auth.secretRefs`/`auth.secretQueryRefs`).
-- `readSecret(domain, name)`, `writeSecret(domain, name, value)`,
++ `readSecret(domain, name)`, `writeSecret(domain, name, value)`,
   `listDomains()`, `listNames(domain)`. Lazy dir creation on write only;
   reads/list never mkdir (read-only `$HOME` safety).
-- No env-var middleman (`PI_LEAN_HOST_KEY_*` dropped).
++ No env-var middleman (`PI_LEAN_HOST_KEY_*` dropped).
 
 **`/api secrets` subcommand (`core/api-toggle.ts` + new module)**
 
-- No-arg list: store-driven (filenames + object keys), names only, never
++ No-arg list: store-driven (filenames + object keys), names only, never
   values. `(no secrets stored)` when dir absent.
-- `<domain>`: assisted entry — if the registered guide declares exactly
++ `<domain>`: assisted entry — if the registered guide declares exactly
   one secret name, prompt directly; if multiple, show a `ctx.ui.custom()`
   picker with provisioned state. Also the per-domain detail view
   (declared-vs-stored gaps via the auth-status helper).
-- `<domain> <name>`: manual entry, escape valve for the chicken-and-egg
++ `<domain> <name>`: manual entry, escape valve for the chicken-and-egg
   case; name validated against `requires ∪ optional` when a guide is
   registered, free-form otherwise.
-- `--delete` modifier: `/api secrets <domain> <name> --delete` drops one
++ `--delete` modifier: `/api secrets <domain> <name> --delete` drops one
   secret (no confirm — a typed name is deliberate); `/api secrets
   <domain> --delete` drops every secret for the domain (interactive
   `ctx.ui.custom()` confirm when `ctx.hasUI`). Removing the last entry
   unlinks the now-empty file so the domain exits `listDomains()` / the
   no-arg list. `--delete` is reserved and cannot be a secret name.
-- All entry via `ctx.ui.input()`; returns metadata-only status line, the
++ All entry via `ctx.ui.input()`; returns metadata-only status line, the
   value never touches a tool result / `pi.sendMessage` / session file.
-- Headless: `ctx.hasUI` false → entry prints direct-file-write
++ Headless: `ctx.hasUI` false → entry prints direct-file-write
   instructions (no prompt); **deletion executes directly, no confirm**
   (same never-hang contract). Neither path prompts or hangs.
-- Focus-mode guard: **not applied** (peer of `status`/`helpers`/bare, not
++ Focus-mode guard: **not applied** (peer of `status`/`helpers`/bare, not
   an actuation — entry nor deletion writes a `{enabled}` entry). Add to
   help block + `AGENTS.md` command list.
 
 **Schema / parser / validator (`core/api-guide-types.ts`, `core/parse-api-guide.ts`)**
 
-- Realize `auth.kind: "static-key"` in `checkAuth` (`core/helpers.ts:315`).
-- Add `auth.secretRefs: Record<headerName, secretName>`,
++ Realize `auth.kind: "static-key"` in `checkAuth` (`core/helpers.ts:315`).
++ Add `auth.secretRefs: Record<headerName, secretName>`,
   `auth.requires: string[]`, `auth.optional: string[]`.
-- `validateAuth` rules (all fail-closed with `fix:` hints): kind↔field
++ `validateAuth` rules (all fail-closed with `fix:` hints): kind↔field
   consistency (`secretRefs` rejected on `kind: none`; `oauth2` rejected at
   parse with "not yet implemented"); referenced-name consistency (every
   `secretRefs` name in `requires ∪ optional`; a name in **both** is an
   error); `oauth2` type seam stays, unrealized.
-- **Widen `__tests__/all-guides-parse.test.ts`** (currently asserts
++ **Widen `__tests__/all-guides-parse.test.ts`** (currently asserts
   `auth.kind === "none"` for every discovered guide). The first
   `static-key` guide (CoinGecko) will break that assertion, so loosen it
   to accept `kind ∈ {none, static-key}` (and, for auth-bearing guides,
@@ -119,19 +121,19 @@ blocker that unblocks all keyed-guide development.
 
 **Injection (`core/helpers.ts`, `tools/api-fetch.ts`)**
 
-- `api-fetch` resolves `secretRefs` from the store at fetch time and
++ `api-fetch` resolves `secretRefs` from the store at fetch time and
   injects headers in code. Agent sees *that* a key is required and
   *whether* present, never *what*.
-- `requires` secret absent → fail closed **before the request** with the
++ `requires` secret absent → fail closed **before the request** with the
   provision-via-`/api secrets` message.
-- `optional` secret absent → proceed unauthenticated (no error, no nudge).
++ `optional` secret absent → proceed unauthenticated (no error, no nudge).
 
 **Output-channel audit — header secrets (security-critical)**
 
-- 401 body: scrub known secret values from the `result.body.slice(0, 500)`
++ 401 body: scrub known secret values from the `result.body.slice(0, 500)`
   excerpt in `checkResponseStatus` (`core/helpers.ts:361`, slice at
   `:369`), or fail-closed drop the body excerpt for auth-bearing requests.
-- Response-header echo: scrub/filter any response header whose value
++ Response-header echo: scrub/filter any response header whose value
   matches a known secret in `details.headers` (restGet branch only,
   `tools/api-fetch.ts:243`); or drop `details.headers` entirely for
   auth-bearing `restGet`. (Paginate has no `details.headers` emit — not a
@@ -139,52 +141,52 @@ blocker that unblocks all keyed-guide development.
 
 **Cache / SSRF / redirect rules (`core/transport.ts`, `core/helpers.ts`)**
 
-- Introduce `hasAuth` (broader than `hasAuthHeaders`): true when any
++ Introduce `hasAuth` (broader than `hasAuthHeaders`): true when any
   non-`accept` header is present. Used for cache-skip and
   redirect-forcing. (Query-param extension lands in sprint 2.)
-- Force `getWithGuardedRedirects` in `fetchUrl` whenever `hasAuth` — the
++ Force `getWithGuardedRedirects` in `fetchUrl` whenever `hasAuth` — the
   one-liner from §Cache / SSRF / redirect rules. No behavior change for
   keyless requests.
-- Host-match gate inside the guarded loop: drop store-injected
++ Host-match gate inside the guarded loop: drop store-injected
   `secretRefs` headers + `Authorization` on cross-domain redirect hops;
   literal `auth.headers` stay. Plumb `secretHeaderNames: Set<string>` via
   a new optional `FetchOptions` field.
-- Update `guardRedirects` doc comment.
++ Update `guardRedirects` doc comment.
 
 **Auth status footer (shared helper)**
 
-- One helper, used by both `api-guide` and `api-fetch`. Five states: no
++ One helper, used by both `api-guide` and `api-fetch`. Five states: no
   auth / auth-ok / nudge-provision (required absent) / auth-ok-optional /
   optional-not-provisioned. Metadata only, never the value.
 
 **Production validation: CoinGecko guide (A1)**
 
-- New `api-guides/api.coingecko.com/` recipe: header `x-cg-demo-api-key`,
++ New `api-guides/api.coingecko.com/` recipe: header `x-cg-demo-api-key`,
   `auth.kind: static-key`, `auth.secretRefs`, `auth.requires: [apiKey]`,
   offset pagination (`per_page`/`page`). Demo plan, 100/min, zero cost.
-- Co-located `endpoint-coverage.test.ts` (`HOST_INTEGRATION=1` gated).
++ Co-located `endpoint-coverage.test.ts` (`HOST_INTEGRATION=1` gated).
 
 ### Tests (acceptance proof)
 
-- Store: read/write/resolve, `0600` perms, lazy-mkdir-on-write-only,
++ Store: read/write/resolve, `0600` perms, lazy-mkdir-on-write-only,
   names-only listing, missing file/dir handling; `--delete` single-name
   (no confirm, prunes + unlinks last-entry file), whole-domain (confirm
   when interactive, direct when headless), missing-name/domain fail-closed
   no-mutation, empty-domain no-op-not-error, status/confirm never echoes
   the value.
-- Parser/validator: every `validateAuth` rule above; `oauth2` rejected at
++ Parser/validator: every `validateAuth` rule above; `oauth2` rejected at
   parse; `static-key` realized.
-- Output-channel audit (header): no secret value in a 401 body slice, no
++ Output-channel audit (header): no secret value in a 401 body slice, no
   secret value in `details.headers` for an auth-bearing `restGet`.
-- Fail-closed vs proceed: `requires` absent → pre-request error with the
++ Fail-closed vs proceed: `requires` absent → pre-request error with the
   provision message; `optional` absent → unauthenticated fetch succeeds.
-- SSRF verification (a/b/c): (a) malicious `nextUrl` blocked by existing
++ SSRF verification (a/b/c): (a) malicious `nextUrl` blocked by existing
   `nextLink` guard; (b) auth-bearing `restGet` 302→internal blocked by
   forced guarded path; (c) auth-bearing `restGet` 302→public cross-domain
   → store-injected headers stripped, literal `auth.headers` may forward.
-- Footer: five states via the shared helper on both `api-guide` and
++ Footer: five states via the shared helper on both `api-guide` and
   `api-fetch`.
-- CoinGecko: parses cleanly (`all-guides-parse`, after the test widening
++ CoinGecko: parses cleanly (`all-guides-parse`, after the test widening
   above); endpoint coverage under `HOST_INTEGRATION=1`.
 
 ### Acceptance criteria
@@ -212,12 +214,12 @@ blocker that unblocks all keyed-guide development.
 
 ### Out of scope (this sprint)
 
-- `auth.secretQueryRefs` and everything it forces (sprint 2).
-- `api-probe` store-backed auth (sprint 2).
-- The optional-auth keyed variants as shipped recipes (sprint 3); the
++ `auth.secretQueryRefs` and everything it forces (sprint 2).
++ `api-probe` store-backed auth (sprint 2).
++ The optional-auth keyed variants as shipped recipes (sprint 3); the
   *mechanism* (`auth.optional` proceed-unauthenticated + footer) ships
   here, the *proof recipes* ship in sprint 3.
-- OS-keychain backend (deferred — additive seam).
++ OS-keychain backend (deferred — additive seam).
 
 ## Sprint 2 — Query-param secrets + authoring-loop auth
 
@@ -229,17 +231,17 @@ without pasting a key into the transcript.
 
 **Schema / parser — `secretQueryRefs`**
 
-- Add `auth.secretQueryRefs: Record<paramName, secretName>`.
-- `validateAuth` rule: a secret param name that also appears in any
++ Add `auth.secretQueryRefs: Record<paramName, secretName>`.
++ `validateAuth` rule: a secret param name that also appears in any
   operation's `params` map is a parse error (agent must not be able to
   supply a secretly-injected param).
-- `passthrough` + `secretQueryRefs` is **allowed**; the defense is
++ `passthrough` + `secretQueryRefs` is **allowed**; the defense is
   runtime, in `buildQueryParams`'s passthrough branch, which skips
   `secretQueryRefs` keys (code-injected, not agent-settable).
 
 **Output-channel audit — query-param secrets (two channels, two defenses)**
 
-- *Channel 1 (URL):* `redactSecretParams(url, secretParamNames)` redacts
++ *Channel 1 (URL):* `redactSecretParams(url, secretParamNames)` redacts
   at the capture point so the real URL never passes the fetch layer.
   Covers every emit site: `formatRequestLine`, `details.request.url`,
   `renderResult`, `formatHelperError`, `PaginateResult.urls` — including
@@ -250,17 +252,17 @@ without pasting a key into the transcript.
   and later rendered by `formatHelperError` → `formatRequestLine`. Compute
   the redacted URL upstream of the `checkResponseStatus` call so the
   secret-bearing URL never reaches the error object.
-- *Channel 2 (params):* inject the secret **below** the returned params
++ *Channel 2 (params):* inject the secret **below** the returned params
   map, never into it. Return-contract change: `restGet`/`paginate`
   `params` becomes "agent-supplied params." `api-fetch` emits
   `details.request.params` from the pre-injection map. The secret key is
   absent from the returned map entirely (not present-but-redacted).
-- `api-fetch` call sites (`tools/api-fetch.ts:242`, `:292`) updated to
++ `api-fetch` call sites (`tools/api-fetch.ts:242`, `:292`) updated to
   the new `params` semantics.
 
 **`hasAuth` extension**
 
-- `opts.hasQuerySecret: boolean` set by `helpers.ts` when
++ `opts.hasQuerySecret: boolean` set by `helpers.ts` when
   `secretQueryRefs` injected any params. `hasAuth` = header-secrets ∨
   query-secrets. Cache-skip and redirect-forcing key on `hasAuth`, so a
   `secretQueryRefs`-only guide is covered (the gap that motivated the
@@ -268,22 +270,22 @@ without pasting a key into the transcript.
 
 **`api-probe` store-backed auth (`tools/api-probe.ts`)**
 
-- Optional `auth?: { secretRefs?, secretQueryRefs? }` param (injection
++ Optional `auth?: { secretRefs?, secretQueryRefs? }` param (injection
   fields only, no `kind`/`requires`/`optional`) + optional `domain`
   param (defaults to `apiHost` hostname).
-- Resolve `secretName → value` from the store; inject. Value never enters
++ Resolve `secretName → value` from the store; inject. Value never enters
   transcript — only header/param names and secret names do.
-- Store-miss path: **fetch anyway with the missing header/param omitted**,
++ Store-miss path: **fetch anyway with the missing header/param omitted**,
   report the miss in the note (do not fail closed — probe is a
   human-in-the-loop authoring tool). Distinguish in `fetchOne`'s status
   note: no `auth` block → existing `auth:none` wording; `auth` block but
   miss → `secret "<name>" not found in store for domain "<domain>"` (the
   stale `auth:none` text must not fire).
-- Output-channel reuse: same `redactSecretParams`, same
++ Output-channel reuse: same `redactSecretParams`, same
   inject-below-params, at the probe's `fetchUrl` call site. Set
   `hasAuth`/force guarded redirects when `auth` non-empty. Probe already
   passes `fresh: true` (no cache concern).
-- **Body-scrub for auth-bearing probes.** `api-probe.ts:211` slices
++ **Body-scrub for auth-bearing probes.** `api-probe.ts:211` slices
   `res.body.slice(0, 800)` into `r.raw` and emits it directly; the probe
   has its own 401/403 branch at `:218` and **bypasses `checkResponseStatus`**,
   so sprint 1's 401-body scrub does not cover it. Add a probe-local scrub
@@ -293,7 +295,7 @@ without pasting a key into the transcript.
 
 **`api-probe` secret-name discovery (learn-only — the bootstrap gap)**
 
-- Problem: during authoring in `/api learn`, the agent has no
++ Problem: during authoring in `/api learn`, the agent has no
   programmatic way to discover which secret names are already provisioned
   for a domain. `/api secrets <domain>` is a **user-typed slash command**
   (pi runs extension commands before agent processing; the agent never
@@ -303,7 +305,7 @@ without pasting a key into the transcript.
   of their choosing, the agent invents its own `secretName` while
   authoring, probes with the store miss-note, and never learns the right
   name is sitting in the store.
-- Fix (one tool, two modes): add an optional `listSecrets: true` param
++ Fix (one tool, two modes): add an optional `listSecrets: true` param
   to `api-probe`, gated to learn mode (`learnToolsEnabled`). When set, the
   probe short-circuits the fetch and returns the provisioned secret names
   for `domain` (defaulting to `apiHost`'s hostname) via `listNames(domain)`
@@ -311,62 +313,62 @@ without pasting a key into the transcript.
   contract. No new tool, no new plumbing: `api-probe` already takes the
   `domain` param (this sprint) and already does store reads for its auth
   injection.
-- Return shape: a `secrets` block on `ProbeResult` —
++ Return shape: a `secrets` block on `ProbeResult` —
   `{ domain, provisioned: string[], declared?: string[] }`. `declared` is
   populated when a guide is already registered for the domain (from
   `auth.requires ∪ auth.optional`), letting the agent see
   provisioned-vs-declared gaps in one call. Absent a registered guide,
   `declared` is omitted and only `provisioned` is returned. The fetch
   fields (`url`/`status`/`shape`/`draft`/`raw`) are empty in list mode.
-- Learn gate is hard: `/api on` (non-learn) calls with `listSecrets:
++ Learn gate is hard: `/api on` (non-learn) calls with `listSecrets:
   true` are refused with a one-line "learn mode only" note. In normal use
   the agent has no business enumerating the secrets store — discovery is
   an authoring act, provisioning is a human act.
-- Output-channel reuse: list mode emits no URL, no params, no body — so
++ Output-channel reuse: list mode emits no URL, no params, no body — so
   this sprint's `redactSecretParams` / inject-below-params / probe-local
   body-scrub channels do not apply. The only emit is the names array,
   which is names-only by the store contract.
 
 **Production validation: Etherscan V2 guide (A2)**
 
-- New `api-guides/api.etherscan.io/` recipe: query param `apikey=`,
++ New `api-guides/api.etherscan.io/` recipe: query param `apikey=`,
   `chainid`, `auth.kind: static-key`, `auth.secretQueryRefs`, `auth.requires:
   [apikey]`, offset pagination (`page`/`offset`). Free 3/s, 100k/day.
-- This is the security-critical axis — it forces both output-channel
++ This is the security-critical axis — it forces both output-channel
   defenses. Co-located tests.
 
 ### Tests (acceptance proof)
 
-- URL channel: redacted `?key=***` at every emit site incl.
++ URL channel: redacted `?key=***` at every emit site incl.
   server-supplied `nextUrl`; a non-secret param stays intact.
-- Params channel: `result.params` / `details.request.params` **never
++ Params channel: `result.params` / `details.request.params` **never
   contains the secret value** for a `secretQueryRefs` guide — the key is
   absent from the returned map (the proof that the return-contract change
   holds; without it the leak is silent).
-- `passthrough` guard: an agent-supplied value for a secret param name on
++ `passthrough` guard: an agent-supplied value for a secret param name on
   a `passthrough` op is dropped before the query string.
-- `secretQueryRefs`-only parity: (i) authenticated response not cached
++ `secretQueryRefs`-only parity: (i) authenticated response not cached
   (`hasAuth` skips, `hasAuthHeaders` would not); (ii) 302→internal
   blocked by forced guarded path.
-- Parser: `secretQueryRefs`↔`params` collision is a parse error;
++ Parser: `secretQueryRefs`↔`params` collision is a parse error;
   `passthrough` + `secretQueryRefs` parses.
-- `api-probe`: inline `auth` injects from store; miss reported in note,
++ `api-probe`: inline `auth` injects from store; miss reported in note,
   not failed closed; stale `auth:none` text does not fire on a miss; URL
   redacted; **auth-bearing probe's `r.raw` 401-body slice contains no
   secret value** (probe-local body scrub, not the bypassed
   `checkResponseStatus` path).
-- `api-probe` list mode: `listSecrets: true` in learn mode returns
++ `api-probe` list mode: `listSecrets: true` in learn mode returns
   `provisioned` names for the domain (names only, no values); with a
   registered guide, `declared` is populated and a provisioned-vs-declared
   gap is visible in one call; the fetch fields are empty.
-- `api-probe` list-mode learn gate: `listSecrets: true` under `/api on`
++ `api-probe` list-mode learn gate: `listSecrets: true` under `/api on`
   (non-learn) is refused with the "learn mode only" note and does not
   touch the store.
-- Error-path URL redaction: a `HelperError` from `restGet`/`paginate`
++ Error-path URL redaction: a `HelperError` from `restGet`/`paginate`
   carries the redacted URL on `err.url` (proves the redact-before-
   `checkResponseStatus` ordering), so `formatHelperError` renders
   `?key=***`, never the raw value.
-- Etherscan: parses cleanly; endpoint coverage under `HOST_INTEGRATION=1`.
++ Etherscan: parses cleanly; endpoint coverage under `HOST_INTEGRATION=1`.
 
 ### Acceptance criteria
 
@@ -394,9 +396,9 @@ without pasting a key into the transcript.
 
 ### Out of scope (this sprint)
 
-- Path-injected secrets (`secretPathRefs`) — harder redaction story,
++ Path-injected secrets (`secretPathRefs`) — harder redaction story,
   deferred (design doc edge case).
-- The optional-auth keyed variants as shipped recipes (sprint 3).
++ The optional-auth keyed variants as shipped recipes (sprint 3).
 
 ## Sprint 3 — Stateful sessions + optional-auth keyed variants
 
@@ -409,40 +411,40 @@ the three recipes once sprints 1–2 land.
 
 **NCBI E-utilities guide (A3) — new `api-guides/eutils.ncbi.nlm.nih.gov/`**
 
-- Replaces/extends the shipped no-auth guide. Documents the two-step
++ Replaces/extends the shipped no-auth guide. Documents the two-step
   `usehistory=y` flow: `esearch` returns `WebEnv`/`query_key`, then
   `esummary`/`efetch` pass them back as params. Tokens are public (not
   secrets) → no store, no core change. XML format.
-- Optional `api_key` (raises rate limits) modeled as `auth.optional` +
++ Optional `api_key` (raises rate limits) modeled as `auth.optional` +
   `secretQueryRefs` (reuses sprint 2). The `epost` op (uploads an
   arbitrary UID set — a mutation) is **excluded**.
-- Co-located tests.
++ Co-located tests.
 
 **GitHub keyed variant (A1 + optional) — new multi-recipe dir**
 
-- New directory alongside the shipped `api.github.com` no-auth guide
++ New directory alongside the shipped `api.github.com` no-auth guide
   (the `archive.org` + `archive.org-wayback` pattern). `Authorization:
   Bearer` PAT, `auth.optional` (60/hr unauth → 5000/hr authed),
   `secretRefs`, a bounded subset of auth-gated read-only ops (issues,
   PRs, file contents, CI status).
-- Co-located tests.
++ Co-located tests.
 
 **GitLab keyed variant (A1 + optional) — new multi-recipe dir**
 
-- New directory alongside the shipped `gitlab.com` no-auth guide.
++ New directory alongside the shipped `gitlab.com` no-auth guide.
   `Authorization: Bearer` PAT with `read_api` scope, `auth.optional`
   (10/min unauth → 60/min authed), `secretRefs`, a bounded subset of
   `read_api`-gated read-only ops.
-- Co-located tests.
++ Co-located tests.
 
 ### Tests (acceptance proof)
 
-- Each new guide parses cleanly (`all-guides-parse`); endpoint coverage
++ Each new guide parses cleanly (`all-guides-parse`); endpoint coverage
   under `HOST_INTEGRATION=1`.
-- Optional-auth footer states exercised: unauthenticated fetch shows
++ Optional-auth footer states exercised: unauthenticated fetch shows
   `auth: optional (not provisioned)`; provisioned fetch shows
   `auth: ok (optional)`.
-- NCBI: the two-step `usehistory` flow round-trips `WebEnv`/`query_key`
++ NCBI: the two-step `usehistory` flow round-trips `WebEnv`/`query_key`
   as ordinary params (proves the "already supported" claim — no special
   handling).
 
@@ -461,11 +463,11 @@ the three recipes once sprints 1–2 land.
 
 ### Out of scope (this sprint / this slice)
 
-- OAuth2 (all flows) — `auth.kind: "oauth2"` seam stays, unrealized.
-- General mutations / write gate — transport stays GET-only.
-- Cookie-login (jar + `api-login`) — deferred (design doc R5).
-- OS-keychain at-rest (`@napi-rs/keyring`) — additive store backend.
-- Path-injected secrets (`secretPathRefs`).
++ OAuth2 (all flows) — `auth.kind: "oauth2"` seam stays, unrealized.
++ General mutations / write gate — transport stays GET-only.
++ Cookie-login (jar + `api-login`) — deferred (design doc R5).
++ OS-keychain at-rest (`@napi-rs/keyring`) — additive store backend.
++ Path-injected secrets (`secretPathRefs`).
 
 ## Cross-sprint concerns
 

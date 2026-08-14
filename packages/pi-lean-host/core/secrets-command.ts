@@ -29,6 +29,7 @@ import {
 	readSecret,
 	writeSecret,
 } from "./secrets-store.js";
+import { findGuidesByDomain } from "./guide-store.js";
 
 /** One-line pointer to `--help`, used in place of the full instructions block. */
 const HELP_HINT = "Run /api secrets --help for usage & storage details.";
@@ -131,14 +132,28 @@ function listAll(ctx: ExtensionCommandContext): void {
 	);
 }
 
+/**
+ * Declared secret store-names for a domain, from every registered guide's
+ * `auth.secretRefs` (values). Empty for guides without static-key auth.
+ */
+function declaredSecretNames(domain: string): string[] {
+	const names = new Set<string>();
+	for (const { guide } of findGuidesByDomain(domain)) {
+		if (guide.auth.kind !== "static-key") continue;
+		for (const n of Object.values(guide.auth.secretRefs ?? {})) names.add(n);
+	}
+	return [...names].sort((a, b) => a.localeCompare(b));
+}
+
 // ── Assisted entry: /api secrets <domain> ──────────────────────────
 
 async function assistedEntry(
 	ctx: ExtensionCommandContext,
 	domain: string,
 ): Promise<void> {
-	const names = listNames(domain);
-	const storedLine = names.length ? names.join(", ") : "(none)";
+	const stored = listNames(domain);
+	const storedLine = stored.length ? stored.join(", ") : "(none)";
+	const declared = declaredSecretNames(domain);
 
 	if (!ctx.hasUI) {
 		ctx.ui.notify(
@@ -149,12 +164,34 @@ async function assistedEntry(
 		return;
 	}
 
-	ctx.ui.notify(`🔐 Secrets for '${domain}'\n  Stored: ${storedLine}`, "info");
+	const detailLines = [`🔐 Secrets for '${domain}'`, `  Stored: ${storedLine}`];
+	if (declared.length > 0) {
+		detailLines.push(`  Declared (guide): ${declared.join(", ")}`);
+		const missing = declared.filter((n) => !stored.includes(n));
+		if (missing.length) detailLines.push(`  Missing: ${missing.join(", ")}`);
+	}
+	ctx.ui.notify(detailLines.join("\n"), "info");
 
-	// Guide-aware assisted entry (prompt the single declared name / show a
-	// picker over declared names) lands with the sprint-1 auth schema; until
-	// the schema exists no guide declares secret names, so fall back to
-	// prompting for a name + value.
+	// Guide-aware assisted entry: exactly one declared secret name → prompt
+	// its value directly; multiple → a picker. No declared names (public API
+	// or no registered guide) → fall back to a name + value prompt.
+	if (declared.length === 1) {
+		await promptAndStore(ctx, domain, declared[0]!);
+		return;
+	}
+	if (declared.length > 1) {
+		const picked = await ctx.ui.select(
+			`Secret to provision for '${domain}'`,
+			declared,
+		);
+		if (picked === undefined) {
+			ctx.ui.notify("Cancelled — nothing stored.", "info");
+			return;
+		}
+		await promptAndStore(ctx, domain, picked);
+		return;
+	}
+
 	const newName = await ctx.ui.input(
 		`Secret name for '${domain}'`,
 		"e.g. apiKey",
@@ -165,20 +202,27 @@ async function assistedEntry(
 		ctx.ui.notify("Aborted — empty secret name.", "warning");
 		return;
 	}
+	await promptAndStore(ctx, domain, trimmedName);
+}
 
+/** Prompt for a secret's value and store it. Value never leaves the store. */
+async function promptAndStore(
+	ctx: ExtensionCommandContext,
+	domain: string,
+	name: string,
+): Promise<void> {
 	const value = await ctx.ui.input(
-		`Value for '${domain}'.${trimmedName}`,
+		`Value for '${domain}'.${name}`,
 		"paste the secret value",
 	);
 	if (value === undefined) return; // cancelled
-	const trimmedValue = value.trim();
-	if (!trimmedValue) {
+	const trimmed = value.trim();
+	if (!trimmed) {
 		ctx.ui.notify("Aborted — empty value.", "warning");
 		return;
 	}
-
-	writeSecret(domain, trimmedName, trimmedValue);
-	ctx.ui.notify(`Stored secret '${trimmedName}' for '${domain}'.`, "info");
+	writeSecret(domain, name, trimmed);
+	ctx.ui.notify(`Stored secret '${name}' for '${domain}'.`, "info");
 }
 
 // ── Delete: /api secrets <domain> [name] --delete ──────────────────
@@ -239,6 +283,18 @@ async function provisionOne(
 			"info",
 		);
 		return;
+	}
+
+	// Escape-valve validation: when a guide declares secret names, a manual
+	// name outside them is likely a typo — warn but still store (this is the
+	// chicken-and-egg escape hatch).
+	const declared = declaredSecretNames(domain);
+	if (declared.length > 0 && !declared.includes(name)) {
+		ctx.ui.notify(
+			`⚠ '${name}' is not a declared secret for '${domain}' ` +
+				`(guide declares: ${declared.join(", ")}). Storing anyway.`,
+			"warning",
+		);
 	}
 
 	const value = await ctx.ui.input(
