@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { startTestServer } from "../../pi-lean-portal/__tests__/helpers/test-server.js";
 import { parseApiGuide } from "../core/parse-api-guide.js";
 import { restGet, HelperError } from "../core/helpers.js";
-import { stripSecretHeaders } from "../core/transport.js";
+import { stripSecretHeaders, fetchUrl } from "../core/transport.js";
 import { resolveSecretHeaders, authStatusLine } from "../core/auth.js";
 import {
 	writeSecret,
@@ -41,9 +41,18 @@ async function startAuthServer(): Promise<{
 	url: string;
 	stop: () => Promise<void>;
 }> {
+	let cacheHits = 0;
 	const handler = (req: IncomingMessage, res: ServerResponse) => {
 		const url = new URL(req.url ?? "/", "http://localhost");
 		const xkey = (req.headers["x-api-key"] ?? "") as string;
+		// Request counter for the cache-skip parity test: a unique path per
+		// probe is used so pre-existing module-level cache entries don't interfere.
+		if (url.pathname.startsWith("/api/cache/")) {
+			cacheHits += 1;
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ count: cacheHits }));
+			return;
+		}
 		switch (url.pathname) {
 			case "/api/auth-ok":
 				res.writeHead(200, { "Content-Type": "application/json" });
@@ -97,6 +106,30 @@ function makeAuthGuide(serverUrl: string): ApiGuide {
 		auth: {
 			kind: "static-key",
 			secretRefs: { "x-api-key": "api_key" },
+			requires: ["api_key"],
+		},
+		responseShape: { format: "json", charset: "utf-8" },
+		operations: [],
+	};
+}
+
+/** A2-only guide (query-param secret, no header secret) for parity tests. */
+function makeQueryAuthGuide(serverUrl: string): ApiGuide {
+	return {
+		content: "",
+		updated: "2026-12-01",
+		category: "site",
+		source: "user",
+		icon: "🔑",
+		shortName: "QueryAuth",
+		domains: ["auth.test"],
+		kind: "api",
+		apiHost: serverUrl,
+		verified: "2026-12-01",
+		gatherAllMax: 1000,
+		auth: {
+			kind: "static-key",
+			secretQueryRefs: { apikey: "api_key" },
 			requires: ["api_key"],
 		},
 		responseShape: { format: "json", charset: "utf-8" },
@@ -359,6 +392,42 @@ describe("cache/SSRF/redirect (header auth)", () => {
 			restGet(server.url, makeOp("/api/redirect-internal"), {}, guide, {
 				authHeaders: { "x-api-key": "S3CRET" },
 				secretHeaderNames: new Set(["x-api-key"]),
+			}),
+		).rejects.toMatchObject({ name: "SsrfBlockedError" });
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// A2 parity — a secretQueryRefs-only guide (no header secret)
+// ═══════════════════════════════════════════════════════════════════
+
+describe("secretQueryRefs-only parity (cache + SSRF)", () => {
+	it("a query-secret fetch is not cached — each call reaches the server", async () => {
+		const uri = `${server.url}/api/cache/parity-${Date.now()}`;
+		const r1 = JSON.parse(
+			(await fetchUrl(uri, { hasQuerySecret: true })).body,
+		) as { count: number };
+		const r2 = JSON.parse(
+			(await fetchUrl(uri, { hasQuerySecret: true })).body,
+		) as { count: number };
+		// A2: hasQuerySecret → hasAuth → cache-skip. Second call hit the server.
+		expect(r2.count).toBe(r1.count + 1);
+		// Control: same URL without auth IS cached (second call served from cache).
+		const c1 = JSON.parse((await fetchUrl(uri, { fresh: false })).body) as {
+			count: number;
+		};
+		const c2 = JSON.parse((await fetchUrl(uri, { fresh: false })).body) as {
+			count: number;
+		};
+		expect(c2.count).toBe(c1.count);
+	});
+
+	it("a query-secret-only guide that redirects to an internal host is SSRF-blocked", async () => {
+		const guide = makeQueryAuthGuide(server.url);
+		await expect(
+			restGet(server.url, makeOp("/api/redirect-internal"), {}, guide, {
+				secretQueryParams: { apikey: "S3CRET" },
+				secretQueryParamNames: new Set(["apikey"]),
 			}),
 		).rejects.toMatchObject({ name: "SsrfBlockedError" });
 	});

@@ -8,8 +8,9 @@
 > three sprints ordered by **leak risk, not feature completeness**.
 >
 > Status: **sprint 1 implemented** (secrets store + header-auth vertical slice,
-> CoinGecko proof recipe, output-channel audit); sprints 2–3 pending. Source
-> of truth for the
+> CoinGecko proof recipe, output-channel audit); **sprint 2 implemented**
+> (query-param secrets + authoring-loop auth, Etherscan V2 proof recipe);
+> sprint 3 pending. Source of truth for the
 > *what/how* is [`api-auth-and-cookies.md`](./api-auth-and-cookies.md);
 > this doc adds the *when/order* and acceptance criteria.
 
@@ -99,7 +100,21 @@ acceptance criteria) was condensed here on completion.
 `api-probe` store-backed auth → **sprint 2**; optional-auth keyed recipes →
 **sprint 3**; OS-keychain backend (additive seam).
 
-## Sprint 2 — Query-param secrets + authoring-loop auth
+## Sprint 2 — Query-param secrets + authoring-loop auth ✅ (shipped)
+
+**Goal met:** a keyed query-param guide (Etherscan V2) fetches end-to-end with
+both output-channel defenses (URL redaction + params-below-map) in place, and
+`api-probe` can probe auth-gated endpoints (inline `auth` injection) and
+enumerate provisioned secret names (learn-gated `listSecrets` mode). Shipped:
+`secretQueryRefs` schema + parser (incl. the op-`params` collision rule),
+`redactSecretParams` at every emit site (result.url, urls[] incl. server
+`nextUrl`, HelperError.url), inject-below-params return contract,
+`hasQuerySecret` → broadened `hasAuth` (cache-skip + guarded redirects),
+api-probe inline-auth / store-miss / body-scrub / list mode + learn gate, and
+the Etherscan V2 proof recipe. Verified by `__tests__/query-secrets.test.ts`,
+the `secretQueryRefs`-only parity tests in `auth.test.ts`, the api-probe
+list-mode tests, and the live Etherscan coverage suite under
+`HOST_INTEGRATION=1`.
 
 **Goal:** query-param secrets ship with **both** output-channel defenses,
 and the authoring loop (`api-probe`) can probe auth-gated endpoints
@@ -209,9 +224,23 @@ without pasting a key into the transcript.
 
 **Production validation: Etherscan V2 guide (A2)**
 
-+ New `api-guides/api.etherscan.io/` recipe: query param `apikey=`,
++ New `api-guides/etherscan.io/` recipe (routing domain `etherscan.io` —
+  the API host stays `api.etherscan.io`): query param `apikey=`,
   `chainid`, `auth.kind: static-key`, `auth.secretQueryRefs`, `auth.requires:
   [apikey]`, offset pagination (`page`/`offset`). Free 3/s, 100k/day.
++ **Expanded to a comprehensive read-only free-tier surface (45 ops)
+  covering every module** — account (balances, tx/token/nft/internal lists,
+  mined blocks, withdrawals, L2 deposits/withdrawals), blocks, contracts
+  (ABI/source/creation), gas, the full read-only Geth proxy set, logs,
+  transaction status, stats (supply/price/chainsize/nodecount/tokensupply),
+  and API usage. **PRO-gated V2 ops are excluded, not declared-but-broken** —
+  the daily-stats series, holder reads, `balancehistory`/`tokensupplyhistory`,
+  `fundedby`, and `getaddresstag` are all paid-tier-only on a free key, so
+  they were dropped from the guide (why: `api-auth-recipe-candidates.md`,
+  Etherscan scope note). All shipped ops share the same A2 pipeline: key
+  injected below the params map, redacted from every surfaced URL, absent
+  from the returned map. Free-tier live coverage (21 tests) exercises every
+  documented module.
 + This is the security-critical axis — it forces both output-channel
   defenses. Co-located tests.
 
@@ -250,7 +279,7 @@ without pasting a key into the transcript.
 
 ### Acceptance criteria
 
-1. A user provisions the Etherscan key via `/api secrets api.etherscan.io`
+1. A user provisions the Etherscan key via `/api secrets etherscan.io`
    and `api-fetch` returns data with `?apikey=***` in every surfaced URL
    and no `apikey` entry in `details.request.params` — the real key never
    surfaces.

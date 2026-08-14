@@ -473,6 +473,29 @@ function validateAuth(
 		secretRefs = refsRaw as Record<string, string>;
 	}
 
+	// A2 (query-param secrets): maps query param name → secret store name.
+	// Same shape + consistency rules as secretRefs; the collision-with-op-`params`
+	// rule is enforced in parseApiGuide (auth is parsed before operations).
+	let secretQueryRefs: Record<string, string> | undefined;
+	const sqrRaw = a["secretQueryRefs"];
+	if (sqrRaw !== undefined) {
+		if (
+			sqrRaw === null ||
+			typeof sqrRaw !== "object" ||
+			Array.isArray(sqrRaw) ||
+			Object.values(sqrRaw).some((v) => typeof v !== "string")
+		) {
+			return fail(
+				file,
+				"auth.secretQueryRefs",
+				"a YAML mapping of query param name → secret name",
+				describeFound(sqrRaw),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		secretQueryRefs = sqrRaw as Record<string, string>;
+	}
+
 	let requires: string[] | undefined;
 	const reqRaw = a["requires"];
 	if (reqRaw !== undefined) {
@@ -512,32 +535,46 @@ function validateAuth(
 	}
 
 	// Fail-closed consistency rules.
-	if (kindRaw === "none" && (secretRefs || requires || optional)) {
+	if (
+		kindRaw === "none" &&
+		(secretRefs || secretQueryRefs || requires || optional)
+	) {
 		return fail(
 			file,
 			"auth.secretRefs",
 			"absent when auth.kind is none",
-			"secretRefs/requires/optional with kind: none",
+			"secretRefs/secretQueryRefs/requires/optional with kind: none",
 			{
 				fix: "Use auth.kind: static-key to reference stored secrets, or remove the auth fields for a public API.",
 			},
 		);
 	}
-	if (secretRefs) {
+	if (secretRefs || secretQueryRefs) {
 		const declared = new Set([...(requires ?? []), ...(optional ?? [])]);
-		for (const [headerName, secretName] of Object.entries(secretRefs)) {
-			if (!declared.has(secretName)) {
-				return fail(
-					file,
-					`auth.secretRefs.${headerName}`,
-					`a secret name declared in auth.requires or auth.optional`,
-					`"${secretName}" is not in requires/optional`,
-					{
-						fix: `Add "${secretName}" to auth.requires or auth.optional (or fix the reference).`,
-					},
-				);
+		const checkRefs = (
+			refs: Record<string, string>,
+			field: string,
+		): ParseApiGuideResult | null => {
+			for (const outName of Object.keys(refs)) {
+				const secretName = refs[outName]!;
+				if (!declared.has(secretName)) {
+					return fail(
+						file,
+						`${field}.${outName}`,
+						"a secret name declared in auth.requires or auth.optional",
+						`"${secretName}" is not in requires/optional`,
+						{
+							fix: `Add "${secretName}" to auth.requires or auth.optional (or fix the reference).`,
+						},
+					);
+				}
 			}
-		}
+			return null;
+		};
+		const r1 = checkRefs(secretRefs ?? {}, "auth.secretRefs");
+		if (r1) return r1;
+		const r2 = checkRefs(secretQueryRefs ?? {}, "auth.secretQueryRefs");
+		if (r2) return r2;
 		const both = (requires ?? []).filter((n) => (optional ?? []).includes(n));
 		if (both.length > 0) {
 			return fail(
@@ -555,6 +592,7 @@ function validateAuth(
 	const result: AuthConfig = { kind: kindRaw as AuthKind };
 	if (headers !== undefined) result.headers = headers;
 	if (secretRefs !== undefined) result.secretRefs = secretRefs;
+	if (secretQueryRefs !== undefined) result.secretQueryRefs = secretQueryRefs;
 	if (requires !== undefined) result.requires = requires;
 	if (optional !== undefined) result.optional = optional;
 	return result;
@@ -1116,6 +1154,30 @@ export function parseApiGuide(
 		const opRes = validateOperation(opRaw, i, file, pagination);
 		if (!("name" in opRes)) return opRes as ParseApiGuideResult;
 		operations.push(opRes);
+	}
+
+	// Cross-field (A2): a secretQueryRefs param name must not appear in any
+	// operation's `params` map — the agent must never be able to supply a
+	// secretly-injected param. Checked here because auth is parsed before
+	// operations. `passthrough` ops are NOT rejected (the runtime skips
+	// secretQueryRefs keys in buildQueryParams' passthrough branch); only a
+	// declared-op colliding with the injected param is a parse error.
+	if (auth.kind === "static-key" && auth.secretQueryRefs) {
+		for (const paramName of Object.keys(auth.secretQueryRefs)) {
+			for (const dOp of operations) {
+				if (paramName in dOp.params) {
+					return fail(
+						file,
+						`auth.secretQueryRefs.${paramName}`,
+						"a query param name not declared in any operation's params",
+						`also a param of operation "${dOp.name}"`,
+						{
+							fix: `Remove "${paramName}" from operation "${dOp.name}"'s params map — it is code-injected from the secrets store and the agent must not be able to set it.`,
+						},
+					);
+				}
+			}
+		}
 	}
 
 	const guide: ApiGuide = {

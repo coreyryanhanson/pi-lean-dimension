@@ -43,6 +43,44 @@ export function resolveSecretHeaders(
 	return { headers, absentRequired, absentOptional };
 }
 
+/** Result of resolving a guide's `auth.secretQueryRefs` against the store. */
+export interface QuerySecretResolution {
+	/** paramName → resolved value, injected below the agent params map. */
+	queryParams: Record<string, string>;
+	/** secret names referenced by `requires` that are absent from the store. */
+	absentRequired: string[];
+	/** secret names referenced by `optional` that are absent from the store. */
+	absentOptional: string[];
+}
+
+/**
+ * Resolve store-secret query params for a `static-key` guide (A2). Mirrors
+ * `resolveSecretHeaders`: reads the store, splits absents by requires vs
+ * optional. The values are injected below the agent-supplied params map by
+ * the fetch pipeline and never enter agent context.
+ */
+export function resolveSecretQueryParams(
+	auth: AuthConfig,
+	domain: string,
+): QuerySecretResolution {
+	const queryParams: Record<string, string> = {};
+	const absentRequired: string[] = [];
+	const absentOptional: string[] = [];
+	const requires = auth.requires ?? [];
+	for (const [paramName, secretName] of Object.entries(
+		auth.secretQueryRefs ?? {},
+	)) {
+		const value = readSecret(domain, secretName);
+		if (value === null) {
+			if (requires.includes(secretName)) absentRequired.push(secretName);
+			else absentOptional.push(secretName);
+		} else {
+			queryParams[paramName] = value;
+		}
+	}
+	return { queryParams, absentRequired, absentOptional };
+}
+
 /**
  * Metadata-only auth status footer line, shared by `api-guide` and `api-fetch`.
  * Five states: no-auth (→ undefined) / ok / nudge-provision (required absent) /

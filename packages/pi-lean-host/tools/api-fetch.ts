@@ -22,8 +22,10 @@ import { findGuidesByDomain } from "../core/guide-store.js";
 import { callHelper, loadTransform } from "../core/local-helpers.js";
 import {
 	resolveSecretHeaders,
+	resolveSecretQueryParams,
 	authStatusLine,
 	type SecretResolution,
+	type QuerySecretResolution,
 } from "../core/auth.js";
 import { formatGuideListings } from "../core/parse-api-guide.js";
 import { spillResponse, formatSpillNotice } from "../core/response-spill.js";
@@ -213,20 +215,26 @@ export const apiFetchTool = defineTool({
 		}
 
 		// 2.7 Authentication (kind: static-key): resolve store-injected secret
-		// headers up front so a missing required secret fails closed BEFORE any
-		// request is made. The value never leaves this scope — only header and
-		// secret NAMES ever surface to the agent.
-		let resolution: SecretResolution | undefined;
+		// headers AND query params (A2) up front so a missing required secret
+		// fails closed BEFORE any request is made. Values never leave this
+		// scope — only header/param and secret NAMES ever surface to the agent.
+		let headerRes: SecretResolution | undefined;
+		let queryRes: QuerySecretResolution | undefined;
 		if (guide.auth.kind === "static-key") {
-			resolution = resolveSecretHeaders(guide.auth, domain);
-			if (resolution.absentRequired.length > 0) {
+			headerRes = resolveSecretHeaders(guide.auth, domain);
+			queryRes = resolveSecretQueryParams(guide.auth, domain);
+			const missingRequired = [
+				...(headerRes.absentRequired ?? []),
+				...(queryRes.absentRequired ?? []),
+			];
+			if (missingRequired.length > 0) {
 				return {
 					content: [
 						{
 							type: "text",
 							text:
 								`🔑 ${guide.shortName} requires a secret not yet provisioned: ` +
-								`${resolution.absentRequired.join(", ")}.\n` +
+								`${missingRequired.join(", ")}.\n` +
 								`Run /api secrets ${domain} to provision it, then retry this call.`,
 						},
 					],
@@ -234,24 +242,41 @@ export const apiFetchTool = defineTool({
 						error: "auth_required_not_provisioned",
 						domain,
 						operation,
-						missing: resolution.absentRequired,
+						missing: missingRequired,
 					},
 				};
 			}
 		}
+		const headerValues = headerRes ? Object.values(headerRes.headers) : [];
+		const queryValues = queryRes ? Object.values(queryRes.queryParams) : [];
 		const authOpts: {
 			authHeaders?: Record<string, string>;
 			secretHeaderNames?: Set<string>;
 			secretValues?: string[];
-		} = resolution
-			? {
-					authHeaders: resolution.headers,
-					secretHeaderNames: new Set(
-						Object.keys(resolution.headers).map((h) => h.toLowerCase()),
-					),
-					secretValues: Object.values(resolution.headers),
-				}
-			: {};
+			secretQueryParams?: Record<string, string>;
+			secretQueryParamNames?: Set<string>;
+		} =
+			headerRes || queryRes
+				? {
+						...(headerRes
+							? {
+									authHeaders: headerRes.headers,
+									secretHeaderNames: new Set(
+										Object.keys(headerRes.headers).map((h) => h.toLowerCase()),
+									),
+								}
+							: {}),
+						...(queryRes
+							? {
+									secretQueryParams: queryRes.queryParams,
+									secretQueryParamNames: new Set(
+										Object.keys(queryRes.queryParams),
+									),
+								}
+							: {}),
+						secretValues: [...headerValues, ...queryValues],
+					}
+				: {};
 		const authFooter = authStatusLine(guide.auth, domain);
 
 		// 3. Execute via the declared helper.

@@ -56,14 +56,22 @@ describe("all bundled guides parse correctly", () => {
 			expect(["none", "static-key"]).toContain(result.guide.auth.kind);
 			const auth = result.guide.auth;
 			if (auth.kind === "static-key") {
-				// A keyed guide must declare a consistent secretRefs shape.
-				expect(auth.secretRefs).toBeDefined();
-				expect(Object.keys(auth.secretRefs!).length).toBeGreaterThan(0);
+				// A keyed guide must declare a non-empty reference shape: header
+				// (secretRefs), query param (secretQueryRefs), or both — and every
+				// referenced secret name must be in requires ∪ optional.
+				const headerRefs = auth.secretRefs ?? {};
+				const queryRefs = auth.secretQueryRefs ?? {};
+				expect(
+					Object.keys(headerRefs).length + Object.keys(queryRefs).length,
+				).toBeGreaterThan(0);
 				const declared = new Set([
 					...(auth.requires ?? []),
 					...(auth.optional ?? []),
 				]);
-				for (const secretName of Object.values(auth.secretRefs!)) {
+				for (const secretName of [
+					...Object.values(headerRefs),
+					...Object.values(queryRefs),
+				]) {
 					expect(declared.has(secretName)).toBe(true);
 				}
 			}

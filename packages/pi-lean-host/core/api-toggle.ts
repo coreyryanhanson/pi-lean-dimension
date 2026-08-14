@@ -73,6 +73,16 @@ export function getApiToggleState(): boolean {
 	return _lastToggleState;
 }
 
+/**
+ * Learn-mode gate for api-probe's `listSecrets` discovery. Returns the
+ * cached learn state synced on session_start and toolset events. A hard
+ * runtime gate (not just toolset masking) so a `listSecrets` call under
+ * `/api on` is refused even if the tool is somehow reachable.
+ */
+export function isApiLearnEnabled(): boolean {
+	return _lastLearnState;
+}
+
 /** @internal Test-only read access to live learn state. */
 export function _getApiLearnStateForTest(): boolean {
 	return _lastLearnState;

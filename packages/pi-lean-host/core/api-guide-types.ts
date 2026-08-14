@@ -43,6 +43,16 @@ export interface AuthConfig {
 	 * `requires` or `optional` (parser-enforced).
 	 */
 	secretRefs?: Record<string, string>;
+	/**
+	 * static-key only (A2): maps query param name → secret store name.
+	 * Values are injected below the agent-supplied params map at fetch time
+	 * (never into it) and redacted from every surfaced URL. A param name
+	 * colliding with any operation's `params` map is a parse error — the
+	 * agent must not be able to supply a secretly-injected param. Every
+	 * referenced name must also appear in `requires` or `optional`
+	 * (parser-enforced, same rule as `secretRefs`).
+	 */
+	secretQueryRefs?: Record<string, string>;
 	/** static-key: secret names whose absence fails the request closed before it is sent. */
 	requires?: string[];
 	/** static-key: secret names that add value when present but are not required. */

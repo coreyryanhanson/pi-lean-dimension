@@ -35,7 +35,8 @@ no planning narrative.
 
 ### Etherscan — A2, static-key query param
 
-- **Domain:** `api.etherscan.io` (V2 base path `/v2/api`; V1 deprecated Aug 2025 — guide targets V2)
+- **Domain:** `etherscan.io` (routing; the API host is `api.etherscan.io`,
+  V2 base path `/v2/api`; V1 deprecated Aug 2025 — guide targets V2)
 - **Auth:** query param `apikey=` (OpenAPI securityScheme `apiKey in: query, name: apikey`); V2 also requires `chainid` (e.g. `1`)
 - **Free tier:** 3 calls/s, 100k calls/day, email signup, no card
 - **Pagination:** offset — `page` + `offset` (default 100) on `txlist`-style endpoints
@@ -44,6 +45,19 @@ no planning narrative.
 - **Spec:** per-endpoint — `https://docs.etherscan.io/openapi/api-reference/endpoint/<slug>.json` (e.g. `balance.json`, `txlist.json`)
 - **Reachability:** keyless probe returned HTTP 200 `NOTOK "Missing/Invalid API Key"` — endpoint answers, no WAF
 - **Note:** the security-critical axis — forces both output-channel defenses (URL redaction + params-below-map)
+- **Scope (PRO ops excluded):** the guide ships the **free-tier** surface only
+  (45 ops). The V2 API gates several endpoints behind paid tiers
+  (Standard/Pro/Pro Plus), and a free key gets `status:"0"`
+  `"...trying to access an API Pro endpoint..."` for them — so they were
+  **removed rather than declared-but-broken**: the holder reads
+  (`tokenholderlist`/`tokenholdercount`/`topholders`/`tokeninfo`/
+  `addresstokenbalance`), the history reads (`balancehistory`/
+  `tokensupplyhistory`), the daily-stats series (`dailytx`/`dailytxnfee`/
+  `dailyavghashrate`/`dailyavgnetdifficulty`/`dailynewaddress`/
+  `dailynetutilization`/`ethdailyprice`/`dailyensregister`), `fundedby`,
+  and `getaddresstag` (nametags, Pro Plus). A Standard-plan holder could
+  re-add them behind an op `note`; the free-key guide deliberately omits them
+  so every documented op is actually usable.
 
 ### GitHub (keyed variant) — A1, static-key header + optional auth
 

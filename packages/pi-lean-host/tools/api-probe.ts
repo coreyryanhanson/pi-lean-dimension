@@ -26,6 +26,14 @@ import {
 	fillPathTemplate,
 	joinUrl,
 } from "../core/path-template.js";
+import {
+	resolveSecretHeaders,
+	resolveSecretQueryParams,
+} from "../core/auth.js";
+import { listNames } from "../core/secrets-store.js";
+import { findGuidesByDomain } from "../core/guide-store.js";
+import { redactSecretParams } from "../core/helpers.js";
+import { isApiLearnEnabled } from "../core/api-toggle.js";
 import { contentText, renderExpandedText } from "./utils.js";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -69,6 +77,17 @@ export interface ProbeOptions {
 	accept?: string;
 	/** On 404, auto-try /v1/ and /v2/ prefixes. Default true. */
 	tryPrefixes?: boolean;
+	/**
+	 * A2: store-backed auth injection for probing auth-gated endpoints
+	 * (authoring loop). Injection fields only — no kind/requires/optional.
+	 * Values resolve from the secrets store and never enter the transcript.
+	 */
+	auth?: {
+		secretRefs?: Record<string, string>;
+		secretQueryRefs?: Record<string, string>;
+	};
+	/** A2: domain for secrets-store lookups; defaults to apiHost's hostname. */
+	domain?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -184,6 +203,95 @@ function pickRepresentativeId(
 // IO wrapper — fetches via the shared transport and formats the answer
 // ═══════════════════════════════════════════════════════════════════
 
+/** Resolved probe auth (A2) — store values + the names/values to redact/scrub. */
+interface ProbeAuthCtx {
+	hasAuthBlock: boolean;
+	headers: Record<string, string>;
+	queryParams: Record<string, string>;
+	secretHeaderNames: Set<string>;
+	secretQueryParamNames: Set<string>;
+	secretValues: string[];
+	missingNames: string[];
+}
+
+/**
+ * Resolve an inline `auth` block against the secrets store. Probe semantics:
+ * a store miss is NOT fail-closed (human-in-the-loop authoring tool) — the
+ * missing name is reported and the call proceeds with the header/param
+ * omitted. `requires`/`optional` are absent from the probe's injection-only
+ * block, so every miss lands in the report list.
+ */
+function resolveProbeAuth(
+	auth: NonNullable<ProbeOptions["auth"]> | undefined,
+	domain: string,
+): ProbeAuthCtx {
+	const hasRefs =
+		!!auth &&
+		(Object.keys(auth.secretRefs ?? {}).length > 0 ||
+			Object.keys(auth.secretQueryRefs ?? {}).length > 0);
+	if (!hasRefs) {
+		return {
+			hasAuthBlock: false,
+			headers: {},
+			queryParams: {},
+			secretHeaderNames: new Set(),
+			secretQueryParamNames: new Set(),
+			secretValues: [],
+			missingNames: [],
+		};
+	}
+	const headerRes = resolveSecretHeaders(
+		{
+			kind: "static-key",
+			...(auth!.secretRefs ? { secretRefs: auth!.secretRefs } : {}),
+		},
+		domain,
+	);
+	const queryRes = resolveSecretQueryParams(
+		{
+			kind: "static-key",
+			...(auth!.secretQueryRefs
+				? { secretQueryRefs: auth!.secretQueryRefs }
+				: {}),
+		},
+		domain,
+	);
+	return {
+		hasAuthBlock: true,
+		headers: headerRes.headers,
+		queryParams: queryRes.queryParams,
+		secretHeaderNames: new Set(
+			Object.keys(headerRes.headers).map((h) => h.toLowerCase()),
+		),
+		secretQueryParamNames: new Set(Object.keys(queryRes.queryParams)),
+		secretValues: [
+			...Object.values(headerRes.headers),
+			...Object.values(queryRes.queryParams),
+		],
+		missingNames: [
+			...headerRes.absentRequired,
+			...headerRes.absentOptional,
+			...queryRes.absentRequired,
+			...queryRes.absentOptional,
+		],
+	};
+}
+
+/** First missing secret name as a one-line note (names only, never values). */
+function missNote(authCtx: ProbeAuthCtx, domain: string): string {
+	if (authCtx.missingNames.length === 0) return "";
+	return `secret "${authCtx.missingNames[0]}" not found in store for domain "${domain}"`;
+}
+
+/** Hostname of an apiHost URL (falls back to the raw string). */
+function hostnameOf(apiHost: string): string {
+	try {
+		return new URL(apiHost).hostname;
+	} catch {
+		return apiHost;
+	}
+}
+
 export async function probe(
 	apiHost: string,
 	path: string,
@@ -192,13 +300,16 @@ export async function probe(
 ): Promise<ProbeResult> {
 	const accept = opts.accept ?? "application/json";
 	const tryPrefixes = opts.tryPrefixes ?? true;
+	const domain = opts.domain ?? hostnameOf(apiHost);
+	const authCtx = resolveProbeAuth(opts.auth, domain);
 
-	const base = await fetchOne(apiHost, path, params, accept);
+	const base = await fetchOne(apiHost, path, params, accept, authCtx, domain);
 	if (base.status === 404 && tryPrefixes && !/^\/v\d+\//.test(path)) {
 		for (const p of [`/v1${path}`, `/v2${path}`]) {
-			const tried = await fetchOne(apiHost, p, params, accept);
+			const tried = await fetchOne(apiHost, p, params, accept, authCtx, domain);
 			if (tried.status !== 404) {
-				tried.note = `404 on ${path}; /v*/ prefix hit → ${p}`;
+				const miss = missNote(authCtx, domain);
+				tried.note = `${miss ? miss + " — " : ""}404 on ${path}; /v*/ prefix hit → ${p}`;
 				return tried;
 			}
 		}
@@ -211,17 +322,50 @@ async function fetchOne(
 	path: string,
 	params: Record<string, unknown>,
 	accept: string,
+	authCtx: ProbeAuthCtx,
+	domain: string,
 ): Promise<ProbeResult> {
-	const url = buildUrl(apiHost, path, params);
-	const res = await fetchUrl(url, { headers: { accept }, fresh: true });
-	const raw = res.body.slice(0, 800);
-	const finalUrl = res.finalUrl ?? url;
+	// A2: inject secret query params below the agent-supplied params map, then
+	// redact the surfaced URL so the real key never reaches the transcript.
+	const rawUrl = buildUrl(apiHost, path, { ...params, ...authCtx.queryParams });
+	const url = redactSecretParams(rawUrl, authCtx.secretQueryParamNames);
+	const hasQuerySecret = Object.keys(authCtx.queryParams).length > 0;
+	const res = await fetchUrl(rawUrl, {
+		headers: { accept, ...authCtx.headers },
+		fresh: true,
+		...(authCtx.hasAuthBlock
+			? {
+					hasQuerySecret,
+					secretHeaderNames: authCtx.secretHeaderNames,
+				}
+			: {}),
+	});
+	// Probe-local body scrub (A2): the probe bypasses checkResponseStatus, so
+	// scrub known secret values from the raw slice directly — a 401 body
+	// echoing the key must not leak it into agent context.
+	let raw = res.body.slice(0, 800);
+	for (const v of authCtx.secretValues) {
+		if (v && v.length > 0) raw = raw.split(v).join("***");
+	}
+	const finalUrl = redactSecretParams(
+		res.finalUrl ?? rawUrl,
+		authCtx.secretQueryParamNames,
+	);
 
 	if (res.status >= 400) {
-		const note =
-			res.status === 401 || res.status === 403
+		const is401 = res.status === 401 || res.status === 403;
+		const miss = missNote(authCtx, domain);
+		let note: string;
+		if (!authCtx.hasAuthBlock) {
+			// No auth block → the existing auth:none wording.
+			note = is401
 				? `${res.status} — requires authentication? (guide is auth:none)`
 				: `${res.status}`;
+		} else {
+			// Auth block present → never the stale auth:none text; report the
+			// store miss (or a bare requires-auth hint when nothing was missing).
+			note = `${res.status}${is401 ? " — requires authentication?" : ""}${miss ? ` ${miss}` : ""}`;
+		}
 		return {
 			url,
 			finalUrl,
@@ -251,6 +395,7 @@ async function fetchOne(
 	}
 
 	const shape = summarize(data);
+	const miss = missNote(authCtx, domain);
 	return {
 		url,
 		finalUrl,
@@ -259,6 +404,7 @@ async function fetchOne(
 		shape,
 		draft: emitDraft(path, params, shape),
 		raw,
+		...(miss ? { note: miss } : {}),
 	};
 }
 
@@ -381,22 +527,79 @@ export const apiProbeTool = defineTool({
 				description: "On 404, auto-try /v1/ and /v2/ prefixes. Default true.",
 			}),
 		),
+		auth: Type.Optional(
+			Type.Object(
+				{
+					secretRefs: Type.Optional(Type.Record(Type.String(), Type.String())),
+					secretQueryRefs: Type.Optional(
+						Type.Record(Type.String(), Type.String()),
+					),
+				},
+				{
+					description:
+						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Injection fields only — values resolve from the secrets store and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
+				},
+			),
+		),
+		domain: Type.Optional(
+			Type.String({
+				description:
+					"Domain for secrets-store lookups; defaults to apiHost's hostname.",
+			}),
+		),
+		listSecrets: Type.Optional(
+			Type.Boolean({
+				description:
+					"Learn mode only: list provisioned secret names for the domain (no fetch). Names only, never values. Refused under /api on.",
+			}),
+		),
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-		const { apiHost, path, tryPrefixes } = params as {
-			apiHost: string;
-			path: string;
-			params?: Record<string, unknown>;
-			tryPrefixes?: boolean;
-		};
+		const { apiHost, path, tryPrefixes, auth, domain, listSecrets } =
+			params as {
+				apiHost: string;
+				path: string;
+				params?: Record<string, unknown>;
+				tryPrefixes?: boolean;
+				auth?: {
+					secretRefs?: Record<string, string>;
+					secretQueryRefs?: Record<string, string>;
+				};
+				domain?: string;
+				listSecrets?: boolean;
+			};
 		const userParams = (params as Record<string, unknown>)["params"] as
 			| Record<string, unknown>
 			| undefined;
 
+		// A2: learn-gated secrets discovery — short-circuits the fetch entirely.
+		// The agent's only programmatic path to the secrets store; /api secrets is
+		// user-typed only. Names only, never values.
+		if (listSecrets === true) {
+			if (!isApiLearnEnabled()) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: "api-probe: listSecrets: true is learn mode only — run /api learn first.",
+						},
+					],
+					details: { error: "learn_mode_only" },
+				};
+			}
+			const secrets = listDomainSecrets(domain ?? hostnameOf(apiHost));
+			return {
+				content: [{ type: "text", text: formatSecretsResult(secrets) }],
+				details: { secrets },
+			};
+		}
+
 		try {
 			const result = await probe(apiHost, path, userParams ?? {}, {
 				...(tryPrefixes !== undefined ? { tryPrefixes } : {}),
+				...(auth ? { auth } : {}),
+				...(domain ? { domain } : {}),
 			});
 			return {
 				content: [{ type: "text", text: formatProbeResult(result) }],
@@ -438,6 +641,21 @@ export const apiProbeTool = defineTool({
 		const d = result.details as Record<string, unknown> | undefined;
 		if (d?.error) {
 			return new Text(theme.fg("error", `⚠ ${contentText(result, "?")}`), 0, 0);
+		}
+		const secrets = d?.secrets as
+			| { domain: string; provisioned: string[] }
+			| undefined;
+		if (secrets) {
+			let text = theme.fg("accent", theme.bold("🔑 api-probe"));
+			text += ` — secrets for ${secrets.domain} · ${secrets.provisioned.length} provisioned`;
+			const content = contentText(result);
+			if (expanded) {
+				text += "\n";
+				text = renderExpandedText(text, theme, content, 1000);
+			} else {
+				text += `\n${theme.fg("muted", `${content.length} chars (expand)`)}`;
+			}
+			return new Text(text, 0, 0);
 		}
 		const status = d?.status as number | undefined;
 		const shape = d?.shape as ShapeSummary | null | undefined;
@@ -496,5 +714,47 @@ function formatProbeResult(r: ProbeResult): string {
 		lines.push(`  raw (truncated):`);
 		lines.push(r.raw);
 	}
+	return lines.join("\n");
+}
+
+/** A2 list mode: provisioned secret names for a domain (names only). */
+function listDomainSecrets(domain: string): {
+	domain: string;
+	provisioned: string[];
+	declared?: string[];
+} {
+	const provisioned = listNames(domain);
+	const matches = findGuidesByDomain(domain);
+	if (matches.length === 0) return { domain, provisioned };
+	const declaredSet = new Set<string>();
+	for (const { guide } of matches) {
+		for (const n of [
+			...(guide.auth.requires ?? []),
+			...(guide.auth.optional ?? []),
+		]) {
+			declaredSet.add(n);
+		}
+	}
+	const declared = [...declaredSet].sort();
+	return { domain, provisioned, declared };
+}
+
+function formatSecretsResult(s: {
+	domain: string;
+	provisioned: string[];
+	declared?: string[];
+}): string {
+	const lines: string[] = [`🔑 secrets for ${s.domain}`];
+	lines.push(
+		`  provisioned: ${s.provisioned.length > 0 ? s.provisioned.join(", ") : "(none)"}`,
+	);
+	if (s.declared !== undefined) {
+		lines.push(
+			`  declared: ${s.declared.length > 0 ? s.declared.join(", ") : "(none)"}`,
+		);
+		const gaps = s.declared.filter((d) => !s.provisioned.includes(d));
+		if (gaps.length > 0) lines.push(`  gaps: ${gaps.join(", ")}`);
+	}
+	lines.push("  (names only — values never leave the store)");
 	return lines.join("\n");
 }

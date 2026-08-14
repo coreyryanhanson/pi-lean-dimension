@@ -58,6 +58,13 @@ export interface FetchOptions {
 	 * auth-bearing request, so this always applies to keyed calls).
 	 */
 	secretHeaderNames?: Set<string>;
+	/**
+	 * True when this request carries a store-injected query-param secret
+	 * (kind: static-key, A2). Broadens `hasAuth` to cover query-secret-only
+	 * guides (header-secret callers never set this): the response becomes
+	 * private (never cached / served from cache) and redirects are guarded.
+	 */
+	hasQuerySecret?: boolean;
 	/** Charset to decode the body with when the response's Content-Type
 	 *  header omits one. Honors a guide's `responseShape.charset` for APIs
 	 *  that serve e.g. ISO-8859-1 bytes without a charset parameter. An
@@ -386,13 +393,15 @@ export async function fetchUrl(
 	const hasAuthHeaders =
 		!!opts?.headers &&
 		Object.keys(opts.headers).some((h) => h.toLowerCase() !== "accept");
-	// Broader hasAuth gate (sprint 2 extends it to query-param secrets). For
-	// sprint 1 it equals hasAuthHeaders: any non-accept header = keyed call.
-	const hasAuth = hasAuthHeaders;
+	// Broader hasAuth gate: header-secrets ∨ query-secrets. A query-secret-only
+	// guide (A2) carries no non-accept header, so hasAuthHeaders alone would
+	// miss it — hasQuerySecret closes that gap. Every auth gate below keys on
+	// hasAuth: cache-skip, If-None-Match, and the guarded-redirect force.
+	const hasAuth = hasAuthHeaders || (opts?.hasQuerySecret ?? false);
 
 	// ── cache hit ───────────────────────────────────────────────
 	const key = cacheKey(url, opts);
-	if (!opts?.fresh && !hasAuthHeaders) {
+	if (!opts?.fresh && !hasAuth) {
 		const entry = cache.get(key);
 		if (entry && Date.now() < entry.expiresAt) {
 			return { status: 200, headers: {}, body: entry.body, cached: true };
@@ -406,7 +415,7 @@ export async function fetchUrl(
 			"pi-lean-host/0.1.0 (+https://github.com/coreyryanhanson/pi-lean-dimension)";
 	}
 
-	if (!opts?.fresh && !hasAuthHeaders) {
+	if (!opts?.fresh && !hasAuth) {
 		const entry = cache.get(key);
 		if (entry?.etag) {
 			reqHeaders["If-None-Match"] = entry.etag;
@@ -472,7 +481,7 @@ export async function fetchUrl(
 			const charset = charsetMatch?.[1] ?? opts?.fallbackCharset ?? "utf-8";
 			const body = decodeBuffer(rawBody, charset);
 
-			if (status >= 200 && status < 300 && !hasAuthHeaders) {
+			if (status >= 200 && status < 300 && !hasAuth) {
 				const maxAge = parseMaxAge(respHeaders) ?? DEFAULT_TTL_MS;
 				const etag = respHeaders["etag"];
 
