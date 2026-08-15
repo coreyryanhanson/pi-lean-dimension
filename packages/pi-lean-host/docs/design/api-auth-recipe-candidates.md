@@ -61,7 +61,7 @@ no planning narrative.
 
 ### GitHub (keyed variant) — A1, static-key header + optional auth
 
-- **Domain:** `api.github.com`
+- **Domain:** `github.com` (routing; the API host is `api.github.com`)
 - **Auth:** `Authorization: Bearer` PAT (classic or fine-grained); `auth.optional` — 60 req/hr unauth, 5000 authed
 - **Free tier:** PAT, email signup, no card
 - **Pagination:** Link-header (page-based); `X-RateLimit-*` headers
@@ -81,7 +81,7 @@ no planning narrative.
 
 ### NCBI E-utilities — A3, authless stateful (opaque-token)
 
-- **Domain:** `eutils.ncbi.nlm.nih.gov`
+- **Domain:** `ncbi.nlm.nih.gov` (routing; the API host is `eutils.ncbi.nlm.nih.gov`)
 - **Auth:** none required; optional `api_key` raises rate limits
 - **Auth model:** opaque-token server-side session — `esearch` with `usehistory=y` returns `WebEnv`/`query_key`, passed back on `esummary`/`efetch`
 - **Pagination:** offset-limit — `retstart` / `retmax`
