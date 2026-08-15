@@ -188,8 +188,8 @@ read**, **network read**, **local write**, and **network read (exploratory)**:
 
 ```text
 api-guide → list all available API guides (catalog)
-api-guide domain="en.wikipedia.org" → disambiguation menu (two guides claim the domain)
-api-guide domain="en.wikipedia.org" guide="Wikipedia REST" → selected guide
+api-guide domain="wikipedia.org" → disambiguation menu (two guides claim the domain)
+api-guide domain="wikipedia.org" guide="Wikipedia REST" → selected guide
 ```
 
 - No parameters → the full catalog (collapsed by `organization:`).
@@ -204,13 +204,13 @@ broken field instead of re-authoring from scratch.
 ### 2. `api-fetch` — Execute a Guided Operation (network read)
 
 ```text
-api-fetch domain="en.wikipedia.org" operation="getPageSummary" params={title:"Albert_Einstein"}
-api-fetch domain="en.wikipedia.org" operation="searchPages" params={srsearch:"climate"} gatherAll=true
+api-fetch domain="wikipedia.org" operation="getPageSummary" params={title:"Albert_Einstein"}
+api-fetch domain="wikipedia.org" operation="searchPages" params={srsearch:"climate"} gatherAll=true
 ```
 
 **Parameters:**
 
-- `domain` — a domain registered in a guide (e.g. `"en.wikipedia.org"`).
+- `domain` — a domain registered in a guide (e.g. `"wikipedia.org"`).
 - `operation` — an operation name from the guide (e.g. `"getPageSummary"`).
 - `params` (optional) — path and query parameter values for the operation.
 - `gatherAll` (optional) — `true` paginates to gather all items up to the

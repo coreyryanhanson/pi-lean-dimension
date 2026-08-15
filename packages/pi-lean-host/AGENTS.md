@@ -120,7 +120,13 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `resolveSecretHeaders()` / `resolveSecretQueryParams()` and injects them in
   code — the value never enters agent context; a missing `requires` secret
   **fails closed before the request**; `optional` absent proceeds
-  unauthenticated. `hasAuth` (any non-accept header ∨ injected query secret)
+  unauthenticated. The store key is `canonicalStoreDomain(guide) =
+  guide.domains[0]` (`core/auth.ts`), applied at the `api-fetch` call site —
+  decoupled from the routing `domain` the agent supplies, so `/api secrets
+  github.com` feeds a guide regardless of whether the agent routed it as
+  `github.com` or an api-subdomain alias. `api-probe` (no `guide` object)
+  defaults its store domain to `hostnameOf(apiHost)`, overridable via an
+  agent-visible `domain` param. `hasAuth` (any non-accept header ∨ injected query secret)
   forces the guarded-redirect path in the transport, so an auth-bearing call
   is always SSRF-checked hop-by-hop and store-injected headers +
   `Authorization` are stripped on **cross-domain** redirect hops (literal
@@ -137,7 +143,10 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   probing auth-gated endpoints — store-miss fetches unauthenticated with a
   note (never fail-closed) — plus a learn-gated `listSecrets: true` mode that
   lists provisioned secret names (names only) to close the authoring
-  bootstrap gap.
+  bootstrap gap. A bare `listSecrets` call (no `domain`, no `apiHost`) lists
+  **provisioned-but-guideless** (unscoped) store domains first — the orphan
+  view for authoring bootstrap + post-flip migration cleanup — then the
+  per-domain view.
 - **Response spill** (`core/response-spill.ts`): when `api-fetch` truncates,
   the full JSON is spilled to disk (max 8 files/session, oldest evicted;
   `cleanupAllSpill()` on `session_shutdown`).
