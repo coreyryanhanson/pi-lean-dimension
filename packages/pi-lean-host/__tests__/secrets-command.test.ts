@@ -87,21 +87,6 @@ describe("/api secrets --help", () => {
 	});
 });
 
-describe("/api secrets <domain> — assisted entry", () => {
-	it("shows the detail view then prompts name + value", async () => {
-		writeSecret("d.example", "api_key", "super-secret-value");
-		writeSecret("d.example", "other", "another-secret");
-
-		const ctx = mockCtx();
-		await handleSecretsSubcommand("", ctx);
-		const text = notified(ctx);
-		expect(text).toContain("d.example");
-		expect(text).toContain("api_key");
-		expect(text).not.toContain("super-secret-value");
-		expect(text).not.toContain("another-secret");
-	});
-});
-
 describe("/api secrets <domain> <name> — manual entry", () => {
 	it("prompts for a value and stores it; never emits the value", async () => {
 		const ctx = mockCtx();

@@ -134,13 +134,15 @@ function listAll(ctx: ExtensionCommandContext): void {
 
 /**
  * Declared secret store-names for a domain, from every registered guide's
- * `auth.secretRefs` (values). Empty for guides without static-key auth.
+ * `auth.secretRefs` and `auth.secretQueryRefs` (values). Empty for guides
+ * without static-key auth.
  */
 function declaredSecretNames(domain: string): string[] {
 	const names = new Set<string>();
 	for (const { guide } of findGuidesByDomain(domain)) {
 		if (guide.auth.kind !== "static-key") continue;
 		for (const n of Object.values(guide.auth.secretRefs ?? {})) names.add(n);
+		for (const n of Object.values(guide.auth.secretQueryRefs ?? {})) names.add(n);
 	}
 	return [...names].sort((a, b) => a.localeCompare(b));
 }
