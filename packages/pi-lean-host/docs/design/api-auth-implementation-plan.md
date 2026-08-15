@@ -116,196 +116,62 @@ the `secretQueryRefs`-only parity tests in `auth.test.ts`, the api-probe
 list-mode tests, and the live Etherscan coverage suite under
 `HOST_INTEGRATION=1`.
 
-**Goal:** query-param secrets ship with **both** output-channel defenses,
-and the authoring loop (`api-probe`) can probe auth-gated endpoints
-without pasting a key into the transcript.
+**Shipped:**
 
-### In scope
++ `core/api-guide-types.ts` + `core/parse-api-guide.ts` —
+  `auth.secretQueryRefs: Record<paramName, secretName>`; `validateAuth`
+  rule rejecting a secret param name that collides with any operation's
+  `params` map (agent must not be able to supply a secretly-injected
+  param); `passthrough` + `secretQueryRefs` parses (defense is runtime).
++ `core/helpers.ts` — `redactSecretParams(url, secretParamNames)` applied
+  at every emit site (`result.url`, `PaginateResult.urls` incl.
+  server-supplied `nextUrl`, `HelperError.url`) computed upstream of the
+  `checkResponseStatus` call so the secret-bearing URL never reaches the
+  error object; inject-below-params return contract (`restGet`/`paginate`
+  return only agent-supplied params, secret absent from the map entirely);
+  passthrough guard in `buildQueryParams` dropping agent-supplied values
+  for secret param names.
++ `core/transport.ts` + `core/helpers.ts` — `hasQuerySecret` flag;
+  `hasAuth` = header-secrets ∨ query-secrets; cache-skip and forced
+  guarded redirects key on `hasAuth`, giving `secretQueryRefs`-only guides
+  parity with header-secret guides (the gap that motivated the broader
+  flag).
++ `tools/api-fetch.ts` — call sites updated to the new params semantics
+  (agent-supplied params map emitted into `details.request.params`;
+  secret key never present).
++ `tools/api-probe.ts` — optional inline `auth` param (injection fields
+  only) + optional `domain`; store-backed injection (value never in
+  transcript); store-miss fetches unauthenticated with a miss note rather
+  than failing closed (stale `auth:none` text suppressed on a miss);
+  probe-local 401/403 body scrub of known secret values from `r.raw`
+  (covers the `checkResponseStatus`-bypassing path); learn-gated
+  `listSecrets: true` mode returning `{ domain, provisioned, declared? }`
+  via `listNames(domain)` (names only, declared populated when a guide is
+  registered for the domain); refused under `/api on` with a one-line
+  "learn mode only" note.
++ Recipe: `api-guides/etherscan.io/` (routing domain `etherscan.io`, API
+  host `api.etherscan.io`) — `apikey` query secret via `secretQueryRefs`,
+  `chainid`, `auth.requires: [apikey]`, offset pagination; expanded to a
+  comprehensive 45-op read-only free-tier surface across every module
+  (account, blocks, contracts, gas, Geth proxy set, logs, tx status,
+  stats, API usage), with PRO-gated ops excluded rather than
+  declared-but-broken (why: `api-auth-recipe-candidates.md`, Etherscan
+  scope note) + co-located `endpoint-coverage.test.ts`
+  (`HOST_INTEGRATION=1`, 21 live tests, 450ms throttle for the 3/s tier).
 
-**Schema / parser — `secretQueryRefs`**
+**Verified by:** `__tests__/query-secrets.test.ts` (mocked-transport audit:
+URL redaction at every emit site incl. the error path and server
+`nextUrl`, params-below-map, passthrough guard, parser collision rule),
+the `secretQueryRefs`-only parity tests in `auth.test.ts` (cache-skip +
+302→internal SSRF block via forced guarded redirects),
+`api-probe.test.ts` (inline-auth injection / miss-note / URL redaction /
+list mode + declared-vs-provisioned gap / learn gate), plus the widened
+`all-guides-parse.test.ts` and the structural suite.
 
-+ Add `auth.secretQueryRefs: Record<paramName, secretName>`.
-+ `validateAuth` rule: a secret param name that also appears in any
-  operation's `params` map is a parse error (agent must not be able to
-  supply a secretly-injected param).
-+ `passthrough` + `secretQueryRefs` is **allowed**; the defense is
-  runtime, in `buildQueryParams`'s passthrough branch, which skips
-  `secretQueryRefs` keys (code-injected, not agent-settable).
-
-**Output-channel audit — query-param secrets (two channels, two defenses)**
-
-+ *Channel 1 (URL):* `redactSecretParams(url, secretParamNames)` redacts
-  at the capture point so the real URL never passes the fetch layer.
-  Covers every emit site: `formatRequestLine`, `details.request.url`,
-  `renderResult`, `formatHelperError`, `PaginateResult.urls` — including
-  server-supplied `nextUrl` (redact at the `urls.push` site).
-  **Redact *before* the error path, not only in the return value.**
-  `restGet`/`paginate` pass the raw URL into `checkResponseStatus`
-  (`core/helpers.ts:382`, `:630`), where it is stored on `HelperError.url`
-  and later rendered by `formatHelperError` → `formatRequestLine`. Compute
-  the redacted URL upstream of the `checkResponseStatus` call so the
-  secret-bearing URL never reaches the error object.
-+ *Channel 2 (params):* inject the secret **below** the returned params
-  map, never into it. Return-contract change: `restGet`/`paginate`
-  `params` becomes "agent-supplied params." `api-fetch` emits
-  `details.request.params` from the pre-injection map. The secret key is
-  absent from the returned map entirely (not present-but-redacted).
-+ `api-fetch` call sites (`tools/api-fetch.ts:242`, `:292`) updated to
-  the new `params` semantics.
-
-**`hasAuth` extension**
-
-+ `opts.hasQuerySecret: boolean` set by `helpers.ts` when
-  `secretQueryRefs` injected any params. `hasAuth` = header-secrets ∨
-  query-secrets. Cache-skip and redirect-forcing key on `hasAuth`, so a
-  `secretQueryRefs`-only guide is covered (the gap that motivated the
-  broader flag).
-
-**`api-probe` store-backed auth (`tools/api-probe.ts`)**
-
-+ Optional `auth?: { secretRefs?, secretQueryRefs? }` param (injection
-  fields only, no `kind`/`requires`/`optional`) + optional `domain`
-  param (defaults to `apiHost` hostname).
-+ Resolve `secretName → value` from the store; inject. Value never enters
-  transcript — only header/param names and secret names do.
-+ Store-miss path: **fetch anyway with the missing header/param omitted**,
-  report the miss in the note (do not fail closed — probe is a
-  human-in-the-loop authoring tool). Distinguish in `fetchOne`'s status
-  note: no `auth` block → existing `auth:none` wording; `auth` block but
-  miss → `secret "<name>" not found in store for domain "<domain>"` (the
-  stale `auth:none` text must not fire).
-+ Output-channel reuse: same `redactSecretParams`, same
-  inject-below-params, at the probe's `fetchUrl` call site. Set
-  `hasAuth`/force guarded redirects when `auth` non-empty. Probe already
-  passes `fresh: true` (no cache concern).
-+ **Body-scrub for auth-bearing probes.** `api-probe.ts:211` slices
-  `res.body.slice(0, 800)` into `r.raw` and emits it directly; the probe
-  has its own 401/403 branch at `:218` and **bypasses `checkResponseStatus`**,
-  so sprint 1's 401-body scrub does not cover it. Add a probe-local scrub
-  of known secret values from `r.raw` (or fail-closed body drop) for
-  auth-bearing probes — otherwise a 401 body echoing the auth header
-  value leaks the secret into agent context.
-
-**`api-probe` secret-name discovery (learn-only — the bootstrap gap)**
-
-+ Problem: during authoring in `/api learn`, the agent has no
-  programmatic way to discover which secret names are already provisioned
-  for a domain. `/api secrets <domain>` is a **user-typed slash command**
-  (pi runs extension commands before agent processing; the agent never
-  invokes them), and the four registered tools surface no stored names.
-  This is a real chicken-and-egg gap: a user pre-stashes a key via the
-  manual-entry escape valve (`/api secrets <domain> <name>`) under a name
-  of their choosing, the agent invents its own `secretName` while
-  authoring, probes with the store miss-note, and never learns the right
-  name is sitting in the store.
-+ Fix (one tool, two modes): add an optional `listSecrets: true` param
-  to `api-probe`, gated to learn mode (`learnToolsEnabled`). When set, the
-  probe short-circuits the fetch and returns the provisioned secret names
-  for `domain` (defaulting to `apiHost`'s hostname) via `listNames(domain)`
-  — names only, never values, reusing the store's existing names-only
-  contract. No new tool, no new plumbing: `api-probe` already takes the
-  `domain` param (this sprint) and already does store reads for its auth
-  injection.
-+ Return shape: a `secrets` block on `ProbeResult` —
-  `{ domain, provisioned: string[], declared?: string[] }`. `declared` is
-  populated when a guide is already registered for the domain (from
-  `auth.requires ∪ auth.optional`), letting the agent see
-  provisioned-vs-declared gaps in one call. Absent a registered guide,
-  `declared` is omitted and only `provisioned` is returned. The fetch
-  fields (`url`/`status`/`shape`/`draft`/`raw`) are empty in list mode.
-+ Learn gate is hard: `/api on` (non-learn) calls with `listSecrets:
-  true` are refused with a one-line "learn mode only" note. In normal use
-  the agent has no business enumerating the secrets store — discovery is
-  an authoring act, provisioning is a human act.
-+ Output-channel reuse: list mode emits no URL, no params, no body — so
-  this sprint's `redactSecretParams` / inject-below-params / probe-local
-  body-scrub channels do not apply. The only emit is the names array,
-  which is names-only by the store contract.
-
-**Production validation: Etherscan V2 guide (A2)**
-
-+ New `api-guides/etherscan.io/` recipe (routing domain `etherscan.io` —
-  the API host stays `api.etherscan.io`): query param `apikey=`,
-  `chainid`, `auth.kind: static-key`, `auth.secretQueryRefs`, `auth.requires:
-  [apikey]`, offset pagination (`page`/`offset`). Free 3/s, 100k/day.
-+ **Expanded to a comprehensive read-only free-tier surface (45 ops)
-  covering every module** — account (balances, tx/token/nft/internal lists,
-  mined blocks, withdrawals, L2 deposits/withdrawals), blocks, contracts
-  (ABI/source/creation), gas, the full read-only Geth proxy set, logs,
-  transaction status, stats (supply/price/chainsize/nodecount/tokensupply),
-  and API usage. **PRO-gated V2 ops are excluded, not declared-but-broken** —
-  the daily-stats series, holder reads, `balancehistory`/`tokensupplyhistory`,
-  `fundedby`, and `getaddresstag` are all paid-tier-only on a free key, so
-  they were dropped from the guide (why: `api-auth-recipe-candidates.md`,
-  Etherscan scope note). All shipped ops share the same A2 pipeline: key
-  injected below the params map, redacted from every surfaced URL, absent
-  from the returned map. Free-tier live coverage (21 tests) exercises every
-  documented module.
-+ This is the security-critical axis — it forces both output-channel
-  defenses. Co-located tests.
-
-### Tests (acceptance proof)
-
-+ URL channel: redacted `?key=***` at every emit site incl.
-  server-supplied `nextUrl`; a non-secret param stays intact.
-+ Params channel: `result.params` / `details.request.params` **never
-  contains the secret value** for a `secretQueryRefs` guide — the key is
-  absent from the returned map (the proof that the return-contract change
-  holds; without it the leak is silent).
-+ `passthrough` guard: an agent-supplied value for a secret param name on
-  a `passthrough` op is dropped before the query string.
-+ `secretQueryRefs`-only parity: (i) authenticated response not cached
-  (`hasAuth` skips, `hasAuthHeaders` would not); (ii) 302→internal
-  blocked by forced guarded path.
-+ Parser: `secretQueryRefs`↔`params` collision is a parse error;
-  `passthrough` + `secretQueryRefs` parses.
-+ `api-probe`: inline `auth` injects from store; miss reported in note,
-  not failed closed; stale `auth:none` text does not fire on a miss; URL
-  redacted; **auth-bearing probe's `r.raw` 401-body slice contains no
-  secret value** (probe-local body scrub, not the bypassed
-  `checkResponseStatus` path).
-+ `api-probe` list mode: `listSecrets: true` in learn mode returns
-  `provisioned` names for the domain (names only, no values); with a
-  registered guide, `declared` is populated and a provisioned-vs-declared
-  gap is visible in one call; the fetch fields are empty.
-+ `api-probe` list-mode learn gate: `listSecrets: true` under `/api on`
-  (non-learn) is refused with the "learn mode only" note and does not
-  touch the store.
-+ Error-path URL redaction: a `HelperError` from `restGet`/`paginate`
-  carries the redacted URL on `err.url` (proves the redact-before-
-  `checkResponseStatus` ordering), so `formatHelperError` renders
-  `?key=***`, never the raw value.
-+ Etherscan: parses cleanly; endpoint coverage under `HOST_INTEGRATION=1`.
-
-### Acceptance criteria
-
-1. A user provisions the Etherscan key via `/api secrets etherscan.io`
-   and `api-fetch` returns data with `?apikey=***` in every surfaced URL
-   and no `apikey` entry in `details.request.params` — the real key never
-   surfaces.
-2. A server-supplied `nextUrl` containing `?apikey=<real>` is redacted
-   before it enters `PaginateResult.urls`.
-3. An agent that supplies `apikey` as a param on a `passthrough` op cannot
-   override or race the injection (value dropped).
-4. A `secretQueryRefs`-only guide is not cached and is SSRF-guarded
-   (parity with header-secret guides).
-5. `api-probe` with an inline `auth` block fetches an auth-gated endpoint
-   with the key injected from the store; on a store miss it reports the
-   miss and fetches unauthenticated rather than failing or emitting the
-   stale `auth:none` hint.
-6. In `/api learn`, `api-probe` with `listSecrets: true` surfaces the
-   provisioned secret names for a domain (and the declared names when a
-   guide is registered) without fetching — closing the bootstrap gap
-   where a user pre-stashed a key under a name the agent didn't pick.
-   Under `/api on` the same call is refused with the "learn mode only"
-   note.
-7. Full structural suite + `all-guides-parse` green.
-
-### Out of scope (this sprint)
-
-+ Path-injected secrets (`secretPathRefs`) — harder redaction story,
-  deferred (design doc edge case).
-+ The optional-auth keyed variants as shipped recipes (sprint 3).
+**Deferred to later sprints:** optional-auth keyed recipes (GitHub/GitLab
+PAT variants) + `auth.optional` footer-state parity and the NCBI optional
+`api_key` → **sprint 3**; path-injected secrets (`secretPathRefs`) —
+harder redaction story, deferred (design doc edge case).
 
 ## Sprint 3 — Stateful sessions + optional-auth keyed variants
 
