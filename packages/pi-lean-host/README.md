@@ -24,7 +24,7 @@
 > development preview. The recipe schema, tool surfaces, and guide format are
 > still settling as we test more APIs to finalize the shape — **future
 > compatibility is not guaranteed** until the package reaches lockstep with
-> `pi-lean-dimension` 0.5.0. Guides authored against 0.1.x may need revision
+> `pi-lean-dimension` 0.5.0. Guides authored against 0.2.x may need revision
 > as the schema firms up.
 
 ---
