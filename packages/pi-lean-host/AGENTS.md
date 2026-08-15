@@ -147,6 +147,14 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   **provisioned-but-guideless** (unscoped) store domains first — the orphan
   view for authoring bootstrap + post-flip migration cleanup — then the
   per-domain view.
+  **Auth deferred (design-doc decisions preserved):** `oauth2` stays a
+  declared-but-unrealized seam (rejected at parse); general mutations / write
+  gate stay out (transport is GET-only); cookie-login (jar + `api-login`) is
+  deferred in full; an OS-keychain at-rest backend (`@napi-rs/keyring`) is an
+  additive store-backend upgrade, daemon-gated on headless so the `0600` file
+  stays the honest default. No `scopes` schema — read-only is enforced
+  structurally (only GET `restGet`/`paginate`), scoping is behavioral
+  (provision read-only keys).
 - **Response spill** (`core/response-spill.ts`): when `api-fetch` truncates,
   the full JSON is spilled to disk (max 8 files/session, oldest evicted;
   `cleanupAllSpill()` on `session_shutdown`).

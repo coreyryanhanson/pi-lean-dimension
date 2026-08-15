@@ -95,6 +95,7 @@ export function resolveSecretQueryParams(
  * Metadata-only auth status footer line, shared by `api-guide` and `api-fetch`.
  * Five states: no-auth (→ undefined) / ok / nudge-provision (required absent) /
  * ok-optional (optionals provisioned) / optional-not-provisioned.
+ * Covers BOTH `secretRefs` (header) and `secretQueryRefs` (query) ref maps.
  * Never renders a secret value — names only.
  */
 export function authStatusLine(
@@ -102,25 +103,43 @@ export function authStatusLine(
 	domain: string,
 ): string | undefined {
 	if (auth.kind !== "static-key") return undefined;
-	const refs = auth.secretRefs;
-	if (!refs || Object.keys(refs).length === 0) return undefined;
-	const res = resolveSecretHeaders(auth, domain);
-	if (res.absentRequired.length > 0) {
+	// Nothing to report when neither ref map has an entry (empty maps are valid
+	// = no injection). Length-based, matching the pre-query-ref "no footer"
+	// semantics for an empty `secretRefs`, while still covering query-only guides.
+	if (
+		Object.keys(auth.secretRefs ?? {}).length === 0 &&
+		Object.keys(auth.secretQueryRefs ?? {}).length === 0
+	)
+		return undefined;
+	const headerRes = resolveSecretHeaders(auth, domain);
+	const queryRes = resolveSecretQueryParams(auth, domain);
+	// Dedupe across the two ref maps: a secret injected into both a header
+	// and a query param must be named once, not twice.
+	const absentRequired = [
+		...new Set([...headerRes.absentRequired, ...queryRes.absentRequired]),
+	];
+	if (absentRequired.length > 0) {
 		return (
-			`🔑 auth: requires ${res.absentRequired.join(", ")} — not provisioned. ` +
+			`🔑 auth: requires ${absentRequired.join(", ")} — not provisioned. ` +
 			`Run /api secrets ${domain}.`
 		);
 	}
 	// The optional dimension only exists for optional names actually referenced
-	// by a secretRef (an `optional` name with no ref is meaningless).
-	const refValues = new Set(Object.values(refs));
+	// by a ref (an `optional` name with no ref is meaningless).
+	const refValues = new Set([
+		...Object.values(auth.secretRefs ?? {}),
+		...Object.values(auth.secretQueryRefs ?? {}),
+	]);
 	const referencedOptional = (auth.optional ?? []).filter((n) =>
 		refValues.has(n),
 	);
 	if (referencedOptional.length > 0) {
-		if (res.absentOptional.length > 0) {
+		const absentOptional = [
+			...new Set([...headerRes.absentOptional, ...queryRes.absentOptional]),
+		];
+		if (absentOptional.length > 0) {
 			return (
-				`🔑 auth: ok (optional ${res.absentOptional.join(", ")} not ` +
+				`🔑 auth: ok (optional ${absentOptional.join(", ")} not ` +
 				`provisioned — unauthenticated; provision with /api secrets ${domain} for higher limits)`
 			);
 		}

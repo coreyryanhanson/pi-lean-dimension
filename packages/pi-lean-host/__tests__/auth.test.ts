@@ -450,6 +450,15 @@ describe("authStatusLine footer", () => {
 		expect(authStatusLine({ kind: "none" }, "auth.test")).toBeUndefined();
 	});
 
+	it("static-key with empty ref maps → undefined (nothing to report)", () => {
+		expect(
+			authStatusLine({ kind: "static-key", secretRefs: {} }, "auth.test"),
+		).toBeUndefined();
+		expect(
+			authStatusLine({ kind: "static-key", secretQueryRefs: {} }, "auth.test"),
+		).toBeUndefined();
+	});
+
 	it("requires present → ok", () => {
 		const line = authStatusLine(
 			{ kind: "static-key", ...base, requires: ["api_key"] },
@@ -495,6 +504,75 @@ describe("authStatusLine footer", () => {
 		);
 		expect(line).toContain("auth: ok");
 		expect(line).toContain("optional provisioned");
+	});
+
+	// ── secretQueryRefs parity: the footer must cover query-param auth too ──
+
+	it("query-ref required present → ok", () => {
+		const line = authStatusLine(
+			{
+				kind: "static-key",
+				secretQueryRefs: { apikey: "api_key" },
+				requires: ["api_key"],
+			},
+			"auth.test",
+		);
+		expect(line).toContain("auth: ok");
+		expect(line).not.toContain("S3CRET-VALUE"); // never the value
+	});
+
+	it("query-ref required absent → nudge-provision", () => {
+		const line = authStatusLine(
+			{
+				kind: "static-key",
+				secretQueryRefs: { apikey: "api_key" },
+				requires: ["api_key"],
+			},
+			"auth.missing",
+		);
+		expect(line).toContain("requires api_key");
+		expect(line).toContain("/api secrets auth.missing");
+	});
+
+	it("query-ref optional absent → optional-not-provisioned", () => {
+		const line = authStatusLine(
+			{
+				kind: "static-key",
+				secretQueryRefs: { apikey: "api_key" },
+				optional: ["api_key"],
+			},
+			"auth.missing",
+		);
+		expect(line).toContain("auth: ok (optional api_key not provisioned");
+	});
+
+	it("query-ref optional present → ok (optional)", () => {
+		const line = authStatusLine(
+			{
+				kind: "static-key",
+				secretQueryRefs: { apikey: "api_key" },
+				optional: ["api_key"],
+			},
+			"auth.test",
+		);
+		expect(line).toContain("auth: ok");
+		expect(line).toContain("optional provisioned");
+	});
+
+	it("mixed header+query: missing query required surfaces in the nudge", () => {
+		const line = authStatusLine(
+			{
+				kind: "static-key",
+				secretRefs: { "x-api-key": "api_key" },
+				secretQueryRefs: { apikey: "api_key" },
+				requires: ["api_key"],
+			},
+			"auth.missing",
+		);
+		// The same name is referenced by both maps — it must appear exactly once.
+		expect(line).toBe(
+			"🔑 auth: requires api_key — not provisioned. Run /api secrets auth.missing.",
+		);
 	});
 });
 

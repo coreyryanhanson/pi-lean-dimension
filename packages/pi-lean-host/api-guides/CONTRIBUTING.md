@@ -1,8 +1,10 @@
 # Contributing an API guide
 
 > How a guide's tests stay decoupled from framework base code, and the
-> shape every guide's test files follow. `boe.es` is the reference
-> template — read it first, then copy its pattern.
+> shape every guide's test files follow. `boe.es` is the reference template
+> for no-auth guides — read it first, then copy its pattern. For a **keyed**
+> guide (`auth.kind: static-key`), start from a keyed recipe instead — see
+> [Authoring a keyed guide](#authoring-a-keyed-guide-static-key-auth).
 
 ## Directory layout
 
@@ -11,7 +13,7 @@ ships its **own** test files co-located with `guide.md`. Tests do **not**
 live in `packages/pi-lean-host/__tests__/` — that dir holds framework
 structural tests only.
 
-```
+```text
 api-guides/<domain>/
 ├── guide.md                       ← the recipe YAML
 ├── helper.ts                      ← optional; present when a guide needs a transform
@@ -60,6 +62,48 @@ on the op in `guide.md`. Loaded by `loadTransform`, invoked by the
 `restGet` (whole-body) or `paginate` (per-item) hookpoint. A throw falls
 back to the raw body/item with a warning — graceful, never disables the op.
 Pure function, no default export.
+
+## Authoring a keyed guide (static-key auth)
+
+`boe.es` is the reference for **no-auth** guides. When the endpoint requires a
+key, start from a keyed reference recipe instead: `api.github.com`
+(optional header ref), `coingecko.com` (required header ref), or
+`etherscan.io` (required query `?key=` ref) cover the shapes.
+
+The guide **declares the secret by name**; the value never lives in the guide.
+`api-fetch` reads the value from the per-domain secrets store
+(`~/.pi/agent/pi-lean-host/secrets/<domain>.json`, provisioned via
+`/api secrets`) and injects it in code — a real key committed to the recipe
+would be one `cat` from the agent's context.
+
+```yaml
+auth:
+  kind: static-key
+  secretRefs:                  # or secretQueryRefs: for ?key= style
+    x-cg-demo-api-key: api_key # headerName: secretName
+  requires: [api_key]          # ─ or optional if the API works unauthenticated
+```
+
+**Parser-enforced** (every failure carries a `fix:` hint — a bad guide fails
+at parse time, not fetch time):
+
+- `secretRefs` / `secretQueryRefs` are rejected on `auth.kind: none`.
+- Every ref name must be declared in `requires` ∪ `optional`; a name in
+  **both** is an error.
+- A `secretQueryRefs` param name that also appears in any operation's `params`
+  map is an error — the agent must not be able to set a code-injected param.
+- `auth.kind: oauth2` is rejected at parse ("not yet implemented").
+
+**Keyed-guide tests** follow the `api.github.com/endpoint-coverage.test.ts`
+pattern: parse/recipe assertions run always; live calls resolve the key via
+`resolveSecretHeaders` / `resolveSecretQueryParams` from `core/auth.js` and
+are `HOST_INTEGRATION=1`-gated. Framework structural tests inject a temp store
+via `setSecretsDir` (`__tests__/auth.test.ts`) — use that seam for a keyed
+guide's pure assertions and assert the output-channel invariants too: a
+missing `requires` secret fails closed **before** the request, a missing
+`optional` proceeds unauthenticated, and no secret value ever appears in
+`result.url`, `details.params`, the 401 body, or `details.headers` (names +
+redaction on every surfaced channel).
 
 ## Test harness: shared plumbing, per-file assertions
 
