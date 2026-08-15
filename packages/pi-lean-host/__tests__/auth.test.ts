@@ -286,6 +286,40 @@ body
 		if (!r.ok) expect(r.error.field).toBe("auth.requires");
 	});
 
+	it("requires name not referenced by any ref → ParseError with fix", () => {
+		const r = parseAuthBlock(`  kind: static-key
+  secretRefs:
+    x-api-key: api_key
+  requires:
+    - api_key
+    - unused_key`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.requires");
+			expect(r.error.fix).toContain("unused_key");
+		}
+	});
+
+	it("optional name not referenced by any ref → ParseError", () => {
+		const r = parseAuthBlock(`  kind: static-key
+  secretRefs:
+    x-api-key: api_key
+  requires:
+    - api_key
+  optional:
+    - rate_key`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error.field).toBe("auth.optional");
+	});
+
+	it("static-key with requires but no refs at all → ParseError", () => {
+		const r = parseAuthBlock(`  kind: static-key
+  requires:
+    - api_key`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error.field).toBe("auth.requires");
+	});
+
 	it("secretRefs with kind: none → ParseError (kind↔field consistency)", () => {
 		const r = parseAuthBlock(`  kind: none
   secretRefs:

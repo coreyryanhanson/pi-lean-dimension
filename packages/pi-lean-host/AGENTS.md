@@ -113,10 +113,11 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
 - **Static-key auth** (`core/auth.ts` + schema): `auth.kind: static-key`
   realizes `secretRefs` (`Record<headerName, secretName>`) and
   `secretQueryRefs` (`Record<paramName, secretName>`, A2),
-  `requires: string[]`, `optional: string[]` (parser-enforced: every ref name
-  in `requires ∪ optional`, a name in both is an error, a `secretQueryRefs`
-  param name colliding with any op's `params` map is an error, `oauth2`
-  rejected at parse). `api-fetch` resolves store secrets via
+  `requires: string[]`, `optional: string[]` (parser-enforced: ref values and
+  `requires ∪ optional` must coincide — every ref targets a declared secret
+  and every declared secret is referenced by a ref, a name in both is an
+  error, a `secretQueryRefs` param name colliding with any op's `params` map
+  is an error, `oauth2` rejected at parse). `api-fetch` resolves store secrets via
   `resolveSecretHeaders()` / `resolveSecretQueryParams()` and injects them in
   code — the value never enters agent context; a missing `requires` secret
   **fails closed before the request**; `optional` absent proceeds

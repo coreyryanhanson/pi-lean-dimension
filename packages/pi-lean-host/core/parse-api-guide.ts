@@ -539,8 +539,12 @@ function validateAuth(
 			},
 		);
 	}
-	if (secretRefs || secretQueryRefs) {
+	if (requires || optional || secretRefs || secretQueryRefs) {
 		const declared = new Set([...(requires ?? []), ...(optional ?? [])]);
+		const refNames = new Set([
+			...Object.values(secretRefs ?? {}),
+			...Object.values(secretQueryRefs ?? {}),
+		]);
 		const checkRefs = (
 			refs: Record<string, string>,
 			field: string,
@@ -577,6 +581,29 @@ function validateAuth(
 				},
 			);
 		}
+		const checkDeclared = (
+			names: string[],
+			field: string,
+		): ParseApiGuideResult | null => {
+			for (const name of names) {
+				if (!refNames.has(name)) {
+					return fail(
+						file,
+						field,
+						"a secret name referenced by auth.secretRefs or auth.secretQueryRefs",
+						`"${name}" is declared here but not referenced by any header/query ref`,
+						{
+							fix: `Reference "${name}" from auth.secretRefs or auth.secretQueryRefs, or remove it from ${field}.`,
+						},
+					);
+				}
+			}
+			return null;
+		};
+		const r3 = checkDeclared(requires ?? [], "auth.requires");
+		if (r3) return r3;
+		const r4 = checkDeclared(optional ?? [], "auth.optional");
+		if (r4) return r4;
 	}
 
 	const result: AuthConfig = { kind: kindRaw as AuthKind };

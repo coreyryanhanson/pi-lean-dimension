@@ -30,7 +30,10 @@ import { probe } from "../tools/api-probe.js";
 import type { ApiGuide, Operation } from "../core/api-guide-types.js";
 
 // Mock the transport BEFORE imports that use it.
-vi.mock("../core/transport.js", () => ({
+vi.mock("../core/transport.js", async () => ({
+	...(await vi.importActual<typeof import("../core/transport.js")>(
+		"../core/transport.js",
+	)),
 	fetchUrl: vi.fn(),
 }));
 

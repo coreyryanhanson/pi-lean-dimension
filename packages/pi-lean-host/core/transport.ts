@@ -65,6 +65,13 @@ export interface FetchOptions {
 	 * private (never cached / served from cache) and redirects are guarded.
 	 */
 	hasQuerySecret?: boolean;
+	/**
+	 * Names of store-injected query-param secrets in the request URL. Used by
+	 * `fetchUrl` to redact the URL in any error message it surfaces, so a raw
+	 * query secret can never leak into agent context via a transport error
+	 * (output-channel audit).
+	 */
+	secretQueryParamNames?: Set<string>;
 	/** Charset to decode the body with when the response's Content-Type
 	 *  header omits one. Honors a guide's `responseShape.charset` for APIs
 	 *  that serve e.g. ISO-8859-1 bytes without a charset parameter. An
@@ -140,6 +147,32 @@ function cacheKey(url: string, opts?: FetchOptions): string {
 	const suffix =
 		(accept ? `\x00accept=${accept}` : "") + (cs ? `\x00cs=${cs}` : "");
 	return suffix ? `${url}${suffix}` : url;
+}
+
+/**
+ * Output-channel audit — URL channel: redact every secret query param's
+ * value to `***` in a URL for surfacing. Returns the URL unchanged when no
+ * secret param names are in play (so non-secret guides never get URL-
+ * normalized by this). Defined here so the transport layer — the one place
+ * that holds a raw request URL and may embed it in an error message — can
+ * self-redact instead of relying on callers to remember. `helpers.ts`
+ * re-exports it for the capture points it owns (result.url, urls[],
+ * HelperError.url).
+ */
+export function redactSecretParams(
+	url: string,
+	secretParamNames?: Set<string>,
+): string {
+	if (!secretParamNames || secretParamNames.size === 0) return url;
+	try {
+		const u = new URL(url);
+		for (const name of secretParamNames) {
+			if (u.searchParams.has(name)) u.searchParams.set(name, "***");
+		}
+		return u.toString();
+	} catch {
+		return url;
+	}
 }
 
 function parseHeaders(
@@ -511,5 +544,10 @@ export async function fetchUrl(
 		}
 	}
 
-	throw new Error(`Failed to fetch ${url} after ${maxRetries + 1} attempts`);
+	// Output-channel audit: never embed the raw request URL in a surfaced
+	// message. If a query secret is in play, redact it so the fallthrough
+	// (or any future reachable variant) can't leak the key.
+	throw new Error(
+		`Failed to fetch ${redactSecretParams(url, opts?.secretQueryParamNames)} after ${maxRetries + 1} attempts`,
+	);
 }

@@ -21,7 +21,15 @@ function expandAccept(accept: string): string {
 
 import { XMLParser } from "fast-xml-parser";
 import { ssrfGuard } from "./ssrf-guard.js";
-import { fetchUrl, type FetchOptions } from "./transport.js";
+import {
+	fetchUrl,
+	redactSecretParams,
+	type FetchOptions,
+} from "./transport.js";
+// Re-export for callers (api-probe.ts) that surface redacted URLs; the
+// implementation now lives in transport.ts so the fetch layer can self-
+// redact any URL it embeds in an error message.
+export { redactSecretParams };
 import { fillPathTemplate, joinUrl } from "./path-template.js";
 import type { TransformFn } from "./local-helpers.js"; // type-only — no runtime import (flat dependency direction)
 import type {
@@ -346,6 +354,7 @@ function fetchWithOpts(
 	fallbackCharset?: string,
 	secretHeaderNames?: Set<string>,
 	hasQuerySecret?: boolean,
+	secretQueryParamNames?: Set<string>,
 ): ReturnType<typeof fetchUrl> {
 	const opts: FetchOptions = { headers: { accept, ...extraHeaders } };
 	if (fresh !== undefined) opts.fresh = fresh;
@@ -353,31 +362,8 @@ function fetchWithOpts(
 	if (fallbackCharset) opts.fallbackCharset = fallbackCharset;
 	if (secretHeaderNames) opts.secretHeaderNames = secretHeaderNames;
 	if (hasQuerySecret) opts.hasQuerySecret = true;
+	if (secretQueryParamNames) opts.secretQueryParamNames = secretQueryParamNames;
 	return fetchUrl(url, opts);
-}
-
-/**
- * Output-channel audit — URL channel: redact every secret query param's
- * value to `***` in a URL for surfacing. Returns the URL unchanged when no
- * secret param names are in play (so non-secret guides never get URL-
- * normalized by this). Used at every capture point (result.url, urls[], the
- * URL stored on HelperError.url) so the real key never passes the fetch
- * layer back to the agent.
- */
-export function redactSecretParams(
-	url: string,
-	secretParamNames?: Set<string>,
-): string {
-	if (!secretParamNames || secretParamNames.size === 0) return url;
-	try {
-		const u = new URL(url);
-		for (const name of secretParamNames) {
-			if (u.searchParams.has(name)) u.searchParams.set(name, "***");
-		}
-		return u.toString();
-	} catch {
-		return url;
-	}
 }
 
 /**
@@ -512,6 +498,7 @@ export async function restGet(
 		shape.charset,
 		opts?.secretHeaderNames,
 		hasQuerySecret,
+		opts?.secretQueryParamNames,
 	);
 
 	// 7. Check HTTP status before attempting to parse the body.
@@ -737,6 +724,7 @@ export async function paginate(
 			shape.charset,
 			opts?.secretHeaderNames,
 			hasQuerySecret,
+			opts?.secretQueryParamNames,
 		);
 
 		// Check HTTP status before attempting to parse. Secret values scrubbed
