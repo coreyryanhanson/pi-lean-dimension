@@ -1,8 +1,8 @@
 /**
- * Sprint 2 — A2 (query-param secret) output-channel audit + parser (+ probe
- * auth), structural tests with the transport layer mocked.
+ * Query-param-secret output-channel audit + parser (+ probe auth),
+ * structural tests with the transport layer mocked.
  *
- * Covers the plan's acceptance proofs:
+ * Covers:
  *  - parser: secretQueryRefs rules (consistency, collision-with-op-params,
  *    passthrough allowed, kind:none rejected)
  *  - URL channel: redacted `?apikey=***` on result.url / PaginateResult.urls

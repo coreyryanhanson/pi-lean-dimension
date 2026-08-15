@@ -64,7 +64,7 @@ export interface QuerySecretResolution {
 }
 
 /**
- * Resolve store-secret query params for a `static-key` guide (A2). Mirrors
+ * Resolve store-secret query params for a `static-key` guide. Mirrors
  * `resolveSecretHeaders`: reads the store, splits absents by requires vs
  * optional. The values are injected below the agent-supplied params map by
  * the fetch pipeline and never enter agent context.

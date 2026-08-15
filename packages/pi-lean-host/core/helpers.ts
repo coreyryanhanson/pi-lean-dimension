@@ -119,7 +119,7 @@ function fillPathStrict(path: string, params: Record<string, unknown>): string {
  * Build query-string params: apply defaults for query params,
  * validate required params, and exclude path params.
  *
- * `secretParamNames` (A2): the query-param names that are code-injected from
+ * `secretParamNames`: the query-param names that are code-injected from
  * the secrets store. They are excluded from the returned agent-supplied map
  * AND skipped in the `passthrough` branch so an agent-supplied value can't
  * override or race the injection.
@@ -161,9 +161,7 @@ function buildQueryParams(
 			// params (e.g. BOE's ES query_string DSL) reach the wire as
 			// JSON, not `[object Object]`. Scalars stay as String(val).
 			query[key] =
-				typeof val === "object" && val !== null
-					? JSON.stringify(val)
-					: String(val);
+				typeof val === "object" && val !== null ? JSON.stringify(val) : String(val);
 		}
 	}
 
@@ -177,7 +175,7 @@ function buildQueryParams(
 		for (const [key, val] of Object.entries(params)) {
 			if (pathParamSet.has(key)) continue; // path params stay in path
 			if (key in operation.params) continue; // already handled above
-			// A2: a secretQueryRefs param name is code-injected below the map —
+			// A secretQueryRefs param name is code-injected below the map —
 			// drop any agent-supplied value so it can't override or race it.
 			if (secretParamNames && secretParamNames.has(key)) continue;
 			if (val === undefined) continue;
@@ -250,7 +248,7 @@ const xmlParser = new XMLParser({
 	textNodeName: "#text",
 	parseAttributeValue: true,
 	trimValues: true,
-	// A2: strip element-name prefixes (message:GenericData → GenericData) so
+	// Strip element-name prefixes (message:GenericData → GenericData) so
 	// itemsPath/totalCountPath use stable local names across XML providers.
 	removeNSPrefix: true,
 });
@@ -359,7 +357,7 @@ function fetchWithOpts(
 }
 
 /**
- * A2 output-channel audit — URL channel: redact every secret query param's
+ * Output-channel audit — URL channel: redact every secret query param's
  * value to `***` in a URL for surfacing. Returns the URL unchanged when no
  * secret param names are in play (so non-secret guides never get URL-
  * normalized by this). Used at every capture point (result.url, urls[], the
@@ -442,9 +440,9 @@ export interface RestGetOptions {
 	secretHeaderNames?: Set<string>;
 	/** Store-injected secret values — scrubbed from error bodies (output-channel audit). */
 	secretValues?: string[];
-	/** A2: store-injected secret query params — appended below the agent params map. */
+	/** Store-injected secret query params — appended below the agent params map. */
 	secretQueryParams?: Record<string, string>;
-	/** A2: the injected query-param names — redacted from every surfaced URL. */
+	/** The injected query-param names — redacted from every surfaced URL. */
 	secretQueryParamNames?: Set<string>;
 }
 
@@ -485,7 +483,7 @@ export async function restGet(
 	// injected names are tracked for cross-domain redirect stripping.
 	const extraHeaders = { ...guide.auth.headers, ...opts?.authHeaders };
 
-	// 4. Build URL. A2: secret query params are injected BELOW the
+	// 4. Build URL. Secret query params are injected BELOW the
 	// agent-supplied map — never into it — so the returned `params` stays
 	// agent-supplied-only. The fetch uses the raw URL; every surfaced copy
 	// (result.url, the URL stored on HelperError.url) is redacted.
@@ -520,7 +518,7 @@ export async function restGet(
 	// This turns "Invalid JSON response: <?xml..." into a clean
 	// "Unexpected HTTP 400: El parámetro fecha..." message. Secret values are
 	// scrubbed from the error excerpt so an auth-echo body can't leak a key.
-	// A2: the URL stored on the error object is the REDACTED one (computed
+	// The URL stored on the error object is the REDACTED one (computed
 	// upstream of checkResponseStatus) so the secret never reaches the error.
 	checkResponseStatus({ ...result, url }, opts?.secretValues);
 
@@ -549,7 +547,7 @@ export async function restGet(
 		headers: result.headers,
 		url,
 		params: query,
-		...(transformWarning !== undefined ? { transformWarning } : {}),
+		...(transformWarning === undefined ? {} : { transformWarning }),
 	};
 }
 
@@ -572,9 +570,9 @@ export interface PaginateOptions {
 	secretHeaderNames?: Set<string>;
 	/** Store-injected secret values — scrubbed from error bodies (output-channel audit). */
 	secretValues?: string[];
-	/** A2: store-injected secret query params — appended below the agent params map. */
+	/** Store-injected secret query params — appended below the agent params map. */
 	secretQueryParams?: Record<string, string>;
-	/** A2: the injected query-param names — redacted from every surfaced URL. */
+	/** The injected query-param names — redacted from every surfaced URL. */
 	secretQueryParamNames?: Set<string>;
 }
 
@@ -652,16 +650,15 @@ export async function paginate(
 			params[pagCfg.pageParam!] ??
 			operation.params[pagCfg.pageParam!]?.default ??
 			fallback;
-		page =
-			typeof rawPage === "number" ? rawPage : parseInt(String(rawPage), 10);
+		page = typeof rawPage === "number" ? rawPage : parseInt(String(rawPage), 10);
 		if (isNaN(page)) page = fallback;
 	}
 
 	// Compute effective params once — used for both per-page building and result transparency.
-	// A2: agent-supplied only (secret param names excluded, incl. passthrough).
+	// Agent-supplied only (secret param names excluded, incl. passthrough).
 	const secretParamNames = opts?.secretQueryParamNames ?? new Set<string>();
 	const effectiveParams = buildQueryParams(operation, params, secretParamNames);
-	// A2: secret query params injected below the agent map on every page's fetch URL.
+	// Secret query params injected below the agent map on every page's fetch URL.
 	const secretParams = opts?.secretQueryParams ?? {};
 	const hasQuerySecret = Object.keys(secretParams).length > 0;
 	const urls: string[] = [];
@@ -696,14 +693,14 @@ export async function paginate(
 				? nextUrl
 				: new URL(nextUrl, apiHost).toString();
 		} else {
-			// A2: append secret query params below the agent-supplied page params.
+			// Append secret query params below the agent-supplied page params.
 			url = buildUrl(apiHost, resolvedPath, {
 				...pageParams,
 				...secretParams,
 			});
 		}
 
-		// A2: every surfaced URL (incl. a server-supplied nextUrl that may
+		// Every surfaced URL (incl. a server-supplied nextUrl that may
 		// already carry the secret) is redacted at the capture point.
 		urls.push(redactSecretParams(url, secretParamNames));
 
@@ -743,7 +740,7 @@ export async function paginate(
 		);
 
 		// Check HTTP status before attempting to parse. Secret values scrubbed
-		// from the error excerpt (output-channel audit). A2: the URL stored on
+		// from the error excerpt (output-channel audit). The URL stored on
 		// the error object is redacted, computed upstream of checkResponseStatus.
 		checkResponseStatus(
 			{ ...result, url: redactSecretParams(url, secretParamNames) },
@@ -771,7 +768,7 @@ export async function paginate(
 
 		// Extract items from this page.
 		let pageItems = resolveJsonPath(data, pagCfg.itemsPath);
-		// A1: normalize a single XML record (or scalar) into an array so the
+		// Normalize a single XML record (or scalar) into an array so the
 		// declared list path always yields an array even with one element
 		// (e.g. arXiv max_results=1, PubMed retmax=1 box a single record).
 		if (pageItems != null && !Array.isArray(pageItems)) {
@@ -836,7 +833,7 @@ export async function paginate(
 		items,
 		totalFetched: items.length + failed.length,
 		...(failed.length > 0 ? { failedItems: failed } : {}),
-		...(serverTotal !== undefined ? { serverTotal } : {}),
+		...(serverTotal === undefined ? {} : { serverTotal }),
 		ceilingHit,
 		urls,
 		pages: urls.length,

@@ -78,7 +78,7 @@ export interface ProbeOptions {
 	/** On 404, auto-try /v1/ and /v2/ prefixes. Default true. */
 	tryPrefixes?: boolean;
 	/**
-	 * A2: store-backed auth injection for probing auth-gated endpoints
+	 * Store-backed auth injection for probing auth-gated endpoints
 	 * (authoring loop). Injection fields only — no kind/requires/optional.
 	 * Values resolve from the secrets store and never enter the transcript.
 	 */
@@ -86,7 +86,7 @@ export interface ProbeOptions {
 		secretRefs?: Record<string, string>;
 		secretQueryRefs?: Record<string, string>;
 	};
-	/** A2: domain for secrets-store lookups; defaults to apiHost's hostname. */
+	/** Domain for secrets-store lookups; defaults to apiHost's hostname. */
 	domain?: string;
 }
 
@@ -203,7 +203,7 @@ function pickRepresentativeId(
 // IO wrapper — fetches via the shared transport and formats the answer
 // ═══════════════════════════════════════════════════════════════════
 
-/** Resolved probe auth (A2) — store values + the names/values to redact/scrub. */
+/** Resolved probe auth — store values + the names/values to redact/scrub. */
 interface ProbeAuthCtx {
 	hasAuthBlock: boolean;
 	headers: Record<string, string>;
@@ -323,7 +323,7 @@ async function fetchOne(
 	authCtx: ProbeAuthCtx,
 	domain: string,
 ): Promise<ProbeResult> {
-	// A2: inject secret query params below the agent-supplied params map, then
+	// Inject secret query params below the agent-supplied params map, then
 	// redact the surfaced URL so the real key never reaches the transcript.
 	const rawUrl = buildUrl(apiHost, path, { ...params, ...authCtx.queryParams });
 	const url = redactSecretParams(rawUrl, authCtx.secretQueryParamNames);
@@ -338,7 +338,7 @@ async function fetchOne(
 				}
 			: {}),
 	});
-	// Probe-local body scrub (A2): the probe bypasses checkResponseStatus, so
+	// Probe-local body scrub: the probe bypasses checkResponseStatus, so
 	// scrub known secret values from the raw slice directly — a 401 body
 	// echoing the key must not leak it into agent context.
 	let raw = res.body.slice(0, 800);
@@ -569,7 +569,7 @@ export const apiProbeTool = defineTool({
 			| Record<string, unknown>
 			| undefined;
 
-		// A2: learn-gated secrets discovery — short-circuits the fetch entirely.
+		// Learn-gated secrets discovery — short-circuits the fetch entirely.
 		// The agent's only programmatic path to the secrets store; /api secrets is
 		// user-typed only. Names only, never values.
 		if (listSecrets === true) {
@@ -740,7 +740,7 @@ function formatUnscopedDomains(domains: string[]): string {
 	return lines.join("\n");
 }
 
-/** A2 list mode: provisioned secret names for a domain (names only). */
+/** List mode: provisioned secret names for a domain (names only). */
 function listDomainSecrets(domain: string): {
 	domain: string;
 	provisioned: string[];

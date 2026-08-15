@@ -1,5 +1,5 @@
 /**
- * Sprint 1 — authenticated-API structural tests (no live network).
+ * Authenticated-API structural tests (no live network).
  *
  * Covers the whole vertical slice, split by concern:
  *  - schema/parser: validateAuth rules (static-key realized; oauth2 rejected;
@@ -117,7 +117,7 @@ function makeAuthGuide(serverUrl: string): ApiGuide {
 	};
 }
 
-/** A2-only guide (query-param secret, no header secret) for parity tests. */
+/** Query-param-secret-only guide (no header secret) for parity tests. */
 function makeQueryAuthGuide(serverUrl: string): ApiGuide {
 	return {
 		content: "",
@@ -402,7 +402,7 @@ describe("cache/SSRF/redirect (header auth)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// A2 parity — a secretQueryRefs-only guide (no header secret)
+// Parity — a secretQueryRefs-only guide (no header secret)
 // ═══════════════════════════════════════════════════════════════════
 
 describe("secretQueryRefs-only parity (cache + SSRF)", () => {
@@ -414,7 +414,7 @@ describe("secretQueryRefs-only parity (cache + SSRF)", () => {
 		const r2 = JSON.parse(
 			(await fetchUrl(uri, { hasQuerySecret: true })).body,
 		) as { count: number };
-		// A2: hasQuerySecret → hasAuth → cache-skip. Second call hit the server.
+		// hasQuerySecret → hasAuth → cache-skip. Second call hit the server.
 		expect(r2.count).toBe(r1.count + 1);
 		// Control: same URL without auth IS cached (second call served from cache).
 		const c1 = JSON.parse((await fetchUrl(uri, { fresh: false })).body) as {

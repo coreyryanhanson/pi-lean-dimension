@@ -60,7 +60,7 @@ export interface FetchOptions {
 	secretHeaderNames?: Set<string>;
 	/**
 	 * True when this request carries a store-injected query-param secret
-	 * (kind: static-key, A2). Broadens `hasAuth` to cover query-secret-only
+	 * (kind: static-key). Broadens `hasAuth` to cover query-secret-only
 	 * guides (header-secret callers never set this): the response becomes
 	 * private (never cached / served from cache) and redirects are guarded.
 	 */
@@ -322,16 +322,11 @@ async function getWithGuardedRedirects(
 		// Strip store-injected secrets (and Authorization) once a hop leaves
 		// the request's original host — a secret must never cross domains.
 		const hopHeaders =
-			hostOf(current) !== originalHost
-				? stripSecretHeaders(reqHeaders, secretHeaderNames)
-				: reqHeaders;
+			hostOf(current) === originalHost
+				? reqHeaders
+				: stripSecretHeaders(reqHeaders, secretHeaderNames);
 		const remaining = timeoutMs - (Date.now() - startTime);
-		const res = await singleGet(
-			current,
-			hopHeaders,
-			remaining,
-			noRedirectAgent,
-		);
+		const res = await singleGet(current, hopHeaders, remaining, noRedirectAgent);
 		const isRedirect =
 			res.status >= 300 && res.status < 400 && res.status !== 304;
 		if (!isRedirect || hops === MAX_REDIRECTS) return res;
@@ -394,7 +389,7 @@ export async function fetchUrl(
 		!!opts?.headers &&
 		Object.keys(opts.headers).some((h) => h.toLowerCase() !== "accept");
 	// Broader hasAuth gate: header-secrets ∨ query-secrets. A query-secret-only
-	// guide (A2) carries no non-accept header, so hasAuthHeaders alone would
+	// guide carries no non-accept header, so hasAuthHeaders alone would
 	// miss it — hasQuerySecret closes that gap. Every auth gate below keys on
 	// hasAuth: cache-skip, If-None-Match, and the guarded-redirect force.
 	const hasAuth = hasAuthHeaders || (opts?.hasQuerySecret ?? false);
@@ -462,7 +457,7 @@ export async function fetchUrl(
 						headers: respHeaders,
 						body: entry.body,
 						cached: true,
-						...(finalUrl !== url ? { finalUrl } : {}),
+						...(finalUrl === url ? {} : { finalUrl }),
 					};
 				}
 				// No cached entry → fall through to process body.
@@ -496,7 +491,7 @@ export async function fetchUrl(
 				headers: respHeaders,
 				body,
 				cached: false,
-				...(finalUrl !== url ? { finalUrl } : {}),
+				...(finalUrl === url ? {} : { finalUrl }),
 			};
 		} catch (err) {
 			const e = err instanceof Error ? err : new Error(String(err));

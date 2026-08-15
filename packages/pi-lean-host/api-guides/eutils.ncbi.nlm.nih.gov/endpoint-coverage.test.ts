@@ -194,7 +194,7 @@ describe("PubMed E-utilities live integration smoke", () => {
 	);
 
 	itWhen(
-		"two-step usehistory flow: esearch-raw tokens feed esummary via WebEnv/query_key (A3, no core change)",
+		"two-step usehistory flow: esearch-raw tokens feed esummary via WebEnv/query_key",
 		withTempDirs("eutils.ncbi.nlm.nih.gov")(async ({ guidesDir }) => {
 			// Step 1: single-shot esearch with usehistory=y returns WebEnv/QueryKey.
 			const search = (await fetchOp(guidesDir, "esearch-raw", {

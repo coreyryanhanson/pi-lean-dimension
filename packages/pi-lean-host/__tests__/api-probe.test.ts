@@ -1,7 +1,7 @@
 /**
  * api-probe structural tests — pure shape logic, no external network.
  *
- * Covers the plan's unit-test list:
+ * Covers:
  *  - envelope → paginate + itemsPath
  *  - bare array → `$` (root sentinel)
  *  - single object → restGet
@@ -172,7 +172,7 @@ describe("probe redirect handling (live localhost)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// A2 list mode — learn-gated secrets discovery (the bootstrap-gap closure)
+// List mode — learn-gated secrets discovery (the bootstrap-gap closure)
 // ═══════════════════════════════════════════════════════════════════
 
 const ETHERSCAN_RECIPE = `---
@@ -233,7 +233,7 @@ function runList(
 	);
 }
 
-describe("api-probe listSecrets mode (A2 bootstrap-gap closure)", () => {
+describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
 	it("in learn mode returns provisioned + declared names, no fetch fields", async () => {
 		const res = await runList({
 			apiHost: "https://api.etherscan.io/v2/api",

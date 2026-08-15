@@ -44,7 +44,7 @@ export interface AuthConfig {
 	 */
 	secretRefs?: Record<string, string>;
 	/**
-	 * static-key only (A2): maps query param name → secret store name.
+	 * static-key only: maps query param name → secret store name.
 	 * Values are injected below the agent-supplied params map at fetch time
 	 * (never into it) and redacted from every surfaced URL. A param name
 	 * colliding with any operation's `params` map is a parse error — the

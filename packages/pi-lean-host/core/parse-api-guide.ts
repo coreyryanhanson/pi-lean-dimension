@@ -139,13 +139,9 @@ function requireHttpUrl(
 	try {
 		const u = new URL(value);
 		if (u.protocol !== "http:" && u.protocol !== "https:") {
-			return fail(
-				file,
-				key,
-				"an http or https URL",
-				`protocol "${u.protocol}"`,
-				{ ...(opts?.protocolFix ? { fix: opts.protocolFix } : {}) },
-			);
+			return fail(file, key, "an http or https URL", `protocol "${u.protocol}"`, {
+				...(opts?.protocolFix ? { fix: opts.protocolFix } : {}),
+			});
 		}
 	} catch {
 		return fail(file, key, "a valid http/https URL", `"${value}"`, {
@@ -396,15 +392,9 @@ function validateAuth(
 		return { kind: "none" };
 	}
 	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-		return fail(
-			file,
-			"auth",
-			"a YAML mapping (kind: ...)",
-			describeFound(raw),
-			{
-				snippet: snippetFor(fm, "auth"),
-			},
-		);
+		return fail(file, "auth", "a YAML mapping (kind: ...)", describeFound(raw), {
+			snippet: snippetFor(fm, "auth"),
+		});
 	}
 	const a = raw as Record<string, unknown>;
 	const kindRaw = a["kind"];
@@ -473,7 +463,7 @@ function validateAuth(
 		secretRefs = refsRaw as Record<string, string>;
 	}
 
-	// A2 (query-param secrets): maps query param name → secret store name.
+	// Query-param secrets: maps query param name → secret store name.
 	// Same shape + consistency rules as secretRefs; the collision-with-op-`params`
 	// rule is enforced in parseApiGuide (auth is parsed before operations).
 	let secretQueryRefs: Record<string, string> | undefined;
@@ -718,8 +708,7 @@ function validateOperation(
 					);
 				}
 				const s = spec as Record<string, unknown>;
-				const onlyDescription =
-					Object.keys(s).length === 1 && "description" in s;
+				const onlyDescription = Object.keys(s).length === 1 && "description" in s;
 				if (!onlyDescription) {
 					return fail(
 						file,
@@ -871,11 +860,7 @@ function validateOperation(
 	const opPaginationRaw = o["pagination"];
 	let opPagination: PaginationConfig | undefined;
 	if (opPaginationRaw !== undefined) {
-		const pr = validatePagination(
-			opPaginationRaw,
-			fieldPath("pagination"),
-			file,
-		);
+		const pr = validatePagination(opPaginationRaw, fieldPath("pagination"), file);
 		if (!("style" in pr && typeof pr.style === "string")) {
 			return pr as ParseApiGuideResult;
 		}
@@ -923,13 +908,13 @@ function validateOperation(
 		params,
 		pathParams,
 		...(Object.keys(pathParamDocs).length > 0 ? { pathParamDocs } : {}),
-		...(helper !== undefined ? { helper } : {}),
-		...(transform !== undefined ? { transform } : {}),
-		...(passthrough !== undefined ? { passthrough } : {}),
-		...(dateParams !== undefined ? { dateParams } : {}),
+		...(helper === undefined ? {} : { helper }),
+		...(transform === undefined ? {} : { transform }),
+		...(passthrough === undefined ? {} : { passthrough }),
+		...(dateParams === undefined ? {} : { dateParams }),
 		...(parseOverride ? { parse: parseOverride } : {}),
 		...(opPagination ? { pagination: opPagination } : {}),
-		...(opGatherAllMax !== undefined ? { gatherAllMax: opGatherAllMax } : {}),
+		...(opGatherAllMax === undefined ? {} : { gatherAllMax: opGatherAllMax }),
 	};
 	return operation;
 }
@@ -1156,7 +1141,7 @@ export function parseApiGuide(
 		operations.push(opRes);
 	}
 
-	// Cross-field (A2): a secretQueryRefs param name must not appear in any
+	// Cross-field: a secretQueryRefs param name must not appear in any
 	// operation's `params` map — the agent must never be able to supply a
 	// secretly-injected param. Checked here because auth is parsed before
 	// operations. `passthrough` ops are NOT rejected (the runtime skips
@@ -1340,11 +1325,11 @@ export function formatApiGuideCatalog(loaded: LoadedApiGuides): string {
 	for (const [name, guide] of Object.entries(loaded.guides)) {
 		if (guide.organization) {
 			const idx = orgIndex.get(guide.organization);
-			if (idx !== undefined) {
-				orgRows[idx]!.guides.push(guide);
-			} else {
+			if (idx === undefined) {
 				orgIndex.set(guide.organization, orgRows.length);
 				orgRows.push({ org: guide.organization, guides: [guide] });
+			} else {
+				orgRows[idx]!.guides.push(guide);
 			}
 		} else {
 			orgless.push({ name, guide });
@@ -1362,9 +1347,7 @@ export function formatApiGuideCatalog(loaded: LoadedApiGuides): string {
 	}
 	for (const { name, guide } of orgless) {
 		const domains =
-			guide.domains && guide.domains.length > 0
-				? guide.domains.join(", ")
-				: name;
+			guide.domains && guide.domains.length > 0 ? guide.domains.join(", ") : name;
 		lines.push(
 			`  ${guide.icon} ${guide.shortName} — ${domains} (verified ${guide.verified}, ${guide.operations.length} ops)`,
 		);
@@ -1374,13 +1357,8 @@ export function formatApiGuideCatalog(loaded: LoadedApiGuides): string {
 			`  ⚠ malformed — ${mal.filename}: ${mal.error.field} — expected ${mal.error.expected}; found ${mal.error.found}`,
 		);
 	}
-	if (
-		Object.keys(loaded.guides).length === 0 &&
-		loaded.malformed.length === 0
-	) {
-		lines.push(
-			"  (no guides — call api-learn({domain, recipe}) to author one)",
-		);
+	if (Object.keys(loaded.guides).length === 0 && loaded.malformed.length === 0) {
+		lines.push("  (no guides — call api-learn({domain, recipe}) to author one)");
 	}
 	lines.push("");
 	lines.push(

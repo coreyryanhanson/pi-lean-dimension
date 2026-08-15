@@ -217,7 +217,7 @@ export const apiFetchTool = defineTool({
 		}
 
 		// 2.7 Authentication (kind: static-key): resolve store-injected secret
-		// headers AND query params (A2) up front so a missing required secret
+		// headers AND query params up front so a missing required secret
 		// fails closed BEFORE any request is made. Values never leave this
 		// scope — only header/param and secret NAMES ever surface to the agent.
 		let headerRes: SecretResolution | undefined;
