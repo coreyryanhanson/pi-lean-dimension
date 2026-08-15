@@ -440,7 +440,7 @@ export async function fetchUrl(
 	const reqHeaders: Record<string, string> = { ...opts?.headers };
 	if (!reqHeaders["user-agent"]) {
 		reqHeaders["user-agent"] =
-			"pi-lean-host/0.1.0 (+https://github.com/coreyryanhanson/pi-lean-dimension)";
+			"pi-lean-host/0.2.0 (+https://github.com/coreyryanhanson/pi-lean-dimension)";
 	}
 
 	if (!opts?.fresh && !hasAuth) {
