@@ -32,7 +32,10 @@ import { fileURLToPath } from "node:url";
 
 // Mock the transport layer BEFORE any imports that use it.
 // vi.mock is hoisted; the factory creates a fresh vi.fn() for fetchUrl.
-vi.mock("../core/transport.js", () => ({
+vi.mock("../core/transport.js", async () => ({
+	...(await vi.importActual<typeof import("../core/transport.js")>(
+		"../core/transport.js",
+	)),
 	fetchUrl: vi.fn(),
 }));
 

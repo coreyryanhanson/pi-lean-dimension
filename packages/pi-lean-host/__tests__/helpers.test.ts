@@ -231,10 +231,12 @@ async function createTestServer(): Promise<TestContext> {
 		}
 
 		if (pathname === "/api/paginate/page") {
-			const page = parseInt(url.searchParams.get("page") ?? "0", 10);
+			const page = parseInt(url.searchParams.get("page") ?? "1", 10);
 			const size = parseInt(url.searchParams.get("size") ?? "5", 10);
 			const totalItems = 12;
-			const start = page * size;
+			// 1-based page index (matches the framework's page-style default and
+			// real page-indexed APIs).
+			const start = (page - 1) * size;
 			const count = Math.min(size, totalItems - start);
 			if (count <= 0) {
 				res.writeHead(200, {
@@ -1438,10 +1440,10 @@ describe("auth dispatch", () => {
 		expect(headers["authorization"]).toBeUndefined();
 	});
 
-	it("unrecognised auth.kind throws structured error", async () => {
+	it("unrecognised auth.kind (oauth2, unrealized) throws structured error", async () => {
 		const guide = makeGuide({
 			apiHost: ctx.serverUrl,
-			auth: { kind: "static-key" },
+			auth: { kind: "oauth2" },
 		});
 		const op = makeOp({ path: "/api/items" });
 
@@ -1452,9 +1454,24 @@ describe("auth dispatch", () => {
 			expect(e).toBeInstanceOf(HelperError);
 			if (e instanceof HelperError) {
 				expect(e.field).toBe("auth.kind");
-				expect(e.message).toContain("static-key");
+				expect(e.message).toContain("oauth2");
 			}
 		}
+	});
+
+	it("static-key injects store-resolved authHeaders into the request", async () => {
+		const guide = makeGuide({
+			apiHost: ctx.serverUrl,
+			auth: { kind: "static-key" },
+		});
+		const op = makeOp({ path: "/api/echo-headers" });
+
+		const result = await restGet(ctx.serverUrl, op, {}, guide, {
+			authHeaders: { "X-Api-Key": "secret123" },
+		});
+		const body = result.data as Record<string, unknown>;
+		const headers = (body["headers"] as Record<string, string>) ?? {};
+		expect(headers["x-api-key"]).toBe("secret123");
 	});
 });
 

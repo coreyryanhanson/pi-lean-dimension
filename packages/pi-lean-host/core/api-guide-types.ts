@@ -19,7 +19,7 @@ import type { Guide } from "./guide-loader.js";
  */
 export const GATHER_ALL_MAX_FALLBACK = 1000;
 
-/** Auth strategies recognized by the schema (the seam). v1 realizes only `none`. */
+/** Auth strategies recognized by the schema (the seam). v1 realizes `none` and `static-key`; `oauth2` is rejected at parse. */
 export const KNOWN_AUTH_KINDS: ReadonlySet<string> = new Set([
 	"none",
 	"static-key",
@@ -36,6 +36,27 @@ export interface AuthConfig {
 	kind: AuthKind;
 	/** Extra headers merged into every request (e.g. `X-Api-Key: DEMO_KEY`). */
 	headers?: Record<string, string>;
+	/**
+	 * static-key only: maps request header name → secret store name. Values
+	 * are injected at fetch time from the secrets store; the value never
+	 * enters agent context. Every referenced name must also appear in
+	 * `requires` or `optional` (parser-enforced).
+	 */
+	secretRefs?: Record<string, string>;
+	/**
+	 * static-key only: maps query param name → secret store name.
+	 * Values are injected below the agent-supplied params map at fetch time
+	 * (never into it) and redacted from every surfaced URL. A param name
+	 * colliding with any operation's `params` map is a parse error — the
+	 * agent must not be able to supply a secretly-injected param. Every
+	 * referenced name must also appear in `requires` or `optional`
+	 * (parser-enforced, same rule as `secretRefs`).
+	 */
+	secretQueryRefs?: Record<string, string>;
+	/** static-key: secret names whose absence fails the request closed before it is sent. */
+	requires?: string[];
+	/** static-key: secret names that add value when present but are not required. */
+	optional?: string[];
 }
 
 // ═══════════════════════════════════════════════════════════════════

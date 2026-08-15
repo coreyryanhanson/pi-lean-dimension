@@ -21,7 +21,15 @@ function expandAccept(accept: string): string {
 
 import { XMLParser } from "fast-xml-parser";
 import { ssrfGuard } from "./ssrf-guard.js";
-import { fetchUrl, type FetchOptions } from "./transport.js";
+import {
+	fetchUrl,
+	redactSecretParams,
+	type FetchOptions,
+} from "./transport.js";
+// Re-export for callers (api-probe.ts) that surface redacted URLs; the
+// implementation now lives in transport.ts so the fetch layer can self-
+// redact any URL it embeds in an error message.
+export { redactSecretParams };
 import { fillPathTemplate, joinUrl } from "./path-template.js";
 import type { TransformFn } from "./local-helpers.js"; // type-only — no runtime import (flat dependency direction)
 import type {
@@ -118,10 +126,16 @@ function fillPathStrict(path: string, params: Record<string, unknown>): string {
 /**
  * Build query-string params: apply defaults for query params,
  * validate required params, and exclude path params.
+ *
+ * `secretParamNames`: the query-param names that are code-injected from
+ * the secrets store. They are excluded from the returned agent-supplied map
+ * AND skipped in the `passthrough` branch so an agent-supplied value can't
+ * override or race the injection.
  */
 function buildQueryParams(
 	operation: Operation,
 	params: Record<string, unknown>,
+	secretParamNames?: Set<string>,
 ): Record<string, string> {
 	const query: Record<string, string> = {};
 	const pathParamSet = new Set(operation.pathParams);
@@ -155,9 +169,7 @@ function buildQueryParams(
 			// params (e.g. BOE's ES query_string DSL) reach the wire as
 			// JSON, not `[object Object]`. Scalars stay as String(val).
 			query[key] =
-				typeof val === "object" && val !== null
-					? JSON.stringify(val)
-					: String(val);
+				typeof val === "object" && val !== null ? JSON.stringify(val) : String(val);
 		}
 	}
 
@@ -171,6 +183,9 @@ function buildQueryParams(
 		for (const [key, val] of Object.entries(params)) {
 			if (pathParamSet.has(key)) continue; // path params stay in path
 			if (key in operation.params) continue; // already handled above
+			// A secretQueryRefs param name is code-injected below the map —
+			// drop any agent-supplied value so it can't override or race it.
+			if (secretParamNames && secretParamNames.has(key)) continue;
 			if (val === undefined) continue;
 			let v: unknown = val;
 			if (operation.dateParams && key in operation.dateParams) {
@@ -241,7 +256,7 @@ const xmlParser = new XMLParser({
 	textNodeName: "#text",
 	parseAttributeValue: true,
 	trimValues: true,
-	// A2: strip element-name prefixes (message:GenericData → GenericData) so
+	// Strip element-name prefixes (message:GenericData → GenericData) so
 	// itemsPath/totalCountPath use stable local names across XML providers.
 	removeNSPrefix: true,
 });
@@ -303,30 +318,27 @@ function buildUrl(
 
 /**
  * Check auth.kind and branch accordingly.
- * v1 realizes only `none`; any other kind throws a structured error.
+ * v1 realizes `none` and `static-key` (header injection is resolved by
+ * api-fetch and passed via opts.authHeaders — the store is not read here).
  *
  * This dispatch is a deliberate seam, not dead code: keeping the field +
  * dispatch now makes the future keyed-auth build additive (a new `kind`
  * behind this same `if`/`throw`) rather than a retrofit of every `restGet`/
- * `paginate` call site and the guide schema. Do not inline "none" into the
- * callers to "simplify" — that burns the additive path. See
+ * `paginate` call site and the guide schema. See
  * `docs/design/api-secrets-roadmap.md` for the build-out plan.
  */
 function checkAuth(auth: ApiGuide["auth"]): void {
 	const kind = auth.kind;
-	if (kind === "none") return; // no auth header needed
+	if (kind === "none" || kind === "static-key") return;
 
-	// V1 only realizes `none`. The seam exists; error informingly.
+	// oauth2 — unrealized seam. A parsed guide can't reach here (oauth2 is
+	// rejected at parse), but guard for hand-constructed guides/tests.
 	throw new HelperError(
 		"auth.kind",
 		`Auth kind "${kind}" is not supported in this version`,
-		"one of: none",
+		"one of: none | static-key",
 		kind,
-		kind === "static-key"
-			? "Static-key auth is not yet implemented. Use kind: none for public APIs."
-			: kind === "oauth2"
-				? "OAuth2 is not yet implemented. Use kind: none for public APIs."
-				: "Use auth.kind: none for public APIs",
+		"OAuth2 is not yet implemented. Use kind: none or kind: static-key.",
 	);
 }
 
@@ -340,11 +352,17 @@ function fetchWithOpts(
 	extraHeaders?: Record<string, string>,
 	guardRedirects?: boolean,
 	fallbackCharset?: string,
+	secretHeaderNames?: Set<string>,
+	hasQuerySecret?: boolean,
+	secretQueryParamNames?: Set<string>,
 ): ReturnType<typeof fetchUrl> {
 	const opts: FetchOptions = { headers: { accept, ...extraHeaders } };
 	if (fresh !== undefined) opts.fresh = fresh;
 	if (guardRedirects) opts.guardRedirects = true;
 	if (fallbackCharset) opts.fallbackCharset = fallbackCharset;
+	if (secretHeaderNames) opts.secretHeaderNames = secretHeaderNames;
+	if (hasQuerySecret) opts.hasQuerySecret = true;
+	if (secretQueryParamNames) opts.secretQueryParamNames = secretQueryParamNames;
 	return fetchUrl(url, opts);
 }
 
@@ -358,11 +376,14 @@ function fetchWithOpts(
  * For XML error bodies (common in REST APIs), the `<text>` element is
  * extracted for a cleaner human message.
  */
-function checkResponseStatus(result: {
-	status: number;
-	body: string;
-	url?: string;
-}): void {
+function checkResponseStatus(
+	result: {
+		status: number;
+		body: string;
+		url?: string;
+	},
+	secretValues?: string[],
+): void {
 	if (result.status < 400) return;
 
 	// Cap the raw body to avoid flooding the error output.
@@ -371,6 +392,15 @@ function checkResponseStatus(result: {
 	const textMatch = result.body.match(/<text>([\s\S]*?)<\/text>/i);
 	if (textMatch) {
 		message = textMatch[1]!.trim();
+	}
+
+	// Output-channel audit: scrub known store-injected secret values from the
+	// error excerpt so a 401 body echoing an auth header can't leak the key
+	// into agent context.
+	if (secretValues && secretValues.length > 0) {
+		for (const v of secretValues) {
+			if (v && v.length > 0) message = message.split(v).join("***");
+		}
 	}
 
 	throw new HelperError(
@@ -390,6 +420,16 @@ function checkResponseStatus(result: {
 export interface RestGetOptions {
 	/** Skip cache — force fresh fetch. */
 	fresh?: boolean;
+	/** Store-injected secret headers (kind: static-key). Merged with guide.auth.headers. */
+	authHeaders?: Record<string, string>;
+	/** Lowercased injected header names — stripped on cross-domain redirects. */
+	secretHeaderNames?: Set<string>;
+	/** Store-injected secret values — scrubbed from error bodies (output-channel audit). */
+	secretValues?: string[];
+	/** Store-injected secret query params — appended below the agent params map. */
+	secretQueryParams?: Record<string, string>;
+	/** The injected query-param names — redacted from every surfaced URL. */
+	secretQueryParamNames?: Set<string>;
 }
 
 /**
@@ -397,7 +437,7 @@ export interface RestGetOptions {
  *
  * 1. Replaces `{token}` path params from `params`.
  * 2. Assembles query params with defaults and required validation.
- * 3. Checks auth dispatch (only `none` realised in v1).
+ * 3. Checks auth dispatch (`none` / `static-key` realized; `oauth2` rejected at parse).
  * 4. Constructs the full URL.
  * 5. Builds the Accept header.
  * 6. Fetches via the transport layer.
@@ -416,17 +456,30 @@ export async function restGet(
 	transformFn?: TransformFn,
 	dirName?: string,
 ): Promise<RestGetResult> {
-	// 1. Fill path template.
+	// Steps 1/2 unchanged: fill path, build query (agent-supplied only —
+	// secret param names are excluded, incl. from the passthrough branch).
 	const resolvedPath = fillPathStrict(operation.path, params);
-
-	// 2. Build query params.
-	const query = buildQueryParams(operation, params);
+	const secretParamNames = opts?.secretQueryParamNames ?? new Set<string>();
+	const query = buildQueryParams(operation, params, secretParamNames);
 
 	// 3. Auth dispatch.
 	checkAuth(guide.auth);
 
-	// 4. Build URL.
-	const url = buildUrl(apiHost, resolvedPath, query);
+	// Merge store-injected secret headers with literal auth.headers. The
+	// injected names are tracked for cross-domain redirect stripping.
+	const extraHeaders = { ...guide.auth.headers, ...opts?.authHeaders };
+
+	// 4. Build URL. Secret query params are injected BELOW the
+	// agent-supplied map — never into it — so the returned `params` stays
+	// agent-supplied-only. The fetch uses the raw URL; every surfaced copy
+	// (result.url, the URL stored on HelperError.url) is redacted.
+	const secretParams = opts?.secretQueryParams ?? {};
+	const hasQuerySecret = Object.keys(secretParams).length > 0;
+	const fetchUrlRaw = buildUrl(apiHost, resolvedPath, {
+		...query,
+		...secretParams,
+	});
+	const url = redactSecretParams(fetchUrlRaw, secretParamNames);
 
 	// 5. Build Accept header — json/xml shorthands expand; everything
 	// else passes through as-is (e.g. application/atom+xml, */*).
@@ -437,18 +490,24 @@ export async function restGet(
 	//    APIs); an explicit header charset always wins.
 	const shape = operation.parse ?? guide.responseShape;
 	const result = await fetchWithOpts(
-		url,
+		fetchUrlRaw,
 		accept,
 		opts?.fresh,
-		guide.auth.headers,
+		extraHeaders,
 		undefined,
 		shape.charset,
+		opts?.secretHeaderNames,
+		hasQuerySecret,
+		opts?.secretQueryParamNames,
 	);
 
 	// 7. Check HTTP status before attempting to parse the body.
 	// This turns "Invalid JSON response: <?xml..." into a clean
-	// "Unexpected HTTP 400: El parámetro fecha..." message.
-	checkResponseStatus({ ...result, url });
+	// "Unexpected HTTP 400: El parámetro fecha..." message. Secret values are
+	// scrubbed from the error excerpt so an auth-echo body can't leak a key.
+	// The URL stored on the error object is the REDACTED one (computed
+	// upstream of checkResponseStatus) so the secret never reaches the error.
+	checkResponseStatus({ ...result, url }, opts?.secretValues);
 
 	// 8. Parse response using the effective shape resolved above.
 	let data = parseResponse(result.body, shape);
@@ -475,7 +534,7 @@ export async function restGet(
 		headers: result.headers,
 		url,
 		params: query,
-		...(transformWarning !== undefined ? { transformWarning } : {}),
+		...(transformWarning === undefined ? {} : { transformWarning }),
 	};
 }
 
@@ -492,6 +551,16 @@ export interface PaginateOptions {
 	fresh?: boolean;
 	/** Bypass the nextLink SSRF guard (for testing against local servers). */
 	skipSsrfGuard?: boolean;
+	/** Store-injected secret headers (kind: static-key). Merged with guide.auth.headers. */
+	authHeaders?: Record<string, string>;
+	/** Lowercased injected header names — stripped on cross-domain redirects. */
+	secretHeaderNames?: Set<string>;
+	/** Store-injected secret values — scrubbed from error bodies (output-channel audit). */
+	secretValues?: string[];
+	/** Store-injected secret query params — appended below the agent params map. */
+	secretQueryParams?: Record<string, string>;
+	/** The injected query-param names — redacted from every surfaced URL. */
+	secretQueryParamNames?: Set<string>;
 }
 
 /**
@@ -542,6 +611,11 @@ export async function paginate(
 	// Auth dispatch — checked once up front (auth is constant per guide).
 	checkAuth(guide.auth);
 
+	// Merge store-injected secret headers with literal auth.headers once,
+	// reused for every page. Injected names are tracked for cross-domain
+	// redirect stripping.
+	const extraHeaders = { ...guide.auth.headers, ...opts?.authHeaders };
+
 	// State for the styles.
 	let cursor: string | undefined;
 	let nextUrl: string | undefined;
@@ -553,20 +627,27 @@ export async function paginate(
 
 	// Seed offset/page params.
 	if (style === "offset-limit" || style === "page") {
-		// Caller value, else the recipe's declared default for this page param,
-		// else 0. Some APIs are 1-based and reject offset=0 (USGS FDSN); a
-		// recipe expresses that as `params: { offset: { default: 1 } }`.
+		// Caller value, else the recipe's declared default for this page
+		// param, else the style's framework default: 0 for offset-limit (row
+		// offsets start at 0) and 1 for page (nearly all page-indexed APIs are
+		// 1-based; a rare 0-based page API overrides with
+		// `params: { page: { default: 0 } }`).
+		const fallback = style === "page" ? 1 : 0;
 		const rawPage =
 			params[pagCfg.pageParam!] ??
 			operation.params[pagCfg.pageParam!]?.default ??
-			0;
-		page =
-			typeof rawPage === "number" ? rawPage : parseInt(String(rawPage), 10);
-		if (isNaN(page)) page = 0;
+			fallback;
+		page = typeof rawPage === "number" ? rawPage : parseInt(String(rawPage), 10);
+		if (isNaN(page)) page = fallback;
 	}
 
 	// Compute effective params once — used for both per-page building and result transparency.
-	const effectiveParams = buildQueryParams(operation, params);
+	// Agent-supplied only (secret param names excluded, incl. passthrough).
+	const secretParamNames = opts?.secretQueryParamNames ?? new Set<string>();
+	const effectiveParams = buildQueryParams(operation, params, secretParamNames);
+	// Secret query params injected below the agent map on every page's fetch URL.
+	const secretParams = opts?.secretQueryParams ?? {};
+	const hasQuerySecret = Object.keys(secretParams).length > 0;
 	const urls: string[] = [];
 
 	while (true) {
@@ -599,10 +680,16 @@ export async function paginate(
 				? nextUrl
 				: new URL(nextUrl, apiHost).toString();
 		} else {
-			url = buildUrl(apiHost, resolvedPath, pageParams);
+			// Append secret query params below the agent-supplied page params.
+			url = buildUrl(apiHost, resolvedPath, {
+				...pageParams,
+				...secretParams,
+			});
 		}
 
-		urls.push(url);
+		// Every surfaced URL (incl. a server-supplied nextUrl that may
+		// already carry the secret) is redacted at the capture point.
+		urls.push(redactSecretParams(url, secretParamNames));
 
 		// NextLink guard — the URL comes from the remote server, so this is
 		// the one place SSRF protection is load-bearing. `guardThisFetch`
@@ -615,13 +702,14 @@ export async function paginate(
 		if (guardThisFetch) {
 			const guard = ssrfGuard(url);
 			if (!guard.ok) {
+				const errUrl = redactSecretParams(url, secretParamNames);
 				throw new HelperError(
 					"url",
 					`URL blocked during pagination: ${guard.reason}`,
 					"a safe, public URL",
-					url,
+					errUrl,
 					undefined,
-					url,
+					errUrl,
 				);
 			}
 		}
@@ -631,13 +719,21 @@ export async function paginate(
 			url,
 			accept,
 			opts?.fresh,
-			guide.auth.headers,
+			extraHeaders,
 			guardThisFetch,
 			shape.charset,
+			opts?.secretHeaderNames,
+			hasQuerySecret,
+			opts?.secretQueryParamNames,
 		);
 
-		// Check HTTP status before attempting to parse.
-		checkResponseStatus({ ...result, url });
+		// Check HTTP status before attempting to parse. Secret values scrubbed
+		// from the error excerpt (output-channel audit). The URL stored on
+		// the error object is redacted, computed upstream of checkResponseStatus.
+		checkResponseStatus(
+			{ ...result, url: redactSecretParams(url, secretParamNames) },
+			opts?.secretValues,
+		);
 
 		// Parse.
 		const data = parseResponse(result.body, shape);
@@ -660,7 +756,7 @@ export async function paginate(
 
 		// Extract items from this page.
 		let pageItems = resolveJsonPath(data, pagCfg.itemsPath);
-		// A1: normalize a single XML record (or scalar) into an array so the
+		// Normalize a single XML record (or scalar) into an array so the
 		// declared list path always yields an array even with one element
 		// (e.g. arXiv max_results=1, PubMed retmax=1 box a single record).
 		if (pageItems != null && !Array.isArray(pageItems)) {
@@ -725,7 +821,7 @@ export async function paginate(
 		items,
 		totalFetched: items.length + failed.length,
 		...(failed.length > 0 ? { failedItems: failed } : {}),
-		...(serverTotal !== undefined ? { serverTotal } : {}),
+		...(serverTotal === undefined ? {} : { serverTotal }),
 		ceilingHit,
 		urls,
 		pages: urls.length,

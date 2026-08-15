@@ -18,9 +18,22 @@
   `api-probe` is the shape-discovery tool for the authoring loop (fetch an
   exploratory path, summarize the JSON shape, emit a draft YAML op block);
   it never writes the guide.
-- Registers the **`/api`** command with `on|off|learn|status/helpers`
+- Registers the **`/api`** command with `on|off|learn|status/helpers|secrets`
   subcommands — an independent peer toggle that composes freely with
   portal's `/web` (additive-on / filter-off semantics).
+   `/api secrets [domain [name]]` lists/provisions/deletes the per-domain
+  secrets store (`core/secrets-store.ts`,
+  `~/.pi/agent/pi-lean-host/secrets/<domain>.json`, 0600,
+  lazy-mkdir-on-write-only). Names only, never values; headless
+  invocation prints direct-file-write instructions; `--help` shows full
+  usage + storage format (the bare list shows a one-line hint instead).
+  `<domain>` assisted entry is guide-aware: a registered static-key guide
+  declaring one secret name prompts its value directly, multiple show a
+  picker, and the detail view surfaces declared-vs-stored gaps; `<domain>
+  <name>` is the manual escape valve (warns when the name isn't a declared
+  secret). `--delete` removes all secrets for a `<domain>` (interactive confirm) or
+  a single `<domain> <name>` (no confirm). Peer of `status`/`helpers`/
+  bare `/api` — the focus-mode guard does not apply.
 - Manages the **`api` status bar glyph**, shown as `● api` when `/api` is on
   (colored by learn state) and `○ api` when off.
 - Declares `pi-lean-portal` as an **optional peer dependency**. Host-only
@@ -97,6 +110,52 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   ranges, and cloud metadata endpoints on **server-supplied** `nextLink` URLs
   in `paginate` only. Agent-supplied `restGet` URLs are **not** guarded (the
   agent has bash).
+- **Static-key auth** (`core/auth.ts` + schema): `auth.kind: static-key`
+  realizes `secretRefs` (`Record<headerName, secretName>`) and
+  `secretQueryRefs` (`Record<paramName, secretName>`, A2),
+  `requires: string[]`, `optional: string[]` (parser-enforced: ref values and
+  `requires ∪ optional` must coincide — every ref targets a declared secret
+  and every declared secret is referenced by a ref, a name in both is an
+  error, a `secretQueryRefs` param name colliding with any op's `params` map
+  is an error, `oauth2` rejected at parse). `api-fetch` resolves store secrets via
+  `resolveSecretHeaders()` / `resolveSecretQueryParams()` and injects them in
+  code — the value never enters agent context; a missing `requires` secret
+  **fails closed before the request**; `optional` absent proceeds
+  unauthenticated. The store key is `canonicalStoreDomain(guide) =
+  guide.domains[0]` (`core/auth.ts`), applied at the `api-fetch` call site —
+  decoupled from the routing `domain` the agent supplies, so `/api secrets
+  github.com` feeds a guide regardless of whether the agent routed it as
+  `github.com` or an api-subdomain alias. `api-probe` (no `guide` object)
+  defaults its store domain to `hostnameOf(apiHost)`, overridable via an
+  agent-visible `domain` param. `hasAuth` (any non-accept header ∨ injected query secret)
+  forces the guarded-redirect path in the transport, so an auth-bearing call
+  is always SSRF-checked hop-by-hop and store-injected headers +
+  `Authorization` are stripped on **cross-domain** redirect hops (literal
+  `auth.headers` survive).
+  **Output-channel audit**: known secret values are scrubbed from 401 error
+  bodies (`checkResponseStatus`) and from `details.headers` on auth-bearing
+  `restGet`; query-param secrets are injected **below** the agent params map
+  (never into it) and redacted to `?param=***` on every surfaced URL
+  (`result.url`, `PaginateResult.urls` incl. server-supplied `nextUrl`, and
+  the URL stored on `HelperError.url`). Shared `authStatusLine()` footer
+  renders five metadata-only states on both `api-guide` and `api-fetch`
+  (no-auth / ok / nudge-provision / ok-optional / optional-not-provisioned).
+  `api-probe` accepts an inline `auth` block (injection fields only) for
+  probing auth-gated endpoints — store-miss fetches unauthenticated with a
+  note (never fail-closed) — plus a learn-gated `listSecrets: true` mode that
+  lists provisioned secret names (names only) to close the authoring
+  bootstrap gap. A bare `listSecrets` call (no `domain`, no `apiHost`) lists
+  **provisioned-but-guideless** (unscoped) store domains first — the orphan
+  view for authoring bootstrap + post-flip migration cleanup — then the
+  per-domain view.
+  **Auth deferred (design-doc decisions preserved):** `oauth2` stays a
+  declared-but-unrealized seam (rejected at parse); general mutations / write
+  gate stay out (transport is GET-only); cookie-login (jar + `api-login`) is
+  deferred in full; an OS-keychain at-rest backend (`@napi-rs/keyring`) is an
+  additive store-backend upgrade, daemon-gated on headless so the `0600` file
+  stays the honest default. No `scopes` schema — read-only is enforced
+  structurally (only GET `restGet`/`paginate`), scoping is behavioral
+  (provision read-only keys).
 - **Response spill** (`core/response-spill.ts`): when `api-fetch` truncates,
   the full JSON is spilled to disk (max 8 files/session, oldest evicted;
   `cleanupAllSpill()` on `session_shutdown`).
@@ -113,7 +172,11 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `guide-loader.ts` + `guide-store.ts` (multi-valued domain map,
   `findGuidesByDomain` returns `{ guide, dirName }[]`), `helpers.ts`
   (built-in executor helpers), `local-helpers.ts` (user helper loader),
-  `helpers-command.ts` (`/api helpers`), `transport.ts` (shared fetch
+  `helpers-command.ts` (`/api helpers`), `secrets-store.ts` (per-domain
+  secrets store — swappable `SecretStore` interface, 0600 file backend,
+   lazy-mkdir-on-write-only, single-key + whole-domain delete), `secrets-command.ts` (`/api secrets`),
+  `auth.ts` (static-key secret resolution + shared auth-status footer),
+  `transport.ts` (shared fetch
   pipeline: UA, charset, 429-retry, ETag cache — the sanctioned way to reach
   even WAF'd hosts), `path-template.ts`, `ssrf-guard.ts`, `response-spill.ts`,
   `api-toggle.ts` (`/api` toggle), `portal-projection.ts`,
@@ -123,6 +186,8 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
 - `__tests__/` — framework structural tests (no network): `smoke`,
   `parse-api-guide`, `all-guides-parse` (every bundled `guide.md` parses
   cleanly), `tools`, `helpers`, `local-helpers`, `api-toggle`,
+   `secrets-store`, `secrets-command`, `auth` (static-key schema/injection/
+  output-channel audit/SSRF/footer structural tests),
   `portal-projection`, `render-result`, `response-spill`, `host-only-boundary`,
   `axis-units` (nextLink/XML/cursor/ETag via mocked transport; fixtures in
   `__tests__/fixtures/axis/`), `transform-{restget,paginate,render}`,

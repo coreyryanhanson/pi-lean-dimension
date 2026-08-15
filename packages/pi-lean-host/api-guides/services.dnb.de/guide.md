@@ -1,7 +1,7 @@
 ---
 kind: api
 domains:
-  - services.dnb.de
+  - dnb.de
 shortName: DNB
 icon: 🇩🇪
 apiHost: https://services.dnb.de

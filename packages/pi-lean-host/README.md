@@ -45,8 +45,9 @@
 12. [`/api status` — Detailed Runtime Status](#api-status--detailed-runtime-status)
 13. [Configuration (`settings.json`)](#configuration-settingsjson)
 14. [Co-Installing with `pi-lean-portal`](#co-installing-with-pi-lean-portal)
-15. [Tips & Best Practices](#tips--best-practices)
-16. [Security & Scope](#security--scope)
+15. [Authentication & Secrets](#authentication--secrets)
+16. [Tips & Best Practices](#tips--best-practices)
+17. [Security & Scope](#security--scope)
 
 ---
 
@@ -150,6 +151,7 @@ touches the other's tools.
 | `/api` | Show current state and available sub-commands. |
 | `/api status` | Detailed runtime status — state, active guides, domains, helpers. |
 | `/api helpers` | List local user helpers (or `/api helpers <domain>` to view one's source). |
+| `/api secrets [<domain> [<name>]]` | Manage stored API secrets — list, provision, delete (see [Authentication & Secrets](#authentication--secrets)). |
 
 ### Why a peer toggle?
 
@@ -188,8 +190,8 @@ read**, **network read**, **local write**, and **network read (exploratory)**:
 
 ```text
 api-guide → list all available API guides (catalog)
-api-guide domain="en.wikipedia.org" → disambiguation menu (two guides claim the domain)
-api-guide domain="en.wikipedia.org" guide="Wikipedia REST" → selected guide
+api-guide domain="wikipedia.org" → disambiguation menu (two guides claim the domain)
+api-guide domain="wikipedia.org" guide="Wikipedia REST" → selected guide
 ```
 
 - No parameters → the full catalog (collapsed by `organization:`).
@@ -204,13 +206,13 @@ broken field instead of re-authoring from scratch.
 ### 2. `api-fetch` — Execute a Guided Operation (network read)
 
 ```text
-api-fetch domain="en.wikipedia.org" operation="getPageSummary" params={title:"Albert_Einstein"}
-api-fetch domain="en.wikipedia.org" operation="searchPages" params={srsearch:"climate"} gatherAll=true
+api-fetch domain="wikipedia.org" operation="getPageSummary" params={title:"Albert_Einstein"}
+api-fetch domain="wikipedia.org" operation="searchPages" params={srsearch:"climate"} gatherAll=true
 ```
 
 **Parameters:**
 
-- `domain` — a domain registered in a guide (e.g. `"en.wikipedia.org"`).
+- `domain` — a domain registered in a guide (e.g. `"wikipedia.org"`).
 - `operation` — an operation name from the guide (e.g. `"getPageSummary"`).
 - `params` (optional) — path and query parameter values for the operation.
 - `gatherAll` (optional) — `true` paginates to gather all items up to the
@@ -352,8 +354,12 @@ laws (capped at 1000 by the op override). The `boe-datefmt` helper formats the
 | `docs` | guide | — | optional canonical API documentation URL (http/https); surfaced in api-guide detail |
 | `verified` | guide | creation date | drift signal — **defaulted, not enforced** |
 | `gatherAllMax` | guide / op | `1000` | `gatherAll` ceiling; an op can override |
-| `auth.kind` | guide | `none` | strategy seam — **v1 realizes only `none`** (others error) |
-| `auth.headers` | guide | — | optional extra headers merged into every request (e.g. X-Api-Key: DEMO_KEY) |
+| `auth.kind` | guide | `none` | `none` \| `static-key` (store-backed header/query secrets). `oauth2` is a declared-but-unrealized seam (rejected at parse) |
+| `auth.headers` | guide | — | literal extra headers merged into every request (e.g. X-Api-Key: DEMO_KEY) — **literal values only**, never the path for real credentials |
+| `auth.secretRefs` | guide | — | `Record<headerName, secretName>` — store-backed header injection (`static-key`) |
+| `auth.secretQueryRefs` | guide | — | `Record<paramName, secretName>` — store-backed query-param injection (`static-key`) |
+| `auth.requires` | guide | — | secret names the guide hard-requires; absent → `api-fetch` fails closed before the request |
+| `auth.optional` | guide | — | secret names used if present, skipped if absent (e.g. GitHub rate-limit token) |
 | `pagination.style` | guide / op | required when `via: paginate` | `offset-limit` \| `nextLink` \| `cursor` \| `page` \| `resumptionToken` \| `tokenBag` |
 | `pagination.itemsPath` | guide / op | — | JSON path to the items array in the body |
 | `pagination.totalCountPath` | guide / op | — | optional, any style → server-reported total surfaced as `serverTotal` / `server total: N` |
@@ -377,10 +383,9 @@ Three helpers, for v1. The agent never calls these directly — `api-fetch`
 routes each operation through the one its `via` names:
 
 - **`restGet`** — path templating, query params, Accept negotiation
-  (JSON/XML), and auth injection *when a guide declares a strategy*. v1 ships
-  only `auth.kind: none`, so no v1 guide declares a strategy — the dispatch
-  exists as a seam, but the injection path is cold code until a keyed guide
-  lands.
+  (JSON/XML), and auth injection for `auth.kind: static-key` guides
+  (store-backed `secretRefs` / `secretQueryRefs`). See [Authentication &
+  Secrets](#authentication--secrets).
 - **`paginate`** — wraps a list operation. The guide declares the style; the
   helper follows it. Returns `{items, next?, serverTotal?}` so the agent can
   stop or continue, plus a `gatherAll` flag for the "just get me everything"
@@ -500,7 +505,7 @@ Authoring is via `api-learn` in learn mode, or hand-editing the file.
 ## Pagination Styles
 
 `paginate` follows the style declared in the recipe. Six styles cover the
-patterns the bundled 19-recipe spread pressure-tested:
+patterns the bundled 23-recipe spread pressure-tested:
 
 | Style | What it sends | Key fields |
 |-------|---------------|------------|
@@ -557,18 +562,23 @@ you know you're in disambiguation territory.
 
 ## Bundled Reference Recipes
 
-The repo ships **21 reference recipes** under `api-guides/` (GitHub only —
+The repo ships **23 reference recipes** under `api-guides/` (GitHub only —
 **not in the npm tarball, never auto-loaded**). They are inert worked
-examples spanning the no-auth axes the helper set was validated against:
+examples spanning the no-auth **and keyed** axes:
 
 ```
 api.gbif.org             api.github.com           archive.org              archive.org-wayback
-arxiv.org                boe.es                   data-api.ecb.europa.eu   datos.gob.es
-earthquake.usgs.gov      en.wikipedia.org         en.wikipedia.org-action  eutils.ncbi.nlm.nih.gov
-gitlab.com               loc.gov                  musicbrainz.org          openlibrary.org
-resources.data.gov       services.dnb.de          web.archive.org          www.federalregister.gov
-www.wikidata.org
+arxiv.org                boe.es                   coingecko.com            data-api.ecb.europa.eu
+datos.gob.es             earthquake.usgs.gov      en.wikipedia.org         en.wikipedia.org-action
+etherscan.io             eutils.ncbi.nlm.nih.gov  gitlab.com               loc.gov
+musicbrainz.org          openlibrary.org          resources.data.gov       services.dnb.de
+web.archive.org          www.federalregister.gov  www.wikidata.org
 ```
+
+Five are **keyed** (`auth.kind: static-key`) reference recipes:
+`api.github.com`, `coingecko.com`, `etherscan.io`, `eutils.ncbi.nlm.nih.gov`,
+`gitlab.com` — the spread that exercises header-vs-query refs and the
+required/optional split (see [Authentication & Secrets](#authentication--secrets)).
 
 To use them, copy the guides into your own directory from a shallow clone of
 the feature branch ([browse the folder on GitHub](https://github.com/coreyryanhanson/pi-lean-dimension/tree/feat/pi-lean-host-package/packages/pi-lean-host/api-guides)):
@@ -652,11 +662,12 @@ the toolset's packaged default:
 
 ### No other settings keys
 
-There is no `host.*` settings block in v1. The transport layer (per-domain
-undici `Agent` with retry-on-429, redirect policy, timeouts, ETag/`Cache-Control`
-caching) is configured internally; auth has no keyed strategy yet, so there
-are no secrets or endpoints to configure. `apiHost` and operation paths live
-**in the recipe frontmatter**, not in settings.
+There is no `host.*` settings block. The transport layer (per-domain undici
+`Agent` with retry-on-429, redirect policy, timeouts, ETag/`Cache-Control`
+caching) is configured internally; `apiHost` and operation paths live **in
+the recipe frontmatter**, not in settings. Credentials are **not** stored in
+`settings.json` — they live in the per-domain secrets store, provisioned via
+`/api secrets` (see [Authentication & Secrets](#authentication--secrets)).
 
 ---
 
@@ -727,6 +738,97 @@ know it. The global fallback (`1000`) bounds undeclared guides.
 
 ---
 
+## Authentication & Secrets
+
+Many read APIs authenticate with a static key (`X-Api-Key`, `Authorization:
+Bearer`, or a `?key=` query param). pi-lean-host supports these end-to-end
+without the credential ever appearing in the agent's context — a guide
+**declares the secret by name**, you provision the value once, and `api-fetch`
+injects it in code.
+
+### A candid note on storage and threat model
+
+The secrets store is **plaintext JSON at rest** — mode `0600`, no encryption.
+That matches pi's own posture for its credentials (an API key in
+`settings.json` or the env). The threat this guards against is not another
+process reading the file; it's accidental **transcript exfiltration**. You
+provision a value once via `/api secrets`, it's written transcript-safely to
+the store, and `api-fetch` injects it in code — the agent sees the name, not
+ the value.
+
+That containment is plugin discipline, not a vault. `read`/`cat` on the
+store file is one tool-call from the agent, which runs with your privileges,
+so nothing here is a hard guarantee. **That's why the real rule is: store
+read-only keys.** Scope every credential to the smallest read surface it needs
+(e.g. a GitHub fine-grained token with read-only `contents`). A leaked read
+key is a data-exposure incident; a leaked write key is a takeover — and the
+plugin is GET-only, so a read-only key is always enough for what it does.
+
+### Guide-side: declare the name, never the value
+
+In `guide.md`, set `auth.kind: static-key` and point at store secrets by name.
+The value never lives in the guide (a real key committed there would be one
+`cat` from the agent's context).
+
+```yaml
+auth:
+  kind: static-key
+  secretRefs:
+    x-cg-demo-api-key: api_key   # headerName: secretName
+  requires: [api_key]            # absent → api-fetch fails closed
+# secretQueryRefs: { apikey: api_key }  # query-param injection (?key=)
+# optional: [api_key]            # used if present, skipped if absent
+```
+
+- **`auth.secretRefs`** — `Record<headerName, secretName>`: inject the store
+  value into that request header.
+- **`auth.secretQueryRefs`** — `Record<paramName, secretName>`: inject the
+  store value as that query param.
+- **`auth.requires`** — names the guide **hard-requires**. If one is absent
+  from the store, `api-fetch` **fails closed before the request** — no silent
+  unauthenticated fetch that could return partial data the agent mistakes for
+  complete.
+- **`auth.optional`** — names usable-if-present. Absent → `api-fetch` proceeds
+  unauthenticated (e.g. GitHub: 60 req/hr unauth, 5000 with a token); present
+  → injected like a required secret.
+- **`auth.headers`** stays **literal-only** (demo keys, committed rate-limit
+  tokens) — it is not the path for real credentials.
+
+### Provisioning
+
+```text
+/api secrets                          list stored domains + secret names (names only)
+/api secrets <domain>                 view + provision for a guide (prompts the declared names)
+/api secrets <domain> <name>          set a single secret (manual escape valve)
+/api secrets <domain> --delete        delete all secrets for a domain (confirm)
+/api secrets <domain> <name> --delete delete a single secret
+```
+
+Provisioning is interactive (`ctx.ui` dialogs — the value is captured
+**transcript-safely** and written straight to the store, never returned). On
+headless hosts there is no dialog, so `/api secrets` prints the direct
+file-write instructions instead — write the `0600` file yourself before pi
+starts (a one-line `install -m 600` + `cat >` step).
+
+Secrets persist at `~/.pi/agent/pi-lean-host/secrets/<domain>.json` (mode
+`0600`). **Only names are ever listed** — values never leave the store.
+
+### The status footer
+
+Every `api-guide` / `api-fetch` result on an auth-bearing guide (`secretRefs`
+or `secretQueryRefs`) ends with a `🔑 auth:` line — `ok`, `requires <name>
+— not provisioned`, or an optional state — showing name and presence only,
+never the value, so it's safe anywhere it renders.
+
+### Authoring keyed guides
+
+`api-probe` accepts an inline `auth` block (injection fields only) plus a
+`domain` selector, so you can prove a keyed shape before writing the guide —
+a store miss reports the name and fetches unauthenticated (authoring is
+human-in-the-loop, not fail-closed). One of the bundled keyed recipes is a
+better starting template than `boe.es` for your first keyed guide — see
+[`api-guides/CONTRIBUTING.md`](./api-guides/CONTRIBUTING.md).
+
 ## Security & Scope
 
 ### SSRF guard (server-supplied URLs only)
@@ -743,22 +845,21 @@ Agent-supplied URLs are **not** guarded. `restGet` assembles a URL from
 The agent runs on your own machine with your own privileges and has `bash`,
 `read`, and `write` over the filesystem; blocking `http://169.254.169.254/`
 on `restGet` while `curl` is one tool-call away is a sieve with one hole
-patched. The guard becomes load-bearing the moment keyed auth ships (a
-server-supplied `nextUrl` to an internal host would leak the attached
-`Authorization` header) — it is in place now so that channel is closed before
-the credential-bearing path arrives.
+patched. With keyed auth shipped, the guard is now **load-bearing**: a server-supplied
+`nextUrl` to an internal host would leak the attached `Authorization` header,
+and any keyed `restGet`/`paginate` that redirects is forced through the
+guarded loop — with injected secrets stripped on a cross-domain hop — so the
+channel stays closed.
 
 ### v1 scope (what it is not)
 
 - **GET-read only.** No mutation helper. Add one only when a real *retrieval*
   guide needs it (e.g. a search-then-fetch POST), behind a real auth-review
-  gate — and that gate's foundation is a scoped secrets schema, deferred past
-  v1.
-- **`auth.kind: none` only.** The `auth.kind` field + dispatch is a seam for
-  future `static-key` / `oauth2` strategies; only `none` is realized. No
-  secrets store ships in v1 — no OS-native store, no file fallback, no
-  `requires`/`scopes` resolution, no secret-entry UX. The seam is what keeps
-  that future build additive rather than a retrofit.
+  gate.
+- **Static-key auth only.** `auth.kind: static-key` is realized (store-backed
+  header/query-param secrets, `requires`/`optional`); `oauth2` and cookie-login
+  stay deferred. Values live in the `0600` secrets store, never in a guide —
+  see [Authentication & Secrets](#authentication--secrets).
 - **Bundled recipes are inert.** Nothing the package ships executes until you
   place it in `~/.pi/agent/pi-lean-host/` and opt in.
 - **No inferred-link discovery.** Declared links only in v1; inference is v2.
@@ -779,10 +880,10 @@ machine; the package does not aim to make that easy.
 
 > `pi-lean-host` is part of the
 > [pi-lean-dimension](https://github.com/coreyryanhanson/pi-lean-dimension)
-> web-tools suite. For the deferred secrets-store track (the two-threat
-> model and the first-keyed-guide build checklist), see
-> [`docs/design/api-secrets-roadmap.md`](docs/design/api-secrets-roadmap.md).
-> For the helper escape-valve policy and the 19-recipe spread, see
+> web-tools suite. For the security model behind the secrets store (the
+> two-threat model and the output-channel audit), see
+> [Authentication & Secrets](#authentication--secrets). For the helper
+> escape-valve policy and the 23-recipe spread, see
 > [`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md).
 >
 > License: AGPL-3.0-only

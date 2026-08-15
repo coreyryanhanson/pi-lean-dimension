@@ -16,7 +16,8 @@ import {
 	itWhen,
 } from "../_shared/test-harness.js";
 
-const DOMAIN = "www.wikidata.org";
+const DIR = "www.wikidata.org";
+const DOMAIN = "wikidata.org";
 
 // ── Per-recipe fetch helper (bootstrap shared via createFetchOp; delay wrapper stays here) ──
 
@@ -45,7 +46,7 @@ const P569 = "P569"; // date of birth (property)
 describe("Wikidata live integration smoke", () => {
 	itWhen(
 		"parses and loads the recipe with all 9 ops",
-		withTempDirs("www.wikidata.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const { loadApiGuidesFromDir } = await import(
 				"../../core/parse-api-guide.js"
 			);
@@ -68,7 +69,7 @@ describe("Wikidata live integration smoke", () => {
 describe("Wikidata Group A — entity search", () => {
 	itWhen(
 		"searchEntities returns results via paginate",
-		withTempDirs("www.wikidata.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchEntities", {
 				search: "Douglas Adams",
 				language: "en",
@@ -88,7 +89,7 @@ describe("Wikidata Group A — entity search", () => {
 describe("Wikidata Group B — claims retrieval", () => {
 	itWhen(
 		"getClaims returns a non-empty property→claims map",
-		withTempDirs("www.wikidata.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getClaims", {
 				entity: Q42,
 			})) as { data: { claims?: Record<string, unknown[]> } };
@@ -101,7 +102,7 @@ describe("Wikidata Group B — claims retrieval", () => {
 
 	itWhen(
 		"getClaims honors the property filter",
-		withTempDirs("www.wikidata.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getClaims", {
 				entity: Q42,
 				property: P569,
@@ -121,7 +122,7 @@ describe("Wikidata Group B — claims retrieval", () => {
 describe("Wikidata Groups C+E — REST item & property retrieval", () => {
 	itWhen(
 		"getItemREST returns the full item",
-		withTempDirs("www.wikidata.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getItemREST", {
 				item_id: Q42,
 			})) as { data: { id?: unknown; type?: unknown; labels?: unknown } };
@@ -135,7 +136,7 @@ describe("Wikidata Groups C+E — REST item & property retrieval", () => {
 
 	itWhen(
 		"getPropertyREST returns the full property",
-		withTempDirs("www.wikidata.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getPropertyREST", {
 				property_id: P31,
 			})) as {
@@ -157,7 +158,7 @@ describe("Wikidata Groups C+E — REST item & property retrieval", () => {
 describe("Wikidata Groups D+F — REST statement sub-resources", () => {
 	itWhen(
 		"getItemStatements returns a property→array map",
-		withTempDirs("www.wikidata.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getItemStatements", {
 				item_id: Q42,
 			})) as { data: Record<string, unknown[]> };
@@ -169,7 +170,7 @@ describe("Wikidata Groups D+F — REST statement sub-resources", () => {
 
 	itWhen(
 		"getItemStatements honors the property filter",
-		withTempDirs("www.wikidata.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getItemStatements", {
 				item_id: Q42,
 				property: P569,
@@ -182,7 +183,7 @@ describe("Wikidata Groups D+F — REST statement sub-resources", () => {
 
 	itWhen(
 		"getPropertyStatements returns a property→array map",
-		withTempDirs("www.wikidata.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getPropertyStatements", {
 				property_id: P31,
 			})) as { data: Record<string, unknown[]> };
@@ -200,7 +201,7 @@ describe("Wikidata Groups D+F — REST statement sub-resources", () => {
 describe("Wikidata Group G — REST search", () => {
 	itWhen(
 		"searchItemsREST returns results via paginate",
-		withTempDirs("www.wikidata.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchItemsREST", {
 				q: "Douglas Adams",
 				language: "en",
@@ -214,7 +215,7 @@ describe("Wikidata Group G — REST search", () => {
 
 	itWhen(
 		"searchPropertiesREST returns results via paginate",
-		withTempDirs("www.wikidata.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchPropertiesREST", {
 				q: "population",
 				language: "en",

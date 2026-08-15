@@ -23,7 +23,8 @@ import {
 	itWhen,
 } from "../_shared/test-harness.js";
 
-const DOMAIN = "services.dnb.de";
+const DIR = "services.dnb.de";
+const DOMAIN = "dnb.de";
 
 // ── Per-recipe fetch helper (bootstrap shared via createFetchOp; no wrapper) ──
 
@@ -48,7 +49,7 @@ function expectXmlItems(items: unknown[]): void {
 describe("DNB live integration smoke", () => {
 	itWhen(
 		"parses and loads the recipe with all 10 ops",
-		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const { loadApiGuidesFromDir } = await import(
 				"../../core/parse-api-guide.js"
 			);
@@ -72,7 +73,7 @@ describe("DNB live integration smoke", () => {
 describe("DNB SRU catalogue searches", () => {
 	itWhen(
 		"searchZdb searches the ZDB serials catalogue via paginate",
-		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchZdb", {
 				query: "Wasser",
 			})) as { items: unknown[] };
@@ -83,7 +84,7 @@ describe("DNB SRU catalogue searches", () => {
 
 	itWhen(
 		"searchDnb searches the DNB main catalogue via paginate (indexed query)",
-		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchDnb", {
 				query: "SW=Goethe",
 			})) as { items: unknown[] };
@@ -94,7 +95,7 @@ describe("DNB SRU catalogue searches", () => {
 
 	itWhen(
 		"searchDma searches the German Music Archive via paginate",
-		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchDma", {
 				query: SRU_QUERY,
 			})) as { items: unknown[] };
@@ -105,7 +106,7 @@ describe("DNB SRU catalogue searches", () => {
 
 	itWhen(
 		"searchAuthorities searches the GND authority file via paginate (indexed query)",
-		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchAuthorities", {
 				query: "WOE=Goethe",
 			})) as { items: unknown[] };
@@ -116,7 +117,7 @@ describe("DNB SRU catalogue searches", () => {
 
 	itWhen(
 		"searchZdb with an indexed query surfaces the 200-OK diagnostics swallow (totalFetched 0)",
-		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			// C1 (design doc Workstream C): an indexed query ZDB rejects
 			// (info:srw/diagnostic/1/16) returns HTTP 200 with a <diagnostics>
 			// element and no <records>; itemsPath resolves to undefined and
@@ -140,7 +141,7 @@ describe("DNB SRU catalogue searches", () => {
 describe("DNB OAI-PMH single verbs", () => {
 	itWhen(
 		"oaiIdentify returns repository metadata",
-		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "oaiIdentify")) as {
 				data: { "OAI-PMH"?: { Identify?: { repositoryName?: string } } };
 			};
@@ -154,7 +155,7 @@ describe("DNB OAI-PMH single verbs", () => {
 
 	itWhen(
 		"oaiListSets enumerates available sets",
-		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "oaiListSets")) as {
 				data: { "OAI-PMH"?: { ListSets?: { set?: unknown } } };
 			};
@@ -166,7 +167,7 @@ describe("DNB OAI-PMH single verbs", () => {
 
 	itWhen(
 		"oaiListMetadataFormats lists available metadata formats",
-		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "oaiListMetadataFormats")) as {
 				data: {
 					"OAI-PMH"?: { ListMetadataFormats?: { metadataFormat?: unknown } };
@@ -180,7 +181,7 @@ describe("DNB OAI-PMH single verbs", () => {
 
 	itWhen(
 		"oaiGetRecord returns a single record by identifier",
-		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "oaiGetRecord", {
 				identifier: OAI_IDENTIFIER,
 				metadataPrefix: "MARC21-xml",
@@ -200,7 +201,7 @@ describe("DNB OAI-PMH single verbs", () => {
 describe("DNB OAI-PMH resumptionToken harvests", () => {
 	itWhen(
 		"oaiListRecords harvests a bounded window via resumptionToken",
-		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "oaiListRecords", {
 				verb: "ListRecords",
 				metadataPrefix: "oai_dc",
@@ -214,7 +215,7 @@ describe("DNB OAI-PMH resumptionToken harvests", () => {
 
 	itWhen(
 		"oaiListIdentifiers harvests identifiers over a bounded window via resumptionToken",
-		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "oaiListIdentifiers", {
 				verb: "ListIdentifiers",
 				metadataPrefix: "oai_dc",

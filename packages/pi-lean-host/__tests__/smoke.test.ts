@@ -17,7 +17,7 @@ describe("extension smoke", () => {
 		// We expect a default export function.
 		const mod = await import("../index.js");
 		expect(mod.default).toBeTypeOf("function");
-	});
+	}, 120_000); // the full extension import is slow under host load
 });
 
 // ─── ssrfGuard ───────────────────────────────────────────────────

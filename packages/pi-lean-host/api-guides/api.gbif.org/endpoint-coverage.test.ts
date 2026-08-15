@@ -17,7 +17,8 @@ import {
 	itWhen,
 } from "../_shared/test-harness.js";
 
-const DOMAIN = "api.gbif.org";
+const DIR = "api.gbif.org";
+const DOMAIN = "gbif.org";
 
 // ── Per-recipe fetch helper (bootstrap shared via createFetchOp; delay+retry wrapper stays here) ──
 
@@ -66,7 +67,7 @@ const LIT_UUID = "bc860204-52b8-35a8-9f4f-7c9d55043864";
 describe("GBIF live integration smoke", () => {
 	itWhen(
 		"parses and loads the recipe with all 36 ops",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const { loadApiGuidesFromDir } = await import(
 				"../../core/parse-api-guide.js"
 			);
@@ -83,7 +84,7 @@ describe("GBIF live integration smoke", () => {
 
 	itWhen(
 		"listSpecies returns results via the declared paginate executor",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listSpecies")) as {
 				items: unknown[];
 			};
@@ -101,7 +102,7 @@ describe("GBIF live integration smoke", () => {
 describe("GBIF Group A — species search & match", () => {
 	itWhen(
 		"searchSpecies returns results via paginate",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchSpecies", {
 				q: "Canis lupus",
 			})) as { items: unknown[] };
@@ -113,7 +114,7 @@ describe("GBIF Group A — species search & match", () => {
 
 	itWhen(
 		"suggestSpecies returns a non-empty suggestions array",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "suggestSpecies", {
 				q: "Canis",
 			})) as { data: unknown[] };
@@ -125,7 +126,7 @@ describe("GBIF Group A — species search & match", () => {
 
 	itWhen(
 		"matchSpecies returns usage + match diagnostics",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "matchSpecies", {
 				scientificName: "Canis lupus",
 			})) as {
@@ -143,7 +144,7 @@ describe("GBIF Group A — species search & match", () => {
 
 	itWhen(
 		"matchSpeciesV1 returns a flat match with matchType",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "matchSpeciesV1", {
 				name: "Canis lupus",
 			})) as { data: { matchType?: unknown } };
@@ -155,7 +156,7 @@ describe("GBIF Group A — species search & match", () => {
 
 	itWhen(
 		"lookupSpeciesId returns an array (may be empty for unindexed IDs)",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "lookupSpeciesId", {
 				identifier: String(WOLF),
 			})) as { data: unknown[] };
@@ -166,7 +167,7 @@ describe("GBIF Group A — species search & match", () => {
 
 	itWhen(
 		"lookupSpeciesJoin returns non-empty identifier entries",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "lookupSpeciesJoin", {
 				identifier: String(WOLF),
 			})) as { data: unknown[] };
@@ -184,7 +185,7 @@ describe("GBIF Group A — species search & match", () => {
 describe("GBIF Group B — species detail sub-resources", () => {
 	itWhen(
 		"getSpecies returns the name-usage record",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpecies", {
 				usageKey: String(WOLF),
 			})) as { data: { key?: unknown } };
@@ -196,7 +197,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesVernacularNames returns a results array",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesVernacularNames", {
 				usageKey: String(WOLF),
 			})) as { data: { results?: unknown[] } };
@@ -208,7 +209,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesVerbatim returns the source record for a source usageKey",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesVerbatim", {
 				usageKey: String(VERBATIM_SRC),
 			})) as { data: { key?: unknown } };
@@ -220,7 +221,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesTypeSpecimens returns a results array (may be empty)",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesTypeSpecimens", {
 				usageKey: String(WOLF),
 			})) as { data: { results?: unknown[] } };
@@ -232,7 +233,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesToc returns a toc object",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesToc", {
 				usageKey: String(WOLF),
 			})) as { data: { toc?: unknown } };
@@ -244,7 +245,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesSynonyms returns a non-empty results array",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesSynonyms", {
 				usageKey: String(WOLF),
 			})) as { data: { results?: unknown[] } };
@@ -256,7 +257,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesProfiles returns a non-empty results array",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesProfiles", {
 				usageKey: String(WOLF),
 			})) as { data: { results?: unknown[] } };
@@ -268,7 +269,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesRelated returns a non-empty results array",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesRelated", {
 				usageKey: String(WOLF),
 			})) as { data: { results?: unknown[] } };
@@ -280,7 +281,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesReferences returns a non-empty results array",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesReferences", {
 				usageKey: String(WOLF),
 			})) as { data: { results?: unknown[] } };
@@ -292,7 +293,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesParents returns a non-empty array",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesParents", {
 				usageKey: String(WOLF),
 			})) as { data: unknown[] };
@@ -304,7 +305,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesNameParsed returns the parsed name object",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesNameParsed", {
 				usageKey: String(WOLF),
 			})) as { data: object };
@@ -316,7 +317,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesMetrics returns the metrics object",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesMetrics", {
 				usageKey: String(WOLF),
 			})) as { data: object };
@@ -328,7 +329,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesMedia returns a non-empty results array",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesMedia", {
 				usageKey: String(WOLF),
 			})) as { data: { results?: unknown[] } };
@@ -340,7 +341,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesIucnStatus returns a category",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesIucnStatus", {
 				usageKey: String(WOLF),
 			})) as { data: { category?: unknown } };
@@ -352,7 +353,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesIdentifiers returns a results array (may be empty)",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesIdentifiers", {
 				usageKey: String(WOLF),
 			})) as { data: { results?: unknown[] } };
@@ -364,7 +365,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesDistributions returns a non-empty results array",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesDistributions", {
 				usageKey: String(WOLF),
 			})) as { data: { results?: unknown[] } };
@@ -376,7 +377,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesDescriptions returns a non-empty results array",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesDescriptions", {
 				usageKey: String(WOLF),
 			})) as { data: { results?: unknown[] } };
@@ -388,7 +389,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesCombinations returns an array (may be empty)",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesCombinations", {
 				usageKey: String(WOLF),
 			})) as { data: unknown[] };
@@ -399,7 +400,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesChildren returns a non-empty results array",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesChildren", {
 				usageKey: String(WOLF),
 			})) as { data: { results?: unknown[] } };
@@ -411,7 +412,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 
 	itWhen(
 		"getSpeciesAllChildren returns a non-empty array",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesAllChildren", {
 				usageKey: String(WOLF),
 			})) as { data: unknown[] };
@@ -429,7 +430,7 @@ describe("GBIF Group B — species detail sub-resources", () => {
 describe("GBIF Group C — root usages & parser", () => {
 	itWhen(
 		"getSpeciesRootUsages returns root name usages",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSpeciesRootUsages", {
 				datasetKey: BACKBONE_DATASET,
 			})) as { data: { results?: unknown[] } };
@@ -441,7 +442,7 @@ describe("GBIF Group C — root usages & parser", () => {
 
 	itWhen(
 		"parseSpeciesName parses a scientific name into an array",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "parseSpeciesName", {
 				name: "Canis lupus",
 			})) as { data: unknown[] };
@@ -459,7 +460,7 @@ describe("GBIF Group C — root usages & parser", () => {
 describe("GBIF Group D — occurrence reads", () => {
 	itWhen(
 		"getOccurrence returns a single record",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getOccurrence", {
 				key: String(OCCURRENCE),
 			})) as { data: { key?: unknown } };
@@ -471,7 +472,7 @@ describe("GBIF Group D — occurrence reads", () => {
 
 	itWhen(
 		"searchOccurrences returns results via paginate",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchOccurrences", {
 				taxonKey: String(WOLF),
 			})) as { items: unknown[] };
@@ -483,7 +484,7 @@ describe("GBIF Group D — occurrence reads", () => {
 
 	itWhen(
 		"getOccurrenceVerbatim returns the verbatim record",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getOccurrenceVerbatim", {
 				key: String(OCCURRENCE),
 			})) as { data: object };
@@ -495,7 +496,7 @@ describe("GBIF Group D — occurrence reads", () => {
 
 	itWhen(
 		"getOccurrenceFragment returns the raw fragment record",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getOccurrenceFragment", {
 				key: String(OCCURRENCE),
 			})) as { data: { basisOfRecord?: unknown } };
@@ -507,7 +508,7 @@ describe("GBIF Group D — occurrence reads", () => {
 
 	itWhen(
 		"countOccurrences returns a bare positive number",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "countOccurrences", {
 				taxonKey: String(WOLF),
 			})) as { data: unknown };
@@ -525,7 +526,7 @@ describe("GBIF Group D — occurrence reads", () => {
 describe("GBIF Group E — literature", () => {
 	itWhen(
 		"searchLiterature returns results via paginate",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchLiterature", {
 				q: "biodiversity",
 			})) as { items: unknown[] };
@@ -537,7 +538,7 @@ describe("GBIF Group E — literature", () => {
 
 	itWhen(
 		"getLiterature returns a single item",
-		withTempDirs("api.gbif.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getLiterature", {
 				uuid: LIT_UUID,
 			})) as { data: object };

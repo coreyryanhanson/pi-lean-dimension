@@ -32,6 +32,70 @@ const ISSUE_IID = 612320; // a real issue iid in gitlab-org/gitlab (permanent)
 // counts drift on GitLab.com; the assertion only requires >1 page.
 const DRAIN_SEARCH = "python-docx";
 
+// ── Authenticated helpers (inject the stored PAT header; used by the users family) ──
+
+/** Resolve the stored key-injected header auth for a live call against the guide. */
+async function authFor(guidesDir: string) {
+	const { resolveSecretHeaders } = await import("../../core/auth.js");
+	const { setUserGuidesDir, findGuidesByDomain } = await import(
+		"../../core/guide-store.js"
+	);
+	setUserGuidesDir(guidesDir);
+	const match = findGuidesByDomain(DOMAIN).find(({ guide }) =>
+		guide.operations.some((o) => o.name === "getAuthenticatedUser"),
+	)!;
+	const res = resolveSecretHeaders(match.guide.auth, DOMAIN);
+	expect(res.absentRequired).toEqual([]);
+	expect(res.headers["Authorization"]).toBeTruthy();
+	expect(res.headers["Authorization"]!.startsWith("Bearer ")).toBe(true);
+	return {
+		guide: match.guide,
+		authHeaders: res.headers,
+		secretHeaderNames: new Set(["Authorization"]),
+	};
+}
+
+async function runRestGet(
+	guidesDir: string,
+	opName: string,
+	params: Record<string, unknown>,
+) {
+	const { restGet } = await import("../../core/helpers.js");
+	const { guide, ...auth } = await authFor(guidesDir);
+	const op = guide.operations.find((o) => o.name === opName)!;
+	return restGet(guide.apiHost, op, params, guide, auth);
+}
+
+async function runPaginate(
+	guidesDir: string,
+	opName: string,
+	params: Record<string, unknown>,
+) {
+	const { paginate } = await import("../../core/helpers.js");
+	const { guide, ...auth } = await authFor(guidesDir);
+	const op = guide.operations.find((o) => o.name === opName)!;
+	return paginate(guide.apiHost, op, params, guide, auth);
+}
+
+/** Run a live users op; return {ok, result|msg}. A scope-denied 403 is a valid outcome. */
+async function runUsersOp(
+	guidesDir: string,
+	opName: string,
+	params: Record<string, unknown>,
+): Promise<{ ok: boolean; result?: unknown; msg?: string }> {
+	try {
+		const { guide } = await authFor(guidesDir);
+		const op = guide.operations.find((o) => o.name === opName)!;
+		const result =
+			op.via === "paginate"
+				? await runPaginate(guidesDir, opName, params)
+				: await runRestGet(guidesDir, opName, params);
+		return { ok: true, result };
+	} catch (e) {
+		return { ok: false, msg: String((e as Error)?.message ?? e) };
+	}
+}
+
 describe("GitLab live integration smoke", () => {
 	itWhen(
 		"parses and loads the GitLab recipe from a temp user dir",
@@ -45,8 +109,14 @@ describe("GitLab live integration smoke", () => {
 
 			const guide = loaded.guides["gitlab.com"]!;
 			expect(guide.apiHost).toBe("https://gitlab.com");
-			expect(guide.auth.kind).toBe("none");
-			expect(guide.operations.length).toBe(4);
+			expect(guide.auth.kind).toBe("static-key");
+			expect(guide.auth.secretRefs).toEqual({ Authorization: "api_key" });
+			expect(guide.auth.optional).toEqual(["api_key"]);
+			expect(guide.auth.requires).toBeUndefined();
+			for (const op of guide.operations) {
+				expect(op.params["Authorization"]).toBeUndefined();
+			}
+			expect(guide.operations.length).toBe(7);
 		}),
 	);
 
@@ -136,5 +206,59 @@ describe("GitLab live integration smoke", () => {
 			expect(result.data["project_id"]).toBe(PROJECT_ID);
 		}),
 		20_000,
+	);
+});
+
+describe("GitLab (authenticated) — users family", () => {
+	itWhen(
+		"getAuthenticatedUser returns the token's user (or documented user-scope 403)",
+		withTempDirs("gitlab.com")(async ({ guidesDir }) => {
+			const { ok, result, msg } = await runUsersOp(
+				guidesDir,
+				"getAuthenticatedUser",
+				{},
+			);
+			if (ok) {
+				const data = (result as { data: { username?: string } }).data;
+				expect(data).toBeTruthy();
+				expect(typeof data.username).toBe("string");
+			} else {
+				expect(msg).toMatch(/403/);
+			}
+		}),
+		30_000,
+	);
+
+	itWhen(
+		"listUsers returns users (or documented user-scope 403)",
+		withTempDirs("gitlab.com")(async ({ guidesDir }) => {
+			const { ok, result, msg } = await runUsersOp(guidesDir, "listUsers", {
+				username: "octocat",
+			});
+			if (ok) {
+				const items = (result as { items: { id?: number }[] }).items;
+				expect(Array.isArray(items)).toBe(true);
+			} else {
+				expect(msg).toMatch(/403/);
+			}
+		}),
+		30_000,
+	);
+
+	itWhen(
+		"getUser returns a user by id (or documented user-scope 403)",
+		withTempDirs("gitlab.com")(async ({ guidesDir }) => {
+			const { ok, result, msg } = await runUsersOp(guidesDir, "getUser", {
+				id: 1,
+			});
+			if (ok) {
+				const data = (result as { data: { id?: number } }).data;
+				expect(data).toBeTruthy();
+				expect(data.id).toBe(1);
+			} else {
+				expect(msg).toMatch(/403/);
+			}
+		}),
+		30_000,
 	);
 });

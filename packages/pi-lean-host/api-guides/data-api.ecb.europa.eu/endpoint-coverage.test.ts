@@ -19,7 +19,8 @@ import {
 	itWhen,
 } from "../_shared/test-harness.js";
 
-const DOMAIN = "data-api.ecb.europa.eu";
+const DIR = "data-api.ecb.europa.eu";
+const DOMAIN = "ecb.europa.eu";
 
 // Per-recipe fetch helper (bootstrap shared via createFetchOp; no wrapper —
 // ECB needs no pacing/retry/auth overlay, and each test issues 1 request).
@@ -43,7 +44,7 @@ interface Series {
 describe("ECB Data Portal live integration smoke", () => {
 	itWhen(
 		"parses and loads the ECB recipe from a temp user dir",
-		withTempDirs("data-api.ecb.europa.eu")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const { loadApiGuidesFromDir } = await import(
 				"../../core/parse-api-guide.js"
 			);
@@ -60,7 +61,7 @@ describe("ECB Data Portal live integration smoke", () => {
 
 	itWhen(
 		"getData resolves the prefix-free itemsPath on live prefix-everywhere SDMX-ML (A2 hard proof)",
-		withTempDirs("data-api.ecb.europa.eu")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getData", EXR_MULTI)) as {
 				data: {
 					GenericData?: {
@@ -86,7 +87,7 @@ describe("ECB Data Portal live integration smoke", () => {
 
 	itWhen(
 		"getData returns a single series as an object (restGet, no A1 boxing)",
-		withTempDirs("data-api.ecb.europa.eu")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getData", {
 				flowRef: "EXR",
 				key: "M.USD.EUR.SP00.A",
@@ -111,7 +112,7 @@ describe("ECB Data Portal live integration smoke", () => {
 
 	itWhen(
 		"getDataJson returns SDMX-JSON with dataSets[0].series keyed by index",
-		withTempDirs("data-api.ecb.europa.eu")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getDataJson", {
 				flowRef: "EXR",
 				key: "M.USD.EUR.SP00.A",
@@ -135,7 +136,7 @@ describe("ECB Data Portal live integration smoke", () => {
 
 	itWhen(
 		"getDataCsv returns raw CSV text (format: text passthrough)",
-		withTempDirs("data-api.ecb.europa.eu")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getDataCsv", {
 				flowRef: "EXR",
 				key: "M.USD.EUR.SP00.A",
@@ -153,7 +154,7 @@ describe("ECB Data Portal live integration smoke", () => {
 
 	itWhen(
 		"listStructures lists dataflows prefix-free (discovery entry)",
-		withTempDirs("data-api.ecb.europa.eu")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listStructures", {
 				resource: "dataflow",
 			})) as {
@@ -177,7 +178,7 @@ describe("ECB Data Portal live integration smoke", () => {
 
 	itWhen(
 		"getStructure resolves a specific artefact prefix-free (A2, structure shape)",
-		withTempDirs("data-api.ecb.europa.eu")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getStructure", {
 				resource: "datastructure",
 				agencyID: "ECB",

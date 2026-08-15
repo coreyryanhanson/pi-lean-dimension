@@ -104,7 +104,7 @@ work:
   store and the Linux-native Secret Service path stands alone. File-fallback
   location: `~/.pi/agent/pi-lean-host/secrets/<domain>.json`.
 - **The `requires` / `scopes` schema.** A guide with a keyed `auth.kind`
-  declares `requires: [apiKey]`, and each required secret carries a `scopes`
+  declares `requires: [api_key]`, and each required secret carries a `scopes`
   field (`["read"]` by default, `["write"]` reserved for the future mutation
   gate). `api-fetch` injects the secret; the agent never reads the raw
   value. The mutation gate (when it arrives) is then "does this guide

@@ -139,13 +139,9 @@ function requireHttpUrl(
 	try {
 		const u = new URL(value);
 		if (u.protocol !== "http:" && u.protocol !== "https:") {
-			return fail(
-				file,
-				key,
-				"an http or https URL",
-				`protocol "${u.protocol}"`,
-				{ ...(opts?.protocolFix ? { fix: opts.protocolFix } : {}) },
-			);
+			return fail(file, key, "an http or https URL", `protocol "${u.protocol}"`, {
+				...(opts?.protocolFix ? { fix: opts.protocolFix } : {}),
+			});
 		}
 	} catch {
 		return fail(file, key, "a valid http/https URL", `"${value}"`, {
@@ -396,15 +392,9 @@ function validateAuth(
 		return { kind: "none" };
 	}
 	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-		return fail(
-			file,
-			"auth",
-			"a YAML mapping (kind: ...)",
-			describeFound(raw),
-			{
-				snippet: snippetFor(fm, "auth"),
-			},
-		);
+		return fail(file, "auth", "a YAML mapping (kind: ...)", describeFound(raw), {
+			snippet: snippetFor(fm, "auth"),
+		});
 	}
 	const a = raw as Record<string, unknown>;
 	const kindRaw = a["kind"];
@@ -422,8 +412,15 @@ function validateAuth(
 			"auth.kind",
 			"one of: none | static-key | oauth2",
 			kindRaw,
-			{ fix: "Use `kind: none` (v1 realizes only none)" },
+			{ fix: "Use `kind: none` (public) or `kind: static-key` (keyed header)" },
 		);
+	}
+	// oauth2 is a declared seam, not realized — reject at parse so a recipe
+	// can't load an auth mode the transport can't honor.
+	if (kindRaw === "oauth2") {
+		return fail(file, "auth.kind", "one of: none | static-key", "oauth2", {
+			fix: "OAuth2 is not yet implemented. Use kind: none (public) or kind: static-key (keyed header) for now.",
+		});
 	}
 	// Parse optional headers (per-kind extra headers, e.g. X-Api-Key for DEMO_KEY).
 	let headers: Record<string, string> | undefined;
@@ -445,8 +442,176 @@ function validateAuth(
 		headers = headersRaw as Record<string, string>;
 	}
 
+	// static-key reference fields (secretRefs/requires/optional).
+	let secretRefs: Record<string, string> | undefined;
+	const refsRaw = a["secretRefs"];
+	if (refsRaw !== undefined) {
+		if (
+			refsRaw === null ||
+			typeof refsRaw !== "object" ||
+			Array.isArray(refsRaw) ||
+			Object.values(refsRaw).some((v) => typeof v !== "string")
+		) {
+			return fail(
+				file,
+				"auth.secretRefs",
+				"a YAML mapping of header name → secret name",
+				describeFound(refsRaw),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		secretRefs = refsRaw as Record<string, string>;
+	}
+
+	// Query-param secrets: maps query param name → secret store name.
+	// Same shape + consistency rules as secretRefs; the collision-with-op-`params`
+	// rule is enforced in parseApiGuide (auth is parsed before operations).
+	let secretQueryRefs: Record<string, string> | undefined;
+	const sqrRaw = a["secretQueryRefs"];
+	if (sqrRaw !== undefined) {
+		if (
+			sqrRaw === null ||
+			typeof sqrRaw !== "object" ||
+			Array.isArray(sqrRaw) ||
+			Object.values(sqrRaw).some((v) => typeof v !== "string")
+		) {
+			return fail(
+				file,
+				"auth.secretQueryRefs",
+				"a YAML mapping of query param name → secret name",
+				describeFound(sqrRaw),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		secretQueryRefs = sqrRaw as Record<string, string>;
+	}
+
+	let requires: string[] | undefined;
+	const reqRaw = a["requires"];
+	if (reqRaw !== undefined) {
+		if (
+			!Array.isArray(reqRaw) ||
+			reqRaw.length === 0 ||
+			reqRaw.some((v) => typeof v !== "string")
+		) {
+			return fail(
+				file,
+				"auth.requires",
+				"a non-empty list of secret names",
+				describeFound(reqRaw),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		requires = reqRaw as string[];
+	}
+
+	let optional: string[] | undefined;
+	const optRaw = a["optional"];
+	if (optRaw !== undefined) {
+		if (
+			!Array.isArray(optRaw) ||
+			optRaw.length === 0 ||
+			optRaw.some((v) => typeof v !== "string")
+		) {
+			return fail(
+				file,
+				"auth.optional",
+				"a non-empty list of secret names",
+				describeFound(optRaw),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		optional = optRaw as string[];
+	}
+
+	// Fail-closed consistency rules.
+	if (
+		kindRaw === "none" &&
+		(secretRefs || secretQueryRefs || requires || optional)
+	) {
+		return fail(
+			file,
+			"auth.secretRefs",
+			"absent when auth.kind is none",
+			"secretRefs/secretQueryRefs/requires/optional with kind: none",
+			{
+				fix: "Use auth.kind: static-key to reference stored secrets, or remove the auth fields for a public API.",
+			},
+		);
+	}
+	if (requires || optional || secretRefs || secretQueryRefs) {
+		const declared = new Set([...(requires ?? []), ...(optional ?? [])]);
+		const refNames = new Set([
+			...Object.values(secretRefs ?? {}),
+			...Object.values(secretQueryRefs ?? {}),
+		]);
+		const checkRefs = (
+			refs: Record<string, string>,
+			field: string,
+		): ParseApiGuideResult | null => {
+			for (const outName of Object.keys(refs)) {
+				const secretName = refs[outName]!;
+				if (!declared.has(secretName)) {
+					return fail(
+						file,
+						`${field}.${outName}`,
+						"a secret name declared in auth.requires or auth.optional",
+						`"${secretName}" is not in requires/optional`,
+						{
+							fix: `Add "${secretName}" to auth.requires or auth.optional (or fix the reference).`,
+						},
+					);
+				}
+			}
+			return null;
+		};
+		const r1 = checkRefs(secretRefs ?? {}, "auth.secretRefs");
+		if (r1) return r1;
+		const r2 = checkRefs(secretQueryRefs ?? {}, "auth.secretQueryRefs");
+		if (r2) return r2;
+		const both = (requires ?? []).filter((n) => (optional ?? []).includes(n));
+		if (both.length > 0) {
+			return fail(
+				file,
+				"auth.requires",
+				"secret names not duplicated across requires and optional",
+				`in both: ${both.join(", ")}`,
+				{
+					fix: `Move "${both[0]}" to either requires or optional, not both.`,
+				},
+			);
+		}
+		const checkDeclared = (
+			names: string[],
+			field: string,
+		): ParseApiGuideResult | null => {
+			for (const name of names) {
+				if (!refNames.has(name)) {
+					return fail(
+						file,
+						field,
+						"a secret name referenced by auth.secretRefs or auth.secretQueryRefs",
+						`"${name}" is declared here but not referenced by any header/query ref`,
+						{
+							fix: `Reference "${name}" from auth.secretRefs or auth.secretQueryRefs, or remove it from ${field}.`,
+						},
+					);
+				}
+			}
+			return null;
+		};
+		const r3 = checkDeclared(requires ?? [], "auth.requires");
+		if (r3) return r3;
+		const r4 = checkDeclared(optional ?? [], "auth.optional");
+		if (r4) return r4;
+	}
+
 	const result: AuthConfig = { kind: kindRaw as AuthKind };
 	if (headers !== undefined) result.headers = headers;
+	if (secretRefs !== undefined) result.secretRefs = secretRefs;
+	if (secretQueryRefs !== undefined) result.secretQueryRefs = secretQueryRefs;
+	if (requires !== undefined) result.requires = requires;
+	if (optional !== undefined) result.optional = optional;
 	return result;
 }
 
@@ -570,8 +735,7 @@ function validateOperation(
 					);
 				}
 				const s = spec as Record<string, unknown>;
-				const onlyDescription =
-					Object.keys(s).length === 1 && "description" in s;
+				const onlyDescription = Object.keys(s).length === 1 && "description" in s;
 				if (!onlyDescription) {
 					return fail(
 						file,
@@ -723,11 +887,7 @@ function validateOperation(
 	const opPaginationRaw = o["pagination"];
 	let opPagination: PaginationConfig | undefined;
 	if (opPaginationRaw !== undefined) {
-		const pr = validatePagination(
-			opPaginationRaw,
-			fieldPath("pagination"),
-			file,
-		);
+		const pr = validatePagination(opPaginationRaw, fieldPath("pagination"), file);
 		if (!("style" in pr && typeof pr.style === "string")) {
 			return pr as ParseApiGuideResult;
 		}
@@ -775,13 +935,13 @@ function validateOperation(
 		params,
 		pathParams,
 		...(Object.keys(pathParamDocs).length > 0 ? { pathParamDocs } : {}),
-		...(helper !== undefined ? { helper } : {}),
-		...(transform !== undefined ? { transform } : {}),
-		...(passthrough !== undefined ? { passthrough } : {}),
-		...(dateParams !== undefined ? { dateParams } : {}),
+		...(helper === undefined ? {} : { helper }),
+		...(transform === undefined ? {} : { transform }),
+		...(passthrough === undefined ? {} : { passthrough }),
+		...(dateParams === undefined ? {} : { dateParams }),
 		...(parseOverride ? { parse: parseOverride } : {}),
 		...(opPagination ? { pagination: opPagination } : {}),
-		...(opGatherAllMax !== undefined ? { gatherAllMax: opGatherAllMax } : {}),
+		...(opGatherAllMax === undefined ? {} : { gatherAllMax: opGatherAllMax }),
 	};
 	return operation;
 }
@@ -1008,6 +1168,30 @@ export function parseApiGuide(
 		operations.push(opRes);
 	}
 
+	// Cross-field: a secretQueryRefs param name must not appear in any
+	// operation's `params` map — the agent must never be able to supply a
+	// secretly-injected param. Checked here because auth is parsed before
+	// operations. `passthrough` ops are NOT rejected (the runtime skips
+	// secretQueryRefs keys in buildQueryParams' passthrough branch); only a
+	// declared-op colliding with the injected param is a parse error.
+	if (auth.kind === "static-key" && auth.secretQueryRefs) {
+		for (const paramName of Object.keys(auth.secretQueryRefs)) {
+			for (const dOp of operations) {
+				if (paramName in dOp.params) {
+					return fail(
+						file,
+						`auth.secretQueryRefs.${paramName}`,
+						"a query param name not declared in any operation's params",
+						`also a param of operation "${dOp.name}"`,
+						{
+							fix: `Remove "${paramName}" from operation "${dOp.name}"'s params map — it is code-injected from the secrets store and the agent must not be able to set it.`,
+						},
+					);
+				}
+			}
+		}
+	}
+
 	const guide: ApiGuide = {
 		content,
 		updated,
@@ -1168,11 +1352,11 @@ export function formatApiGuideCatalog(loaded: LoadedApiGuides): string {
 	for (const [name, guide] of Object.entries(loaded.guides)) {
 		if (guide.organization) {
 			const idx = orgIndex.get(guide.organization);
-			if (idx !== undefined) {
-				orgRows[idx]!.guides.push(guide);
-			} else {
+			if (idx === undefined) {
 				orgIndex.set(guide.organization, orgRows.length);
 				orgRows.push({ org: guide.organization, guides: [guide] });
+			} else {
+				orgRows[idx]!.guides.push(guide);
 			}
 		} else {
 			orgless.push({ name, guide });
@@ -1190,9 +1374,7 @@ export function formatApiGuideCatalog(loaded: LoadedApiGuides): string {
 	}
 	for (const { name, guide } of orgless) {
 		const domains =
-			guide.domains && guide.domains.length > 0
-				? guide.domains.join(", ")
-				: name;
+			guide.domains && guide.domains.length > 0 ? guide.domains.join(", ") : name;
 		lines.push(
 			`  ${guide.icon} ${guide.shortName} — ${domains} (verified ${guide.verified}, ${guide.operations.length} ops)`,
 		);
@@ -1202,13 +1384,8 @@ export function formatApiGuideCatalog(loaded: LoadedApiGuides): string {
 			`  ⚠ malformed — ${mal.filename}: ${mal.error.field} — expected ${mal.error.expected}; found ${mal.error.found}`,
 		);
 	}
-	if (
-		Object.keys(loaded.guides).length === 0 &&
-		loaded.malformed.length === 0
-	) {
-		lines.push(
-			"  (no guides — call api-learn({domain, recipe}) to author one)",
-		);
+	if (Object.keys(loaded.guides).length === 0 && loaded.malformed.length === 0) {
+		lines.push("  (no guides — call api-learn({domain, recipe}) to author one)");
 	}
 	lines.push("");
 	lines.push(

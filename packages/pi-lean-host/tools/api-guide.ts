@@ -20,6 +20,7 @@ import {
 	getCatalogText,
 } from "../core/guide-store.js";
 import { formatGuideListings, TODAY } from "../core/parse-api-guide.js";
+import { authStatusLine, canonicalStoreDomain } from "../core/auth.js";
 import type { ApiGuide } from "../core/api-guide-types.js";
 
 export const apiGuideTool = defineTool({
@@ -163,11 +164,11 @@ export const apiGuideTool = defineTool({
 		} else if (guideName && opCount !== undefined) {
 			text = theme.fg("accent", theme.bold(`📖 ${guideName}`));
 			text += ` — ${opCount} operations`;
-		} else if (guideCount !== undefined) {
+		} else if (guideCount === undefined) {
+			text = theme.fg("dim", "📖 No guide");
+		} else {
 			text = theme.fg("dim", theme.bold("📖 catalog"));
 			text += ` — ${guideCount} guides`;
-		} else {
-			text = theme.fg("dim", "📖 No guide");
 		}
 
 		const content = contentText(result);
@@ -197,6 +198,11 @@ function renderGuideDetail(
 	lines.push(`  Verified: ${guide.verified} · Updated: ${guide.updated}`);
 	if (guide.docs) lines.push(`  Docs: ${guide.docs}`);
 	lines.push(`  Auth: ${guide.auth.kind}`);
+	// Auth status footer — shared with api-fetch. Metadata only (names,
+	// never values); nudges provisioning when a required secret is absent.
+	// Keyed on the canonical store domain, not the routing `domain`.
+	const authStatus = authStatusLine(guide.auth, canonicalStoreDomain(guide));
+	if (authStatus) lines.push(`  ${authStatus}`);
 	lines.push(
 		`  Response: ${guide.responseShape.format} (${guide.responseShape.charset})`,
 	);
@@ -235,9 +241,7 @@ function renderGuideDetail(
 			// primary guidance for shaping values, so they get their own lines.
 			for (const [k, spec] of qParams) {
 				if (spec.description) {
-					lines.push(
-						`      ${k}: ${spec.description.replace(/\s+/g, " ").trim()}`,
-					);
+					lines.push(`      ${k}: ${spec.description.replace(/\s+/g, " ").trim()}`);
 				}
 			}
 		}

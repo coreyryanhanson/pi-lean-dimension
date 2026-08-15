@@ -20,6 +20,14 @@ import { Text } from "@earendil-works/pi-tui";
 import { restGet, paginate, HelperError } from "../core/helpers.js";
 import { findGuidesByDomain } from "../core/guide-store.js";
 import { callHelper, loadTransform } from "../core/local-helpers.js";
+import {
+	resolveSecretHeaders,
+	resolveSecretQueryParams,
+	authStatusLine,
+	canonicalStoreDomain,
+	type SecretResolution,
+	type QuerySecretResolution,
+} from "../core/auth.js";
 import { formatGuideListings } from "../core/parse-api-guide.js";
 import { spillResponse, formatSpillNotice } from "../core/response-spill.js";
 import { contentText, renderExpandedText } from "./utils.js";
@@ -92,9 +100,8 @@ export const apiFetchTool = defineTool({
 			| Record<string, unknown>
 			| undefined;
 		const gatherAll =
-			((params as Record<string, unknown>)["gatherAll"] as
-				| boolean
-				| undefined) ?? (rawParams?.gatherAll as boolean | undefined);
+			((params as Record<string, unknown>)["gatherAll"] as boolean | undefined) ??
+			(rawParams?.gatherAll as boolean | undefined);
 		const userParams = rawParams ? { ...rawParams } : undefined;
 		if (userParams && "gatherAll" in userParams) {
 			delete userParams.gatherAll;
@@ -158,6 +165,12 @@ export const apiFetchTool = defineTool({
 
 		const { guide, dirName: helperDirName, op } = opMatches[0]!;
 
+		// 2.5.5 The canonical secret-store key: `guide.domains[0]` (the plain
+		// browsable domain). Independent of the routing `domain` the agent
+		// passed — auth resolution, the fail-closed error, and the footer all
+		// key the store on this canonical value, not on `domain`.
+		const storeDomain = canonicalStoreDomain(guide);
+
 		// 2.5 Resolve local helper if the operation declares one.
 		// The helper is resolved by the matched guide's directory name
 		// (helperDirName), not by a helper name — one helper per guide lives
@@ -165,11 +178,7 @@ export const apiFetchTool = defineTool({
 		// routing `domain` in the multi-recipe case.
 		let executeParams = userParams ?? {};
 		if (op.helper === true) {
-			const helperResult = await callHelper(
-				helperDirName,
-				op.name,
-				executeParams,
-			);
+			const helperResult = await callHelper(helperDirName, op.name, executeParams);
 			if (!helperResult.ok) {
 				return {
 					content: [
@@ -207,6 +216,69 @@ export const apiFetchTool = defineTool({
 			);
 		}
 
+		// 2.7 Authentication (kind: static-key): resolve store-injected secret
+		// headers AND query params up front so a missing required secret
+		// fails closed BEFORE any request is made. Values never leave this
+		// scope — only header/param and secret NAMES ever surface to the agent.
+		let headerRes: SecretResolution | undefined;
+		let queryRes: QuerySecretResolution | undefined;
+		if (guide.auth.kind === "static-key") {
+			headerRes = resolveSecretHeaders(guide.auth, storeDomain);
+			queryRes = resolveSecretQueryParams(guide.auth, storeDomain);
+			const missingRequired = [
+				...(headerRes.absentRequired ?? []),
+				...(queryRes.absentRequired ?? []),
+			];
+			if (missingRequired.length > 0) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`🔑 ${guide.shortName} requires a secret not yet provisioned: ` +
+								`${missingRequired.join(", ")}.\n` +
+								`Run /api secrets ${storeDomain} to provision it, then retry this call.`,
+						},
+					],
+					details: {
+						error: "auth_required_not_provisioned",
+						domain,
+						operation,
+						missing: missingRequired,
+					},
+				};
+			}
+		}
+		const headerValues = headerRes ? Object.values(headerRes.headers) : [];
+		const queryValues = queryRes ? Object.values(queryRes.queryParams) : [];
+		const authOpts: {
+			authHeaders?: Record<string, string>;
+			secretHeaderNames?: Set<string>;
+			secretValues?: string[];
+			secretQueryParams?: Record<string, string>;
+			secretQueryParamNames?: Set<string>;
+		} =
+			headerRes || queryRes
+				? {
+						...(headerRes
+							? {
+									authHeaders: headerRes.headers,
+									secretHeaderNames: new Set(
+										Object.keys(headerRes.headers).map((h) => h.toLowerCase()),
+									),
+								}
+							: {}),
+						...(queryRes
+							? {
+									secretQueryParams: queryRes.queryParams,
+									secretQueryParamNames: new Set(Object.keys(queryRes.queryParams)),
+								}
+							: {}),
+						secretValues: [...headerValues, ...queryValues],
+					}
+				: {};
+		const authFooter = authStatusLine(guide.auth, storeDomain);
+
 		// 3. Execute via the declared helper.
 		try {
 			const helperOpts = {
@@ -219,7 +291,7 @@ export const apiFetchTool = defineTool({
 					op,
 					executeParams,
 					guide,
-					undefined, // opts — restGet has no SSRF guard to bypass
+					authOpts, // opts — restGet has no SSRF bypass; auth headers injected here
 					transformFn ?? undefined,
 					helperDirName,
 				);
@@ -232,6 +304,7 @@ export const apiFetchTool = defineTool({
 				if (gatherAll) {
 					text += `\n⚠ gatherAll ignored — ${operation} is not paginated (via: restGet).`;
 				}
+				if (authFooter) text += `\n${authFooter}`;
 				return {
 					content: [{ type: "text", text }],
 					details: {
@@ -240,7 +313,9 @@ export const apiFetchTool = defineTool({
 						shortName: guide.shortName,
 						via: "restGet",
 						request: { method: "GET", url: result.url, params: result.params },
-						headers: result.headers,
+						// Output-channel audit: drop response headers that echo a known
+						// secret value (an auth-bearing server must not leak the key).
+						headers: scrubSecretHeaders(result.headers, authOpts.secretValues),
 					},
 				};
 			}
@@ -248,6 +323,7 @@ export const apiFetchTool = defineTool({
 			if (op.via === "paginate") {
 				const paginateOpts: Parameters<typeof paginate>[4] = {
 					...helperOpts,
+					...authOpts,
 				};
 				if (gatherAll !== undefined) paginateOpts.gatherAll = gatherAll;
 				const result = await paginate(
@@ -261,7 +337,7 @@ export const apiFetchTool = defineTool({
 				);
 				const firstUrl = result.urls[0] ?? "";
 				const serverTotal = result.serverTotal;
-				const text =
+				let text =
 					result.items.length === 0 && !result.failedItems
 						? [
 								`📦 0 item(s) fetched`,
@@ -279,6 +355,7 @@ export const apiFetchTool = defineTool({
 								serverTotal,
 								result.failedItems,
 							);
+				if (authFooter) text += `\n${authFooter}`;
 				return {
 					content: [{ type: "text", text }],
 					details: {
@@ -294,7 +371,7 @@ export const apiFetchTool = defineTool({
 							urls: result.urls,
 						},
 						totalFetched: result.totalFetched,
-						...(serverTotal !== undefined ? { serverTotal } : {}),
+						...(serverTotal === undefined ? {} : { serverTotal }),
 						ceilingHit: result.ceilingHit,
 					},
 				};
@@ -372,8 +449,7 @@ export const apiFetchTool = defineTool({
 
 		const shortName = (d?.shortName as string) || (d?.domain as string) || "?";
 		const operation = (d?.operation as string) || "?";
-		const reqUrl =
-			((d?.request as Record<string, unknown>)?.url as string) || "";
+		const reqUrl = ((d?.request as Record<string, unknown>)?.url as string) || "";
 		const totalFetched = d?.totalFetched as number | undefined;
 
 		let text = theme.fg("accent", theme.bold(`📡 ${shortName}`));
@@ -531,9 +607,7 @@ function formatAmbiguousOperation(
 	lines.push(
 		`then re-author one guide via api-learn({domain: "${first.dirName}", recipe: …}) with the colliding operation renamed so the names no longer clash.`,
 	);
-	lines.push(
-		`Note: api-learn rewrites a whole recipe, not a single operation.`,
-	);
+	lines.push(`Note: api-learn rewrites a whole recipe, not a single operation.`);
 	return lines.join("\n");
 }
 
@@ -554,6 +628,25 @@ function formatHelperDisabled(
 		"Call api-guide({domain: …}) to review the guide, or fix the helper file and restart the session.",
 	];
 	return lines.join("\n");
+}
+
+/**
+ * Output-channel audit — response-header echo: drop any response header
+ * whose value contains a known store-injected secret. An auth-bearing
+ * server must not echo the key back into `details.headers`. Returns the
+ * original map unchanged when no secrets are in play.
+ */
+function scrubSecretHeaders(
+	headers: Record<string, string>,
+	secretValues?: string[],
+): Record<string, string> {
+	if (!secretValues || secretValues.length === 0) return headers;
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(headers)) {
+		if (secretValues.some((s) => s && v.includes(s))) continue;
+		out[k] = v;
+	}
+	return out;
 }
 
 function formatHelperError(
