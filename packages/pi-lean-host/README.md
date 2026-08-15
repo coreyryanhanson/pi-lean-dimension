@@ -505,7 +505,7 @@ Authoring is via `api-learn` in learn mode, or hand-editing the file.
 ## Pagination Styles
 
 `paginate` follows the style declared in the recipe. Six styles cover the
-patterns the bundled 19-recipe spread pressure-tested:
+patterns the bundled 23-recipe spread pressure-tested:
 
 | Style | What it sends | Key fields |
 |-------|---------------|------------|
@@ -746,6 +746,24 @@ without the credential ever appearing in the agent's context — a guide
 **declares the secret by name**, you provision the value once, and `api-fetch`
 injects it in code.
 
+### A candid note on storage and threat model
+
+The secrets store is **plaintext JSON at rest** — mode `0600`, no encryption.
+That matches pi's own posture for its credentials (an API key in
+`settings.json` or the env). The threat this guards against is not another
+process reading the file; it's accidental **transcript exfiltration**. You
+provision a value once via `/api secrets`, it's written transcript-safely to
+the store, and `api-fetch` injects it in code — the agent sees the name, not
+ the value.
+
+That containment is plugin discipline, not a vault. `read`/`cat` on the
+store file is one tool-call from the agent, which runs with your privileges,
+so nothing here is a hard guarantee. **That's why the real rule is: store
+read-only keys.** Scope every credential to the smallest read surface it needs
+(e.g. a GitHub fine-grained token with read-only `contents`). A leaked read
+key is a data-exposure incident; a leaked write key is a takeover — and the
+plugin is GET-only, so a read-only key is always enough for what it does.
+
 ### Guide-side: declare the name, never the value
 
 In `guide.md`, set `auth.kind: static-key` and point at store secrets by name.
@@ -793,34 +811,22 @@ file-write instructions instead — write the `0600` file yourself before pi
 starts (a one-line `install -m 600` + `cat >` step).
 
 Secrets persist at `~/.pi/agent/pi-lean-host/secrets/<domain>.json` (mode
-`0600`; the directory is created lazily on first write). A guide's store key
-is its primary browsable domain (`guide.domains[0]`), so `/api secrets
-github.com` feeds a guide routed via an api-subdomain alias. **Only names are
-ever listed** — values never leave the store.
+`0600`). **Only names are ever listed** — values never leave the store.
 
 ### The status footer
 
 Every `api-guide` / `api-fetch` result on an auth-bearing guide (`secretRefs`
-or `secretQueryRefs`) ends with a metadata-only auth-status line:
-
-- `🔑 auth: ok` — required secret provisioned
-- `🔑 auth: requires <name> — not provisioned` — provision via `/api secrets <domain>`
-- `🔑 auth: ok (optional provisioned)`
-- `🔑 auth: ok (optional <name> not provisioned …)` — proceeding unauthenticated
-
-The footer shows names and presence, never the value — safe anywhere it
-renders.
+or `secretQueryRefs`) ends with a `🔑 auth:` line — `ok`, `requires <name>
+— not provisioned`, or an optional state — showing name and presence only,
+never the value, so it's safe anywhere it renders.
 
 ### Authoring keyed guides
 
 `api-probe` accepts an inline `auth` block (injection fields only) plus a
 `domain` selector, so you can prove a keyed shape before writing the guide —
 a store miss reports the name and fetches unauthenticated (authoring is
-human-in-the-loop, not fail-closed). In `/api learn`, `api-probe
-{listSecrets: true}` lists the provisioned names for a domain (and, when a
-guide is registered, the declared names too) to close the bootstrap gap. One
-of the bundled keyed recipes is a better starting template than `boe.es` for
-your first keyed guide — see
+human-in-the-loop, not fail-closed). One of the bundled keyed recipes is a
+better starting template than `boe.es` for your first keyed guide — see
 [`api-guides/CONTRIBUTING.md`](./api-guides/CONTRIBUTING.md).
 
 ## Security & Scope
@@ -877,7 +883,7 @@ machine; the package does not aim to make that easy.
 > web-tools suite. For the security model behind the secrets store (the
 > two-threat model and the output-channel audit), see
 > [Authentication & Secrets](#authentication--secrets). For the helper
-> escape-valve policy and the 19-recipe spread, see
+> escape-valve policy and the 23-recipe spread, see
 > [`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md).
 >
 > License: AGPL-3.0-only
