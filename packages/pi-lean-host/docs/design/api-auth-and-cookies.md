@@ -7,12 +7,10 @@
 > and [`api-stateful-sessions.md`](./api-stateful-sessions.md) (the stateful
 > ladder; its cookie rung stays open — see §Auth status footer).
 >
-> Status: **design complete; sprint 1 of the implementation plan has landed**
-> (secrets store + header-auth vertical slice, incl. the output-channel audit).
-> Deferred items are named, not hand-waved.
->
-> Implementation plan (sprint order + acceptance criteria):
-> [`api-auth-implementation-plan.md`](./api-auth-implementation-plan.md).
+> Status: **design complete; all three sprints of the implementation plan have
+> landed** (secrets store + header/query-param injection + the output-channel
+> audit + `api-probe` authoring-loop auth). Deferred items are named, not
+> hand-waved.
 
 ## Supersedes note
 
@@ -756,6 +754,16 @@ registered guide, `declared` is omitted and only `provisioned` is
 returned (the common pre-guide case). The fetch fields
 (`url`/`status`/`shape`/`draft`/`raw`) are empty in list mode.
 
+**Orphan view (no `domain`, no `apiHost`).** A bare `listSecrets` call
+(no target) additionally surfaces the **unscoped** store domains — those
+provisioned but not scoped to any registered guide
+(`unscopedStoreDomains()`, names only): the authoring-bootstrap and
+post-flip-migration-cleanup view. This is the inverse of the per-domain
+gap view (it lists domains whose *store* entries have no guide, rather
+than a guide's declared-versus-stored gap). It emits no URL, params, or
+body, so it carries the same names-only, no-leak invariant as the
+per-domain list.
+
 The learn gate is **hard**, not advisory. `/api on` (non-learn) calls
 with `listSecrets: true` are refused with a one-line "learn mode only"
 note and do not touch the store. In normal use the agent has no business
@@ -780,10 +788,10 @@ duplicated):
 | State | Footer |
 |-------|--------|
 | No auth needed | (nothing) |
-| Auth required + credential present | `auth: ok` |
-| Auth required + credential **absent** | nudge the user to provision via `/api secrets <domain>` (interactive) or by writing the `0600` file directly (headless) |
-| Auth optional + credential present | `auth: ok (optional)` |
-| Auth optional + credential **absent** | `auth: optional (not provisioned)` — informational, no nudge, no error |
+| Auth required + credential present | `🔑 auth: ok` |
+| Auth required + credential **absent** | `🔑 auth: requires <name> — not provisioned. Run /api secrets <domain>.` — nudges out-of-band provisioning |
+| Auth optional + credential present | `🔑 auth: ok (optional provisioned)` |
+| Auth optional + credential **absent** | `🔑 auth: ok (optional <name> not provisioned — unauthenticated; provision with /api secrets <domain> for higher limits)` — informational, no nudge, no error |
 
 The footer is **metadata, never the value.** It is safe under the
 output-channel audit. The required-absent branch is worded to steer
