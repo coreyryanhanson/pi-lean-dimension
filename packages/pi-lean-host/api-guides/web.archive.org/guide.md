@@ -3,7 +3,7 @@ kind: api
 organization: archive.org
 description: "Wayback capture history: CDX index queries and Memento time-travel lookups."
 domains:
-  - web.archive.org
+  - archive.org
 shortName: Wayback CDX Server
 icon: 🕰️
 apiHost: https://web.archive.org

@@ -313,4 +313,49 @@ describe("api-probe listSecrets mode (A2 bootstrap-gap closure)", () => {
 			_setToggleStateForTest(true, true);
 		}
 	});
+
+	it("bare listSecrets (no domain, no apiHost) lists unscoped store domains only", async () => {
+		const res = await runList({ listSecrets: true });
+		const d = res.details as Record<string, unknown>;
+		const unscoped = d.unscoped as string[];
+		expect(unscoped).toContain("api.github.com"); // provisioned, no guide
+		expect(unscoped).not.toContain("etherscan.io"); // scoped to a guide
+		expect(d.secrets).toBeUndefined(); // no per-domain view
+		const text = contentText(res);
+		expect(text).toContain("unscoped store domains");
+		expect(text).not.toContain("REALKEY"); // names only
+	});
+
+	it("apiHost without domain lists unscoped first, then the per-domain view", async () => {
+		const res = await runList({
+			apiHost: "https://api.github.com",
+			path: "/repos",
+			listSecrets: true,
+		});
+		const d = res.details as Record<string, unknown>;
+		const secrets = d.secrets as { domain: string; provisioned: string[] };
+		const unscoped = d.unscoped as string[];
+		expect(unscoped).toContain("api.github.com");
+		expect(secrets.domain).toBe("api.github.com");
+		expect(secrets.provisioned).toContain("gh_token");
+		const text = contentText(res);
+		// orphan list first, then the per-domain view
+		expect(text.indexOf("unscoped store domains")).toBeLessThan(
+			text.indexOf("secrets for api.github.com"),
+		);
+	});
+
+	it("domain present: per-domain view unchanged, no unscoped section", async () => {
+		const res = await runList({
+			apiHost: "https://api.etherscan.io/v2/api",
+			path: "/",
+			domain: "etherscan.io",
+			listSecrets: true,
+		});
+		const d = res.details as Record<string, unknown>;
+		expect(d.unscoped).toBeUndefined();
+		expect(contentText(res)).not.toContain("unscoped store domains");
+		const secrets = d.secrets as { domain: string };
+		expect(secrets.domain).toBe("etherscan.io");
+	});
 });

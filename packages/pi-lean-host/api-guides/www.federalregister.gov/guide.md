@@ -1,7 +1,6 @@
 ---
 kind: api
 domains:
-  - www.federalregister.gov
   - federalregister.gov
 shortName: Federal Register
 icon: 📰

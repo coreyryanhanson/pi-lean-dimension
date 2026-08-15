@@ -3,7 +3,7 @@ kind: api
 organization: wikimedia.org
 description: Wiki data, catalog lists, and site metadata via the MediaWiki action=query surface.
 domains:
-  - en.wikipedia.org
+  - wikipedia.org
 shortName: Wikimedia Action
 icon: 🛠️
 apiHost: https://en.wikipedia.org

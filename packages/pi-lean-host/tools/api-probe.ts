@@ -30,7 +30,7 @@ import {
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
 } from "../core/auth.js";
-import { listNames } from "../core/secrets-store.js";
+import { listDomains, listNames } from "../core/secrets-store.js";
 import { findGuidesByDomain } from "../core/guide-store.js";
 import { redactSecretParams } from "../core/helpers.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
@@ -159,7 +159,7 @@ export function summarize(data: unknown): ShapeSummary {
 	}
 
 	const arrayLen = items?.length ?? 0;
-	const suggestedVia = items !== null ? "paginate" : "restGet";
+	const suggestedVia = items === null ? "restGet" : "paginate";
 
 	const summary: ShapeSummary = {
 		topLevel,
@@ -250,9 +250,7 @@ function resolveProbeAuth(
 	const queryRes = resolveSecretQueryParams(
 		{
 			kind: "static-key",
-			...(auth!.secretQueryRefs
-				? { secretQueryRefs: auth!.secretQueryRefs }
-				: {}),
+			...(auth!.secretQueryRefs ? { secretQueryRefs: auth!.secretQueryRefs } : {}),
 		},
 		domain,
 	);
@@ -356,15 +354,15 @@ async function fetchOne(
 		const is401 = res.status === 401 || res.status === 403;
 		const miss = missNote(authCtx, domain);
 		let note: string;
-		if (!authCtx.hasAuthBlock) {
+		if (authCtx.hasAuthBlock) {
+			// Auth block present → never the stale auth:none text; report the
+			// store miss (or a bare requires-auth hint when nothing was missing).
+			note = `${res.status}${is401 ? " — requires authentication?" : ""}${miss ? ` ${miss}` : ""}`;
+		} else {
 			// No auth block → the existing auth:none wording.
 			note = is401
 				? `${res.status} — requires authentication? (guide is auth:none)`
 				: `${res.status}`;
-		} else {
-			// Auth block present → never the stale auth:none text; report the
-			// store miss (or a bare requires-auth hint when nothing was missing).
-			note = `${res.status}${is401 ? " — requires authentication?" : ""}${miss ? ` ${miss}` : ""}`;
 		}
 		return {
 			url,
@@ -390,7 +388,8 @@ async function fetchOne(
 			shape: null,
 			draft: "",
 			raw,
-			note: "non-JSON body (set opts.accept for XML/HTML, or use a different path)",
+			note:
+				"non-JSON body (set opts.accept for XML/HTML, or use a different path)",
 		};
 	}
 
@@ -531,9 +530,7 @@ export const apiProbeTool = defineTool({
 			Type.Object(
 				{
 					secretRefs: Type.Optional(Type.Record(Type.String(), Type.String())),
-					secretQueryRefs: Type.Optional(
-						Type.Record(Type.String(), Type.String()),
-					),
+					secretQueryRefs: Type.Optional(Type.Record(Type.String(), Type.String())),
 				},
 				{
 					description:
@@ -556,19 +553,18 @@ export const apiProbeTool = defineTool({
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-		const { apiHost, path, tryPrefixes, auth, domain, listSecrets } =
-			params as {
-				apiHost: string;
-				path: string;
-				params?: Record<string, unknown>;
-				tryPrefixes?: boolean;
-				auth?: {
-					secretRefs?: Record<string, string>;
-					secretQueryRefs?: Record<string, string>;
-				};
-				domain?: string;
-				listSecrets?: boolean;
+		const { apiHost, path, tryPrefixes, auth, domain, listSecrets } = params as {
+			apiHost: string;
+			path: string;
+			params?: Record<string, unknown>;
+			tryPrefixes?: boolean;
+			auth?: {
+				secretRefs?: Record<string, string>;
+				secretQueryRefs?: Record<string, string>;
 			};
+			domain?: string;
+			listSecrets?: boolean;
+		};
 		const userParams = (params as Record<string, unknown>)["params"] as
 			| Record<string, unknown>
 			| undefined;
@@ -582,22 +578,36 @@ export const apiProbeTool = defineTool({
 					content: [
 						{
 							type: "text",
-							text: "api-probe: listSecrets: true is learn mode only — run /api learn first.",
+							text:
+								"api-probe: listSecrets: true is learn mode only — run /api learn first.",
 						},
 					],
 					details: { error: "learn_mode_only" },
 				};
 			}
-			const secrets = listDomainSecrets(domain ?? hostnameOf(apiHost));
+			// Bare call (no domain, no apiHost): orphan list only. apiHost present:
+			// orphan list first, then the per-domain view. domain present: unchanged.
+			const unscoped = domain ? undefined : unscopedStoreDomains();
+			const blocks: string[] = [];
+			if (unscoped !== undefined) blocks.push(formatUnscopedDomains(unscoped));
+			const target = domain ?? (apiHost ? hostnameOf(apiHost) : undefined);
+			if (target !== undefined) {
+				const secrets = listDomainSecrets(target);
+				blocks.push(formatSecretsResult(secrets));
+				return {
+					content: [{ type: "text", text: blocks.join("\n\n") }],
+					details: unscoped === undefined ? { secrets } : { secrets, unscoped },
+				};
+			}
 			return {
-				content: [{ type: "text", text: formatSecretsResult(secrets) }],
-				details: { secrets },
+				content: [{ type: "text", text: blocks.join("\n\n") }],
+				details: { unscoped: unscoped! },
 			};
 		}
 
 		try {
 			const result = await probe(apiHost, path, userParams ?? {}, {
-				...(tryPrefixes !== undefined ? { tryPrefixes } : {}),
+				...(tryPrefixes === undefined ? {} : { tryPrefixes }),
 				...(auth ? { auth } : {}),
 				...(domain ? { domain } : {}),
 			});
@@ -696,8 +706,7 @@ function formatProbeResult(r: ProbeResult): string {
 		lines.push(`  shape: ${s.topLevel}`);
 		if (s.keys.length > 0) lines.push(`  keys: ${s.keys.join(", ")}`);
 		lines.push(`  via: ${s.suggestedVia}`);
-		if (s.suggestedItemsPath)
-			lines.push(`  itemsPath: ${s.suggestedItemsPath}`);
+		if (s.suggestedItemsPath) lines.push(`  itemsPath: ${s.suggestedItemsPath}`);
 		if (s.arrayLen > 0) lines.push(`  arrayLen: ${s.arrayLen}`);
 		if (s.paginationMarkers.length > 0)
 			lines.push(`  pagination markers: ${s.paginationMarkers.join(", ")}`);
@@ -714,6 +723,20 @@ function formatProbeResult(r: ProbeResult): string {
 		lines.push(`  raw (truncated):`);
 		lines.push(r.raw);
 	}
+	return lines.join("\n");
+}
+
+/** Store domains that are provisioned but not scoped to any guide.
+ *  Authoring-loop diagnostic: surfaces bootstrap + migration-orphan
+ *  secrets. Names only. */
+function unscopedStoreDomains(): string[] {
+	return listDomains().filter((d) => findGuidesByDomain(d).length === 0);
+}
+
+function formatUnscopedDomains(domains: string[]): string {
+	const lines: string[] = ["🗂 unscoped store domains (provisioned, no guide)"];
+	lines.push(`  ${domains.length > 0 ? domains.join(", ") : "(none)"}`);
+	lines.push("  (names only — values never leave the store)");
 	return lines.join("\n");
 }
 

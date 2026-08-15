@@ -24,6 +24,7 @@ import {
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
 	authStatusLine,
+	canonicalStoreDomain,
 	type SecretResolution,
 	type QuerySecretResolution,
 } from "../core/auth.js";
@@ -99,9 +100,8 @@ export const apiFetchTool = defineTool({
 			| Record<string, unknown>
 			| undefined;
 		const gatherAll =
-			((params as Record<string, unknown>)["gatherAll"] as
-				| boolean
-				| undefined) ?? (rawParams?.gatherAll as boolean | undefined);
+			((params as Record<string, unknown>)["gatherAll"] as boolean | undefined) ??
+			(rawParams?.gatherAll as boolean | undefined);
 		const userParams = rawParams ? { ...rawParams } : undefined;
 		if (userParams && "gatherAll" in userParams) {
 			delete userParams.gatherAll;
@@ -165,6 +165,12 @@ export const apiFetchTool = defineTool({
 
 		const { guide, dirName: helperDirName, op } = opMatches[0]!;
 
+		// 2.5.5 The canonical secret-store key: `guide.domains[0]` (the plain
+		// browsable domain). Independent of the routing `domain` the agent
+		// passed — auth resolution, the fail-closed error, and the footer all
+		// key the store on this canonical value, not on `domain`.
+		const storeDomain = canonicalStoreDomain(guide);
+
 		// 2.5 Resolve local helper if the operation declares one.
 		// The helper is resolved by the matched guide's directory name
 		// (helperDirName), not by a helper name — one helper per guide lives
@@ -172,11 +178,7 @@ export const apiFetchTool = defineTool({
 		// routing `domain` in the multi-recipe case.
 		let executeParams = userParams ?? {};
 		if (op.helper === true) {
-			const helperResult = await callHelper(
-				helperDirName,
-				op.name,
-				executeParams,
-			);
+			const helperResult = await callHelper(helperDirName, op.name, executeParams);
 			if (!helperResult.ok) {
 				return {
 					content: [
@@ -221,8 +223,8 @@ export const apiFetchTool = defineTool({
 		let headerRes: SecretResolution | undefined;
 		let queryRes: QuerySecretResolution | undefined;
 		if (guide.auth.kind === "static-key") {
-			headerRes = resolveSecretHeaders(guide.auth, domain);
-			queryRes = resolveSecretQueryParams(guide.auth, domain);
+			headerRes = resolveSecretHeaders(guide.auth, storeDomain);
+			queryRes = resolveSecretQueryParams(guide.auth, storeDomain);
 			const missingRequired = [
 				...(headerRes.absentRequired ?? []),
 				...(queryRes.absentRequired ?? []),
@@ -235,7 +237,7 @@ export const apiFetchTool = defineTool({
 							text:
 								`🔑 ${guide.shortName} requires a secret not yet provisioned: ` +
 								`${missingRequired.join(", ")}.\n` +
-								`Run /api secrets ${domain} to provision it, then retry this call.`,
+								`Run /api secrets ${storeDomain} to provision it, then retry this call.`,
 						},
 					],
 					details: {
@@ -269,15 +271,13 @@ export const apiFetchTool = defineTool({
 						...(queryRes
 							? {
 									secretQueryParams: queryRes.queryParams,
-									secretQueryParamNames: new Set(
-										Object.keys(queryRes.queryParams),
-									),
+									secretQueryParamNames: new Set(Object.keys(queryRes.queryParams)),
 								}
 							: {}),
 						secretValues: [...headerValues, ...queryValues],
 					}
 				: {};
-		const authFooter = authStatusLine(guide.auth, domain);
+		const authFooter = authStatusLine(guide.auth, storeDomain);
 
 		// 3. Execute via the declared helper.
 		try {
@@ -371,7 +371,7 @@ export const apiFetchTool = defineTool({
 							urls: result.urls,
 						},
 						totalFetched: result.totalFetched,
-						...(serverTotal !== undefined ? { serverTotal } : {}),
+						...(serverTotal === undefined ? {} : { serverTotal }),
 						ceilingHit: result.ceilingHit,
 					},
 				};
@@ -449,8 +449,7 @@ export const apiFetchTool = defineTool({
 
 		const shortName = (d?.shortName as string) || (d?.domain as string) || "?";
 		const operation = (d?.operation as string) || "?";
-		const reqUrl =
-			((d?.request as Record<string, unknown>)?.url as string) || "";
+		const reqUrl = ((d?.request as Record<string, unknown>)?.url as string) || "";
 		const totalFetched = d?.totalFetched as number | undefined;
 
 		let text = theme.fg("accent", theme.bold(`📡 ${shortName}`));
@@ -608,9 +607,7 @@ function formatAmbiguousOperation(
 	lines.push(
 		`then re-author one guide via api-learn({domain: "${first.dirName}", recipe: …}) with the colliding operation renamed so the names no longer clash.`,
 	);
-	lines.push(
-		`Note: api-learn rewrites a whole recipe, not a single operation.`,
-	);
+	lines.push(`Note: api-learn rewrites a whole recipe, not a single operation.`);
 	return lines.join("\n");
 }
 

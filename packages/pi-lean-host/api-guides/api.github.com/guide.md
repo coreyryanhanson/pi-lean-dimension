@@ -1,7 +1,7 @@
 ---
 kind: api
 domains:
-  - api.github.com
+  - github.com
 shortName: GitHub
 icon: 🐙
 apiHost: https://api.github.com

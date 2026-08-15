@@ -1,7 +1,7 @@
 ---
 kind: api
 domains:
-  - data-api.ecb.europa.eu
+  - ecb.europa.eu
 shortName: ECB Data Portal
 icon: 💶
 apiHost: https://data-api.ecb.europa.eu/service

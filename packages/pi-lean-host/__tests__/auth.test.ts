@@ -22,7 +22,11 @@ import { startTestServer } from "../../pi-lean-portal/__tests__/helpers/test-ser
 import { parseApiGuide } from "../core/parse-api-guide.js";
 import { restGet, HelperError } from "../core/helpers.js";
 import { stripSecretHeaders, fetchUrl } from "../core/transport.js";
-import { resolveSecretHeaders, authStatusLine } from "../core/auth.js";
+import {
+	resolveSecretHeaders,
+	authStatusLine,
+	canonicalStoreDomain,
+} from "../core/auth.js";
 import {
 	writeSecret,
 	listNames,
@@ -555,13 +559,97 @@ describe("api-fetch authenticated execution", () => {
 			undefined,
 			undefined as any,
 		);
-		expect(
-			(res.details as Record<string, unknown>).error ?? "ok",
-		).toBeDefined();
+		expect((res.details as Record<string, unknown>).error ?? "ok").toBeDefined();
 		const text = contentText(res);
 		// Must NOT have failed closed; the footer reports optional not provisioned.
 		expect(text).toContain("auth: ok (optional");
 		expect(text).toContain("not provisioned");
+	});
+
+	it("flipped guide: secrets resolve under domains[0] regardless of the routing domain", async () => {
+		// Guide claims both the canonical base and the api subdomain; the secret
+		// is provisioned ONLY under the canonical key (github.com).
+		writeGuideForDomain(
+			"flipped",
+			`---
+domains: [github.com, api.github.com]
+apiHost: ${server.url}
+auth:
+  kind: static-key
+  secretRefs:
+    x-api-key: api_key
+  requires:
+    - api_key
+operations:
+  - name: ping
+    via: restGet
+    path: /api/auth-ok
+    accept: json
+---
+body
+`,
+		);
+		writeSecret("github.com", "api_key", "S3CRET-VALUE");
+		invalidateCache();
+
+		const run = async (domain: string) =>
+			apiFetchTool.execute(
+				"t",
+				{ domain, operation: "ping" },
+				undefined,
+				undefined,
+				undefined as any,
+			);
+
+		// Routing on the canonical base.
+		const resBase = await run("github.com");
+		expect(contentText(resBase)).toContain("auth: ok");
+		expect(contentText(resBase)).not.toContain("S3CRET-VALUE");
+
+		// Routing on the api subdomain STILL resolves under github.com.
+		const resApi = await run("api.github.com");
+		expect(contentText(resApi)).toContain("auth: ok");
+		expect((resApi.details as Record<string, unknown>).error).toBeUndefined();
+	});
+
+	it("fail-closed error names the canonical store domain, not the api subdomain", async () => {
+		// Guide claims the base + api subdomain; NO secret provisioned under the
+		// canonical key (gbif.org).
+		writeGuideForDomain(
+			"flipped-missing",
+			`---
+domains: [gbif.org, api.gbif.org]
+apiHost: ${server.url}
+auth:
+  kind: static-key
+  secretRefs:
+    x-api-key: api_key
+  requires:
+    - api_key
+operations:
+  - name: ping
+    via: restGet
+    path: /api/auth-ok
+    accept: json
+---
+body
+`,
+		);
+		invalidateCache();
+
+		const res = await apiFetchTool.execute(
+			"t",
+			{ domain: "api.gbif.org", operation: "ping" },
+			undefined,
+			undefined,
+			undefined as any,
+		);
+		expect((res.details as Record<string, unknown>).error).toBe(
+			"auth_required_not_provisioned",
+		);
+		const text = contentText(res);
+		expect(text).toContain("/api secrets gbif.org");
+		expect(text).not.toContain("/api secrets api.gbif.org");
 	});
 });
 
@@ -590,5 +678,22 @@ describe("api-guide auth footer", () => {
 describe("store sanity", () => {
 	it("auth.test has the provisioned api_key", () => {
 		expect(listNames("auth.test")).toContain("api_key");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// canonicalStoreDomain (T1.1) — the canonical store-key seam
+// ═══════════════════════════════════════════════════════════════════
+
+describe("canonicalStoreDomain", () => {
+	it("returns domains[0] — the primary browsable domain", () => {
+		expect(
+			canonicalStoreDomain({
+				domains: ["github.com", "api.github.com"],
+			} as ApiGuide),
+		).toBe("github.com");
+		expect(canonicalStoreDomain({ domains: ["boe.es"] } as ApiGuide)).toBe(
+			"boe.es",
+		);
 	});
 });

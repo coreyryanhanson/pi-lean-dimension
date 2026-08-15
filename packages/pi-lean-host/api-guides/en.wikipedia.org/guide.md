@@ -3,7 +3,7 @@ kind: api
 organization: wikimedia.org
 description: Page summaries, HTML, and revision metadata via the Wikimedia REST surface.
 domains:
-  - en.wikipedia.org
+  - wikipedia.org
 shortName: Wikipedia REST
 icon: 🌐
 apiHost: https://en.wikipedia.org

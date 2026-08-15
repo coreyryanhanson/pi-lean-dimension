@@ -1,7 +1,7 @@
 ---
 kind: api
 domains:
-  - eutils.ncbi.nlm.nih.gov
+  - ncbi.nlm.nih.gov
 shortName: PubMed E-utilities
 icon: 📚
 apiHost: https://eutils.ncbi.nlm.nih.gov/entrez/eutils

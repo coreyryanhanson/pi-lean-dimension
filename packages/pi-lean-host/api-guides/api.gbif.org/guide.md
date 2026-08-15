@@ -1,7 +1,7 @@
 ---
 kind: api
 domains:
-  - api.gbif.org
+  - gbif.org
 shortName: GBIF
 icon: 🧬
 apiHost: https://api.gbif.org

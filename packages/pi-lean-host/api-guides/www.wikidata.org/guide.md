@@ -1,7 +1,6 @@
 ---
 kind: api
 domains:
-  - www.wikidata.org
   - wikidata.org
 shortName: Wikidata
 icon: 🔣

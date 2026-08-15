@@ -7,8 +7,20 @@
  * map (which only the fetch pipeline consumes, never agent context).
  */
 
-import type { AuthConfig } from "./api-guide-types.js";
+import type { AuthConfig, ApiGuide } from "./api-guide-types.js";
 import { readSecret } from "./secrets-store.js";
+
+/**
+ * The canonical secret-store key for a guide: its primary browsable domain.
+ * `domains:` is parser-required (an `ApiGuide` always has a non-empty
+ * `domains` array), so `domains[0]` is always present. No override field,
+ * no organization chain, no dirName fallback.
+ */
+export function canonicalStoreDomain(guide: ApiGuide): string {
+	// `domains` is optional on the Guide base for web-guides, but parser-required
+	// (non-empty) on any ApiGuide — see requireStringArray in parse-api-guide.ts.
+	return guide.domains![0]!;
+}
 
 /** Result of resolving a guide's `auth.secretRefs` against the store. */
 export interface SecretResolution {
@@ -29,9 +41,7 @@ export function resolveSecretHeaders(
 	const absentRequired: string[] = [];
 	const absentOptional: string[] = [];
 	const requires = auth.requires ?? [];
-	for (const [headerName, secretName] of Object.entries(
-		auth.secretRefs ?? {},
-	)) {
+	for (const [headerName, secretName] of Object.entries(auth.secretRefs ?? {})) {
 		const value = readSecret(domain, secretName);
 		if (value === null) {
 			if (requires.includes(secretName)) absentRequired.push(secretName);
