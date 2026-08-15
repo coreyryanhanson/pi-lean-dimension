@@ -18,7 +18,8 @@ import {
 	itWhen,
 } from "../_shared/test-harness.js";
 
-const DOMAIN = "web.archive.org";
+const DIR = "web.archive.org";
+const DOMAIN = "archive.org";
 
 // ── Per-recipe fetch helper (bootstrap shared via createFetchOp; no wrapper) ──
 
@@ -41,7 +42,7 @@ const CDX_FIELDS = [
 describe("Wayback CDX live integration smoke", () => {
 	itWhen(
 		"parses and loads the web.archive.org recipe from a temp user dir",
-		withTempDirs("web.archive.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const { loadApiGuidesFromDir } = await import(
 				"../../core/parse-api-guide.js"
 			);
@@ -67,7 +68,7 @@ describe("Wayback CDX live integration smoke", () => {
 describe("Wayback CDX Server Group A — queryCdx (post-transform objects)", () => {
 	itWhen(
 		"queryCdx returns row objects zipped against the CDX field header",
-		withTempDirs("web.archive.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "queryCdx", {
 				url: "example.com",
 				limit: 2,
@@ -82,7 +83,7 @@ describe("Wayback CDX Server Group A — queryCdx (post-transform objects)", () 
 
 	itWhen(
 		"queryCdx limit=-1 returns a single most-recent capture",
-		withTempDirs("web.archive.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "queryCdx", {
 				url: "example.com",
 				limit: -1,
@@ -97,7 +98,7 @@ describe("Wayback CDX Server Group A — queryCdx (post-transform objects)", () 
 
 	itWhen(
 		"queryCdx filter and fl narrow the result set",
-		withTempDirs("web.archive.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "queryCdx", {
 				url: "example.com",
 				limit: 5,
@@ -120,7 +121,7 @@ describe("Wayback CDX Server Group A — queryCdx (post-transform objects)", () 
 describe("Wayback Memento Group B — getTimemap", () => {
 	itWhen(
 		"getTimemap returns link-format text with memento rels",
-		withTempDirs("web.archive.org")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			// archive.org/developers/metadata.html has a compact TimeMap
 			// (19 mementos, ~3KB); example.com's is tens of MB and exceeds
 			// the transport body cap.

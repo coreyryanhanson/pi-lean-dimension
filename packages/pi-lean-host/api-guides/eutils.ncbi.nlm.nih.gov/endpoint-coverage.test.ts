@@ -18,10 +18,10 @@ import {
 	itWhen,
 } from "../_shared/test-harness.js";
 
-const DOMAIN = "eutils.ncbi.nlm.nih.gov";
+const DOMAIN = "ncbi.nlm.nih.gov"; // routing domain (the dir is eutils.ncbi.nlm.nih.gov)
 
-// Per-recipe fetch helper (bootstrap shared via createFetchOp; no wrapper —
-// E-utilities needs no pacing/retry/auth overlay, and each test issues 1 request).
+// The routing domain is `ncbi.nlm.nih.gov` (guide.domains[0]) — api-fetch and
+// the harness route by that, not by the dir name (`eutils.ncbi.nlm.nih.gov`).
 const fetchOp = createFetchOp(DOMAIN);
 
 // A real, permanent PMID (records are never deleted from PubMed).
@@ -46,11 +46,11 @@ describe("PubMed E-utilities live integration smoke", () => {
 			expect(loaded.malformed).toHaveLength(0);
 
 			const guide = loaded.guides["eutils.ncbi.nlm.nih.gov"]!;
-			expect(guide.apiHost).toBe(
-				"https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
-			);
-			expect(guide.auth.kind).toBe("none");
-			expect(guide.operations.length).toBe(7);
+			expect(guide.apiHost).toBe("https://eutils.ncbi.nlm.nih.gov/entrez/eutils");
+			expect(guide.auth.kind).toBe("static-key");
+			expect(guide.auth.secretQueryRefs).toEqual({ api_key: "api_key" });
+			expect(guide.auth.optional).toEqual(["api_key"]);
+			expect(guide.operations.length).toBe(8);
 		}),
 	);
 
@@ -191,5 +191,40 @@ describe("PubMed E-utilities live integration smoke", () => {
 			expect(result.data).toContain("2014248");
 		}),
 		20_000,
+	);
+
+	itWhen(
+		"two-step usehistory flow: esearch-raw tokens feed esummary via WebEnv/query_key (A3, no core change)",
+		withTempDirs("eutils.ncbi.nlm.nih.gov")(async ({ guidesDir }) => {
+			// Step 1: single-shot esearch with usehistory=y returns WebEnv/QueryKey.
+			const search = (await fetchOp(guidesDir, "esearch-raw", {
+				term: UNIQUE_DOI_TERM,
+				usehistory: "y",
+			})) as { data: { eSearchResult?: Record<string, unknown> } };
+			const esr = search.data.eSearchResult!;
+			const weNode = esr["WebEnv"] as { "#text"?: string } | string | undefined;
+			const qkNode = esr["QueryKey"] as
+				| { "#text"?: unknown }
+				| string
+				| number
+				| undefined;
+			const webenv = typeof weNode === "string" ? weNode : weNode?.["#text"];
+			const queryKey = String(
+				typeof qkNode === "object" ? qkNode?.["#text"] : qkNode,
+			);
+			expect(webenv).toBeTruthy();
+			expect(queryKey).toBeTruthy();
+
+			// Step 2: esummary consumes the history set via query_key+WebEnv (no id).
+			const summary = (await fetchOp(guidesDir, "esummary", {
+				query_key: queryKey,
+				WebEnv: webenv,
+			})) as { data: { eSummaryResult?: { DocSum?: { Id?: unknown } } } };
+			expect(summary.data.eSummaryResult).toBeTruthy();
+			expect(summary.data.eSummaryResult!.DocSum).toBeTruthy();
+			// The unique-DOI history set holds exactly one record → a single DocSum.
+			expect(String(summary.data.eSummaryResult!.DocSum!.Id)).toMatch(/^\d+$/);
+		}),
+		30_000,
 	);
 });

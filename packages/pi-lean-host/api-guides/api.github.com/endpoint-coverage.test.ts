@@ -8,27 +8,24 @@
  * Skipped in bare CI — opt in via HOST_INTEGRATION=1.
  * Co-located with the guide it tests.
  *
- * GitHub Unauthenticated rate limit is 60/hr core + 10/min search. Running
- * the FULL file live (53 requests + a few derivation fetches) exceeds the
- * hourly budget. Run a bounded subset per HOST_INTEGRATION session instead:
- *   HOST_INTEGRATION=1 npx vitest run .../api.github.com/ -t "Group A"
- * (the plan's C2 best-effort escape hatch covers partial confirmation).
+ * The guide is `auth.optional`; the suite runs AUTHENTICATED (the stored PAT
+ * is injected on every op) so it lands on the 5000/hr quota, not the 60/hr
+ * anonymous one — the full 58-request file runs in one pass. Requires a
+ * provisioned PAT at `/api secrets github.com` (value `Bearer <token>`).
  */
 
 import { describe, expect } from "vitest";
-import {
-	withTempDirs,
-	createFetchOp,
-	itWhen,
-} from "../_shared/test-harness.js";
+import { withTempDirs, itWhen } from "../_shared/test-harness.js";
 
-const DOMAIN = "api.github.com";
+const DIR = "api.github.com";
+const DOMAIN = "github.com";
 
-// ── Per-recipe fetch helper (bootstrap shared via createFetchOp; delay wrapper stays here) ──
+// ── Per-recipe fetch helper ──
+// This is a single auth.optional guide, so the live tests authenticate like
+// CoinGecko/Etherscan: the stored PAT is injected on every op (real api-fetch
+// behavior, and it keeps the suite off the 60/hr unauth quota).
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-const _fetch = createFetchOp(DOMAIN);
 
 async function fetchOp(
 	guidesDir: string,
@@ -36,7 +33,58 @@ async function fetchOp(
 	params: Record<string, unknown> = {},
 ) {
 	await delay(100);
-	return _fetch(guidesDir, name, params);
+	const { guide } = await authFor(guidesDir);
+	const op = guide.operations.find((o) => o.name === name)!;
+	return op.via === "paginate"
+		? authPaginate(guidesDir, name, params)
+		: authRestGet(guidesDir, name, params);
+}
+
+// -- Authenticated helpers (inject the stored PAT header; every op)
+
+/** Resolve the stored key-injected header auth for a live call against the guide. */
+async function authFor(guidesDir: string) {
+	const { resolveSecretHeaders } = await import("../../core/auth.js");
+	const { setUserGuidesDir, findGuidesByDomain } = await import(
+		"../../core/guide-store.js"
+	);
+	setUserGuidesDir(guidesDir);
+	const match = findGuidesByDomain(DOMAIN).find(({ guide }) =>
+		guide.operations.some((o) => o.name === "getAuthenticatedUser"),
+	)!;
+	const res = resolveSecretHeaders(match.guide.auth, DOMAIN);
+	expect(res.absentRequired).toEqual([]);
+	expect(res.absentOptional).toEqual([]);
+	expect(res.headers["Authorization"]).toBeTruthy();
+	expect(res.headers["Authorization"]!.startsWith("Bearer ")).toBe(true);
+	return {
+		guide: match.guide,
+		authHeaders: res.headers,
+		secretHeaderNames: new Set(["Authorization"]),
+		secretValues: Object.values(res.headers),
+	};
+}
+
+async function authRestGet(
+	guidesDir: string,
+	opName: string,
+	params: Record<string, unknown>,
+) {
+	const { restGet } = await import("../../core/helpers.js");
+	const { guide, ...auth } = await authFor(guidesDir);
+	const op = guide.operations.find((o) => o.name === opName)!;
+	return restGet(guide.apiHost, op, params, guide, auth);
+}
+
+async function authPaginate(
+	guidesDir: string,
+	opName: string,
+	params: Record<string, unknown>,
+) {
+	const { paginate } = await import("../../core/helpers.js");
+	const { guide, ...auth } = await authFor(guidesDir);
+	const op = guide.operations.find((o) => o.name === opName)!;
+	return paginate(guide.apiHost, op, params, guide, auth);
 }
 
 // ── Stable live identifiers (canonical GitHub test fixtures) ──────────
@@ -70,8 +118,8 @@ function expectFlatNonEmpty(items: unknown[]): void {
 
 describe("GitHub live integration smoke", () => {
 	itWhen(
-		"parses and loads the recipe with all 53 ops",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		"parses and loads the recipe with all 57 ops + optional auth",
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const { loadApiGuidesFromDir } = await import(
 				"../../core/parse-api-guide.js"
 			);
@@ -81,10 +129,106 @@ describe("GitHub live integration smoke", () => {
 
 			const guide = loaded.guides["api.github.com"]!;
 			expect(guide.apiHost).toBe("https://api.github.com");
-			expect(guide.auth.kind).toBe("none");
-			expect(guide.operations.length).toBe(52);
+			expect(guide.auth.kind).toBe("static-key");
+			expect(guide.auth.secretRefs).toEqual({ Authorization: "api_key" });
+			expect(guide.auth.optional).toEqual(["api_key"]);
+			expect(guide.auth.requires).toBeUndefined();
+			// The secret header must never be agent-suppliable.
+			for (const op of guide.operations) {
+				expect(op.params["Authorization"]).toBeUndefined();
+			}
+			expect(guide.operations.length).toBe(57);
 		}),
 		20_000,
+	);
+});
+
+describe("GitHub (authenticated) — Group K ops", () => {
+	itWhen(
+		"getAuthenticatedUser returns the token's user (auth-gated proof)",
+		withTempDirs(DIR)(async ({ guidesDir }) => {
+			const result = (await authRestGet(
+				guidesDir,
+				"getAuthenticatedUser",
+				{},
+			)) as {
+				data: { login?: string; id?: number };
+			};
+			expect(result.data).toBeTruthy();
+			expect(typeof result.data.login).toBe("string");
+			expect(result.data.login!.length).toBeGreaterThan(0);
+			expect(typeof result.data.id).toBe("number");
+		}),
+		30_000,
+	);
+
+	itWhen(
+		"listWorkflowRuns returns a repo's recent runs",
+		withTempDirs(DIR)(async ({ guidesDir }) => {
+			const result = (await authPaginate(guidesDir, "listWorkflowRuns", {
+				owner: "nodejs",
+				repo: "node",
+			})) as { items: { id?: number; status?: string }[] };
+			expect(Array.isArray(result.items)).toBe(true);
+			expect(result.items.length).toBeGreaterThan(0);
+			expect(typeof result.items[0]!.id).toBe("number");
+		}),
+		30_000,
+	);
+
+	itWhen(
+		"getWorkflowRun returns a single run derived from the list",
+		withTempDirs(DIR)(async ({ guidesDir }) => {
+			const list = (await authPaginate(guidesDir, "listWorkflowRuns", {
+				owner: "nodejs",
+				repo: "node",
+			})) as { items: { id?: number }[] };
+			expect(list.items.length).toBeGreaterThan(0);
+			const runId = list.items[0]!.id!;
+			const result = (await authRestGet(guidesDir, "getWorkflowRun", {
+				owner: "nodejs",
+				repo: "node",
+				run_id: runId,
+			})) as { data: { id?: number; status?: string } };
+			expect(result.data).toBeTruthy();
+			expect(result.data.id).toBe(runId);
+			expect(typeof result.data.status).toBe("string");
+		}),
+		30_000,
+	);
+
+	itWhen(
+		"listWorkflowRunsForWorkflow returns runs for one workflow file",
+		withTempDirs(DIR)(async ({ guidesDir }) => {
+			const list = (await authPaginate(guidesDir, "listWorkflowRuns", {
+				owner: "nodejs",
+				repo: "node",
+			})) as { items: { path?: string }[] };
+			expect(typeof list.items[0]!.path).toBe("string");
+			const result = (await authPaginate(
+				guidesDir,
+				"listWorkflowRunsForWorkflow",
+				{ owner: "nodejs", repo: "node", workflow_id: list.items[0]!.path! },
+			)) as { items: { id?: number }[] };
+			expect(Array.isArray(result.items)).toBe(true);
+			expect(result.items.length).toBeGreaterThan(0);
+		}),
+		30_000,
+	);
+
+	itWhen(
+		"listCheckRunsForRef returns check runs for the default branch",
+		withTempDirs(DIR)(async ({ guidesDir }) => {
+			const result = (await authRestGet(guidesDir, "listCheckRunsForRef", {
+				owner: "nodejs",
+				repo: "node",
+				ref: "main",
+			})) as { data: { total_count?: number; check_runs?: unknown[] } };
+			expect(result.data).toBeTruthy();
+			expect(Array.isArray(result.data.check_runs)).toBe(true);
+			expect(typeof result.data.total_count).toBe("number");
+		}),
+		30_000,
 	);
 });
 
@@ -95,7 +239,7 @@ describe("GitHub live integration smoke", () => {
 describe("GitHub Group A — repository info", () => {
 	itWhen(
 		"searchRepos returns results via paginate",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchRepos", {
 				q: "octocat",
 			})) as { items: unknown[] };
@@ -106,7 +250,7 @@ describe("GitHub Group A — repository info", () => {
 
 	itWhen(
 		"listOrgRepos lists an org's public repos",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listOrgRepos", {
 				org: ORG,
 			})) as { items: unknown[] };
@@ -118,7 +262,7 @@ describe("GitHub Group A — repository info", () => {
 
 	itWhen(
 		"getRepo returns a single repo",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getRepo", {
 				owner: OWNER,
 				repo: REPO,
@@ -132,7 +276,7 @@ describe("GitHub Group A — repository info", () => {
 
 	itWhen(
 		"getRepoLanguages returns a language→bytes map",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getRepoLanguages", {
 				owner: OWNER,
 				repo: REPO,
@@ -146,7 +290,7 @@ describe("GitHub Group A — repository info", () => {
 
 	itWhen(
 		"getRepoTopics returns a names envelope",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getRepoTopics", {
 				owner: OWNER,
 				repo: REPO,
@@ -159,7 +303,7 @@ describe("GitHub Group A — repository info", () => {
 
 	itWhen(
 		"listRepoTags returns a flat array via paginate",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listRepoTags", {
 				owner: OWNER,
 				repo: REPO,
@@ -171,7 +315,7 @@ describe("GitHub Group A — repository info", () => {
 
 	itWhen(
 		"listRepoContributors returns contributors",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listRepoContributors", {
 				owner: OWNER,
 				repo: REPO,
@@ -183,7 +327,7 @@ describe("GitHub Group A — repository info", () => {
 
 	itWhen(
 		"listPublicRepos lists public repos",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listPublicRepos")) as {
 				items: unknown[];
 			};
@@ -194,7 +338,7 @@ describe("GitHub Group A — repository info", () => {
 
 	itWhen(
 		"listUserRepos lists a user's public repos",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listUserRepos", {
 				username: USER,
 			})) as { items: unknown[] };
@@ -205,7 +349,7 @@ describe("GitHub Group A — repository info", () => {
 
 	itWhen(
 		"listRepoActivities returns a flat array via paginate",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listRepoActivities", {
 				owner: OWNER,
 				repo: REPO,
@@ -223,7 +367,7 @@ describe("GitHub Group A — repository info", () => {
 describe("GitHub Group B — repository contents", () => {
 	itWhen(
 		"getRepoReadme returns the base64-encoded README",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getRepoReadme", {
 				owner: OWNER,
 				repo: REPO,
@@ -238,7 +382,7 @@ describe("GitHub Group B — repository contents", () => {
 
 	itWhen(
 		"getRepoContent fetches a file at a path",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getRepoContent", {
 				owner: OWNER,
 				repo: REPO,
@@ -259,7 +403,7 @@ describe("GitHub Group B — repository contents", () => {
 describe("GitHub Group C — commits & branches", () => {
 	itWhen(
 		"listCommits returns a flat array via paginate",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listCommits", {
 				owner: OWNER,
 				repo: REPO,
@@ -272,7 +416,7 @@ describe("GitHub Group C — commits & branches", () => {
 
 	itWhen(
 		"getCommit returns a single commit",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getCommit", {
 				owner: OWNER,
 				repo: REPO,
@@ -287,7 +431,7 @@ describe("GitHub Group C — commits & branches", () => {
 
 	itWhen(
 		"compareCommits compares two refs",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "compareCommits", {
 				owner: OWNER,
 				repo: REPO,
@@ -302,7 +446,7 @@ describe("GitHub Group C — commits & branches", () => {
 
 	itWhen(
 		"listCommitBranches lists branches containing the commit",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listCommitBranches", {
 				owner: OWNER,
 				repo: REPO,
@@ -315,7 +459,7 @@ describe("GitHub Group C — commits & branches", () => {
 
 	itWhen(
 		"listCommitPulls lists PRs associated with the commit",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listCommitPulls", {
 				owner: OWNER,
 				repo: REPO,
@@ -328,7 +472,7 @@ describe("GitHub Group C — commits & branches", () => {
 
 	itWhen(
 		"listBranches lists the repo's branches",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listBranches", {
 				owner: OWNER,
 				repo: REPO,
@@ -340,7 +484,7 @@ describe("GitHub Group C — commits & branches", () => {
 
 	itWhen(
 		"getBranch returns a single branch",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getBranch", {
 				owner: OWNER,
 				repo: REPO,
@@ -360,7 +504,7 @@ describe("GitHub Group C — commits & branches", () => {
 describe("GitHub Group D — issues & comments", () => {
 	itWhen(
 		"listRepoIssues lists the repo's issues",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listRepoIssues", {
 				owner: OWNER,
 				repo: REPO,
@@ -372,7 +516,7 @@ describe("GitHub Group D — issues & comments", () => {
 
 	itWhen(
 		"getIssue returns a single issue",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getIssue", {
 				owner: OWNER,
 				repo: REPO,
@@ -387,7 +531,7 @@ describe("GitHub Group D — issues & comments", () => {
 
 	itWhen(
 		"getIssueComment returns a single comment",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			// Derive a real comment id from the issue-scoped list.
 			const list = (await fetchOp(guidesDir, "listIssueComments", {
 				owner: OWNER,
@@ -410,7 +554,7 @@ describe("GitHub Group D — issues & comments", () => {
 
 	itWhen(
 		"listIssueComments lists an issue's comments",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listIssueComments", {
 				owner: OWNER,
 				repo: REPO,
@@ -429,7 +573,7 @@ describe("GitHub Group D — issues & comments", () => {
 describe("GitHub Group E — pull requests & comments", () => {
 	itWhen(
 		"listPulls lists the repo's pull requests",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listPulls", {
 				owner: OWNER,
 				repo: REPO,
@@ -441,7 +585,7 @@ describe("GitHub Group E — pull requests & comments", () => {
 
 	itWhen(
 		"getPull returns a single pull request",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const pulls = (await fetchOp(guidesDir, "listPulls", {
 				owner: OWNER,
 				repo: REPO,
@@ -462,7 +606,7 @@ describe("GitHub Group E — pull requests & comments", () => {
 
 	itWhen(
 		"listPullCommits lists commits in a PR",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const pulls = (await fetchOp(guidesDir, "listPulls", {
 				owner: OWNER,
 				repo: REPO,
@@ -480,7 +624,7 @@ describe("GitHub Group E — pull requests & comments", () => {
 
 	itWhen(
 		"listPullFiles lists files changed in a PR",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const pulls = (await fetchOp(guidesDir, "listPulls", {
 				owner: OWNER,
 				repo: REPO,
@@ -498,7 +642,7 @@ describe("GitHub Group E — pull requests & comments", () => {
 
 	itWhen(
 		"listPullReviewComments lists review comments on a PR",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const pulls = (await fetchOp(guidesDir, "listPulls", {
 				owner: OWNER,
 				repo: REPO,
@@ -516,7 +660,7 @@ describe("GitHub Group E — pull requests & comments", () => {
 
 	itWhen(
 		"getPullReviewComment returns a real review comment",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			// Hello-World's PRs have no review comments, so a real id can't be
 			// derived there. Use a real, durable review comment on torvalds/linux
 			// PR #16 (review comment ids are permanent).
@@ -541,9 +685,9 @@ describe("GitHub Group E — pull requests & comments", () => {
 describe("GitHub Group F — search", () => {
 	itWhen(
 		"searchIssues returns results via paginate",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchIssues", {
-				q: `repo:${OWNER}/${REPO}`,
+				q: `repo:${OWNER}/${REPO} is:issue`,
 			})) as { items: { id?: number }[] };
 			expectFlatNonEmpty(result.items);
 			expect(typeof result.items[0]!.id).toBe("number");
@@ -553,7 +697,7 @@ describe("GitHub Group F — search", () => {
 
 	itWhen(
 		"searchUsers returns results via paginate",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchUsers", {
 				q: "octocat",
 			})) as { items: { login?: string }[] };
@@ -565,7 +709,7 @@ describe("GitHub Group F — search", () => {
 
 	itWhen(
 		"searchCommits returns results via paginate",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			// Commit search requires actual search text — a qualifier-only query
 			// (e.g. `repo:…`) returns 422. A global text query is stable + non-empty.
 			const result = (await fetchOp(guidesDir, "searchCommits", {
@@ -579,7 +723,7 @@ describe("GitHub Group F — search", () => {
 
 	itWhen(
 		"searchTopics returns results via paginate",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "searchTopics", {
 				q: "javascript",
 			})) as { items: { name?: string }[] };
@@ -591,7 +735,7 @@ describe("GitHub Group F — search", () => {
 
 	itWhen(
 		"searchLabels returns results scoped to a repository id",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			// Hello-World defines no labels, so scope to torvalds/linux (which has
 			// the default labels) and derive its repository id from getRepo.
 			const repo = (await fetchOp(guidesDir, "getRepo", {
@@ -610,17 +754,18 @@ describe("GitHub Group F — search", () => {
 	);
 
 	itWhen(
-		"searchCode documents the auth-required error shape (GitHub requires a token)",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
-			// GitHub search-code is the one search endpoint that requires
-			// authentication even for a read; unauthenticated it returns 401.
-			// Asserting the documented error shape (resources.data.gov pattern),
-			// not a 200 — the recipe is auth: none.
-			await expect(
-				fetchOp(guidesDir, "searchCode", { q: `repo:${OWNER}/${REPO}` }),
-			).rejects.toThrow(/Unexpected HTTP 401|403/);
+		"searchCode succeeds with the token (code search requires auth)",
+		withTempDirs(DIR)(async ({ guidesDir }) => {
+			// searchCode is the one GitHub search endpoint that requires a token
+			// even for a read (401 raw). With the optional PAT injected, it now
+			// returns results — the auth benefit in action.
+			const result = (await fetchOp(guidesDir, "searchCode", {
+				q: `repo:${OWNER}/${REPO} filename:README`,
+			})) as { items: unknown[] };
+			expect(Array.isArray(result.items)).toBe(true);
+			expect(result.items.length).toBeGreaterThan(0);
 		}),
-		20_000,
+		30_000,
 	);
 });
 
@@ -631,7 +776,7 @@ describe("GitHub Group F — search", () => {
 describe("GitHub Group G — users & organizations", () => {
 	itWhen(
 		"getUser returns a user profile",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getUser", {
 				username: USER,
 			})) as { data: { login?: string; id?: number } };
@@ -644,7 +789,7 @@ describe("GitHub Group G — users & organizations", () => {
 
 	itWhen(
 		"listUsers lists public users",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listUsers")) as {
 				items: unknown[];
 			};
@@ -655,7 +800,7 @@ describe("GitHub Group G — users & organizations", () => {
 
 	itWhen(
 		"getOrg returns an org profile",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getOrg", {
 				org: ORG,
 			})) as { data: { login?: string; id?: number } };
@@ -668,7 +813,7 @@ describe("GitHub Group G — users & organizations", () => {
 
 	itWhen(
 		"listOrgs lists public organizations",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listOrgs")) as {
 				items: unknown[];
 			};
@@ -679,7 +824,7 @@ describe("GitHub Group G — users & organizations", () => {
 
 	itWhen(
 		"listUserOrgs lists a user's organizations",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listUserOrgs", {
 				username: USER,
 			})) as { items: unknown[] };
@@ -696,7 +841,7 @@ describe("GitHub Group G — users & organizations", () => {
 describe("GitHub Group H — releases", () => {
 	itWhen(
 		"listReleases lists a repo's releases",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listReleases", {
 				owner: RELEASE_OWNER,
 				repo: RELEASE_REPO,
@@ -708,7 +853,7 @@ describe("GitHub Group H — releases", () => {
 
 	itWhen(
 		"getLatestRelease returns the latest release",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getLatestRelease", {
 				owner: RELEASE_OWNER,
 				repo: RELEASE_REPO,
@@ -721,7 +866,7 @@ describe("GitHub Group H — releases", () => {
 
 	itWhen(
 		"getReleaseByTag returns a release by tag name",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const list = (await fetchOp(guidesDir, "listReleases", {
 				owner: RELEASE_OWNER,
 				repo: RELEASE_REPO,
@@ -769,7 +914,7 @@ async function firstTreeSha(
 describe("GitHub Group I — git database", () => {
 	itWhen(
 		"getGitBlob returns a base64-encoded blob",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const { blobSha } = await firstTreeSha(guidesDir);
 			const result = (await fetchOp(guidesDir, "getGitBlob", {
 				owner: OWNER,
@@ -785,7 +930,7 @@ describe("GitHub Group I — git database", () => {
 
 	itWhen(
 		"getGitTree returns a tree listing",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const { treeSha } = await firstTreeSha(guidesDir);
 			const result = (await fetchOp(guidesDir, "getGitTree", {
 				owner: OWNER,
@@ -801,7 +946,7 @@ describe("GitHub Group I — git database", () => {
 
 	itWhen(
 		"listMatchingRefs lists refs matching a pattern",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listMatchingRefs", {
 				owner: OWNER,
 				repo: REPO,
@@ -814,7 +959,7 @@ describe("GitHub Group I — git database", () => {
 
 	itWhen(
 		"getGitRef returns a single reference",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getGitRef", {
 				owner: OWNER,
 				repo: REPO,
@@ -835,7 +980,7 @@ describe("GitHub Group I — git database", () => {
 describe("GitHub Group J — activity / events", () => {
 	itWhen(
 		"listPublicEvents returns public events",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listPublicEvents")) as {
 				items: unknown[];
 			};
@@ -846,7 +991,7 @@ describe("GitHub Group J — activity / events", () => {
 
 	itWhen(
 		"listRepoEvents returns a repo's events",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listRepoEvents", {
 				owner: OWNER,
 				repo: REPO,
@@ -858,7 +1003,7 @@ describe("GitHub Group J — activity / events", () => {
 
 	itWhen(
 		"listRepoNetworkEvents returns network events",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listRepoNetworkEvents", {
 				owner: OWNER,
 				repo: REPO,
@@ -870,7 +1015,7 @@ describe("GitHub Group J — activity / events", () => {
 
 	itWhen(
 		"listUserPublicEvents returns a user's public events (may be empty for inactive users)",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			// GitHub events only cover ~90 days; octocat (the canonical test user)
 			// is inactive, so this can legitimately be empty. Assert reachability.
 			const result = (await fetchOp(guidesDir, "listUserPublicEvents", {
@@ -883,7 +1028,7 @@ describe("GitHub Group J — activity / events", () => {
 
 	itWhen(
 		"listUserReceivedEvents returns events received by a user",
-		withTempDirs("api.github.com")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listUserReceivedEvents", {
 				username: USER,
 			})) as { items: unknown[] };

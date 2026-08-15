@@ -6,11 +6,15 @@ shortName: GitHub
 icon: 🐙
 apiHost: https://api.github.com
 auth:
-  kind: none
+  kind: static-key
+  secretRefs:
+    Authorization: api_key
+  optional:
+    - api_key
 responseShape:
   format: json
   charset: utf-8
-verified: "2026-07-18"
+verified: "2026-08-15"
 docs: https://docs.github.com/en/rest
 operations:
   - name: searchRepos
@@ -792,12 +796,125 @@ operations:
       per_page:
         description: Per-page count.
         default: 30
+
+  # ── Group K — Actions CI / checks / authenticated reads ─────────
+  - name: getAuthenticatedUser
+    via: restGet
+    path: /user
+    accept: json
+
+  - name: listWorkflowRuns
+    via: paginate
+    path: /repos/{owner}/{repo}/actions/runs
+    accept: json
+    pagination:
+      style: page
+      itemsPath: workflow_runs
+      pageParam: page
+      pageSizeParam: per_page
+      pageSize: 30
+    params:
+      owner:
+        description: Repository owner. Passed as a path token.
+      repo:
+        description: Repository name. Passed as a path token.
+      branch:
+        description: Only returns workflow runs associated with this branch.
+      status:
+        description: >
+          completed | action_required | cancelled | failure | neutral |
+          skipped | stale | success | timed_out | in_progress | queued |
+          requested | waiting.
+      event:
+        description: Returns workflow runs by the event that triggered them (push, pull_request, …).
+      per_page:
+        description: Per-page count.
+        default: 30
+      page:
+        description: 1-based page number.
+
+  - name: getWorkflowRun
+    via: restGet
+    path: /repos/{owner}/{repo}/actions/runs/{run_id}
+    accept: json
+    params:
+      owner:
+        description: Repository owner. Passed as a path token.
+      repo:
+        description: Repository name. Passed as a path token.
+      run_id:
+        description: The unique identifier of the workflow run. Passed as a path token.
+
+  - name: listWorkflowRunsForWorkflow
+    via: paginate
+    path: /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs
+    accept: json
+    pagination:
+      style: page
+      itemsPath: workflow_runs
+      pageParam: page
+      pageSizeParam: per_page
+      pageSize: 30
+    params:
+      owner:
+        description: Repository owner. Passed as a path token.
+      repo:
+        description: Repository name. Passed as a path token.
+      workflow_id:
+        description: The ID of the workflow (or its file name, e.g. `ci.yml`). Passed as a path token.
+      branch:
+        description: Only returns runs associated with this branch.
+      status:
+        description: Same status filter as `listWorkflowRuns`.
+      per_page:
+        description: Per-page count.
+        default: 30
+      page:
+        description: 1-based page number.
+
+  - name: listCheckRunsForRef
+    via: restGet
+    path: /repos/{owner}/{repo}/commits/{ref}/check-runs
+    accept: json
+    params:
+      owner:
+        description: Repository owner. Passed as a path token.
+      repo:
+        description: Repository name. Passed as a path token.
+      ref:
+        description: "The commit SHA or branch name whose check runs to list. Passed as a path token."
+      filter:
+        description: latest (default) | all — filters check runs by their most recent action.
+      per_page:
+        description: Per-page count.
+        default: 30
+      page:
+        description: 1-based page number.
 ---
 # GitHub — REST API metadata & search
 
 GitHub's REST API exposes repo/user/org metadata, code, issues, PRs, commits,
-releases, and activity with **no auth** (60/hr unauth rate limit; 10/min for
-search). GitHub ToS permits API access; this recipe reads metadata only.
+releases, Actions CI status, and activity, with **optional auth** (see Auth
+below): 60/hr unauthenticated (10/min for search), 5000/hr with a PAT. GitHub
+ToS permits API access; this recipe reads metadata + CI status only.
+
+## Auth
+
+`Authorization: Bearer <PAT>` header, **optional** (`auth.optional`):
+60 requests/hr unauthenticated → 5000/hr with a PAT. Provision the PAT once:
+
+```sh
+/api secrets github.com api_key "Bearer ghp_..."
+```
+
+The store value is injected **verbatim** as the `Authorization` header, so it
+must include the `Bearer` scheme prefix (a bare token is rejected with 401).
+When absent, calls proceed unauthenticated under the 60/hr rate with the
+`auth: ok (optional … not provisioned)` footer; when present, **every op** gets
+the injected header (SSRF-guarded redirects + cache-skip) and the 5000/hr rate
+with the `auth: ok (optional provisioned)` footer. The value never enters agent
+context. `searchCode` requires auth scoping; `getAuthenticatedUser` and the
+Actions/checks ops (Group K) need a token — the rest work either way.
 
 ## Operations
 
@@ -880,6 +997,25 @@ requires `user:`/`org:`/`repo:` scoping in the query for unauthenticated use.
 - `listRepoNetworkEvents` — `GET /networks/{owner}/{repo}/events`.
 - `listUserPublicEvents` — `GET /users/{username}/events`.
 - `listUserReceivedEvents` — `GET /users/{username}/received_events/public`.
+
+### Group K — Actions CI / checks / authenticated reads
+
+- `getAuthenticatedUser` — `GET /user` — the authenticated user's profile.
+  **Requires the token** (401 without it).
+- `listWorkflowRuns` — `GET /repos/{owner}/{repo}/actions/runs` (paginated
+  `workflow_runs`) — recent Actions runs; filter by `branch`/`status`/`event`.
+- `getWorkflowRun` — `GET /repos/{owner}/{repo}/actions/runs/{run_id}` — one
+  run's full status + timings.
+- `listWorkflowRunsForWorkflow` — `GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs`
+  (paginated) — runs of a single workflow file (e.g. `ci.yml`).
+- `listCheckRunsForRef` — `GET /repos/{owner}/{repo}/commits/{ref}/check-runs`
+  — the check runs attached to a commit `ref`; response is
+  `{total_count, check_runs[]}`.
+
+The Actions runs ops are `paginate` (page style, `itemsPath: workflow_runs`);
+the rest are `restGet`. `getAuthenticatedUser` is the only one that 401s
+unauthenticated — the others serve public-repo data either way (auth raises the
+rate limit and enables private-repo reads).
 
 ## Pagination
 

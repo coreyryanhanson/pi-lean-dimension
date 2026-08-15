@@ -17,7 +17,8 @@ import {
 	itWhen,
 } from "../_shared/test-harness.js";
 
-const DOMAIN = "www.federalregister.gov";
+const DIR = "www.federalregister.gov";
+const DOMAIN = "federalregister.gov";
 
 // ── Per-recipe fetch helper (bootstrap shared via createFetchOp; no wrapper) ──
 
@@ -67,7 +68,7 @@ async function findPiDateWithDocs(): Promise<string> {
 describe("Federal Register live integration smoke", () => {
 	itWhen(
 		"parses and loads the Federal Register recipe from a temp user dir",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const { loadApiGuidesFromDir } = await import(
 				"../../core/parse-api-guide.js"
 			);
@@ -84,7 +85,7 @@ describe("Federal Register live integration smoke", () => {
 
 	itWhen(
 		"listDocuments fetches a page via the declared paginate executor",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listDocuments")) as {
 				items: unknown[];
 			};
@@ -102,7 +103,7 @@ describe("Federal Register live integration smoke", () => {
 describe("Federal Register Group A — single-resource lookups", () => {
 	itWhen(
 		"getDocument returns document_number and title for a real document",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getDocument", {
 				document_number: TEST_DOC,
 			})) as { data: Record<string, unknown> };
@@ -116,7 +117,7 @@ describe("Federal Register Group A — single-resource lookups", () => {
 
 	itWhen(
 		"getAgency returns name and slug for a real agency",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getAgency", {
 				slug: TEST_AGENCY,
 			})) as { data: Record<string, unknown> };
@@ -129,7 +130,7 @@ describe("Federal Register Group A — single-resource lookups", () => {
 
 	itWhen(
 		"getImage returns image variants for a real identifier",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getImage", {
 				identifier: TEST_IMAGE,
 			})) as { data: Record<string, { url?: unknown }> };
@@ -146,7 +147,7 @@ describe("Federal Register Group A — single-resource lookups", () => {
 
 	itWhen(
 		"getSuggestedSearch returns a non-empty suggested-search object",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getSuggestedSearch", {
 				slug: TEST_SUGGESTED_SEARCH,
 			})) as { data: Record<string, unknown> };
@@ -165,7 +166,7 @@ describe("Federal Register Group A — single-resource lookups", () => {
 describe("Federal Register Group B — list/metadata endpoints", () => {
 	itWhen(
 		"listAgencies returns the bare array of all agencies (> 400)",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listAgencies")) as {
 				data: unknown[];
 			};
@@ -177,7 +178,7 @@ describe("Federal Register Group B — list/metadata endpoints", () => {
 
 	itWhen(
 		"listSuggestedSearches returns a non-empty object keyed by section",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "listSuggestedSearches")) as {
 				data: Record<string, unknown>;
 			};
@@ -191,7 +192,7 @@ describe("Federal Register Group B — list/metadata endpoints", () => {
 
 	itWhen(
 		"getDocumentFacets returns a non-empty object keyed by facet value",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getDocumentFacets", {
 				facet: "agency",
 			})) as { data: Record<string, unknown> };
@@ -211,7 +212,7 @@ describe("Federal Register Group B — list/metadata endpoints", () => {
 describe("Federal Register Group C — public inspection documents", () => {
 	itWhen(
 		"listPublicInspectionDocuments fetches a non-empty page via paginate",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const date = await findPiDateWithDocs();
 			const result = (await fetchOp(
 				guidesDir,
@@ -228,7 +229,7 @@ describe("Federal Register Group C — public inspection documents", () => {
 
 	itWhen(
 		"getCurrentPublicInspectionDocuments returns a non-empty results array",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(
 				guidesDir,
 				"getCurrentPublicInspectionDocuments",
@@ -242,7 +243,7 @@ describe("Federal Register Group C — public inspection documents", () => {
 
 	itWhen(
 		"getPublicInspectionDocument returns a single PI doc",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getPublicInspectionDocument", {
 				document_number: TEST_PI_DOC,
 			})) as { data: Record<string, unknown> };
@@ -260,7 +261,7 @@ describe("Federal Register Group C — public inspection documents", () => {
 describe("Federal Register Group D — issues / TOC", () => {
 	itWhen(
 		"getIssue returns a non-empty agencies array for a print-edition date",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getIssue", {
 				publication_date: TEST_ISSUE_DATE,
 			})) as { data: { agencies?: unknown[] } };
@@ -279,7 +280,7 @@ describe("Federal Register Group D — issues / TOC", () => {
 describe("Federal Register Group E — multi-document batch", () => {
 	itWhen(
 		"getDocuments returns results for comma-separated real document numbers",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getDocuments", {
 				document_numbers: `${TEST_DOC},${TEST_DOC2}`,
 			})) as { data: { results?: unknown[] } };
@@ -292,7 +293,7 @@ describe("Federal Register Group E — multi-document batch", () => {
 
 	itWhen(
 		"getPublicInspectionDocuments returns results for comma-separated PI numbers",
-		withTempDirs("www.federalregister.gov")(async ({ guidesDir }) => {
+		withTempDirs(DIR)(async ({ guidesDir }) => {
 			const result = (await fetchOp(guidesDir, "getPublicInspectionDocuments", {
 				document_numbers: `${TEST_PI_DOC},${TEST_PI_DOC2}`,
 			})) as { data: { results?: unknown[] } };

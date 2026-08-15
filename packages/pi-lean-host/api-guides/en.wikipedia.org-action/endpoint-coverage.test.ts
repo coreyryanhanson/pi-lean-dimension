@@ -7,9 +7,9 @@
  * expected shape (200 + expected keys in the JSON; `itemsPath` for
  * `paginate` ops).
  *
- * The Action guide claims `domains: [en.wikipedia.org]` (shared with the
+ * The Action guide claims `domains: [wikipedia.org]` (shared with the
  * REST guide in `en.wikipedia.org/`), so fetchOp routes through `DOMAIN =
- * "en.wikipedia.org"` and relies on op-name resolution across the two
+ * "wikipedia.org"` and relies on op-name resolution across the two
  * matching guides — the multi-recipe acceptance path.
  *
  * Skipped in bare CI — opt in via HOST_INTEGRATION=1.
@@ -23,7 +23,7 @@ import {
 	itWhen,
 } from "../_shared/test-harness.js";
 
-const DOMAIN = "en.wikipedia.org";
+const DOMAIN = "wikipedia.org";
 
 // ── Per-recipe fetch helper (bootstrap shared via createFetchOp; delay wrapper stays here) ──
 
