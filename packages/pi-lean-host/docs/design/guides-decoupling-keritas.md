@@ -53,10 +53,13 @@ without the guide tree in the way.
 2. **keritas** (separate repo) owns the **comprehensive recipe library** —
    the long tail of real-world guides + their co-located live integration
    tests (`HOST_INTEGRATION=1`) — plus the explicit drift disclaimer.
-3. **No redundancy.** The axis guides in pi-lean-host are chosen to maximize
-   *framework feature* coverage (so the framework is proven without a live
-   dependency); keritas's integration tests maximize *endpoint* coverage.
-   They overlap in neither purpose nor content.
+3. **No endpoint-recipe duplication.** The axis guides in pi-lean-host are
+   *synthetic minimal variants* authored to exercise framework features against
+   a mocked transport — they are not copies of real recipes and carry no
+   `verified:` date. keritas owns the real, comprehensive recipe library and
+   its live integration tests. The two repos overlap in neither purpose nor
+   real-recipe content: host proves framework features deterministically;
+   keritas proves endpoints against live APIs.
 
 ## Non-goals
 
@@ -76,14 +79,15 @@ without the guide tree in the way.
 ```
 pi-lean-host/            (framework repo — this package)
 ├── core/  tools/        (the shipped extension)
-├── api-guides/          (CORE AXIS SET ONLY — small, curated)
-│   ├── boe.es/          (reference/template guide — kept)
-│   └── …                (< ~7 guides, one per covered axis; membership TBD)
+├── api-guides/          (CORE AXIS SET ONLY — synthetic minimal guides)
+│   ├── boe.es/          (synthetic axis variant — NOT the reference template)
+│   └── …                (< ~7 synthetic guides, one per covered axis; membership TBD)
 └── __tests__/           (structural — no live network)
 
 keritas/                 (separate repo — devDep on pi-lean-host)
-├── api-guides/          (comprehensive recipes, incl. axis-set overlap-free)
+├── api-guides/          (comprehensive real recipes, incl. full boe.es reference)
 ├── _shared/test-harness.ts   (moved here with the guides)
+├── _shared/probe-op.ts       (moved here with the guides)
 ├── WAF-NOTES.md              (moved here with the guides)
 ├── CONTRIBUTING.md           (moved here with the guides)
 └── README.md                 (owns the drift disclaimer)
@@ -94,21 +98,31 @@ keritas/                 (separate repo — devDep on pi-lean-host)
 **Moves with the guides** (they are content infrastructure, not framework):
 
 - Every non-axis recipe + its `guide.md`, `helper.ts`, and co-located
-  `endpoint-coverage.test.ts` / `helper.test.ts`
+  `endpoint-coverage.test.ts` / `helper.test.ts` — **including the full boe.es
+  reference/template guide** (the slim synthetic boe.es stays in host)
 - `api-guides/_shared/test-harness.ts` (`itWhen` + live gate)
+- `api-guides/_shared/probe-op.ts` (dev probing tool — no non-axis guides to
+  probe remain in host)
 - `api-guides/WAF-NOTES.md`, `api-guides/CONTRIBUTING.md`
 
 **Stays in pi-lean-host:**
 
 - All of `core/`, `tools/`, and the framework structural tests
-- A small **axis guide set** — recipes picked specifically so the union
-  exercises every framework feature: `restGet`, `paginate`, built-in
-  `transform`, local-helper auth, static-key auth, XML parsing (fast-xml-parser),
-  charset/ETag quirks, multi-recipe domains. These are tested with a **mocked
-  transport** (they never touch a live endpoint), so they are deterministic.
-  The axis guides are **data** — the framework's structural tests parse and
-  execute them against a stubbed fetch; their live endpoint tests move to
-  keritas with the rest.
+- A small **axis guide set** — *synthetic minimal guides* authored
+  specifically so the union exercises every framework feature: `restGet`,
+  `paginate`, built-in `transform`, local-helper auth, static-key auth, XML
+  parsing (fast-xml-parser), charset/ETag quirks, multi-recipe domains. These
+  are **not** copies of real recipes; they are minimal synthetic guides written
+  to hit one axis (or a small group of axes) against a **mocked transport**
+  (they never touch a live endpoint), so they are deterministic and carry no
+  `verified:` date. The axis guides are **data** — the framework's structural
+  tests parse and execute them against a stubbed fetch. Because they are
+  synthetic, the real recipe for any domain they echo (e.g. the full boe.es)
+  lives in keritas alongside that recipe's live `endpoint-coverage.test.ts`;
+  keritas's test harness (`copyDomains`) resolves the guide locally, unchanged.
+  The reference/template role (boe.es as the canonical guide authors copy,
+  per `CONTRIBUTING.md`) stays with the full recipe in keritas — host's slim
+  variants are coverage fixtures, not authoring templates.
 - The `all-guides-parse` test (still applies to the kept axis set) — the
   always-on, zero-flake binding contract that the guides are schema-valid
   *now*.
@@ -219,10 +233,14 @@ The four open questions from the proposal are resolved:
 ## Deferred: axis-set membership (TBD)
 
 The exact axis-guide set is **intentionally deferred**. The aim is fixed: a
-small (~5–7), non-flaky, mocked-transport set whose union exercises every
-framework feature (see [What stays](#what-moves-to-keritas-vs-what-stays)).
-The concrete membership needs a **feature-coverage audit** of the current
-23 guides — a large-model task that is not available right now.
+small (~5–7), non-flaky, mocked-transport set of **synthetic minimal guides**
+whose union exercises every framework feature (see [What stays](#what-moves-to-keritas-vs-what-stays)).
+Unlike the pre-split recipes, these guides are authored, not picked from the
+existing library — each is a minimal synthetic guide written to hit one axis
+(or a small group) against mocked transport, carrying no `verified:` date and
+no live endpoint. The concrete membership needs a **feature-coverage audit**
+of the current 23 real guides — a large-model task that is not available right
+now.
 
 **Audit procedure (to run before finalizing the set):**
 
@@ -230,18 +248,22 @@ The concrete membership needs a **feature-coverage audit** of the current
    `transform`, local-helper, static-key auth, XML parsing, charset/ETag
    quirks, multi-recipe domains) — the guide-driven subset of the full list
    in [Test axes](#test-axes-the-audits-dimension-list).
-2. For each current guide, record which axes its ops exercise (frontmatter
-   `via`/`auth`/`parse`/`helper`/`transform` + helper.ts presence).
-3. Pick the minimal union of guides covering every axis, preferring the
-   reference/template guide (boe.es) and guides with the least endpoint
-   surface (fewer ops to mock).
-4. Verify each chosen guide parses under `all-guides-parse` and executes
+2. For each current *real* guide, record which axes its ops exercise (frontmatter
+   `via`/`auth`/`parse`/`helper`/`transform` + helper.ts presence) — this is
+   the feature checklist the synthetic variants must collectively cover.
+3. Author the minimal union of synthetic guides covering every axis, one axis
+   per guide where practical (preferring small groupings over multi-axis
+   guides for regression isolation), each with the fewest ops needed to hit
+   its feature(s) against mocked transport. Do **not** copy real recipes —
+   these are coverage fixtures, not reference content.
+4. Verify each synthetic guide parses under `all-guides-parse` and executes
    against a mocked transport with no live calls.
 
-A working candidate union (not committed) is: boe.es, earthquake.usgs.gov,
-api.github.com, archive.org + archive.org-wayback, services.dnb.de — covering
-all eight axes in six guides. This is a starting point for the audit, not the
-decision.
+A working candidate set (not committed) is six synthetic guides echoing the
+feature spread of: boe.es, earthquake.usgs.gov, api.github.com, archive.org +
+archive.org-wayback, services.dnb.de — covering all eight axes (6 guides:
+archive.org and archive.org-wayback count separately, exercising multi-recipe
+domain dispatch). This is a starting point for the audit, not the decision.
 
 ## Test axes (the audit's dimension list)
 
@@ -322,11 +344,14 @@ gap.)
   separate, clearly-scoped statements.
 - **Axis-set audit may find no small set works.** The split's self-proving
   premise depends on a finalized axis set that doesn't exist yet. If the
-  feature-coverage audit reveals that no small set of guides covers all axes
-  without live endpoints, the premise weakens. The candidate union (boe.es,
-  earthquake.usgs.gov, api.github.com, archive.org pair, services.dnb.de)
-  covers all eight axes in six guides and is testable with mocked transport,
-  so this risk is low — but it is not yet proven.
+  feature-coverage audit reveals that no small set of synthetic guides can
+  cover all axes against mocked transport, the premise weakens. The candidate
+  set (echoing boe.es, earthquake.usgs.gov, api.github.com, archive.org pair,
+  services.dnb.de) covers all eight axes in six synthetic guides testable with
+  mocked transport, so this risk is low — but it is not yet proven. Because
+  the axis guides are authored (not picked), there is no additional risk that
+  an existing low-surface guide is unsuitable; the only risk is authoring
+  effort, which is bounded by the axis count.
 
 ## Validation / evidence plan
 
@@ -349,15 +374,20 @@ Out of scope for this document as a schedule, but the intended order:
    alters parse behavior (closes the schema-version gap; this is the
    regression guard for the central coupling answer).
 2. Run the feature-coverage audit and finalize the axis set.
-3. Move non-axis guides + `_shared`/`WAF-NOTES`/`CONTRIBUTING` into keritas;
-   adapt axis-guide tests to a mocked transport. The multi-recipe axis-guide
-   pair (archive.org + archive.org-wayback) must exercise `api-fetch`
-   operation-name dispatch across both guides (the dispatch path is already
-   tested structurally in `tools.test.ts`; the axis-guide pair preserves
-   guide-driven coverage of it). Add an axis-coverage structural test
-   asserting the kept axis-set union covers every guide-driven axis in the
-   [Test axes](#test-axes-the-audits-dimension-list) table (closes the
-   axis-set coverage gap; promotes the one-time audit to an enforced guard).
+3. Move non-axis guides + `_shared`/`WAF-NOTES`/`CONTRIBUTING` (including
+   `_shared/probe-op.ts`) into keritas; author the synthetic axis guides and
+   write mocked-transport tests for each (these are new tests with stubbed
+   fetch responses, not adaptations of the existing live `itWhen` tests — the
+   live `endpoint-coverage.test.ts` files move to keritas with the real
+   recipes). The multi-recipe axis-guide pair (archive.org +
+   archive.org-wayback, authored as two synthetic guides claiming one domain)
+   must exercise `api-fetch` operation-name dispatch across both guides (the
+   dispatch path is already tested structurally in `tools.test.ts`; the
+   axis-guide pair preserves guide-driven coverage of it). Add an
+   axis-coverage structural test asserting the kept axis-set union covers
+   every guide-driven axis in the [Test axes](#test-axes-the-audits-dimension-list)
+   table (closes the axis-set coverage gap; promotes the one-time audit to an
+   enforced guard).
 4. Stand up keritas CI (nightly live) + README drift disclaimer.
 5. At lockstep: remove the README unstable disclaimer, declare schema v1
    (CHANGELOG line), continue with the bump rule for any post-v1 break.
