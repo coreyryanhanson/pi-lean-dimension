@@ -7,26 +7,20 @@
  * `vi.mock("../core/transport.js")` so these tests run in bare CI with
  * no network.
  *
+ * Every guide is an INLINE YAML string parsed via `parseApiGuide()` — no
+ * on-disk recipe dependency. (The real recipes live in the caritas repo.)
  * Fixtures live in `__tests__/fixtures/axis/` and are captured from real
  * endpoints, then trimmed to the fields the framework reads. See
  * `capture-axis-fixtures.mjs` to refresh them.
  *
- * Recipe-validity tests (live-endpoint, opt-in via HOST_INTEGRATION=1)
- * live alongside their recipe in `api-guides/<domain>/`.
+ * This file is the consolidated home for the pagination/XML/ETag axes.
+ * The synthetic axis guides' co-located mocked-transport tests cover the
+ * axes NOT owned here (multi-recipe dispatch, transform, local-helper,
+ * static-key-auth, tokenBag).
  */
 
 import { describe, it, expect, vi } from "vitest";
-import {
-	mkdtempSync,
-	mkdirSync,
-	copyFileSync,
-	readdirSync,
-	statSync,
-	rmSync,
-	existsSync,
-	readFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,52 +34,7 @@ vi.mock("../core/transport.js", async () => ({
 }));
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_API_GUIDES = join(__dirname, "..", "api-guides");
 const FIXTURE_DIR = join(__dirname, "fixtures", "axis");
-
-// ── Recipe setup helpers (same as original, no HOST_INTEGRATION gate) ──
-
-function copyDir(src: string, dest: string): void {
-	if (!existsSync(src)) return;
-	const entries = readdirSync(src);
-	mkdirSync(dest, { recursive: true });
-	for (const entry of entries) {
-		const srcPath = join(src, entry);
-		const destPath = join(dest, entry);
-		if (statSync(srcPath).isDirectory()) {
-			copyDir(srcPath, destPath);
-		} else {
-			copyFileSync(srcPath, destPath);
-		}
-	}
-}
-
-function copyDomains(guidesDir: string, ...domains: string[]): void {
-	for (const domain of domains) {
-		const src = join(REPO_API_GUIDES, domain);
-		if (!existsSync(src)) {
-			throw new Error(`Recipe folder not found: ${src}`);
-		}
-		copyDir(src, join(guidesDir, domain));
-	}
-}
-
-function withTempDirs(
-	...domainsToCopy: string[]
-): (fn: (dirs: { guidesDir: string }) => Promise<void>) => () => Promise<void> {
-	return (fn: (dirs: { guidesDir: string }) => Promise<void>) => {
-		return async () => {
-			const guidesDir = mkdtempSync(join(tmpdir(), "pi-host-axis-guides-"));
-
-			try {
-				copyDomains(guidesDir, ...domainsToCopy);
-				await fn({ guidesDir });
-			} finally {
-				rmSync(guidesDir, { recursive: true, force: true });
-			}
-		};
-	};
-}
 
 // ── Fixture loader ──────────────────────────────────────────────────
 
@@ -101,193 +50,245 @@ function loadFixture(name: string): FixtureFile {
 	return JSON.parse(readFileSync(p, "utf-8")) as FixtureFile;
 }
 
-// ── Axis A — nextLink pagination (loc.gov) ─────────────────────────
+// ── Axis A — nextLink pagination ────────────────────────────────────
 
 describe("framework axis A — nextLink pagination", () => {
-	it(
-		"listSearch fetches first page and extracts items with title",
-		withTempDirs("loc.gov")(async ({ guidesDir }) => {
-			const { fetchUrl } = await import("../core/transport.js");
-			const { loadApiGuidesFromDir } = await import(
-				"../core/parse-api-guide.js"
-			);
-			const { paginate } = await import("../core/helpers.js");
-			const { setUserGuidesDir } = await import("../core/guide-store.js");
+	it("listSearch fetches first page and extracts items with title", async () => {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { parseApiGuide } = await import("../core/parse-api-guide.js");
+		const { paginate } = await import("../core/helpers.js");
 
-			const fixture = loadFixture("loc-nextlink-page1.json");
-			vi.mocked(fetchUrl).mockResolvedValue({
-				status: fixture.status,
-				headers: {},
-				body: fixture.body,
-				cached: false,
-			});
+		const fixture = loadFixture("loc-nextlink-page1.json");
+		vi.mocked(fetchUrl).mockResolvedValue({
+			status: fixture.status,
+			headers: {},
+			body: fixture.body,
+			cached: false,
+		});
 
-			setUserGuidesDir(guidesDir);
-			const loaded = loadApiGuidesFromDir(guidesDir);
-			const guide = loaded.guides["loc.gov"]!;
-			const op = guide.operations.find((o) => o.name === "listSearch")!;
+		const parsed = parseApiGuide(`---
+kind: api
+domains: [www.loc.gov]
+apiHost: https://www.loc.gov
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: listSearch
+    via: paginate
+    path: /search/
+    pagination:
+      style: nextLink
+      itemsPath: results
+      nextLinkPath: pagination.next
+    params:
+      fo:
+        default: json
+      q:
+        required: true
+      c:
+        default: 2
+---
+`);
+		if (!parsed.ok) throw new Error("guide failed to parse");
+		const guide = parsed.guide;
+		const op = guide.operations.find((o) => o.name === "listSearch")!;
 
-			const result = await paginate(
-				guide.apiHost,
-				op,
-				{ q: "earthquake", c: 2 },
-				guide,
-				{ skipSsrfGuard: true },
-			);
+		const result = await paginate(
+			guide.apiHost,
+			op,
+			{ q: "earthquake", c: 2 },
+			guide,
+			{ skipSsrfGuard: true },
+		);
 
-			expect(result.items.length).toBeGreaterThan(0);
-			expect(result.totalFetched).toBeGreaterThan(0);
-			expect(result.ceilingHit).toBe(false);
+		expect(result.items.length).toBeGreaterThan(0);
+		expect(result.totalFetched).toBeGreaterThan(0);
+		expect(result.ceilingHit).toBe(false);
 
-			const first = result.items[0] as Record<string, unknown>;
-			expect(first["title"]).toBeTruthy();
-		}),
-		10_000,
-	);
+		const first = result.items[0] as Record<string, unknown>;
+		expect(first["title"]).toBeTruthy();
+	});
 });
 
-// ── Axis B — XML response (services.dnb.de) ────────────────────────
+// ── Axis B — XML response ───────────────────────────────────────────
 
 describe("framework axis B — XML response parsing", () => {
-	it(
-		"searchZdb fetches first page and parses XML items",
-		withTempDirs("services.dnb.de")(async ({ guidesDir }) => {
-			const { fetchUrl } = await import("../core/transport.js");
-			const { loadApiGuidesFromDir } = await import(
-				"../core/parse-api-guide.js"
-			);
-			const { paginate } = await import("../core/helpers.js");
-			const { setUserGuidesDir } = await import("../core/guide-store.js");
+	it("searchZdb fetches first page and parses XML items", async () => {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { parseApiGuide } = await import("../core/parse-api-guide.js");
+		const { paginate } = await import("../core/helpers.js");
 
-			// Read the XML body directly (not a JSON wrapper).
-			const xmlBody = readFileSync(
-				join(FIXTURE_DIR, "dnb-xml-page1.xml"),
-				"utf-8",
-			);
-			vi.mocked(fetchUrl).mockResolvedValue({
-				status: 200,
-				headers: { "content-type": "text/xml;charset=UTF-8" },
-				body: xmlBody,
-				cached: false,
-			});
+		// Read the XML body directly (not a JSON wrapper).
+		const xmlBody = readFileSync(join(FIXTURE_DIR, "dnb-xml-page1.xml"), "utf-8");
+		vi.mocked(fetchUrl).mockResolvedValue({
+			status: 200,
+			headers: { "content-type": "text/xml;charset=UTF-8" },
+			body: xmlBody,
+			cached: false,
+		});
 
-			setUserGuidesDir(guidesDir);
-			const loaded = loadApiGuidesFromDir(guidesDir);
-			const guide = loaded.guides["services.dnb.de"]!;
-			const op = guide.operations.find((o) => o.name === "searchZdb")!;
+		const parsed = parseApiGuide(`---
+kind: api
+domains: [dnb.de]
+apiHost: https://services.dnb.de
+auth: { kind: none }
+responseShape:
+  format: xml
+  charset: utf-8
+operations:
+  - name: searchZdb
+    via: paginate
+    path: /sru/zdb
+    accept: xml
+    pagination:
+      style: offset-limit
+      itemsPath: searchRetrieveResponse.records.record
+      pageParam: startRecord
+      pageSizeParam: maximumRecords
+      pageSize: 2
+    params:
+      query:
+        required: true
+      maximumRecords:
+        default: 2
+---
+`);
+		if (!parsed.ok) throw new Error("guide failed to parse");
+		const guide = parsed.guide;
+		const op = guide.operations.find((o) => o.name === "searchZdb")!;
 
-			const result = await paginate(
-				guide.apiHost,
-				op,
-				{ query: "Wasser", maximumRecords: 2 },
-				guide,
-			);
+		const result = await paginate(
+			guide.apiHost,
+			op,
+			{ query: "Wasser", maximumRecords: 2 },
+			guide,
+		);
 
-			expect(result.items.length).toBeGreaterThan(0);
-			expect(result.totalFetched).toBeGreaterThan(0);
+		expect(result.items.length).toBeGreaterThan(0);
+		expect(result.totalFetched).toBeGreaterThan(0);
 
-			const first = result.items[0] as Record<string, unknown>;
-			const recordData = first["recordData"] as
-				| Record<string, unknown>
-				| undefined;
-			if (recordData) {
-				expect(recordData).toBeTruthy();
-			}
-		}),
-		10_000,
-	);
+		const first = result.items[0] as Record<string, unknown>;
+		const recordData = first["recordData"] as Record<string, unknown> | undefined;
+		if (recordData) {
+			expect(recordData).toBeTruthy();
+		}
+	});
 });
 
-// ── Axis C — cursor pagination (resources.data.gov) ────────────────
+// ── Axis C — cursor pagination ──────────────────────────────────────
 
 describe("framework axis C — cursor pagination", () => {
-	it(
-		"searchDatasets fetches first page and extracts items with _score and description",
-		withTempDirs("resources.data.gov")(async ({ guidesDir }) => {
-			const { fetchUrl } = await import("../core/transport.js");
-			const { loadApiGuidesFromDir } = await import(
-				"../core/parse-api-guide.js"
-			);
-			const { paginate } = await import("../core/helpers.js");
-			const { setUserGuidesDir } = await import("../core/guide-store.js");
+	it("searchDatasets fetches first page and extracts items with _score and description", async () => {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { parseApiGuide } = await import("../core/parse-api-guide.js");
+		const { paginate } = await import("../core/helpers.js");
 
-			const fixture = loadFixture("datagov-cursor-page1.json");
-			vi.mocked(fetchUrl).mockResolvedValue({
-				status: fixture.status,
-				headers: {},
-				body: fixture.body,
-				cached: false,
-			});
+		const fixture = loadFixture("datagov-cursor-page1.json");
+		vi.mocked(fetchUrl).mockResolvedValue({
+			status: fixture.status,
+			headers: {},
+			body: fixture.body,
+			cached: false,
+		});
 
-			setUserGuidesDir(guidesDir);
-			const loaded = loadApiGuidesFromDir(guidesDir);
-			const guide = loaded.guides["resources.data.gov"]!;
-			const op = guide.operations.find((o) => o.name === "searchDatasets")!;
+		const parsed = parseApiGuide(`---
+kind: api
+domains: [resources.data.gov]
+apiHost: https://api.gsa.gov
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: searchDatasets
+    via: paginate
+    path: /technology/datagov/v4/search
+    pagination:
+      style: cursor
+      itemsPath: results
+      cursorParam: cursor
+      cursorPath: after
+    params:
+      q:
+        required: true
+      per_page:
+        default: 2
+---
+`);
+		if (!parsed.ok) throw new Error("guide failed to parse");
+		const guide = parsed.guide;
+		const op = guide.operations.find((o) => o.name === "searchDatasets")!;
 
-			const result = await paginate(
-				guide.apiHost,
-				op,
-				{ q: "water", per_page: 2 },
-				guide,
-			);
+		const result = await paginate(
+			guide.apiHost,
+			op,
+			{ q: "water", per_page: 2 },
+			guide,
+		);
 
-			expect(result.items.length).toBeGreaterThan(0);
-			expect(result.totalFetched).toBeGreaterThan(0);
+		expect(result.items.length).toBeGreaterThan(0);
+		expect(result.totalFetched).toBeGreaterThan(0);
 
-			const first = result.items[0] as Record<string, unknown>;
-			expect(first["_score"]).toBeDefined();
-			expect(first["description"]).toBeTruthy();
-		}),
-		10_000,
-	);
+		const first = result.items[0] as Record<string, unknown>;
+		expect(first["_score"]).toBeDefined();
+		expect(first["description"]).toBeTruthy();
+	});
 });
 
-// ── Axis D — ETag / conditional-GET (en.wikipedia.org) ─────────────
+// ── Axis D — ETag / conditional-GET (restGet) ───────────────────────
 
 describe("framework axis D — ETag header on restGet", () => {
-	it(
-		"getPageSummary fetches a page summary with etag header",
-		withTempDirs("en.wikipedia.org")(async ({ guidesDir }) => {
-			const { fetchUrl } = await import("../core/transport.js");
-			const { loadApiGuidesFromDir } = await import(
-				"../core/parse-api-guide.js"
-			);
-			const { restGet } = await import("../core/helpers.js");
-			const { setUserGuidesDir } = await import("../core/guide-store.js");
+	it("getPageSummary fetches a page summary with etag header", async () => {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { parseApiGuide } = await import("../core/parse-api-guide.js");
+		const { restGet } = await import("../core/helpers.js");
 
-			const bodyFixture = loadFixture("wikipedia-pagesummary.json");
-			const headersFixture = loadFixture("wikipedia-pagesummary.headers.json");
-			vi.mocked(fetchUrl).mockResolvedValue({
-				status: bodyFixture.status,
-				headers: headersFixture.headers ?? {},
-				body: bodyFixture.body,
-				cached: false,
-			});
+		const bodyFixture = loadFixture("wikipedia-pagesummary.json");
+		const headersFixture = loadFixture("wikipedia-pagesummary.headers.json");
+		vi.mocked(fetchUrl).mockResolvedValue({
+			status: bodyFixture.status,
+			headers: headersFixture.headers ?? {},
+			body: bodyFixture.body,
+			cached: false,
+		});
 
-			setUserGuidesDir(guidesDir);
-			const loaded = loadApiGuidesFromDir(guidesDir);
-			const guide = loaded.guides["en.wikipedia.org"]!;
-			const op = guide.operations.find((o) => o.name === "getPageSummary")!;
+		const parsed = parseApiGuide(`---
+kind: api
+domains: [en.wikipedia.org]
+apiHost: https://en.wikipedia.org
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: getPageSummary
+    via: restGet
+    path: /api/rest_v1/page/summary/{title}
+---
+`);
+		if (!parsed.ok) throw new Error("guide failed to parse");
+		const guide = parsed.guide;
+		const op = guide.operations.find((o) => o.name === "getPageSummary")!;
 
-			const result = await restGet(
-				guide.apiHost,
-				op,
-				{ title: "JavaScript" },
-				guide,
-			);
+		const result = await restGet(
+			guide.apiHost,
+			op,
+			{ title: "JavaScript" },
+			guide,
+		);
 
-			expect(result.data).toBeTruthy();
-			const body = result.data as Record<string, unknown>;
-			expect(body["title"]).toBe("JavaScript");
-			expect(body["extract"]).toBeTruthy();
+		expect(result.data).toBeTruthy();
+		const body = result.data as Record<string, unknown>;
+		expect(body["title"]).toBe("JavaScript");
+		expect(body["extract"]).toBeTruthy();
 
-			const etag = result.headers["etag"];
-			expect(etag).toBeTruthy();
-			expect(typeof etag).toBe("string");
-			expect((etag as string).length).toBeGreaterThan(0);
-		}),
-		10_000,
-	);
+		const etag = result.headers["etag"];
+		expect(etag).toBeTruthy();
+		expect(typeof etag).toBe("string");
+		expect((etag as string).length).toBeGreaterThan(0);
+	});
 });
 
 // ── Axis E — A1 XML single-record array normalization (eutils) ─────
@@ -355,7 +356,7 @@ operations:
 		expect(result.items[0]).toBe(42572859);
 		expect(result.totalFetched).toBe(1);
 		expect(result.serverTotal).toBe(3);
-	}, 10_000);
+	});
 });
 
 // ── Axis F — A2 namespaced XML (ECB SDMX shape) ────────────────────
@@ -417,5 +418,5 @@ operations:
 		const obsValue = first["ObsValue"] as Record<string, unknown> | undefined;
 		expect(obsValue).toBeTruthy();
 		expect(obsValue!["@_value"]).toBe(0.9);
-	}, 10_000);
+	});
 });

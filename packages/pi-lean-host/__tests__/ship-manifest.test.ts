@@ -46,12 +46,16 @@ describe("publish manifest", () => {
 			expect(entry).not.toMatch(/^helpers\//);
 		}
 	});
-	it("web.archive.org reference recipe ships its transform helper.ts", () => {
+	it("axis guides ship their transform helper.ts alongside guide.md", () => {
 		// api-guides/ is GitHub-only (excluded from the npm tarball — see the
 		// negative assertions above), so the helper only needs to exist in the
-		// repo tree, not in the published `files` array.
+		// repo tree, not in the published `files` array. The synthetic axis
+		// guides carry helper.ts where their axis needs one (transform /
+		// local-helper).
 		expect(
-			existsSync(resolve(PACKAGE_ROOT, "api-guides/web.archive.org/helper.ts")),
+			existsSync(
+				resolve(PACKAGE_ROOT, "api-guides/earthquake.usgs.gov/helper.ts"),
+			),
 		).toBe(true);
 	});
 });
