@@ -1,9 +1,9 @@
-# pi-lean-host — Guide Content Decoupling (`keritas`)
+# pi-lean-host — Guide Content Decoupling (`caritas`)
 
 > Design for breaking the recipe/guide content out of the `pi-lean-host`
-> package into a separate repository named **`keritas`** (keeping the pi-lean
+> package into a separate repository named **`caritas`** (keeping the pi-lean
 > / Pylean pun family from *Angel*). pi-lean-host stays the framework + a
-> small, non-flaky axis-guide set; keritas owns the comprehensive recipe
+> small, non-flaky axis-guide set; caritas owns the comprehensive recipe
 > library, its live integration tests, and the "proven as of a date, may
 > drift" disclaimer.
 >
@@ -50,27 +50,27 @@ without the guide tree in the way.
    structural tests** that (a) prove every framework feature end-to-end and
    (b) are non-flaky (no live external APIs, via mocked transport). This
    core keeps the repo self-contained and fast — pure structural CI.
-2. **keritas** (separate repo) owns the **comprehensive recipe library** —
+2. **caritas** (separate repo) owns the **comprehensive recipe library** —
    the long tail of real-world guides + their co-located live integration
    tests (`HOST_INTEGRATION=1`) — plus the explicit drift disclaimer.
 3. **No endpoint-recipe duplication.** The axis guides in pi-lean-host are
    *synthetic minimal variants* authored to exercise framework features against
    a mocked transport — they are not copies of real recipes and carry no
-   `verified:` date. keritas owns the real, comprehensive recipe library and
+   `verified:` date. caritas owns the real, comprehensive recipe library and
    its live integration tests. The two repos overlap in neither purpose nor
    real-recipe content: host proves framework features deterministically;
-   keritas proves endpoints against live APIs.
+   caritas proves endpoints against live APIs.
 
 ## Non-goals
 
 - **Not** a guides-content-cdn, a marketplace, or an auto-generated
-  catalogue. keritas is a plain recipe repo.
+  catalogue. caritas is a plain recipe repo.
 - **No** schema-change auto-enforcement beyond the existing parse gate
   (`schemaVersion` is advisory — see [Schema versioning](#schema-versioning-the-coupling-answer)).
 - **No** per-guide version pinning / multiple framework versions installed in
   one repo — that freezes the wrong thing (the framework is *more* stable
   than the endpoints it talks to).
-- **No** published keritas npm package. keritas is a source repo consumed only
+- **No** published caritas npm package. caritas is a source repo consumed only
   as a devDependency by its own dev/test tooling against a published
   pi-lean-host (see [Decisions](#decisions)).
 
@@ -84,7 +84,7 @@ pi-lean-host/            (framework repo — this package)
 │   └── …                (< ~7 synthetic guides, one per covered axis; membership TBD)
 └── __tests__/           (structural — no live network)
 
-keritas/                 (separate repo — devDep on pi-lean-host)
+caritas/                 (separate repo — devDep on pi-lean-host)
 ├── api-guides/          (comprehensive real recipes, incl. full boe.es reference)
 ├── _shared/test-harness.ts   (moved here with the guides)
 ├── _shared/probe-op.ts       (moved here with the guides)
@@ -93,7 +93,7 @@ keritas/                 (separate repo — devDep on pi-lean-host)
 └── README.md                 (owns the drift disclaimer)
 ```
 
-## What moves to keritas vs what stays
+## What moves to caritas vs what stays
 
 **Moves with the guides** (they are content infrastructure, not framework):
 
@@ -119,14 +119,14 @@ keritas/                 (separate repo — devDep on pi-lean-host)
   `verified:` date. The axis guides are **data** — the framework's structural
   tests parse and execute them against a stubbed fetch. Because they are
   synthetic, the real recipe for any domain they echo (e.g. the full boe.es)
-  lives in keritas alongside that recipe's live `endpoint-coverage.test.ts`;
-  keritas's test harness (`copyDomains`) resolves the guide locally, unchanged.
+  lives in caritas alongside that recipe's live `endpoint-coverage.test.ts`;
+  caritas's test harness (`copyDomains`) resolves the guide locally, unchanged.
   The reference/template role (boe.es as the canonical guide authors copy,
-  per `CONTRIBUTING.md`) stays with the full recipe in keritas — host's slim
+  per `CONTRIBUTING.md`) stays with the full recipe in caritas — host's slim
   variants are coverage fixtures, not authoring templates. Note: the
   inline worked example in `api-learn` (in `tools/api-learn.ts`) stays in host
   as a simplified fixture and is separate from the full reference guides in
-  keritas.
+  caritas.
 - The `all-guides-parse` test (still applies to the kept axis set) — the
   always-on, zero-flake binding contract that the guides are schema-valid
   *now*.
@@ -174,7 +174,7 @@ rare, cause-aligned one.
 
 **Attribution, not enforcement.** Guides declare `schemaVersion` in
 frontmatter. It is metadata for triage ("this guide targets schema 2, current
-is 3 → migrate it") and for keritas's provenance claim. The version **never
+is 3 → migrate it") and for caritas's provenance claim. The version **never
 gates or warns at parse time** — `all-guides-parse` (running the *current*
 parser) is the real, only gate. No parser changes for versioning.
 
@@ -188,7 +188,7 @@ stays and gains the `schemaVersion` sibling.
 - **pi-lean-host** CI runs structural tests only — fast, deterministic, no
   browser, no network. This is the split's whole point: the framework repo is
   green by construction.
-- **keritas** CI has two tiers:
+- **caritas** CI has two tiers:
   - **Per-PR (fast, gated):** parse-validity (`parseApiGuide()` over every
     guide, no network) **plus** the mocked-transport recipe-correctness tests
     that move with the guides — the co-located `transform.test.ts` files and
@@ -196,7 +196,7 @@ stays and gains the `schemaVersion` sibling.
     transport. These are fast and deterministic ("bare CI, no network"), so a
     recipe PR that breaks parsing or a helper's transform wiring fails fast
     instead of waiting for the nightly run. They are coupled to the real
-    `helper.ts` (which moves to keritas), so they move with it — the import
+    `helper.ts` (which moves to caritas), so they move with it — the import
     `from "./helper.js"` only resolves co-located with the recipe.
   - **Nightly (slow, non-gating):** the live integration tests
     (`HOST_INTEGRATION=1`) on a schedule against a pinned `pi-lean-host`
@@ -209,9 +209,9 @@ stays and gains the `schemaVersion` sibling.
   where it's achievable (per-PR: parse + mocked-transport wiring) while
   reserving the drift-signal posture for the genuinely flaky live calls.
 
-## Drift disclaimer (keritas README)
+## Drift disclaimer (caritas README)
 
-keritas's README owns this statement, per recipe:
+caritas's README owns this statement, per recipe:
 
 > Recipes here were verified against a specific pi-lean-host schema version
 > and their live endpoints as of the date in each guide's `verified` field.
@@ -224,7 +224,7 @@ escape hatch — a natural fit for a content repo, and it keeps the framework
 repo out of the "X API broke" issue traffic.
 
 **Two disclaimers, kept separate.** The README unstable disclaimer
-(pre-lockstep, schema settling) is *removed at lockstep*; keritas's drift
+(pre-lockstep, schema settling) is *removed at lockstep*; caritas's drift
 disclaimer (perpetual, "proven as of a date") stays forever. They answer
 different questions and must not be conflated.
 
@@ -239,12 +239,12 @@ The four open questions from the proposal are resolved:
    already covers the churn period, and the workflow driver (framework
    branches blocked by the guide tree) argues for sooner. oauth2 is a watched
    schema item that lands during beta and burns no bump.
-2. **keritas release flow — devDep-only source repo.** No published keritas
-   package. keritas is consumed only as a devDependency by its own dev/test
+2. **caritas release flow — devDep-only source repo.** No published caritas
+   package. caritas is consumed only as a devDependency by its own dev/test
    tooling against a published pi-lean-host. Users adopt a recipe by copying
    its guide dir, exactly as today.
 3. **Schema-attribution enforcement — advisory only.** `schemaVersion` is
-   purely metadata (triage + keritas provenance). It never gates or warns at
+   purely metadata (triage + caritas provenance). It never gates or warns at
    parse time; `all-guides-parse` is the only gate; no parser changes.
 4. **Schema versioning lifecycle — beta (v0) → v1 at lockstep.** See
    [Schema versioning](#schema-versioning-the-coupling-answer).
@@ -253,7 +253,7 @@ The four open questions from the proposal are resolved:
 
 The exact axis-guide set is **intentionally deferred**. The aim is fixed: a
 small (~5–7), non-flaky, mocked-transport set of **synthetic minimal guides**
-whose union exercises every framework feature (see [What stays](#what-moves-to-keritas-vs-what-stays)).
+whose union exercises every framework feature (see [What stays](#what-moves-to-caritas-vs-what-stays)).
 Unlike the pre-split recipes, these guides are authored, not picked from the
 existing library — each is a minimal synthetic guide written to hit one axis
 (or a small group) against mocked transport, carrying no `verified:` date and
@@ -352,17 +352,17 @@ gap.)
   features hides which feature regressed. Mitigated by keeping the set small
   and the mocked-transport tests focused; the audit (above) prefers one
   feature per guide where practical.
-- **keritas drift noise.** Nightly live tests go red when an endpoint
+- **caritas drift noise.** Nightly live tests go red when an endpoint
   changes. This is intended signal, not a gate; the drift disclaimer + WAF
   notes absorb it. Risk is only if reds are ignored indefinitely — the
   `verified:` date on each guide makes staleness visible.
 - **Split churn.** Moving ~24k LOC across repos is a one-time mechanical cost;
   the workflow driver (unblocked framework branches) pays for it immediately.
 - **Two-disclaimer confusion.** Removing the README unstable disclaimer at
-  lockstep must not silently remove keritas's drift disclaimer. Kept as
+  lockstep must not silently remove caritas's drift disclaimer. Kept as
   separate, clearly-scoped statements.
 - **Import path migration.** `_shared/test-harness.ts` and `probe-op.ts`
-  use relative paths (`../../core/`) to import framework helpers. In keritas,
+  use relative paths (`../../core/`) to import framework helpers. In caritas,
   where `pi-lean-host` is an npm devDep, these must become package imports
   (e.g. `pi-lean-host/core/helpers.js`). This is a mechanical but non-trivial
   migration cost that affects the "test shape is unchanged" claim.
@@ -373,11 +373,11 @@ gap.)
   the always-on proof that the kept guides are schema-valid.
 - **Axis-guide mocked-transport tests** prove every framework feature
   executes end-to-end without a live dependency (deterministic, structural).
-- **keritas per-PR** (parse-validity + mocked-transport recipe-correctness)
+- **caritas per-PR** (parse-validity + mocked-transport recipe-correctness)
   proves the long-tail recipes parse and that their real `helper.ts` wiring
   (transform hookpoint, helper logic) holds without a live dependency —
   fast and deterministic, gated.
-- **keritas nightly `HOST_INTEGRATION=1`** proves the long-tail recipes
+- **caritas nightly `HOST_INTEGRATION=1`** proves the long-tail recipes
   against live endpoints; reds are the drift signal (non-gating).
 - **Feature-coverage audit** (see Deferred) is the evidence that the axis set
   loses no framework feature coverage before the split.
@@ -393,10 +393,10 @@ Out of scope for this document as a schedule, but the intended order:
    regression guard for the central coupling answer).
 2. Run the feature-coverage audit and finalize the axis set.
 3. Move non-axis guides + `_shared`/`WAF-NOTES`/`CONTRIBUTING` (including
-   `_shared/probe-op.ts`) into keritas; author the synthetic axis guides and
+   `_shared/probe-op.ts`) into caritas; author the synthetic axis guides and
    write mocked-transport tests for each (these are new tests with stubbed
    fetch responses, not adaptations of the existing live `itWhen` tests — the
-   live `endpoint-coverage.test.ts` files move to keritas with the real
+   live `endpoint-coverage.test.ts` files move to caritas with the real
    recipes). The multi-recipe axis-guide pair (archive.org +
    archive.org-wayback, authored as two synthetic guides claiming one domain)
    must exercise `api-fetch` operation-name dispatch across both guides (the
@@ -406,7 +406,7 @@ Out of scope for this document as a schedule, but the intended order:
    every guide-driven axis in the [Test axes](#test-axes-the-audits-dimension-list)
    table (closes the axis-set coverage gap; promotes the one-time audit to an
    enforced guard).
-4. Stand up keritas CI — per-PR (parse-validity + the mocked-transport
+4. Stand up caritas CI — per-PR (parse-validity + the mocked-transport
    `transform.test.ts`/`helper.test.ts` that moved with the guides) and
    nightly live (`HOST_INTEGRATION=1`) — + README drift disclaimer.
 5. At lockstep: remove the README unstable disclaimer, declare schema v1
