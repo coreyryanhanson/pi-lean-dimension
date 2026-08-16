@@ -127,13 +127,14 @@ demand. A skill is pure text with no in-process eval, whereas a loaded
 |------|----------------|---------------|-------------------|-------|
 | Built-in helpers | package source (`core/`) | maintainers | yes | reviewed |
 | Local user helpers | `~/.pi/agent/pi-lean-host/api-guides/<domain>/helper.ts` | you, or the agent in `/api learn` | no | user-owned |
-| Bundled recipes | `api-guides/<domain>/` in the repo (GitHub) | maintainers | no (reference) | **inert — never auto-executed** |
+| Bundled recipes | `caritas` repo (`api-guides/<domain>/`) | maintainers | no (reference) | **inert — never auto-executed** |
 
 Built-in helpers cover the common 90%. Local user helpers cover the weird 10%
 (computed signatures, strange date transforms, custom auth). Bundled recipes
-are inert reference material on GitHub — the loader never reads `api-guides/`
-from the package. You adopt one by copying the whole domain folder into your
-own directory; only then does it load and execute.
+are inert reference material in the [`caritas`](https://github.com/coreyryanhanson/caritas)
+repo — the loader never reads `api-guides/` from the package. You adopt one by
+copying the whole domain folder into your own directory; only then does it
+load and execute.
 
 ---
 
@@ -505,7 +506,7 @@ Authoring is via `api-learn` in learn mode, or hand-editing the file.
 ## Pagination Styles
 
 `paginate` follows the style declared in the recipe. Six styles cover the
-patterns the bundled 23-recipe spread pressure-tested:
+patterns the recipe library (caritas) pressure-tested:
 
 | Style | What it sends | Key fields |
 |-------|---------------|------------|
@@ -562,9 +563,15 @@ you know you're in disambiguation territory.
 
 ## Bundled Reference Recipes
 
-The repo ships **23 reference recipes** under `api-guides/` (GitHub only —
-**not in the npm tarball, never auto-loaded**). They are inert worked
-examples spanning the no-auth **and keyed** axes:
+The comprehensive recipe library lives in the
+[**caritas**](https://github.com/coreyryanhanson/caritas) repo — real,
+verified recipes spanning the no-auth **and keyed** axes, each with a
+per-recipe `verified:`-date provenance and the perpetual drift disclaimer.
+They are inert reference material: nothing executes until you copy a recipe
+into your own `~/.pi/agent/pi-lean-host/api-guides/<domain>/` directory.
+
+The domains caritas covers (a discoverability index, may drift from the live
+repo):
 
 ```
 api.gbif.org             api.github.com           archive.org              archive.org-wayback
@@ -575,19 +582,15 @@ musicbrainz.org          openlibrary.org          resources.data.gov       servi
 web.archive.org          www.federalregister.gov  www.wikidata.org
 ```
 
-Five are **keyed** (`auth.kind: static-key`) reference recipes:
-`api.github.com`, `coingecko.com`, `etherscan.io`, `eutils.ncbi.nlm.nih.gov`,
-`gitlab.com` — the spread that exercises header-vs-query refs and the
-required/optional split (see [Authentication & Secrets](#authentication--secrets)).
+Several are **keyed** (`auth.kind: static-key`), the spread that exercises
+header-vs-query refs and the required/optional split (see [Authentication &
+Secrets](#authentication--secrets)).
 
-To use them, copy the guides into your own directory from a shallow clone of
-the feature branch ([browse the folder on GitHub](https://github.com/coreyryanhanson/pi-lean-dimension/tree/feat/pi-lean-host-package/packages/pi-lean-host/api-guides)):
+To use them, copy the guides into your own directory from a clone of caritas:
 
 ```bash
-git clone --depth 1 --branch feat/pi-lean-host-package \
-  https://github.com/coreyryanhanson/pi-lean-dimension.git /tmp/pi-lean-dimension
-cp -r /tmp/pi-lean-dimension/packages/pi-lean-host/api-guides/* \
-  ~/.pi/agent/pi-lean-host/api-guides/
+git clone https://github.com/coreyryanhanson/caritas.git /tmp/caritas
+cp -r /tmp/caritas/api-guides/* ~/.pi/agent/pi-lean-host/api-guides/
 ```
 
 To grab a single domain instead of all of them, copy just its folder
@@ -596,11 +599,19 @@ To grab a single domain instead of all of them, copy just its folder
 Only then does it load and execute. A recipe may carry
 `operation.helper: true` plus an accompanying `helper.ts` in its domain
 subdir as a worked example — but it stays inert until you copy the folder.
-See [`api-guides/CONTRIBUTING.md`](./api-guides/CONTRIBUTING.md) for authoring
-a bundled recipe, and
+See caritas's `CONTRIBUTING.md` for authoring a recipe, and
 [`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md)
 for the per-recipe quirk breakdown and the built-in vs local-helper
 classification.
+
+### What host ships instead
+
+Host itself ships only a **synthetic axis-guide set** under `api-guides/` —
+minimal coverage fixtures (no `verified:` date, no live endpoints) that keep
+every guide-driven framework axis exercised via mocked transport. They are
+framework fixtures for host's own tests, not recipes for you to copy. See
+[`docs/design/axis-set-audit.md`](docs/design/axis-set-audit.md) for the
+membership.
 
 ---
 
@@ -825,9 +836,9 @@ never the value, so it's safe anywhere it renders.
 `api-probe` accepts an inline `auth` block (injection fields only) plus a
 `domain` selector, so you can prove a keyed shape before writing the guide —
 a store miss reports the name and fetches unauthenticated (authoring is
-human-in-the-loop, not fail-closed). One of the bundled keyed recipes is a
+human-in-the-loop, not fail-closed). One of the keyed recipes in caritas is a
 better starting template than `boe.es` for your first keyed guide — see
-[`api-guides/CONTRIBUTING.md`](./api-guides/CONTRIBUTING.md).
+caritas's `CONTRIBUTING.md`.
 
 ## Security & Scope
 
