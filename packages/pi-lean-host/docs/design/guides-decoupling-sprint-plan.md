@@ -44,7 +44,7 @@
 | 1 | `GUIDE_SCHEMA_VERSION = 0` + `schemaVersion: 0` frontmatter + `schema-version.test.ts` | none | no |
 | 2 | Feature-coverage audit → finalize axis-set membership | none (research) | no |
 | 3 | Author synthetic axis guides + mocked-transport tests + `axis-coverage.test.ts` guard | 2 | no |
-| 4 | Add `exports` map to `pi-lean-host`; move non-axis content to `keritas` repo; migrate import paths | 3 + a published `pi-lean-host` with the `exports` map | no |
+| 4 | Add `exports` map to `pi-lean-host`; move non-axis content to `keritas` repo; migrate import paths | 3 | no |
 | 5 | Stand up keritas CI (per-PR parse + mocked-transport; nightly live) + README drift disclaimer | 4 | no (per-PR) / yes (nightly) |
 | — | **Lockstep gate:** remove README unstable disclaimer, declare schema v1 | 5 + lockstep release of `pi-lean-dimension` 0.5.0 | — |
 | 6 | Documentation cleanup in host `AGENTS.md` + `README.md` | 4 | no |
@@ -79,6 +79,10 @@ answer.
    `core/api-guide-types.ts`. Add an optional `schemaVersion?: number` field
    to the parsed-guide type (the parser reads it from frontmatter; absent
    defaults to `0`). No parser behavior changes on its presence or value.
+   **`exactOptionalPropertyTypes` note:** the parser cannot assign
+   `schemaVersion: undefined` — conditionally omit the field
+   (`...(schemaVersion !== undefined ? { schemaVersion } : {})`), matching
+   the existing `organization`/`description` spread-conditional pattern.
 2. Confirm `parseApiGuide()` surfaces `schemaVersion` on the parsed guide
    when present and leaves it `undefined` when absent — and that *nothing*
    in the parse path branches on it (no validation, no warning, no reject).
@@ -218,27 +222,32 @@ cannot silently drop a feature axis.
 ## Sprint 4 — Add `exports` map; move non-axis content to `keritas`; migrate import paths
 
 **Goal:** the actual split. Add an `exports` map to `pi-lean-host` so keritas
-can import framework helpers as package imports, publish it, create the
-`keritas` repo, and move every non-axis recipe + `_shared/` + `WAF-NOTES.md`
-
-- `CONTRIBUTING.md` into it — migrating the moved tests' relative
+can import framework helpers as package imports, create the `keritas` repo,
+and move every non-axis recipe + `_shared/` + `WAF-NOTES.md` +
+`CONTRIBUTING.md` into it — migrating the moved tests' relative
 `../../core/` imports to `pi-lean-host/core/...` package imports. Host stays
 green by construction throughout (Sprint 3 put the axis guides and
 mocked-transport coverage in place first).
 
-**Gated on:** Sprint 3 + a published `pi-lean-host` carrying the `exports`
-map (keritas is a devDep-only source repo — see the design doc's Decisions).
+**Gated on:** Sprint 3 (keritas is a devDep-only source repo — see the
+design doc's Decisions).
 
-**Merge-cycle & rollback note:** this sprint is **at minimum two merge
-cycles** — 4a (exports map + publish) must land and publish before 4c (move
-- import migration) can be verified, because keritas's devDep resolves
-`pi-lean-host/core/...` against npm. Git revert is the rollback for the
-content move in host. The published exports-map version is permanent (npm
-un-publish is time-limited) but **additive** — it exposes new entry points
-without changing existing behavior, so no current consumer breaks; a wrong
-map is fixed with a new patch version, not an un-publish. If 4c stalls
-after 4a publishes, the only residue is a published version exposing
-internal modules with no consumer yet — benign but worth naming.
+**Local install, not npm publish:** keritas consumes `pi-lean-host` via a
+**manual local install** (`npm install <path-to-pi-lean-host>`) while the
+split is being developed — no npm publish of `pi-lean-host` is required on
+this plan's schedule. The `exports` map is just a `package.json` edit that
+keritas's local devDep resolves against the on-disk source (the `files`
+allowlist already ships the `core/*.ts` sources). The actual npm version
+bump + publish of `pi-lean-host` (exports map or otherwise) is the
+maintainer's own schedule, independent of these sprints.
+
+**Merge-cycle & rollback note:** 4a (exports map in `package.json`) must
+land before 4c (move + import migration) can be verified, because keritas's
+local devDep resolves `pi-lean-host/core/...` against the on-disk package.
+Git revert is the rollback for both the exports-map edit and the content
+move in host — nothing is published, so nothing is permanent. If 4c stalls
+after 4a, the only residue is an additive `exports` field in host's
+`package.json` with no consumer yet — benign.
 
 ### 4a — `exports` map on `pi-lean-host`
 
@@ -257,17 +266,23 @@ internal modules with no consumer yet — benign but worth naming.
 2. Keep the existing `files` array (the npm tarball already excludes
    `api-guides/`); confirm the `exports` map does not pull new content into
    the tarball (`ship-manifest.test.ts` stays green).
-3. Publish the `exports`-map release (lockstep bump via
-   `scripts/sync-versions.js`, `npm run publish:dry` to inspect, then
-   `npm run publish`). keritas's devDep resolves against this published
-   version.
+3. **Do not publish.** The `exports` map is a `package.json` edit only;
+   keritas resolves it via a local install in 4b. The actual npm version
+   bump + publish of `pi-lean-host` is deferred to the maintainer's own
+   schedule (not on this plan's critical path). Optional sanity check:
+   `npm publish --dry-run -w packages/pi-lean-host` to confirm the tarball
+   carries the `core/*.ts` sources the exports map points at — but no
+   publish is performed here.
 
 ### 4b — Create the `keritas` repo
 
 1. Create the `keritas` repo (separate repo, same license). Add a
-   `package.json` with `pi-lean-host` as a **devDependency** pinned to the
-   4a-published version. No published keritas package — it is a source repo
-   consumed only by its own dev/test tooling (design doc Decisions #2).
+   `package.json` with `pi-lean-host` as a **devDependency** installed via a
+   local path (`npm install <path-to-pi-lean-host>`, or a `file:` entry)
+   — **not** an npm version pin. No published keritas package — it is a
+   source repo consumed only by its own dev/test tooling (design doc
+   Decisions #2). Switching the devDep from the local path to a published
+   npm version is a later, deliberate step on the maintainer's own schedule.
 2. Set up `tsx` + `vitest` dev tooling mirroring host's runner versions.
 
 ### 4c — Move content + migrate import paths
@@ -290,14 +305,21 @@ internal modules with no consumer yet — benign but worth naming.
    `rg "\.\./\.\./core" api-guides/` to enumerate every site — **drop the
    `from "` prefix** so the match catches **dynamic** `import("../../core/…")`
    calls as well as static `import … from "../../core/…"`. The static-only
-   form misses ~40 dynamic imports across ~14 moved files (the auth-bearing
-   `endpoint-coverage.test.ts` files and the `transform.test.ts` files use
-   dynamic imports, plus `vi.importActual`); those resolve `./core/transport.js`
+   form misses ~40 dynamic imports across ~26 moved files (every
+   `endpoint-coverage.test.ts` plus the `transform.test.ts` files plus
+   `helper.test.ts` files plus `_shared/test-harness.ts`; the auth-bearing
+   `endpoint-coverage.test.ts` and `transform.test.ts` files use dynamic
+   imports plus `vi.importActual`); those resolve `./core/transport.js`
    and `./core/auth.js`, which is why 4a lists them. The
    moved `_shared/test-harness.ts` and `probe-op.ts` are the shared cases;
    per-recipe `transform.test.ts` / `endpoint-coverage.test.ts` /
    `helper.test.ts` are the per-file cases.
-4. In keritas, run the moved tests against the devDep `pi-lean-host`:
+   **Exclude the synthetic axis-guide dirs (Sprint 3 output) from the
+   rewrite** — their `../../core/` imports stay relative because they
+   remain in host. The grep catches both moved files and kept files; only
+   rewrite the moved ones.
+4. In keritas, run the moved tests against the locally-installed
+   `pi-lean-host`:
    - `all-guides-parse` equivalent over keritas's full recipe set (parse,
      no network).
    - The moved `transform.test.ts` / `helper.test.ts` (mocked-transport
@@ -337,13 +359,14 @@ internal modules with no consumer yet — benign but worth naming.
 
 - `npm run test:ci` green in `pi-lean-host` with only the synthetic axis
   guides present (no real recipes, no `_shared/`).
-- `pi-lean-host` published with the `exports` map. `ship-manifest.test.ts`
-  still green (it guards the `files` array — unchanged here); the `exports`
-  map itself is validated by `npm run publish:dry` inspection (each
-  `./core/*.js` key resolves to its `.ts` source) **and** by keritas's
-  devDep resolving the moved tests' `pi-lean-host/core/...` imports in 4c.
-  `ship-manifest.test.ts` alone does *not* validate the exports map — do
-  not treat its green as proof.
+- `pi-lean-host` `package.json` carries the `exports` map (no npm publish
+  on this plan). `ship-manifest.test.ts` still green (it guards the `files`
+  array — unchanged here); the `exports` map itself is validated by
+  `npm publish --dry-run` inspection (each `./core/*.js` key resolves to
+  its `.ts` source, and the tarball carries the `core/*.ts` sources)
+  **and** by keritas's local devDep resolving the moved tests'
+  `pi-lean-host/core/...` imports in 4c. `ship-manifest.test.ts` alone
+  does *not* validate the exports map — do not treat its green as proof.
 - `keritas` repo exists with every non-axis recipe + `_shared/` +
   `WAF-NOTES.md` + `CONTRIBUTING.md`; all moved tests' imports rewritten to
   `pi-lean-host/core/...` and resolving against the devDep.
@@ -386,9 +409,13 @@ imports).
    author their own guides with `/api learn` + `/api probe` or copy + adapt
    a recipe here). Keep this **separate** from host's README unstable
    disclaimer (different questions — the design doc's two-disclaimers rule).
-4. Pin the `pi-lean-host` devDep in keritas to a specific published version;
-   bumping it is a deliberate keritas PR (so a schema change in host is a
-   visible, reviewed event in keritas, not a silent break).
+4. Keep the `pi-lean-host` devDep in keritas as the local-path install from
+   Sprint 4 during development. Bumping it is a deliberate keritas PR (so a
+   schema change in host is a visible, reviewed event in keritas, not a
+   silent break). Switching the devDep from the local path to a pinned
+   published npm version happens on the maintainer's own schedule once
+   `pi-lean-host` is published with the exports map — independent of this
+   plan's sprints.
 
 ### Sprint 5 exit criteria
 
@@ -399,7 +426,8 @@ imports).
 - `keritas/README.md` carries the drift disclaimer, scoped to per-recipe
   `verified`-date provenance — distinct from any framework unstable
   disclaimer.
-- `pi-lean-host` devDep pinned to a published version in keritas.
+- `pi-lean-host` devDep present in keritas (local-path install during dev;
+  npm-version pin is a deferred, maintainer-scheduled step).
 
 ---
 
@@ -445,7 +473,8 @@ label change, not a dependency.
 - `schema-version.test.ts` green at v1.
 - README unstable disclaimer removed; keritas drift disclaimer intact.
 - CHANGELOG records "schema v1 declared" at the lockstep release.
-- `npm run test:ci` green; `npm run publish:dry` clean.
+- `npm run test:ci` green. (npm publish of the schema-v1 release is the
+  maintainer's own schedule, out of this plan's scope.)
 
 ---
 
@@ -504,7 +533,7 @@ after the split.
   host after Sprint 4.
 - **No endpoint-recipe duplication.** Host's axis guides are synthetic
   minimal variants against mocked transport; keritas owns the real recipes
-  - their live tests. The two repos overlap in neither purpose nor
+  and their live tests. The two repos overlap in neither purpose nor
   real-recipe content.
 - **`schemaVersion` is attribution, not enforcement.** It never gates,
   warns, or alters parse behavior. `all-guides-parse` (host, over the axis
