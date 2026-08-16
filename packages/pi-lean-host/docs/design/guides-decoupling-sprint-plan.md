@@ -191,6 +191,17 @@ cannot silently drop a feature axis.
      an axis-exercising op fails this test.
    - Assert each axis guide parses under `all-guides-parse` and that the
      set size matches the audit's finalized count.
+   - **Role clarity:** the mocked-transport tests (task 2) are the *real*
+     coverage proof — they execute ops and assert axis-specific behavior.
+     `axis-coverage.test.ts` is a **regression tripwire** against silent
+     axis-guide removal, not a proof of coverage on its own (a guide can
+     declare a flag while the behavior is malformed — only the
+     mocked-transport test catches that). Both layers are required.
+   - **Assert specific flag combinations per axis**, not just flag presence,
+     to prevent single-`via` coverage holes — e.g. require at least one op
+     with `transform: true` AND `via: restGet` *and* at least one with
+     `transform: true` AND `via: paginate`, rather than "some op somewhere
+     has `transform: true`". Same for pagination styles and auth kinds.
 4. Confirm `all-guides-parse` still green over the *expanded* guide set
    (real recipes still present + new synthetic guides added).
 
@@ -209,6 +220,7 @@ cannot silently drop a feature axis.
 **Goal:** the actual split. Add an `exports` map to `pi-lean-host` so keritas
 can import framework helpers as package imports, publish it, create the
 `keritas` repo, and move every non-axis recipe + `_shared/` + `WAF-NOTES.md`
+
 - `CONTRIBUTING.md` into it — migrating the moved tests' relative
 `../../core/` imports to `pi-lean-host/core/...` package imports. Host stays
 green by construction throughout (Sprint 3 put the axis guides and
@@ -217,14 +229,31 @@ mocked-transport coverage in place first).
 **Gated on:** Sprint 3 + a published `pi-lean-host` carrying the `exports`
 map (keritas is a devDep-only source repo — see the design doc's Decisions).
 
+**Merge-cycle & rollback note:** this sprint is **at minimum two merge
+cycles** — 4a (exports map + publish) must land and publish before 4c (move
+- import migration) can be verified, because keritas's devDep resolves
+`pi-lean-host/core/...` against npm. Git revert is the rollback for the
+content move in host. The published exports-map version is permanent (npm
+un-publish is time-limited) but **additive** — it exposes new entry points
+without changing existing behavior, so no current consumer breaks; a wrong
+map is fixed with a new patch version, not an un-publish. If 4c stalls
+after 4a publishes, the only residue is a published version exposing
+internal modules with no consumer yet — benign but worth naming.
+
 ### 4a — `exports` map on `pi-lean-host`
 
 1. Add an `exports` field to `package.json` exposing the framework entry
-   points keritas needs: `./core/helpers.js`, `./core/parse-api-guide.js`,
-   `./core/guide-store.js`, `./core/local-helpers.js`,
-   `./core/api-guide-types.js`, and any other `../../core/` target the moved
-   tests import (audit the relative imports first — see Tasks 4c). Map both
-   the `.js` and the source `.ts`/types so `tsx` and type-checking resolve.
+   points keritas needs. The audited full set (run the 4c audit command —
+   do not rely on this enumeration alone) is **seven** targets:
+   `./core/helpers.js`, `./core/parse-api-guide.js`, `./core/guide-store.js`,
+   `./core/local-helpers.js`, `./core/api-guide-types.js`,
+   `./core/transport.js` (dynamically imported by the moved
+   `transform.test.ts` files), and `./core/auth.js` (dynamically imported
+   by the moved auth-bearing `endpoint-coverage.test.ts` files).
+   **No-build shape:** the package has `noEmit: true` (no `.js` files exist),
+   so each export must map the `.js` key to its source `.ts` file (or use a
+   `types`/`default` conditions map) so `tsx` and type-checking in keritas
+   resolve it — e.g. `"./core/helpers.js": "./core/helpers.ts"`.
 2. Keep the existing `files` array (the npm tarball already excludes
    `api-guides/`); confirm the `exports` map does not pull new content into
    the tarball (`ship-manifest.test.ts` stays green).
@@ -258,7 +287,13 @@ map (keritas is a devDep-only source repo — see the design doc's Decisions).
    cost): in every moved test/helper that imported framework code via
    relative paths (`../../core/...`), rewrite to package imports
    (`pi-lean-host/core/...`). Audit first with
-   `rg "from \"\.\./\.\./core" api-guides/` to enumerate every site. The
+   `rg "\.\./\.\./core" api-guides/` to enumerate every site — **drop the
+   `from "` prefix** so the match catches **dynamic** `import("../../core/…")`
+   calls as well as static `import … from "../../core/…"`. The static-only
+   form misses ~40 dynamic imports across ~14 moved files (the auth-bearing
+   `endpoint-coverage.test.ts` files and the `transform.test.ts` files use
+   dynamic imports, plus `vi.importActual`); those resolve `./core/transport.js`
+   and `./core/auth.js`, which is why 4a lists them. The
    moved `_shared/test-harness.ts` and `probe-op.ts` are the shared cases;
    per-recipe `transform.test.ts` / `endpoint-coverage.test.ts` /
    `helper.test.ts` are the per-file cases.
@@ -277,13 +312,38 @@ map (keritas is a devDep-only source repo — see the design doc's Decisions).
 2. Confirm `__tests__/all-guides-parse.test.ts` still discovers and parses
    the kept axis set (it scans `api-guides/` — now smaller).
 3. Confirm `axis-coverage.test.ts` still green (the axis guides are intact).
+4. **Update `__tests__/axis-units.test.ts`** — it reads real recipe dirs
+   (`loc.gov`, `services.dnb.de`, `resources.data.gov`, `en.wikipedia.org`)
+   via `withTempDirs(...)` and asserts content-specific operations
+   (`listSearch`, `searchZdb`, etc.). Those dirs move to keritas in 4c, so
+   the test throws `Recipe folder not found`. Either re-point it at the
+   synthetic axis guides (which constrains Sprint 3 authoring: the synthetic
+   guides must carry matching operation names + pagination styles), or fold
+   these assertions into Sprint 3's mocked-transport tests and slim
+   `axis-units.test.ts` to synthetic guides only. Schedule this with 4c,
+   not after — the exit criterion below can't pass without it.
+5. **Update `__tests__/parse-api-guide.test.ts`** — the "real boe.es guide
+   — 17 operations" describe block (~line 209) reads
+   `api-guides/boe.es/guide.md` and asserts exactly 17 specific op names.
+   The real boe.es moves to keritas; the synthetic slim boe.es has far fewer
+   ops. Delete that describe block (the inline `BOE_RECIPE` worked-example
+   tests above it use a string constant, not the file, and are unaffected)
+   or move it to keritas.
+6. **Update `__tests__/ship-manifest.test.ts`** — the
+   `api-guides/web.archive.org/helper.ts` existence assertion (~line 53)
+   fails post-move (`web.archive.org` is non-axis). Remove or adjust it.
 
 ### Sprint 4 exit criteria
 
 - `npm run test:ci` green in `pi-lean-host` with only the synthetic axis
   guides present (no real recipes, no `_shared/`).
-- `pi-lean-host` published with the `exports` map; `ship-manifest.test.ts`
-  confirms no new tarball content.
+- `pi-lean-host` published with the `exports` map. `ship-manifest.test.ts`
+  still green (it guards the `files` array — unchanged here); the `exports`
+  map itself is validated by `npm run publish:dry` inspection (each
+  `./core/*.js` key resolves to its `.ts` source) **and** by keritas's
+  devDep resolving the moved tests' `pi-lean-host/core/...` imports in 4c.
+  `ship-manifest.test.ts` alone does *not* validate the exports map — do
+  not treat its green as proof.
 - `keritas` repo exists with every non-axis recipe + `_shared/` +
   `WAF-NOTES.md` + `CONTRIBUTING.md`; all moved tests' imports rewritten to
   `pi-lean-host/core/...` and resolving against the devDep.
@@ -355,6 +415,13 @@ every beta guide is implicitly v1 with no migration.
 **Gated on:** Sprint 5 (keritas nightly live tests running as the drift
 signal that makes dropping the unstable disclaimer safe) **and** the
 lockstep release of `pi-lean-dimension` 0.5.0.
+
+**Pre-lockstep independence:** Sprints 1–5 are pre-lockstep and independent
+of the 0.5.0 release — only the schema v1 bump and the disclaimer removal
+wait for it. If 0.5.0 is delayed indefinitely, host stays at schema v0 with
+the README unstable disclaimer and keritas runs with its own drift
+disclaimer; everything functions. No functional deadlock — the gate is a
+label change, not a dependency.
 
 ### Tasks
 
