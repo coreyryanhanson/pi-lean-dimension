@@ -1,5 +1,6 @@
 ---
 kind: api
+schemaVersion: 0
 domains:
   - ncbi.nlm.nih.gov
 shortName: PubMed E-utilities

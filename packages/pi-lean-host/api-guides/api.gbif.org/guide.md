@@ -1,5 +1,6 @@
 ---
 kind: api
+schemaVersion: 0
 domains:
   - gbif.org
 shortName: GBIF

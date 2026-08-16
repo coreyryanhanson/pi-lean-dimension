@@ -19,6 +19,14 @@ import type { Guide } from "./guide-loader.js";
  */
 export const GATHER_ALL_MAX_FALLBACK = 1000;
 
+/**
+ * The schema version of the guide recipe format. Metadata-only attribution:
+ * it is surfaced on the parsed guide but NEVER gates/warns/alters parse
+ * (see __tests__/schema-version.test.ts). Absent frontmatter defaults to the
+ * semantic 0. Bumped to 1 at lockstep (a label change, not a break).
+ */
+export const GUIDE_SCHEMA_VERSION = 0 as const;
+
 /** Auth strategies recognized by the schema (the seam). v1 realizes `none` and `static-key`; `oauth2` is rejected at parse. */
 export const KNOWN_AUTH_KINDS: ReadonlySet<string> = new Set([
 	"none",
@@ -190,6 +198,12 @@ export interface Operation {
  */
 export interface ApiGuide extends Guide {
 	kind: "api";
+	/**
+	 * Recipe schema version (attribution, not enforcement — see
+	 * GUIDE_SCHEMA_VERSION). Parsed from frontmatter `schemaVersion:`; absent
+	 * stays `undefined` (semantic default 0). Never gates/warns/alters parse.
+	 */
+	schemaVersion?: number;
 	/** Execution root: scheme + host + base path; version prefix lives here. */
 	apiHost: string;
 	/** Drift signal; defaulted not enforced. */

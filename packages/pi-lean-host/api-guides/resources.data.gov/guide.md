@@ -1,5 +1,6 @@
 ---
 kind: api
+schemaVersion: 0
 domains:
   - resources.data.gov
   - api.gsa.gov

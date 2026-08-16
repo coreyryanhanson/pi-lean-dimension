@@ -1,5 +1,6 @@
 ---
 kind: api
+schemaVersion: 0
 domains:
   - loc.gov
   - www.loc.gov

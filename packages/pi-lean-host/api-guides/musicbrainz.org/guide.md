@@ -1,5 +1,6 @@
 ---
 kind: api
+schemaVersion: 0
 domains:
   - musicbrainz.org
 shortName: MusicBrainz

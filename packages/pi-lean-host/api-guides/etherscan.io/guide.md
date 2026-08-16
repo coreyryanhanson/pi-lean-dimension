@@ -1,5 +1,6 @@
 ---
 kind: api
+schemaVersion: 0
 domains:
   - etherscan.io
 shortName: Etherscan V2

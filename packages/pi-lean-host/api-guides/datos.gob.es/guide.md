@@ -1,5 +1,6 @@
 ---
 kind: api
+schemaVersion: 0
 domains:
   - datos.gob.es
 shortName: datos.gob.es

@@ -1,5 +1,6 @@
 ---
 kind: api
+schemaVersion: 0
 domains:
   - ecb.europa.eu
 shortName: ECB Data Portal
