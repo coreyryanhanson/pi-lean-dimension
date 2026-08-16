@@ -25,6 +25,9 @@
 | Framework structural tests | ~10.3k |
 | **Repo total** | **~48.2k** |
 
+(LOC measured via `wc -l` on git-tracked files in each bucket; counts
+are a snapshot for the split rationale, not a maintained invariant.)
+
 The shipped framework is ~7.3k LOC of code; the rest is content. Content has a
 faster churn cadence (endpoints break, format drifts) and a flakier test
 profile (live external APIs) than the framework. Co-locating them means the
@@ -198,8 +201,8 @@ The four open questions from the proposal are resolved:
 
 1. **Split timing — split now.** The original wait-trigger (`auth.kind:
    static-key` proven) is already met: static-key is realized in the schema
-   and used by ~6 keyed guides (etherscan, gitlab, coingecko, eutils,
-   resources.data.gov, api.github.com). The README unstable disclaimer
+   and used by 5 keyed guides (etherscan, gitlab, coingecko, eutils,
+   api.github.com). The README unstable disclaimer
    already covers the churn period, and the workflow driver (framework
    branches blocked by the guide tree) argues for sooner. oauth2 is a watched
    schema item that lands during beta and burns no bump.
@@ -219,7 +222,7 @@ The exact axis-guide set is **intentionally deferred**. The aim is fixed: a
 small (~5–7), non-flaky, mocked-transport set whose union exercises every
 framework feature (see [What stays](#what-moves-to-keritas-vs-what-stays)).
 The concrete membership needs a **feature-coverage audit** of the current
-~29 guides — a large-model task that is not available right now.
+23 guides — a large-model task that is not available right now.
 
 **Audit procedure (to run before finalizing the set):**
 
@@ -263,7 +266,8 @@ completeness — they're stable across the split.
 | local-helper | pre-call param transformation, disable-on-failure | guide | `local-helpers.test.ts` | covered |
 | static-key-auth | secret injection, fail-closed, output-channel audit, SSRF-on-auth, canonical store domain | guide | `auth.test.ts`, `query-secrets.test.ts`, `secrets-store.test.ts`, `secrets-command.test.ts` | covered |
 | transport | UA, charset, 429-retry parsing, ETag, `redactSecretParams` | guide | `transport.test.ts`, `helpers.test.ts` | covered |
-| multi-recipe-domains | `api-fetch` operation-name dispatch across two guides claiming one domain | guide | `parse-api-guide.test.ts` (catalog), `tools.test.ts` | **gap** (catalog tested, dispatch not) |
+| ssrf-guard | unauthenticated `paginate` nextLink block (loopback, RFC1918, cloud metadata) | guide | `helpers.test.ts` (nextLink metadata block), `smoke.test.ts` (ssrfGuard unit), `auth.test.ts` (auth-bearing redirect SSRF) | covered |
+| multi-recipe-domains | `api-fetch` operation-name dispatch across two guides claiming one domain | guide | `tools.test.ts` (cross-guide op-name resolution: success, zero-match, collision), `parse-api-guide.test.ts` (catalog) | covered |
 | parse-schema | `parseApiGuide()` field validation, defaults, `projectToGuide`, catalog | structural | `parse-api-guide.test.ts`, `all-guides-parse.test.ts` | covered |
 | api-fetch-tool | end-to-tool execute, spill, render | structural | `tools.test.ts`, `render-result.test.ts`, `response-spill.test.ts` | covered |
 | api-guide-tool | catalog, detail, auth footer, disambiguation | structural | `tools.test.ts`, `parse-api-guide.test.ts`, `auth.test.ts` | covered |
@@ -285,19 +289,17 @@ would require introducing a second parser). Both are YAGNI as dedicated tests.
 1. **schema-version** — the doc's central coupling answer (`schemaVersion` is
    metadata, never gates/warns at parse) has no regression guard. Closed in
    [Rollout](#rollout--next-steps) step 1.
-2. **multi-recipe-domains** — catalog collapse is tested but `api-fetch`
-   operation-name dispatch across two guides claiming one domain is not.
-   Closed in step 3 (the axis-guide pair must exercise dispatch, not just
-   parse).
-3. **ssrf-guard** — the unauthenticated `paginate` nextLink block (loopback,
-   RFC1918, cloud metadata) is only proven indirectly via auth-bearing
-   redirects; `axis-units.test.ts` uses `skipSsrfGuard: true` to bypass it.
-   A dedicated test is closed in step 3.
-4. **axis-set coverage assertion** — `all-guides-parse` asserts every kept
+2. **axis-set coverage assertion** — `all-guides-parse` asserts every kept
    guide parses, but nothing asserts the *union* covers every guide-driven
    axis. Post-split, removing an axis guide keeps `all-guides-parse` green
    with silent coverage loss. A structural guard promoting the manual audit
    to an enforced invariant is closed in step 3.
+
+(`multi-recipe-domains` dispatch and `ssrf-guard` were previously listed here
+as gaps; both are already covered — see the [Test axes](#test-axes-the-audits-dimension-list)
+table. The `skipSsrfGuard: true` usage in `axis-units.test.ts` is a test-
+infrastructure necessity for hitting the local test server, not a coverage
+gap.)
 
 ## Risks & failure modes
 
@@ -318,6 +320,13 @@ would require introducing a second parser). Both are YAGNI as dedicated tests.
 - **Two-disclaimer confusion.** Removing the README unstable disclaimer at
   lockstep must not silently remove keritas's drift disclaimer. Kept as
   separate, clearly-scoped statements.
+- **Axis-set audit may find no small set works.** The split's self-proving
+  premise depends on a finalized axis set that doesn't exist yet. If the
+  feature-coverage audit reveals that no small set of guides covers all axes
+  without live endpoints, the premise weakens. The candidate union (boe.es,
+  earthquake.usgs.gov, api.github.com, archive.org pair, services.dnb.de)
+  covers all eight axes in six guides and is testable with mocked transport,
+  so this risk is low — but it is not yet proven.
 
 ## Validation / evidence plan
 
@@ -343,13 +352,12 @@ Out of scope for this document as a schedule, but the intended order:
 3. Move non-axis guides + `_shared`/`WAF-NOTES`/`CONTRIBUTING` into keritas;
    adapt axis-guide tests to a mocked transport. The multi-recipe axis-guide
    pair (archive.org + archive.org-wayback) must exercise `api-fetch`
-   operation-name dispatch across both guides, not just parse/catalog. Add
-   `ssrf-guard.test.ts` exercising the unauthenticated `paginate` nextLink
-   block (loopback, RFC1918, cloud metadata) and an axis-coverage structural
-   test asserting the kept axis-set union covers every guide-driven axis in
-   the [Test axes](#test-axes-the-audits-dimension-list) table (closes the
-   multi-recipe, ssrf-guard, and axis-set coverage gaps; promotes the
-   one-time audit to an enforced guard).
+   operation-name dispatch across both guides (the dispatch path is already
+   tested structurally in `tools.test.ts`; the axis-guide pair preserves
+   guide-driven coverage of it). Add an axis-coverage structural test
+   asserting the kept axis-set union covers every guide-driven axis in the
+   [Test axes](#test-axes-the-audits-dimension-list) table (closes the
+   axis-set coverage gap; promotes the one-time audit to an enforced guard).
 4. Stand up keritas CI (nightly live) + README drift disclaimer.
 5. At lockstep: remove the README unstable disclaimer, declare schema v1
    (CHANGELOG line), continue with the bump rule for any post-v1 break.
