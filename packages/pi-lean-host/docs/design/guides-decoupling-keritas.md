@@ -98,7 +98,8 @@ keritas/                 (separate repo — devDep on pi-lean-host)
 **Moves with the guides** (they are content infrastructure, not framework):
 
 - Every non-axis recipe + its `guide.md`, `helper.ts`, and co-located
-  `endpoint-coverage.test.ts` / `helper.test.ts` — **including the full boe.es
+  `endpoint-coverage.test.ts` / `helper.test.ts` (plus incidental content like
+  `transform.test.ts` or `endpoint-coverage-plan.md`) — **including the full boe.es
   reference/template guide** (the slim synthetic boe.es stays in host)
 - `api-guides/_shared/test-harness.ts` (`itWhen` + live gate)
 - `api-guides/_shared/probe-op.ts` (dev probing tool — no non-axis guides to
@@ -122,7 +123,10 @@ keritas/                 (separate repo — devDep on pi-lean-host)
   keritas's test harness (`copyDomains`) resolves the guide locally, unchanged.
   The reference/template role (boe.es as the canonical guide authors copy,
   per `CONTRIBUTING.md`) stays with the full recipe in keritas — host's slim
-  variants are coverage fixtures, not authoring templates.
+  variants are coverage fixtures, not authoring templates. Note: the
+  inline worked example in `api-learn` (in `tools/api-learn.ts`) stays in host
+  as a simplified fixture and is separate from the full reference guides in
+  keritas.
 - The `all-guides-parse` test (still applies to the kept axis set) — the
   always-on, zero-flake binding contract that the guides are schema-valid
   *now*.
@@ -184,11 +188,26 @@ stays and gains the `schemaVersion` sibling.
 - **pi-lean-host** CI runs structural tests only — fast, deterministic, no
   browser, no network. This is the split's whole point: the framework repo is
   green by construction.
-- **keritas** CI runs the live integration tests (`HOST_INTEGRATION=1`) on a
-  schedule (cron/nightly) against a pinned `pi-lean-host` (dev dependency
-  from npm). These are allowed to be slow and occasionally red — that's the
-  drift signal, not a gate. Reuses the same `itWhen` live-gate harness the
-  framework already uses, so the test shape is unchanged.
+- **keritas** CI has two tiers:
+  - **Per-PR (fast, gated):** parse-validity (`parseApiGuide()` over every
+    guide, no network) **plus** the mocked-transport recipe-correctness tests
+    that move with the guides — the co-located `transform.test.ts` files and
+    any `helper.test.ts` that imports the real `helper.ts` via mocked
+    transport. These are fast and deterministic ("bare CI, no network"), so a
+    recipe PR that breaks parsing or a helper's transform wiring fails fast
+    instead of waiting for the nightly run. They are coupled to the real
+    `helper.ts` (which moves to keritas), so they move with it — the import
+    `from "./helper.js"` only resolves co-located with the recipe.
+  - **Nightly (slow, non-gating):** the live integration tests
+    (`HOST_INTEGRATION=1`) on a schedule against a pinned `pi-lean-host`
+    (dev dependency from npm). These are allowed to be slow and occasionally
+    red — that's the drift signal, not a gate. Reuses the same `itWhen`
+    live-gate harness the framework already uses, so the live test shape is
+    unchanged.
+
+  Splitting the two tiers keeps the split's "green by construction" property
+  where it's achievable (per-PR: parse + mocked-transport wiring) while
+  reserving the drift-signal posture for the genuinely flaky live calls.
 
 ## Drift disclaimer (keritas README)
 
@@ -342,16 +361,11 @@ gap.)
 - **Two-disclaimer confusion.** Removing the README unstable disclaimer at
   lockstep must not silently remove keritas's drift disclaimer. Kept as
   separate, clearly-scoped statements.
-- **Axis-set audit may find no small set works.** The split's self-proving
-  premise depends on a finalized axis set that doesn't exist yet. If the
-  feature-coverage audit reveals that no small set of synthetic guides can
-  cover all axes against mocked transport, the premise weakens. The candidate
-  set (echoing boe.es, earthquake.usgs.gov, api.github.com, archive.org pair,
-  services.dnb.de) covers all eight axes in six synthetic guides testable with
-  mocked transport, so this risk is low — but it is not yet proven. Because
-  the axis guides are authored (not picked), there is no additional risk that
-  an existing low-surface guide is unsuitable; the only risk is authoring
-  effort, which is bounded by the axis count.
+- **Import path migration.** `_shared/test-harness.ts` and `probe-op.ts`
+  use relative paths (`../../core/`) to import framework helpers. In keritas,
+  where `pi-lean-host` is an npm devDep, these must become package imports
+  (e.g. `pi-lean-host/core/helpers.js`). This is a mechanical but non-trivial
+  migration cost that affects the "test shape is unchanged" claim.
 
 ## Validation / evidence plan
 
@@ -359,8 +373,12 @@ gap.)
   the always-on proof that the kept guides are schema-valid.
 - **Axis-guide mocked-transport tests** prove every framework feature
   executes end-to-end without a live dependency (deterministic, structural).
+- **keritas per-PR** (parse-validity + mocked-transport recipe-correctness)
+  proves the long-tail recipes parse and that their real `helper.ts` wiring
+  (transform hookpoint, helper logic) holds without a live dependency —
+  fast and deterministic, gated.
 - **keritas nightly `HOST_INTEGRATION=1`** proves the long-tail recipes
-  against live endpoints; reds are the drift signal.
+  against live endpoints; reds are the drift signal (non-gating).
 - **Feature-coverage audit** (see Deferred) is the evidence that the axis set
   loses no framework feature coverage before the split.
 
@@ -388,9 +406,14 @@ Out of scope for this document as a schedule, but the intended order:
    every guide-driven axis in the [Test axes](#test-axes-the-audits-dimension-list)
    table (closes the axis-set coverage gap; promotes the one-time audit to an
    enforced guard).
-4. Stand up keritas CI (nightly live) + README drift disclaimer.
+4. Stand up keritas CI — per-PR (parse-validity + the mocked-transport
+   `transform.test.ts`/`helper.test.ts` that moved with the guides) and
+   nightly live (`HOST_INTEGRATION=1`) — + README drift disclaimer.
 5. At lockstep: remove the README unstable disclaimer, declare schema v1
    (CHANGELOG line), continue with the bump rule for any post-v1 break.
+6. **Cleanup documentation.** Update host `AGENTS.md` and `README.md` to remove
+   stale references to the `api-guides/` tree, `_shared/` layout, and the
+   `HOST_INTEGRATION` env-gate instructions.
 
 **Ownership.** Sole maintainer; this document is the durable decision record.
 No reviewer/sign-off workflow.
