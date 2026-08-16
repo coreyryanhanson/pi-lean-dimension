@@ -124,7 +124,7 @@ is a read-only research sprint: no code or guide content changes.
 
 1. Enumerate the guide-driven framework feature axes from the design doc's
    [Test axes](./guides-decoupling-keritas.md#test-axes-the-audits-dimension-list)
-   table (the eight guide-driven rows: `exec-restGet`, `exec-paginate`,
+   table (the nine guide-driven rows: `exec-restGet`, `exec-paginate`,
    `xml-parsing`, `transform-builtin`, `local-helper`, `static-key-auth`,
    `transport`, `ssrf-guard`, `multi-recipe-domains`).
 2. For each current real guide, record which axes its ops exercise
@@ -187,7 +187,37 @@ cannot silently drop a feature axis.
    stubbed fetch**, not adaptations of the existing live `itWhen` tests —
    the live `endpoint-coverage.test.ts` files move to keritas with the real
    recipes in Sprint 4.
-3. Add `__tests__/axis-coverage.test.ts`:
+   **No duplication with `__tests__/axis-units.test.ts`:** that file is the
+   consolidated axis-test home for the pagination/XML/ETag axes (it is
+   converted to inline guides in task 3 below). Do **not** author
+   a second co-located test in `api-guides/<domain>/` for an axis already
+   proved in `axis-units.test.ts`; the `api-guides/<domain>/` co-located
+   test is only for axes *not* consolidated there (e.g. the multi-recipe
+   dispatch pair, transform, local-helper, static-key-auth). Respecting the
+   `__tests__/` vs `api-guides/<domain>/` split also keeps the AGENTS.md
+   convention: `__tests__/` holds structural/framework tests; synthetic
+   axis guides are framework fixtures, not recipes.
+   **Auth-kind constraint (self-enforcing but worth stating):** every
+   synthetic axis guide must declare `auth.kind: none` or `static-key` —
+   `all-guides-parse.test.ts` asserts `auth.kind ∈ {none, static-key}` for
+   every discovered guide, so `oauth2` would fail it. Since oauth2 is
+   deferred (Out of scope), this is automatic, but don't author an axis
+   guide with `oauth2` expecting it to parse.
+3. **Convert `__tests__/axis-units.test.ts` axes A–D to the inline-guide
+   pattern.** Axes E–F already use `parseApiGuide()` on an inline YAML
+   string with no on-disk recipe dependency; axes A–D still copy real
+   recipe dirs (`loc.gov`, `services.dnb.de`, `resources.data.gov`,
+   `en.wikipedia.org`) to a temp dir via `withTempDirs(...)` and load them
+   with `loadApiGuidesFromDir`. Rewrite A–D to the E–F shape: inline YAML,
+   stubbed `fetchUrl`, `paginate`/`restGet` against the existing
+   `__tests__/fixtures/axis/` fixtures. This deletes `copyDir`/
+   `copyDomains`/`withTempDirs` + the `mkdtempSync`/`rmSync`/
+   `readdirSync`/`statSync`/`copyFileSync` imports and the
+   `REPO_API_GUIDES` constant, and removes the `Recipe folder not found`
+   failure mode. The fixtures stay in host (captured real responses, not
+   recipes). This conversion is what makes Sprint 4d.4 a no-op — do it
+   here, not in Sprint 4, so host stays green through the move.
+4. Add `__tests__/axis-coverage.test.ts`:
    - Enumerate the guide-driven axes (same list as Sprint 2).
    - Assert the kept axis-set union covers every axis — by reading each
      axis guide's ops and matching them to axes (the same matrix Sprint 2
@@ -195,7 +225,7 @@ cannot silently drop a feature axis.
      an axis-exercising op fails this test.
    - Assert each axis guide parses under `all-guides-parse` and that the
      set size matches the audit's finalized count.
-   - **Role clarity:** the mocked-transport tests (task 2) are the *real*
+   - **Role clarity:** the mocked-transport tests (tasks 2 and 3) are the *real*
      coverage proof — they execute ops and assert axis-specific behavior.
      `axis-coverage.test.ts` is a **regression tripwire** against silent
      axis-guide removal, not a proof of coverage on its own (a guide can
@@ -206,7 +236,7 @@ cannot silently drop a feature axis.
      with `transform: true` AND `via: restGet` *and* at least one with
      `transform: true` AND `via: paginate`, rather than "some op somewhere
      has `transform: true`". Same for pagination styles and auth kinds.
-4. Confirm `all-guides-parse` still green over the *expanded* guide set
+5. Confirm `all-guides-parse` still green over the *expanded* guide set
    (real recipes still present + new synthetic guides added).
 
 ### Sprint 3 exit criteria
@@ -263,6 +293,19 @@ after 4a, the only residue is an additive `exports` field in host's
    so each export must map the `.js` key to its source `.ts` file (or use a
    `types`/`default` conditions map) so `tsx` and type-checking in keritas
    resolve it — e.g. `"./core/helpers.js": "./core/helpers.ts"`.
+   **Main entry (future-publish guard):** also add a `"."` entry pointing
+   at the extension entry (e.g. `".": "./index.ts"`). With only the seven
+   `./core/*.js` subpath exports and no `"."`, `import "pi-lean-host"`
+   resolves to nothing under Node's `exports` resolution. That's harmless
+   while keritas consumes a local-path devDep and imports specific
+   `core/*` paths, and harmless for host's own relative-import tests — but
+   once `pi-lean-host` is eventually published with the exports map, the pi
+   runtime loading the extension via `pi.extensions: ["./index.ts"]` could
+   hit the missing-`"."` trap depending on how it resolves the entry. Add
+   `"."` now (one line, additive, no tarball impact) so the publish-time
+   bump is not a separate schema/exports surgery. (If the pi runtime is
+   later confirmed to bypass `exports` and load `pi.extensions` by direct
+   file path, the `"."` entry is still harmless and correct to keep.)
 2. Keep the existing `files` array (the npm tarball already excludes
    `api-guides/`); confirm the `exports` map does not pull new content into
    the tarball (`ship-manifest.test.ts` stays green).
@@ -334,16 +377,23 @@ after 4a, the only residue is an additive `exports` field in host's
 2. Confirm `__tests__/all-guides-parse.test.ts` still discovers and parses
    the kept axis set (it scans `api-guides/` — now smaller).
 3. Confirm `axis-coverage.test.ts` still green (the axis guides are intact).
-4. **Update `__tests__/axis-units.test.ts`** — it reads real recipe dirs
-   (`loc.gov`, `services.dnb.de`, `resources.data.gov`, `en.wikipedia.org`)
-   via `withTempDirs(...)` and asserts content-specific operations
-   (`listSearch`, `searchZdb`, etc.). Those dirs move to keritas in 4c, so
-   the test throws `Recipe folder not found`. Either re-point it at the
-   synthetic axis guides (which constrains Sprint 3 authoring: the synthetic
-   guides must carry matching operation names + pagination styles), or fold
-   these assertions into Sprint 3's mocked-transport tests and slim
-   `axis-units.test.ts` to synthetic guides only. Schedule this with 4c,
-   not after — the exit criterion below can't pass without it.
+4. **Confirm `__tests__/axis-units.test.ts` is already self-contained —
+   no `4d` fix needed.** Sprint 3 converted its axes A–D from the real-recipe
+   `withTempDirs(...)` pattern to the inline-guide pattern its own axes E–F
+   already used (`parseApiGuide()` on an inline YAML string, no on-disk
+   recipe dependency). After that conversion the file no longer reads
+   `loc.gov` / `services.dnb.de` / `resources.data.gov` / `en.wikipedia.org`
+   from `api-guides/`, so moving those dirs in 4c does not break it.
+   Verify by grep: `rg "withTempDirs|REPO_API_GUIDES|copyDomains" __tests__/axis-units.test.ts`
+   should be **empty** — if any remain, the Sprint 3 conversion is
+   incomplete and must be finished before this sprint's exit criterion can
+   pass. (This is the Option B call from the pre-implementation review:
+   inline guides fully decouple Sprint 3 from Sprint 4 — no op-name
+   constraint to propagate back, no synthetic-on-disk fixture that exists
+   only so another test can copy it to a temp dir. The inline pattern also
+   deletes ~40 lines of filesystem machinery — `copyDir`/`copyDomains`/
+   `withTempDirs` + the `mkdtempSync`/`rmSync`/`readdirSync`/`statSync`
+   imports and the `Recipe folder not found` failure mode.)
 5. **Update `__tests__/parse-api-guide.test.ts`** — the "real boe.es guide
    — 17 operations" describe block (~line 209) reads
    `api-guides/boe.es/guide.md` and asserts exactly 17 specific op names.
