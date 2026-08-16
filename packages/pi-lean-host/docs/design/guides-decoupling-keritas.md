@@ -225,7 +225,8 @@ The concrete membership needs a **feature-coverage audit** of the current
 
 1. Enumerate the framework feature axes (restGet, paginate, built-in
    `transform`, local-helper, static-key auth, XML parsing, charset/ETag
-   quirks, multi-recipe domains).
+   quirks, multi-recipe domains) — the guide-driven subset of the full list
+   in [Test axes](#test-axes-the-audits-dimension-list).
 2. For each current guide, record which axes its ops exercise (frontmatter
    `via`/`auth`/`parse`/`helper`/`transform` + helper.ts presence).
 3. Pick the minimal union of guides covering every axis, preferring the
@@ -238,6 +239,65 @@ A working candidate union (not committed) is: boe.es, earthquake.usgs.gov,
 api.github.com, archive.org + archive.org-wayback, services.dnb.de — covering
 all eight axes in six guides. This is a starting point for the audit, not the
 decision.
+
+## Test axes (the audit's dimension list)
+
+The audit (Deferred, step 1) enumerates these axes. Each is a framework
+feature dimension that must be exercised by at least one axis guide against
+mocked transport (deterministic, no live network), or by a structural test
+that doesn't depend on guide content. The current suite already covers most —
+the audit's job is to confirm the kept axis guides preserve the guide-driven
+coverage after the split.
+
+The Deferred section's eight axes are the **guide-driven** subset (coverage
+depends on axis-set membership); the remaining rows are **framework-structural**
+axes covered by tests that don't depend on which guides are kept, listed for
+completeness — they're stable across the split.
+
+| Axis | Exercises | Driver | Current test file(s) | Status |
+|------|-----------|--------|----------------------|--------|
+| exec-restGet | path templating, query assembly, `parseResponse`, ETag cache, 429 retry | guide | `helpers.test.ts`, `axis-units.test.ts` (Axis D) | covered |
+| exec-paginate | all 5 pagination styles, `gatherAll` ceiling, `totalCountPath` | guide | `helpers.test.ts`, `axis-units.test.ts` (Axes A/C/E/F) | covered |
+| xml-parsing | XML→JSON, namespace stripping (A2), single-record boxing (A1) | guide | `axis-units.test.ts` (Axes B/E/F) | covered |
+| transform-builtin | `transform: true` hookpoint, graceful failure, `failedItems` routing | guide | `transform-restget.test.ts`, `transform-paginate.test.ts`, `transform-render.test.ts` | covered |
+| local-helper | pre-call param transformation, disable-on-failure | guide | `local-helpers.test.ts` | covered |
+| static-key-auth | secret injection, fail-closed, output-channel audit, SSRF-on-auth, canonical store domain | guide | `auth.test.ts`, `query-secrets.test.ts`, `secrets-store.test.ts`, `secrets-command.test.ts` | covered |
+| transport | UA, charset, 429-retry parsing, ETag, `redactSecretParams` | guide | `transport.test.ts`, `helpers.test.ts` | covered |
+| multi-recipe-domains | `api-fetch` operation-name dispatch across two guides claiming one domain | guide | `parse-api-guide.test.ts` (catalog), `tools.test.ts` | **gap** (catalog tested, dispatch not) |
+| parse-schema | `parseApiGuide()` field validation, defaults, `projectToGuide`, catalog | structural | `parse-api-guide.test.ts`, `all-guides-parse.test.ts` | covered |
+| api-fetch-tool | end-to-tool execute, spill, render | structural | `tools.test.ts`, `render-result.test.ts`, `response-spill.test.ts` | covered |
+| api-guide-tool | catalog, detail, auth footer, disambiguation | structural | `tools.test.ts`, `parse-api-guide.test.ts`, `auth.test.ts` | covered |
+| api-learn-tool | validate-before-write, worked example | structural | `tools.test.ts` | covered |
+| api-probe-tool | shape discovery, draft emission, redirect, listSecrets | structural | `api-probe.test.ts`, `query-secrets.test.ts` | covered |
+| api-toggle | on/off/learn, focus guard, peer composition, glyph | structural | `api-toggle.test.ts` | covered |
+| portal-projection | runtime feature-detect, recipe stripping, boundary | structural | `portal-projection.test.ts`, `host-only-boundary.test.ts` | covered |
+| ship-manifest | tarball coverage, api-guides exclusion | structural | `ship-manifest.test.ts` | covered |
+| schema-version | `GUIDE_SCHEMA_VERSION` advisory-only invariant (never gates at parse) | structural | — | **gap** (constant not yet implemented) |
+
+Two low-severity interactions are intentionally **not** axes: the
+local-helper × transform combination (each mechanism proven independently; the
+interaction is unlikely to fail in a novel way) and `api-learn` round-trip
+identity (both call sites import the same `parseApiGuide`, so a regression
+would require introducing a second parser). Both are YAGNI as dedicated tests.
+
+### Gaps to close with the split
+
+1. **schema-version** — the doc's central coupling answer (`schemaVersion` is
+   metadata, never gates/warns at parse) has no regression guard. Closed in
+   [Rollout](#rollout--next-steps) step 1.
+2. **multi-recipe-domains** — catalog collapse is tested but `api-fetch`
+   operation-name dispatch across two guides claiming one domain is not.
+   Closed in step 3 (the axis-guide pair must exercise dispatch, not just
+   parse).
+3. **ssrf-guard** — the unauthenticated `paginate` nextLink block (loopback,
+   RFC1918, cloud metadata) is only proven indirectly via auth-bearing
+   redirects; `axis-units.test.ts` uses `skipSsrfGuard: true` to bypass it.
+   A dedicated test is closed in step 3.
+4. **axis-set coverage assertion** — `all-guides-parse` asserts every kept
+   guide parses, but nothing asserts the *union* covers every guide-driven
+   axis. Post-split, removing an axis guide keeps `all-guides-parse` green
+   with silent coverage loss. A structural guard promoting the manual audit
+   to an enforced invariant is closed in step 3.
 
 ## Risks & failure modes
 
@@ -275,10 +335,21 @@ decision.
 Out of scope for this document as a schedule, but the intended order:
 
 1. Introduce `GUIDE_SCHEMA_VERSION = 0` + `schemaVersion: 0` on guides
-   (net-new; no behavior change).
+   (net-new; no behavior change), and add `schema-version.test.ts` asserting
+   `schemaVersion` frontmatter is metadata-only — it never gates, warns, or
+   alters parse behavior (closes the schema-version gap; this is the
+   regression guard for the central coupling answer).
 2. Run the feature-coverage audit and finalize the axis set.
 3. Move non-axis guides + `_shared`/`WAF-NOTES`/`CONTRIBUTING` into keritas;
-   adapt axis-guide tests to a mocked transport.
+   adapt axis-guide tests to a mocked transport. The multi-recipe axis-guide
+   pair (archive.org + archive.org-wayback) must exercise `api-fetch`
+   operation-name dispatch across both guides, not just parse/catalog. Add
+   `ssrf-guard.test.ts` exercising the unauthenticated `paginate` nextLink
+   block (loopback, RFC1918, cloud metadata) and an axis-coverage structural
+   test asserting the kept axis-set union covers every guide-driven axis in
+   the [Test axes](#test-axes-the-audits-dimension-list) table (closes the
+   multi-recipe, ssrf-guard, and axis-set coverage gaps; promotes the
+   one-time audit to an enforced guard).
 4. Stand up keritas CI (nightly live) + README drift disclaimer.
 5. At lockstep: remove the README unstable disclaimer, declare schema v1
    (CHANGELOG line), continue with the bump rule for any post-v1 break.
