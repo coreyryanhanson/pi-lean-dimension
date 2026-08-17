@@ -9,7 +9,7 @@
  * op during the split (real recipes live in caritas now; the synthetic
  * axis set keeps host green by construction).
  *
- * It encodes the Sprint 2 audit (`docs/design/axis-set-audit.md`) matrix:
+ * It encodes the axis-set audit matrix:
  *  - the kept set has exactly the finalized 7 synthetic guides;
  *  - the union covers all nine guide-driven axes;
  *  - all six pagination styles are present (offset-limit, page, nextLink,

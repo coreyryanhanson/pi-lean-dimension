@@ -599,19 +599,16 @@ To grab a single domain instead of all of them, copy just its folder
 Only then does it load and execute. A recipe may carry
 `operation.helper: true` plus an accompanying `helper.ts` in its domain
 subdir as a worked example — but it stays inert until you copy the folder.
-See caritas's `CONTRIBUTING.md` for authoring a recipe, and
-[`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md)
-for the per-recipe quirk breakdown and the built-in vs local-helper
-classification.
+See caritas's `CONTRIBUTING.md` for authoring a recipe.
 
 ### What host ships instead
 
 Host itself ships only a **synthetic axis-guide set** under `api-guides/` —
 minimal coverage fixtures (no `verified:` date, no live endpoints) that keep
 every guide-driven framework axis exercised via mocked transport. They are
-framework fixtures for host's own tests, not recipes for you to copy. See
-[`docs/design/axis-set-audit.md`](docs/design/axis-set-audit.md) for the
-membership.
+framework fixtures for host's own tests, not recipes for you to copy. The
+membership is pinned by `__tests__/axis-coverage.test.ts` (which encodes the
+axis-set audit matrix).
 
 ---
 
@@ -893,8 +890,6 @@ machine; the package does not aim to make that easy.
 > [pi-lean-dimension](https://github.com/coreyryanhanson/pi-lean-dimension)
 > web-tools suite. For the security model behind the secrets store (the
 > two-threat model and the output-channel audit), see
-> [Authentication & Secrets](#authentication--secrets). For the helper
-> escape-valve policy and the 23-recipe spread, see
-> [`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md).
+> [Authentication & Secrets](#authentication--secrets).
 >
 > License: AGPL-3.0-only

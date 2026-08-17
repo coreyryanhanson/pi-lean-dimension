@@ -211,11 +211,10 @@ inside host. They are **framework fixtures, not real recipes**: no
 recipe library. Like all of `api-guides/`, they're excluded from the npm
 tarball (repo-only); the tests read them from disk.
 
-The membership is set by the Sprint 2 audit — see
-[`docs/design/axis-set-audit.md`](docs/design/axis-set-audit.md) (guide × axis
-matrix + per-guide fixture notes). `__tests__/axis-coverage.test.ts` is the
-regression tripwire that pins it: the kept union must cover every axis and
-the guide count must match. Co-located mocked-transport tests live only for
+The membership is set by the Sprint 2 audit (its matrix is encoded in
+`__tests__/axis-coverage.test.ts`). That test is the regression tripwire
+that pins the set: the kept union must cover every axis and the guide count
+must match. Co-located mocked-transport tests live only for
 axes **not** consolidated into `__tests__/axis-units.test.ts` (local-helper,
 transform, static-key-auth, multi-recipe-domains, resumptionToken, tokenBag).
 No `_shared/`, `WAF-NOTES.md`, or `CONTRIBUTING.md` remain here — those moved
@@ -252,13 +251,10 @@ meaning — those bump. Each v2+ bump is one CHANGELOG line.
   transcript/output-channel exfiltration), the Secret Service primary / plaintext
   fallback decision, and the checklist for the first keyed-guide build.
 - [`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md)
-  — escape-valve policy (built-in vs local-helper classification, the 18-recipe
-  spread, rejected candidates).
+  — escape-valve policy (built-in vs local-helper classification boundary + the
+  when-to-promote rule). Per-recipe evidence lives in the caritas repo
+  (`docs/design/api-helper-escape-valve-evidence.md`).
 - [`docs/design/api-hardening-and-proof-recipes.md`](docs/design/api-hardening-and-proof-recipes.md)
   — hardening + proof-recipe work (three core fixes + four proof recipes).
 - [`docs/design/api-hardening-sprint-plan.md`](docs/design/api-hardening-sprint-plan.md)
   — executable sprint breakdown for the hardening design doc (the how/when).
-- [`docs/design/api-stateful-sessions.md`](docs/design/api-stateful-sessions.md)
-  — transport-capability note for stateful/session APIs (core is stateless
-  per-request; the cookie-jar gap is contained and deferred until a recipe
-  forces it).
