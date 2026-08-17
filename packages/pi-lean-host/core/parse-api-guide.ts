@@ -1102,6 +1102,24 @@ export function parseApiGuide(
 		description = descriptionRaw;
 	}
 
+	// schemaVersion — metadata-only attribution (design: "schemaVersion is
+	// attribution, not enforcement"). Read from frontmatter, surfaced on the
+	// parsed guide when present, left `undefined` when absent. Never gates,
+	// warns, or alters parse. A malformed (non-integer/negative) value is
+	// tolerated and ignored — it must never reject a guide.
+	let schemaVersion: number | undefined;
+	const schemaVersionRaw = m["schemaVersion"];
+	if (schemaVersionRaw !== undefined) {
+		if (
+			typeof schemaVersionRaw === "number" &&
+			Number.isInteger(schemaVersionRaw) &&
+			schemaVersionRaw >= 0
+		) {
+			schemaVersion = schemaVersionRaw;
+		}
+		// else: tolerated + ignored — metadata stays silent on malformed input.
+	}
+
 	let gatherAllMax = GATHER_ALL_MAX_FALLBACK;
 	const gatherAllMaxRaw = m["gatherAllMax"];
 	if (gatherAllMaxRaw !== undefined) {
@@ -1206,6 +1224,7 @@ export function parseApiGuide(
 		...(docs ? { docs } : {}),
 		...(organization ? { organization } : {}),
 		...(description ? { description } : {}),
+		...(schemaVersion === undefined ? {} : { schemaVersion }),
 		gatherAllMax,
 		auth,
 		responseShape,

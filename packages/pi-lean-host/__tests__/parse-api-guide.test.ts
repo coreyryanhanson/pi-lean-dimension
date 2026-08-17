@@ -10,19 +10,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-	mkdtempSync,
-	mkdirSync,
-	writeFileSync,
-	rmSync,
-	readFileSync,
-} from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = join(__dirname, "..");
+import { join } from "node:path";
 import {
 	parseApiGuide,
 	projectToGuide,
@@ -191,65 +181,6 @@ describe("parseApiGuide — BOE worked example", () => {
 		expect(list.pagination?.cursorPath).toBe("pagination.nextCursor");
 		expect(list.pagination?.itemsPath).toBe("results");
 		expect(list.gatherAllMax).toBe(1000);
-	});
-});
-
-// ═══════════════════════════════════════════════════════════════════
-// Real boe.es guide — 17 operations regression check
-// ═══════════════════════════════════════════════════════════════════
-
-describe("parseApiGuide — real boe.es guide", () => {
-	it("parses the actual guide.md with all 17 operations", () => {
-		const raw = readFileSync(
-			join(REPO_ROOT, "api-guides", "boe.es", "guide.md"),
-			"utf-8",
-		);
-		const guide = expectOk(raw, { filename: "boe.es" });
-		expect(guide.operations).toHaveLength(17);
-
-		const names = guide.operations.map((o) => o.name);
-		expect(names).toContain("listConsolidada");
-		expect(names).toContain("getConsolidada");
-		expect(names).toContain("getSumario");
-		expect(names).toContain("getSumarioBorme");
-		// Group B — consolidada sub-resources
-		expect(names).toContain("getConsolidadaMetadatos");
-		expect(names).toContain("getConsolidadaAnalisis");
-		expect(names).toContain("getConsolidadaMetadataEli");
-		expect(names).toContain("getConsolidadaTexto");
-		expect(names).toContain("getConsolidadaTextoIndice");
-		expect(names).toContain("getConsolidadaTextoBloque");
-		// Group C — auxiliary tables
-		expect(names).toContain("listMaterias");
-		expect(names).toContain("listAmbitos");
-		expect(names).toContain("listEstadosConsolidacion");
-		expect(names).toContain("listDepartamentos");
-		expect(names).toContain("listRangos");
-		expect(names).toContain("listRelacionesAnteriores");
-		expect(names).toContain("listRelacionesPosteriores");
-
-		// Verify a few key properties on new endpoints
-		const borme = guide.operations.find((o) => o.name === "getSumarioBorme")!;
-		expect(borme.via).toBe("restGet");
-		expect(borme.accept).toBe("json");
-		expect(borme.helper).toBe(true);
-		expect(borme.pathParams).toEqual(["fecha"]);
-
-		const textoBloque = guide.operations.find(
-			(o) => o.name === "getConsolidadaTextoBloque",
-		)!;
-		expect(textoBloque.pathParams).toEqual(["id", "id_bloque"]);
-		expect(textoBloque.parse).toEqual({ format: "xml", charset: "utf-8" });
-
-		const metadatos = guide.operations.find(
-			(o) => o.name === "getConsolidadaMetadatos",
-		)!;
-		expect(metadatos.accept).toBe("json");
-		expect(metadatos.parse).toBeUndefined();
-
-		const materias = guide.operations.find((o) => o.name === "listMaterias")!;
-		expect(materias.pathParams).toEqual([]);
-		expect(materias.accept).toBe("json");
 	});
 });
 
@@ -1420,10 +1351,7 @@ org guide.
 		try {
 			// A subdir without guide.md — skipped
 			mkdirSync(join(dir, "no-guide"), { recursive: true });
-			writeFileSync(
-				join(dir, "no-guide", "helper.ts"),
-				"export default p => p;",
-			);
+			writeFileSync(join(dir, "no-guide", "helper.ts"), "export default p => p;");
 
 			// A valid subdir with guide.md — loaded
 			mkdirSync(join(dir, "good"), { recursive: true });

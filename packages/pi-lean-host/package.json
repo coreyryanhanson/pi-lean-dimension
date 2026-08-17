@@ -21,6 +21,16 @@
 	"publishConfig": {
 		"access": "public"
 	},
+	"exports": {
+		".": "./index.ts",
+		"./core/helpers.js": "./core/helpers.ts",
+		"./core/parse-api-guide.js": "./core/parse-api-guide.ts",
+		"./core/guide-store.js": "./core/guide-store.ts",
+		"./core/local-helpers.js": "./core/local-helpers.ts",
+		"./core/api-guide-types.js": "./core/api-guide-types.ts",
+		"./core/transport.js": "./core/transport.ts",
+		"./core/auth.js": "./core/auth.ts"
+	},
 	"files": [
 		"index.ts",
 		"LICENSE",

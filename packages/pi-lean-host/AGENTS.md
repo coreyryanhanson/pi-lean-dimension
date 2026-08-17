@@ -52,11 +52,12 @@ npm test                                              # all workspace tests, inc
 npm run test:ci                                       # excludes chromium/firefox/bench; keeps host
 npx vitest run packages/pi-lean-host                  # this package only
 npx vitest run packages/pi-lean-host/__tests__/tools.test.ts   # one file
-HOST_INTEGRATION=1 npx vitest run packages/pi-lean-host/api-guides/<domain>/  # live endpoint tests
 ```
 
-`HOST_INTEGRATION=1` opts into live-endpoint recipe-validity tests (co-located
-under `api-guides/<domain>/`). Without it they `it.skip`; bare CI stays green.
+Host CI is **structural only** — fast, deterministic, no browser, no network.
+Host's `api-guides/<domain>/` co-located tests are mocked-transport and
+always-on (no env gate). Live-endpoint recipe tests are **not** hosted here;
+they live in the [`caritas`](https://github.com/coreyryanhanson/caritas) repo, gated by its own `HOST_INTEGRATION=1`.
 
 ## Toggle states & focus-mode guard
 
@@ -190,41 +191,55 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   output-channel audit/SSRF/footer structural tests),
   `portal-projection`, `render-result`, `response-spill`, `host-only-boundary`,
   `axis-units` (nextLink/XML/cursor/ETag via mocked transport; fixtures in
-  `__tests__/fixtures/axis/`), `transform-{restget,paginate,render}`,
+  `__tests__/fixtures/axis/`), `axis-coverage` (regression tripwire: the
+  synthetic axis-guide set's union covers every guide-driven axis — removing
+  an axis guide or dropping an axis-exercising op fails it), `schema-version`
+  (metadata-only guard on `schemaVersion` frontmatter), `transform-{restget,paginate,render}`,
   `transport` (A3 Retry-After HTTP-date / exponential-backoff parsing — no
   recipe can reliably force a 429, so the unit test is the proof),
   `api-probe`, `ship-manifest` (tarball coverage + asserts `api-guides/` is
   excluded from the npm tarball).
 
-## api-guides/ — bundled reference recipes
+## api-guides/ — synthetic axis guides (framework fixtures)
 
-`api-guides/<domain>/` holds **reference recipes** (GitHub-only, **not in the
-npm tarball**, inert — copy to `~/.pi/agent/pi-lean-host/api-guides/` to use).
-Each guide dir ships its own co-located tests (`endpoint-coverage.test.ts`,
-`helper.test.ts` when a helper exists) — recipe tests do **not** live in
-`__tests__/`; that dir holds framework structural tests only.
+`api-guides/<domain>/` holds the **synthetic axis-guide set** — minimal
+coverage fixtures that keep every guide-driven framework axis exercised
+inside host. They are **framework fixtures, not real recipes**: no
+`verified:` date, no live endpoints, and every co-located test runs against
+**mocked transport** (always-on, no env gate). This is what lets host stay
+"green by construction" — the framework is still proved without the real
+recipe library. Like all of `api-guides/`, they're excluded from the npm
+tarball (repo-only); the tests read them from disk.
 
-- `api-guides/_shared/test-harness.ts` — `itWhen` (live-gate: runs only under
-  `HOST_INTEGRATION=1`, else `it.skip`) and the live-gate helper.
-- `api-guides/CONTRIBUTING.md` — guide + test layout; **`boe.es` is the
-  reference template** — read it first, then copy its pattern.
-- `api-guides/WAF-NOTES.md` — central tracker for WAF / rate-limit / bot-detection
-  quirks observed against endpoints during coverage-plan drafting.
+The membership is set by the axis-set audit (its matrix is encoded in
+`__tests__/axis-coverage.test.ts`). That test is the regression tripwire
+that pins the set: the kept union must cover every axis and the guide count
+must match. Co-located mocked-transport tests live only for
+axes **not** consolidated into `__tests__/axis-units.test.ts` (local-helper,
+transform, static-key-auth, multi-recipe-domains, resumptionToken, tokenBag).
+No `_shared/`, `WAF-NOTES.md`, or `CONTRIBUTING.md` remain here — those moved
+to caritas along with the real recipes.
 
-## Design docs
+The inline worked-example recipe in `tools/api-learn.ts` (no-`domain`
+call, the BOE shape) stays in host — it's a self-contained authoring aid,
+separate from the full reference recipes in caritas.
 
-- [`docs/design/api-secrets-roadmap.md`](docs/design/api-secrets-roadmap.md)
-  — deferred secrets-store track: the two-threat model (at-rest vs
-  transcript/output-channel exfiltration), the Secret Service primary / plaintext
-  fallback decision, and the checklist for the first keyed-guide build.
-- [`docs/design/api-helper-escape-valve.md`](docs/design/api-helper-escape-valve.md)
-  — escape-valve policy (built-in vs local-helper classification, the 18-recipe
-  spread, rejected candidates).
-- [`docs/design/api-hardening-and-proof-recipes.md`](docs/design/api-hardening-and-proof-recipes.md)
-  — hardening + proof-recipe work (three core fixes + four proof recipes).
-- [`docs/design/api-hardening-sprint-plan.md`](docs/design/api-hardening-sprint-plan.md)
-  — executable sprint breakdown for the hardening design doc (the how/when).
-- [`docs/design/api-stateful-sessions.md`](docs/design/api-stateful-sessions.md)
-  — transport-capability note for stateful/session APIs (core is stateless
-  per-request; the cookie-jar gap is contained and deferred until a recipe
-  forces it).
+For the **comprehensive recipe library** (real endpoints, live tests, per-recipe
+`verified:`-date drift disclaimer), see the
+[`caritas`](https://github.com/coreyryanhanson/caritas) repo. It owns the drift
+disclaimer; host ships only the synthetic axis fixtures.
+
+### Guide schema versioning
+
+`core/api-guide-types.ts` exports `GUIDE_SCHEMA_VERSION` (currently `0`,
+beta). Guides may carry a `schemaVersion` frontmatter field (absent defaults
+to `0`), surfaced on the parsed guide as metadata — **attribution, never
+enforcement**: it never gates, warns, or alters parse behavior (proved by
+`__tests__/schema-version.test.ts`). At the lockstep release it bumps to `1`
+(the frozen-beta label change) with a CHANGELOG line.
+
+**Bump rule (post-v1):** do not bump unless a guide that used to parse now
+fails to parse. Adding an optional field, a new enum value, or relaxing a
+constraint is a non-event; removing/renaming a field, deleting a
+`via`/`pagination.style` value, or changing a parse-enforced constraint's
+meaning — those bump. Each v2+ bump is one CHANGELOG line.
