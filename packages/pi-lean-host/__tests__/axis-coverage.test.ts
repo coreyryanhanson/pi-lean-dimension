@@ -1,6 +1,6 @@
 /**
  * `axis-coverage.test.ts` — regression tripwire for the guide-driven
- * framework axes (Sprint 3, task 4).
+ * framework axes.
  *
  * This is NOT the proof of coverage — the co-located mocked-transport tests
  * (`api-guides/<domain>/`) and `__tests__/axis-units.test.ts` execute the
@@ -36,7 +36,7 @@ import type {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GUIDES_DIR = join(__dirname, "..", "api-guides");
 
-// ── The finalized axis set (Sprint 2 audit §4) ──────────────────────
+// ── The finalized axis set ─────────────────────────────────────────
 
 const AXIS_DIRS = [
 	"boe.es",
@@ -166,7 +166,7 @@ describe("axis-coverage — every guide-driven axis is covered by ≥1 guide", (
 });
 
 // Per-guide spot checks — each single-coverage axis maps 1:1 to a guide
-// whose primary purpose is that axis (audit §4 regression-isolation rule).
+// whose primary purpose is that axis (regression-isolation rule).
 describe("axis-coverage — single-coverage guide ownership", () => {
 	it("local-helper is owned by boe.es (helper: true op, not elsewhere required)", () => {
 		expect(opOf(GUIDES["boe.es"]).some((o) => o.helper === true)).toBe(true);

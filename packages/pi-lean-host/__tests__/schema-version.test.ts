@@ -1,5 +1,5 @@
 /**
- * schemaVersion metadata-only guard (Sprint 1).
+ * schemaVersion metadata-only guard.
  *
  * Proves GUIDE_SCHEMA_VERSION + the `schemaVersion` frontmatter field are
  * pure attribution: the field never gates, warns, or alters parse behavior.
