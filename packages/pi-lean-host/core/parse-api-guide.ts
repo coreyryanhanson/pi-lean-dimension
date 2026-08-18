@@ -250,6 +250,18 @@ function validatePagination(
 			}
 			cfg.pageSize = ps;
 		}
+		const base = p["base"];
+		if (base !== undefined) {
+			if (typeof base !== "number" || !Number.isInteger(base)) {
+				return fail(
+					file,
+					`${fieldPrefix}.base`,
+					"a finite integer (the seed value for the page param)",
+					describeFound(base),
+				);
+			}
+			cfg.base = base;
+		}
 	} else if (style === "nextLink") {
 		const nlp = p["nextLinkPath"];
 		if (typeof nlp !== "string" || nlp === "") {

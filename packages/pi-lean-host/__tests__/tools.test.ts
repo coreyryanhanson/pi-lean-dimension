@@ -283,6 +283,7 @@ operations:
       pageParam: offset
       pageSizeParam: limit
       pageSize: 50
+      base: 1
       itemsPath: data
 ---
 Pagination test guide.
@@ -593,13 +594,7 @@ function callLearn(domain?: string, recipe?: string) {
 	const p: Record<string, unknown> = {};
 	if (domain !== undefined) p.domain = domain;
 	if (recipe !== undefined) p.recipe = recipe;
-	return apiLearnTool.execute(
-		"test",
-		p,
-		undefined,
-		undefined,
-		undefined as any,
-	);
+	return apiLearnTool.execute("test", p, undefined, undefined, undefined as any);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -696,6 +691,7 @@ describe("api-guide", () => {
 		const text = contentText(await callGuide("paged.example"));
 		expect(text).toContain("pagination: offset-limit offset");
 		expect(text).toContain("limit=50");
+		expect(text).toContain("base=1");
 		expect(text).toContain("params: q required");
 	});
 });
@@ -713,6 +709,14 @@ describe("api-learn", () => {
 		expect(text).toContain("operations");
 		expect(text).toContain("Required fields");
 		expect(text).toContain("Key defaults");
+
+		// Executor-semantics reference (item 2) — the in-transcript authoring
+		// facts for path resolution, pagination seeding, and auth.
+		expect(text).toContain("Executor semantics");
+		expect(text).toContain("joinUrl` strips a leading `/");
+		expect(text).toContain("pagination.base` seeds the page param");
+		expect(text).toContain("page-size param is a real knob");
+		expect(text).toContain("requires` = fail-closed if unprovisioned");
 	});
 
 	// Regression for issues 1a/1b/2a: the worked example must copy-paste
@@ -726,9 +730,7 @@ describe("api-learn", () => {
 		const parsed = parseApiGuide(example, { filename: "boe.es" });
 		expect(parsed.ok).toBe(true);
 		if (parsed.ok) {
-			const diary = parsed.guide.operations.find(
-				(o) => o.name === "searchDiary",
-			)!;
+			const diary = parsed.guide.operations.find((o) => o.name === "searchDiary")!;
 			expect(diary.dateParams).toEqual({ since: "yyyy-mm-dd" });
 			expect(diary.pathParamDocs).toEqual({
 				date: "Diary date in yyyy-mm-dd form (e.g. 2026-07-15).",
@@ -739,9 +741,7 @@ describe("api-learn", () => {
 	});
 
 	it("validates and writes a valid recipe", async () => {
-		const text = contentText(
-			await callLearn("boe.es", boeRecipe(ctx.serverUrl)),
-		);
+		const text = contentText(await callLearn("boe.es", boeRecipe(ctx.serverUrl)));
 		expect(text).toContain("Guide saved");
 		expect(text).toContain("boe.es");
 		expect(text).toContain("searchDiary");
@@ -780,10 +780,7 @@ describe("api-learn", () => {
 		});
 		// Nothing written outside the guides dir.
 		expect(() =>
-			readFileSync(
-				join(tmpGuidesDir, "..", "..", "escape", "guide.md"),
-				"utf-8",
-			),
+			readFileSync(join(tmpGuidesDir, "..", "..", "escape", "guide.md"), "utf-8"),
 		).toThrow();
 	});
 
@@ -1139,9 +1136,7 @@ describe("api-fetch", () => {
 			expect.fail("Spill file contains invalid JSON");
 			return;
 		}
-		expect(Array.isArray((parsed as Record<string, unknown>).results)).toBe(
-			true,
-		);
+		expect(Array.isArray((parsed as Record<string, unknown>).results)).toBe(true);
 		expect(
 			((parsed as Record<string, unknown>).results as unknown[]).length,
 		).toBe(200);
@@ -1232,9 +1227,7 @@ describe("api-guide — multi-guide disambiguation", () => {
 		expect(text).toContain("2 ops: getDiary, restOnly");
 		expect(text).toContain("2 ops: listConsolidada, actionOnly");
 		// Footer points at the guide selector.
-		expect(text).toContain(
-			'Call api-guide({domain: "shared.example", guide: "',
-		);
+		expect(text).toContain('Call api-guide({domain: "shared.example", guide: "');
 		expect(result.details).toMatchObject({
 			domain: "shared.example",
 			disambiguation: 2,
@@ -1357,9 +1350,7 @@ describe("api-fetch — cross-guide op-name resolution", () => {
 		expect(text).toContain(
 			"api-learn rewrites a whole recipe, not a single operation",
 		);
-		expect(text).not.toContain(
-			'api-fetch({domain: "opcollide.example", guide:',
-		);
+		expect(text).not.toContain('api-fetch({domain: "opcollide.example", guide:');
 		expect(result.details).toMatchObject({
 			error: "ambiguous_operation",
 			operation: "fetchThing",

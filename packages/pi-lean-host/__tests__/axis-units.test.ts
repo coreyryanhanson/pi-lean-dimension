@@ -50,6 +50,140 @@ function loadFixture(name: string): FixtureFile {
 	return JSON.parse(readFileSync(p, "utf-8")) as FixtureFile;
 }
 
+// ── Axis AA — effective page size (caller override honored) ─────────
+
+describe("framework axis AA — effective page size", () => {
+	it("paginate honors the caller's page size and advances by it", async () => {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { parseApiGuide } = await import("../core/parse-api-guide.js");
+		const { paginate } = await import("../core/helpers.js");
+
+		// 3 items per page; gatherAll walks pages until the ceiling (6) is hit.
+		const body = JSON.stringify({ items: [{ id: 1 }, { id: 2 }, { id: 3 }] });
+		vi.mocked(fetchUrl).mockResolvedValue({
+			status: 200,
+			headers: {},
+			body,
+			cached: false,
+		});
+
+		const parsed = parseApiGuide(`---
+kind: api
+domains: [api.test]
+apiHost: https://api.test
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: listThings
+    via: paginate
+    path: /things
+    pagination:
+      style: offset-limit
+      itemsPath: items
+      pageParam: start
+      pageSizeParam: limit
+      pageSize: 10
+    params:
+      start:
+        default: 1
+      limit:
+        default: 10
+---
+`);
+		if (!parsed.ok) throw new Error("guide failed to parse");
+		const guide = parsed.guide;
+		const op = guide.operations.find((o) => o.name === "listThings")!;
+
+		// Caller passes limit: 3 — must win over the op default (10) and
+		// pagCfg.pageSize (10), and the offset advance must use 3 as well.
+		const result = await paginate(guide.apiHost, op, { limit: 3 }, guide, {
+			gatherAll: true,
+			gatherAllMax: 6,
+			skipSsrfGuard: true,
+		});
+
+		expect(result.items.length).toBe(6);
+		expect(result.pages).toBe(2);
+
+		// First page: seed start=1, caller's limit=3 (not 10).
+		expect(result.urls[0]).toContain("start=1");
+		expect(result.urls[0]).toContain("limit=3");
+		expect(result.urls[0]).not.toContain("limit=10");
+
+		// Second page: offset advanced by the effective size (3) → start=4,
+		// not by the stale pagCfg.pageSize (10) → start=11.
+		expect(result.urls[1]).toContain("start=4");
+		expect(result.urls[1]).toContain("limit=3");
+		expect(result.urls[1]).not.toContain("start=11");
+	});
+});
+
+// ── Axis AB — pagination `base` seed (#5) ───────────────────────────
+
+describe("framework axis AB — pagination base seed", () => {
+	it("base seeds the page param and the caller override still wins", async () => {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { parseApiGuide } = await import("../core/parse-api-guide.js");
+		const { paginate } = await import("../core/helpers.js");
+
+		const body = JSON.stringify({ items: [{ id: 1 }, { id: 2 }, { id: 3 }] });
+		vi.mocked(fetchUrl).mockResolvedValue({
+			status: 200,
+			headers: {},
+			body,
+			cached: false,
+		});
+
+		// `base: 1` seeds `start` at 1 without the double-declaration hack;
+		// no `params.start.default` needed. pageSize left to pagCfg (10).
+		const parsed = parseApiGuide(`---
+kind: api
+domains: [api.test]
+apiHost: https://api.test
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: listThings
+    via: paginate
+    path: /things
+    pagination:
+      style: offset-limit
+      itemsPath: items
+      pageParam: start
+      pageSizeParam: limit
+      pageSize: 10
+      base: 1
+---
+`);
+		if (!parsed.ok) throw new Error("guide failed to parse");
+		const guide = parsed.guide;
+		const op = guide.operations.find((o) => o.name === "listThings")!;
+
+		// No caller params: base seeds start=1, size falls to pagCfg (10).
+		const seeded = await paginate(guide.apiHost, op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 6,
+			skipSsrfGuard: true,
+		});
+		expect(seeded.urls[0]).toContain("start=1");
+		expect(seeded.urls[1]).toContain("start=11");
+		expect(seeded.urls[1]).toContain("limit=10");
+
+		// Caller override still wins over base (offset-limit style).
+		const overridden = await paginate(guide.apiHost, op, { start: 5 }, guide, {
+			gatherAll: true,
+			gatherAllMax: 6,
+			skipSsrfGuard: true,
+		});
+		expect(overridden.urls[0]).toContain("start=5");
+		expect(overridden.urls[0]).not.toContain("start=1");
+	});
+});
+
 // ── Axis A — nextLink pagination ────────────────────────────────────
 
 describe("framework axis A — nextLink pagination", () => {

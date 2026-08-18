@@ -32,3 +32,24 @@ export function renderExpandedText(
 		text += `\n${theme.fg("muted", `… ${content.length - limit} more chars`)}`;
 	return text;
 }
+
+/**
+ * Append the shared collapsed/expanded body footer to a render string:
+ * expanded shows the content preview; collapsed shows a "chars (expand)" hint.
+ */
+export function appendFooter(
+	text: string,
+	expanded: boolean,
+	result: AgentToolResult<unknown>,
+	theme: { fg: (c: ThemeColor, t: string) => string },
+	limit: number,
+): string {
+	const content = contentText(result);
+	if (expanded) {
+		text += "\n";
+		text = renderExpandedText(text, theme, content, limit);
+	} else {
+		text += `\n${theme.fg("muted", `${content.length} chars (expand)`)}`;
+	}
+	return text;
+}

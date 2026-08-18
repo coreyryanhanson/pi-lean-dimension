@@ -168,3 +168,13 @@ export function listDomains(): string[] {
 export function listNames(domain: string): string[] {
 	return _store.listNames(domain);
 }
+
+/**
+ * Suffix naming the *other* provisioned domains (names only) for a store-miss
+ * note — " — provisioned domains: a, b" — or "" when none. Lets a miss tell
+ * the authoring agent where the key actually lives without an `ls`.
+ */
+export function provisionedDomainsSuffix(domain: string): string {
+	const others = listDomains().filter((d) => d !== domain);
+	return others.length > 0 ? ` — provisioned domains: ${others.join(", ")}` : "";
+}

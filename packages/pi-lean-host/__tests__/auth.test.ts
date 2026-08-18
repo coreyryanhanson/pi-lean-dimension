@@ -604,9 +604,12 @@ describe("authStatusLine footer", () => {
 			"auth.missing",
 		);
 		// The same name is referenced by both maps — it must appear exactly once.
-		expect(line).toBe(
+		expect(line).toContain(
 			"🔑 auth: requires api_key — not provisioned. Run /api secrets auth.missing.",
 		);
+		// Other provisioned domains surface as a names-only hint.
+		expect(line).toContain("provisioned domains:");
+		expect(line).toContain("auth.test");
 	});
 });
 
@@ -633,6 +636,9 @@ describe("api-fetch authenticated execution", () => {
 		expect(details.error).toBe("auth_required_not_provisioned");
 		const text = contentText(res);
 		expect(text).toContain("/api secrets auth.missing");
+		// Parallel: the fail-closed footer also names the other provisioned
+		// domains so the user isn't forced to ls the store.
+		expect(text).toContain("provisioned domains:");
 	});
 
 	it("provisioned key: fetch succeeds, response-header echo scrubbed from details", async () => {

@@ -171,8 +171,7 @@ async function createTestServer(): Promise<TestContext> {
 			const items = Array.from({ length: 2 }, (_, i) => ({
 				id: (page - 1) * 2 + i + 1,
 			}));
-			const next =
-				page === 1 ? "http://169.254.169.254/latest/meta-data/" : null;
+			const next = page === 1 ? "http://169.254.169.254/latest/meta-data/" : null;
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(JSON.stringify({ data: items, next }));
 			return;
@@ -708,12 +707,7 @@ describe("restGet", () => {
 			params: { tags: {} },
 		});
 
-		const result = await restGet(
-			ctx.serverUrl,
-			op,
-			{ tags: ["a", "b"] },
-			guide,
-		);
+		const result = await restGet(ctx.serverUrl, op, { tags: ["a", "b"] }, guide);
 		expect(result.params["tags"]).toBe('["a","b"]');
 		expect(result.url).not.toContain("[object Object]");
 	});
@@ -983,6 +977,30 @@ describe("paginate", () => {
 		// rows 1-10), NOT the hardcoded 0 (rows 0-9) — so the first item is id 2.
 		expect(result.items).toHaveLength(10);
 		expect(result.items[0]).toMatchObject({ id: 2 });
+	});
+
+	it("honors a caller-supplied page size even when the op does not declare it in params", async () => {
+		const guide = makeGuide({
+			apiHost: ctx.serverUrl,
+		});
+		const op = makeOp({
+			via: "paginate",
+			path: "/api/paginate/offset-limit",
+			// `limit` deliberately NOT declared in the op's params map — the
+			// size resolve must still read the raw caller value, not drop it.
+			params: {},
+			pagination: {
+				style: "offset-limit",
+				pageParam: "page",
+				pageSizeParam: "limit",
+				itemsPath: "data",
+			},
+		});
+
+		const result = await paginate(ctx.serverUrl, op, { limit: 2 }, guide, SKIP);
+		// The caller's limit=2 reaches the first URL — not the 50 fallback.
+		expect(result.urls[0]).toContain("limit=2");
+		expect(result.items).toHaveLength(2);
 	});
 
 	it("walks nextLink style to exhaustion with gatherAll:true", async () => {
@@ -1370,8 +1388,7 @@ describe("paginate", () => {
 				tokenParam: "resumptionToken",
 				tokenPath: "OAI-PMH.ListRecords.resumptionToken.#text",
 				itemsPath: "OAI-PMH.ListRecords.record",
-				totalCountPath:
-					"OAI-PMH.ListRecords.resumptionToken.@_completeListSize",
+				totalCountPath: "OAI-PMH.ListRecords.resumptionToken.@_completeListSize",
 			},
 		});
 

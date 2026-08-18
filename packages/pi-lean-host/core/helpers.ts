@@ -627,14 +627,16 @@ export async function paginate(
 
 	// Seed offset/page params.
 	if (style === "offset-limit" || style === "page") {
-		// Caller value, else the recipe's declared default for this page
-		// param, else the style's framework default: 0 for offset-limit (row
+		// Caller value, else `pagination.base` (where this API's index
+		// starts), else the recipe's declared default for this page param,
+		// else the style's framework default: 0 for offset-limit (row
 		// offsets start at 0) and 1 for page (nearly all page-indexed APIs are
 		// 1-based; a rare 0-based page API overrides with
-		// `params: { page: { default: 0 } }`).
+		// `base: 0` or `params: { page: { default: 0 } }`).
 		const fallback = style === "page" ? 1 : 0;
 		const rawPage =
 			params[pagCfg.pageParam!] ??
+			pagCfg.base ??
 			operation.params[pagCfg.pageParam!]?.default ??
 			fallback;
 		page = typeof rawPage === "number" ? rawPage : parseInt(String(rawPage), 10);
@@ -645,6 +647,23 @@ export async function paginate(
 	// Agent-supplied only (secret param names excluded, incl. passthrough).
 	const secretParamNames = opts?.secretQueryParamNames ?? new Set<string>();
 	const effectiveParams = buildQueryParams(operation, params, secretParamNames);
+
+	// Resolve the effective page size once for the seeding styles — the
+	// caller's value, else the op's declared default (both already folded into
+	// effectiveParams), else pagCfg.pageSize, else 50. Used for the per-page
+	// pageSizeParam set AND the offset-limit advance, so a caller-supplied
+	// size is honored end-to-end (the row-offset increment must match the size
+	// the server honored, or pages overlap/skip).
+	let effectivePageSize: number | undefined;
+	if (style === "offset-limit" || style === "page") {
+		const rawSize =
+			pagCfg.pageSizeParam === undefined
+				? undefined
+				: (params[pagCfg.pageSizeParam] ?? effectiveParams[pagCfg.pageSizeParam]);
+		effectivePageSize =
+			rawSize === undefined ? (pagCfg.pageSize ?? 50) : Number(rawSize);
+		if (isNaN(effectivePageSize)) effectivePageSize = 50;
+	}
 	// Secret query params injected below the agent map on every page's fetch URL.
 	const secretParams = opts?.secretQueryParams ?? {};
 	const hasQuerySecret = Object.keys(secretParams).length > 0;
@@ -659,8 +678,9 @@ export async function paginate(
 
 		if (style === "offset-limit" || style === "page") {
 			pageParams[pagCfg.pageParam!] = String(page ?? 0);
+			// effectivePageSize is always resolved (a number) in this branch.
 			if (pagCfg.pageSizeParam) {
-				pageParams[pagCfg.pageSizeParam] = String(pagCfg.pageSize ?? 50);
+				pageParams[pagCfg.pageSizeParam] = String(effectivePageSize);
 			}
 		} else if (style === "cursor" && cursor !== undefined) {
 			pageParams[pagCfg.cursorParam!] = cursor;
@@ -806,7 +826,13 @@ export async function paginate(
 		}
 
 		// Determine next page.
-		const advanced = advancePagination(style, pagCfg, data, page);
+		const advanced = advancePagination(
+			style,
+			pagCfg,
+			data,
+			page,
+			effectivePageSize,
+		);
 
 		if (!advanced) break;
 
@@ -846,13 +872,19 @@ function advancePagination(
 	cfg: NonNullable<Operation["pagination"]>,
 	data: unknown,
 	prevPage?: number,
+	effectivePageSize?: number,
 ): PaginationState | null {
 	if (style === "offset-limit") {
 		// Row-offset semantics: the API skips `offset` items, so the next page
-		// must advance by the page size, not by 1 (a +1 advance re-reads the
-		// same rows and overlaps pages). APIs whose param is a true page index
-		// use style: page, which keeps the +1 advance.
-		return { page: (prevPage ?? 0) + (cfg.pageSize ?? 50) };
+		// must advance by the effective page size (caller value → op default →
+		// cfg.pageSize → 50) — the size actually sent — not by 1 (a +1 advance
+		// re-reads the same rows and overlaps pages) and not by a stale
+		// pageSize (overlaps/skips when the caller overrides the size). APIs
+		// whose param is a true page index use style: page, which keeps the +1
+		// advance.
+		return {
+			page: (prevPage ?? 0) + (effectivePageSize ?? cfg.pageSize ?? 50),
+		};
 	}
 
 	if (style === "page") {

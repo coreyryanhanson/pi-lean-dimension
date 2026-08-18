@@ -30,11 +30,15 @@ import {
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
 } from "../core/auth.js";
-import { listDomains, listNames } from "../core/secrets-store.js";
+import {
+	listDomains,
+	listNames,
+	provisionedDomainsSuffix,
+} from "../core/secrets-store.js";
 import { findGuidesByDomain } from "../core/guide-store.js";
 import { redactSecretParams } from "../core/helpers.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
-import { contentText, renderExpandedText } from "./utils.js";
+import { appendFooter, contentText } from "./utils.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -75,8 +79,8 @@ export interface ProbeResult {
 export interface ProbeOptions {
 	/** Accept header (default application/json). */
 	accept?: string;
-	/** On 404, auto-try /v1/ and /v2/ prefixes. Default true. */
-	tryPrefixes?: boolean;
+	/** On 404, walk the apiHost version backward (vN→v1). Default true. */
+	walkVersions?: boolean;
 	/**
 	 * Store-backed auth injection for probing auth-gated endpoints
 	 * (authoring loop). Injection fields only — no kind/requires/optional.
@@ -159,7 +163,9 @@ export function summarize(data: unknown): ShapeSummary {
 	}
 
 	const arrayLen = items?.length ?? 0;
-	const suggestedVia = items === null ? "restGet" : "paginate";
+	const hasPaginationSignal = paginationMarkers.length > 0;
+	const suggestedVia =
+		items === null || !hasPaginationSignal ? "restGet" : "paginate";
 
 	const summary: ShapeSummary = {
 		topLevel,
@@ -167,7 +173,7 @@ export function summarize(data: unknown): ShapeSummary {
 		keys,
 		arrayLen,
 		suggestedVia,
-		suggestedItemsPath: suggestedVia === "paginate" ? itemsPath : "",
+		suggestedItemsPath: items === null ? "" : itemsPath,
 		paginationMarkers,
 	};
 	const representativeId = pickRepresentativeId(items);
@@ -278,7 +284,10 @@ function resolveProbeAuth(
 /** First missing secret name as a one-line note (names only, never values). */
 function missNote(authCtx: ProbeAuthCtx, domain: string): string {
 	if (authCtx.missingNames.length === 0) return "";
-	return `secret "${authCtx.missingNames[0]}" not found in store for domain "${domain}"`;
+	return (
+		`secret "${authCtx.missingNames[0]}" not found in store for domain "${domain}"` +
+		provisionedDomainsSuffix(domain)
+	);
 }
 
 /** Hostname of an apiHost URL (falls back to the raw string). */
@@ -290,6 +299,17 @@ function hostnameOf(apiHost: string): string {
 	}
 }
 
+/** Trailing path of an apiHost URL (e.g. `/v3`), or `""` when empty/root.
+ *  Trailing slashes stripped so `.../v3/` + `/items` → `/v3/items`, not `/v3//items`.
+ *  Lets the probe draft carry the version prefix that was actually fetched. */
+function versionPrefixOf(apiHost: string): string {
+	try {
+		return new URL(apiHost).pathname.replace(/\/+$/, "");
+	} catch {
+		return "";
+	}
+}
+
 export async function probe(
 	apiHost: string,
 	path: string,
@@ -297,22 +317,102 @@ export async function probe(
 	opts: ProbeOptions = {},
 ): Promise<ProbeResult> {
 	const accept = opts.accept ?? "application/json";
-	const tryPrefixes = opts.tryPrefixes ?? true;
+	const walkVersions = opts.walkVersions ?? true;
 	const domain = opts.domain ?? hostnameOf(apiHost);
 	const authCtx = resolveProbeAuth(opts.auth, domain);
 
-	const base = await fetchOne(apiHost, path, params, accept, authCtx, domain);
-	if (base.status === 404 && tryPrefixes && !/^\/v\d+\//.test(path)) {
-		for (const p of [`/v1${path}`, `/v2${path}`]) {
-			const tried = await fetchOne(apiHost, p, params, accept, authCtx, domain);
-			if (tried.status !== 404) {
-				const miss = missNote(authCtx, domain);
-				tried.note = `${miss ? miss + " — " : ""}404 on ${path}; /v*/ prefix hit → ${p}`;
-				return tried;
-			}
+	// Base case only carries the apiHost version prefix; a walk-hit draft
+	// embeds its walked version in the prefix passed to fetchOne.
+	const base = await fetchOne(
+		apiHost,
+		path,
+		params,
+		accept,
+		authCtx,
+		domain,
+		versionPrefixOf(apiHost),
+	);
+	if (base.status !== 404 || !walkVersions || /^\/v\d+\//.test(path)) {
+		return base;
+	}
+	// Recover an over-claimed version by walking the apiHost version backward
+	// (vN-1 → … → 1). Only fires on 404 — never a poller on a live 200.
+	const stated = VERSION_PATHNAME_RE.exec(versionPrefixOf(apiHost))?.[1];
+	if (stated === undefined) {
+		// Gate excludes a bare / non-integer / subdomain-versioned host — no
+		// walk to run, so tell the agent why rather than a silent bare 404.
+		base.note = walkSkipNote(authCtx, domain);
+		return base;
+	}
+	const hit = await walkBackward(
+		{ apiHost, path, params, accept, authCtx, domain },
+		Number(stated),
+	);
+	return hit ?? base;
+}
+
+// ponytail: MAX_VERSION_WALK caps a high-version host's request burst
+// (a /v10 host fires at most 5 backward walks, not 9); raise it if a longer
+// version-gap chain is ever needed.
+export const MAX_VERSION_WALK = 5;
+
+/** Matches a pure integer version pathname (`/v3`), excluding date/non-numeric
+ *  /subdomain /multi-segment conventions — the only form the walk can swap. */
+const VERSION_PATHNAME_RE = /^\/v(\d+)$/;
+
+/** Backward version walk: refetch the same bare path with /vN-… swapped into
+ *  apiHost; return the first non-404 (with a version-walk note) or null. */
+async function walkBackward(
+	ctx: {
+		apiHost: string;
+		path: string;
+		params: Record<string, unknown>;
+		accept: string;
+		authCtx: ProbeAuthCtx;
+		domain: string;
+	},
+	start: number,
+): Promise<ProbeResult | null> {
+	const miss = missNote(ctx.authCtx, ctx.domain);
+	const floor = Math.max(start - MAX_VERSION_WALK, 1);
+	for (let k = start - 1; k >= floor; k--) {
+		const tried = await fetchOne(
+			withVersion(ctx.apiHost, k),
+			ctx.path,
+			ctx.params,
+			ctx.accept,
+			ctx.authCtx,
+			ctx.domain,
+			`/v${k}`,
+		);
+		if (tried.status !== 404) {
+			// A walk hit may itself have redirected (e.g. /v2 301→ /v3); the
+			// draft carries /v${k} while the body came from elsewhere — flag
+			// it so the agent checks finalUrl instead of trusting the prefix.
+			const redirected = tried.finalUrl !== tried.url;
+			tried.note = `${miss ? miss + " — " : ""}404 on /v${start}${ctx.path}; version walk → /v${k}${redirected ? " — verify finalUrl (redirect target)" : ""}`;
+			return tried;
 		}
 	}
-	return base;
+	return null;
+}
+
+/** apiHost with the version segment swapped via the URL API — never a
+ *  string-replace (the version string could appear elsewhere in the host). */
+function withVersion(apiHost: string, k: number): string {
+	try {
+		const u = new URL(apiHost);
+		u.pathname = `/v${k}`;
+		return `${u.origin}${u.pathname}`;
+	} catch {
+		return apiHost;
+	}
+}
+
+/** The gate-excluded 404 note (bare / non-integer / subdomain version hosts). */
+function walkSkipNote(authCtx: ProbeAuthCtx, domain: string): string {
+	const miss = missNote(authCtx, domain);
+	return `${miss ? miss + " — " : ""}404 — no version walk (apiHost has no /vN prefix)`;
 }
 
 async function fetchOne(
@@ -322,6 +422,7 @@ async function fetchOne(
 	accept: string,
 	authCtx: ProbeAuthCtx,
 	domain: string,
+	prefix = "",
 ): Promise<ProbeResult> {
 	// Inject secret query params below the agent-supplied params map, then
 	// redact the surfaced URL so the real key never reaches the transcript.
@@ -401,17 +502,26 @@ async function fetchOne(
 		status: res.status,
 		ok: true,
 		shape,
-		draft: emitDraft(path, params, shape),
+		draft: emitDraft(path, params, shape, prefix),
 		raw,
 		...(miss ? { note: miss } : {}),
 	};
 }
+
+const RESERVED_PARAM_NAMES = new Set(["domain", "apiHost", "path", "auth"]);
 
 function buildUrl(
 	apiHost: string,
 	path: string,
 	params: Record<string, unknown>,
 ): string {
+	for (const key of Object.keys(params)) {
+		if (RESERVED_PARAM_NAMES.has(key)) {
+			throw new Error(
+				`"${key}" is a top-level param, not a query param — move it out of params`,
+			);
+		}
+	}
 	// Substitute {token} → params[token] BEFORE building the URL, so a
 	// templated path fetches real values instead of literal %7Bowner%7D.
 	// Missing tokens stay literal ({token}) — fine for probing an unfilled path.
@@ -435,7 +545,11 @@ export function emitDraft(
 	path: string,
 	params: Record<string, unknown>,
 	shape: ShapeSummary,
+	prefix = "",
 ): string {
+	// Idempotent: only prepend when the path doesn't already carry the prefix,
+	// so `apiHost: .../v3` + `path: /v3/items` doesn't become `/v3/v3/items`.
+	if (prefix && !path.startsWith(prefix)) path = prefix + path;
 	const name = suggestName(path);
 	const pathTokens = extractPathTokens(path);
 	const queryParamKeys = Object.keys(params).filter(
@@ -465,6 +579,11 @@ export function emitDraft(
 		lines.push(`      pageParam: ${pageParam}`);
 		lines.push(`      pageSizeParam: ${pageSizeParam}`);
 		lines.push("      pageSize: 30");
+	}
+	if (shape.suggestedVia === "restGet" && shape.suggestedItemsPath !== "") {
+		lines.push(
+			"    # array response with no pagination markers — if the API documents paging, prefer paginate; otherwise use restGet.",
+		);
 	}
 	if (queryParamKeys.length > 0) {
 		lines.push("    params:");
@@ -504,26 +623,45 @@ export const apiProbeTool = defineTool({
 		"a draft YAML operation block to paste into a guide recipe. " +
 		"It only suggests — it never writes the guide, and the operation must still be " +
 		"traceable to your plan source. Pre-guide: pass apiHost + path. After a guide " +
-		"exists, use api-guide({domain}) to get apiHost, or api-fetch to execute.",
+		"exists, use api-guide({domain}) to get apiHost, or api-fetch to execute. " +
+		"Before the first auth-gated probe, call with listSecrets: true (and no domain) " +
+		"to list every provisioned store domain and which already have guides — pass that " +
+		"domain up front so a store-miss round-trip is avoided. " +
+		"Before authoring a new guide, read the provider's docs index (llms.txt, " +
+		"openapi.json at the API root, or the docs page) to learn the current API " +
+		"version — then probe that version explicitly. Do not default the version from " +
+		"memory: a stale version that still returns 200 is not detected as old (the " +
+		"backward walk only fires on 404). The probe recovers an over-claimed version " +
+		"but cannot detect a stale-but-working one.",
 
 	parameters: Type.Object({
-		apiHost: Type.String({
-			description:
-				"Base URL including version prefix, e.g. 'https://api.github.com'.",
-		}),
-		path: Type.String({
-			description:
-				"Templated path, e.g. '/repos/{owner}/{repo}/branches'. {token} placeholders are filled from params.",
-		}),
+		apiHost: Type.Optional(
+			Type.String({
+				description:
+					"Base URL including the API's current version prefix, e.g. " +
+					"'https://api.example.com/v3'. Find the latest version before probing: " +
+					"check the API's docs page, openapi.json/swagger.json at the API root, " +
+					"or llms.txt. Supply the newest version you can verify — if it 404s, the " +
+					"probe walks backward (v3→v2→v1) to recover. Do not default to /v1 from " +
+					"memory; a stale version that still returns 200 is not detected as old.",
+			}),
+		),
+		path: Type.Optional(
+			Type.String({
+				description:
+					"Templated path, e.g. '/repos/{owner}/{repo}/branches'. {token} placeholders are filled from params.",
+			}),
+		),
 		params: Type.Optional(
 			Type.Record(Type.String(), Type.Unknown(), {
 				description:
 					"Values for {token} path placeholders and query parameters. Path tokens are not re-declared as query params.",
 			}),
 		),
-		tryPrefixes: Type.Optional(
+		walkVersions: Type.Optional(
 			Type.Boolean({
-				description: "On 404, auto-try /v1/ and /v2/ prefixes. Default true.",
+				description:
+					"On 404, walk the apiHost version backward (vN→v1) to find the highest live version. Default true.",
 			}),
 		),
 		auth: Type.Optional(
@@ -535,6 +673,8 @@ export const apiProbeTool = defineTool({
 				{
 					description:
 						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Injection fields only — values resolve from the secrets store and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
+					// Tight: unknown keys (e.g. a stray `domain`) are rejected before execute runs.
+					additionalProperties: false,
 				},
 			),
 		),
@@ -547,17 +687,21 @@ export const apiProbeTool = defineTool({
 		listSecrets: Type.Optional(
 			Type.Boolean({
 				description:
-					"Learn mode only: list provisioned secret names for the domain (no fetch). Names only, never values. Refused under /api on.",
+					"Names only, never values. Two modes: with no domain/apiHost, lists " +
+					"provisioned-but-guideless store domains (authoring-bootstrap view — " +
+					"call this empty first to see what's provisioned); with a domain (or " +
+					"apiHost), lists provisioned secret names for that domain, with " +
+					"declared-vs-stored gaps when a guide exists.",
 			}),
 		),
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-		const { apiHost, path, tryPrefixes, auth, domain, listSecrets } = params as {
-			apiHost: string;
-			path: string;
+		const { apiHost, path, walkVersions, auth, domain, listSecrets } = params as {
+			apiHost?: string;
+			path?: string;
 			params?: Record<string, unknown>;
-			tryPrefixes?: boolean;
+			walkVersions?: boolean;
 			auth?: {
 				secretRefs?: Record<string, string>;
 				secretQueryRefs?: Record<string, string>;
@@ -594,6 +738,11 @@ export const apiProbeTool = defineTool({
 			if (target !== undefined) {
 				const secrets = listDomainSecrets(target);
 				blocks.push(formatSecretsResult(secrets));
+				// apiHost/domain present means a real probe was suppressed by
+				// listSecrets: true — say so, or the author silently loses the probe.
+				blocks.push(
+					"probe suppressed because listSecrets: true — drop listSecrets to probe.",
+				);
 				return {
 					content: [{ type: "text", text: blocks.join("\n\n") }],
 					details: unscoped === undefined ? { secrets } : { secrets, unscoped },
@@ -605,9 +754,26 @@ export const apiProbeTool = defineTool({
 			};
 		}
 
+		// apiHost/path are optional in the schema so the bare listSecrets call is
+		// legal; every real probe needs both. The schema no longer enforces it,
+		// so guard here before falling through to probe(). (The listSecrets:true
+		// branch always returns above, so this guard only sees non-listSecrets.)
+		if (!apiHost || !path) {
+			return {
+				content: [
+					{
+						type: "text",
+						text:
+							"api-probe: apiHost and path are required unless listSecrets: true.",
+					},
+				],
+				details: { error: "missing_apiHost_or_path" },
+			};
+		}
+
 		try {
 			const result = await probe(apiHost, path, userParams ?? {}, {
-				...(tryPrefixes === undefined ? {} : { tryPrefixes }),
+				...(walkVersions === undefined ? {} : { walkVersions }),
 				...(auth ? { auth } : {}),
 				...(domain ? { domain } : {}),
 			});
@@ -652,20 +818,41 @@ export const apiProbeTool = defineTool({
 		if (d?.error) {
 			return new Text(theme.fg("error", `⚠ ${contentText(result, "?")}`), 0, 0);
 		}
+		// Secrets first: the domain-scoped view is the primary output and is present
+		// for both the per-domain and combined (apiHost-no-domain) shapes. Only the
+		// bare call (no domain/apiHost) carries unscoped alone.
 		const secrets = d?.secrets as
 			| { domain: string; provisioned: string[] }
 			| undefined;
 		if (secrets) {
-			let text = theme.fg("accent", theme.bold("🔑 api-probe"));
-			text += ` — secrets for ${secrets.domain} · ${secrets.provisioned.length} provisioned`;
-			const content = contentText(result);
-			if (expanded) {
-				text += "\n";
-				text = renderExpandedText(text, theme, content, 1000);
-			} else {
-				text += `\n${theme.fg("muted", `${content.length} chars (expand)`)}`;
-			}
-			return new Text(text, 0, 0);
+			const text = theme.fg("accent", theme.bold("🔑 api-probe"));
+			return new Text(
+				appendFooter(
+					text +
+						` — secrets for ${secrets.domain} · ${secrets.provisioned.length} provisioned`,
+					expanded,
+					result,
+					theme,
+					1000,
+				),
+				0,
+				0,
+			);
+		}
+		const unscoped = d?.unscoped as string[] | undefined;
+		if (unscoped) {
+			const text = theme.fg("accent", theme.bold("🔑 api-probe"));
+			return new Text(
+				appendFooter(
+					text + ` — ${unscoped.length} unscoped domains`,
+					expanded,
+					result,
+					theme,
+					1000,
+				),
+				0,
+				0,
+			);
 		}
 		const status = d?.status as number | undefined;
 		const shape = d?.shape as ShapeSummary | null | undefined;
@@ -679,15 +866,7 @@ export const apiProbeTool = defineTool({
 					: "";
 			text += `\n${theme.fg("dim", `${shape.suggestedVia}${items}`)}`;
 		}
-
-		const content = contentText(result);
-		if (expanded) {
-			text += "\n";
-			text = renderExpandedText(text, theme, content, 1000);
-		} else {
-			text += `\n${theme.fg("muted", `${content.length} chars (expand)`)}`;
-		}
-		return new Text(text, 0, 0);
+		return new Text(appendFooter(text, expanded, result, theme, 1000), 0, 0);
 	},
 });
 
@@ -695,7 +874,12 @@ export const apiProbeTool = defineTool({
 // Result formatting
 // ═══════════════════════════════════════════════════════════════════
 
-function formatProbeResult(r: ProbeResult): string {
+const DOCS_NUDGE = [
+	"probe validates shape only — it cannot enumerate endpoints.",
+	"For a full guide, read the API's docs index (e.g. llms.txt or per-endpoint .md).",
+];
+
+export function formatProbeResult(r: ProbeResult): string {
 	const lines: string[] = [];
 	lines.push(`🔬 api-probe — ${r.url}`);
 	lines.push(`  status: ${r.status}`);
@@ -723,6 +907,8 @@ function formatProbeResult(r: ProbeResult): string {
 		lines.push(`  raw (truncated):`);
 		lines.push(r.raw);
 	}
+	lines.push("");
+	lines.push(`  ${DOCS_NUDGE.join("\n  ")}`);
 	return lines.join("\n");
 }
 

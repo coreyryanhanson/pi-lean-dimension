@@ -28,9 +28,10 @@ import {
 	type SecretResolution,
 	type QuerySecretResolution,
 } from "../core/auth.js";
+import { provisionedDomainsSuffix } from "../core/secrets-store.js";
 import { formatGuideListings } from "../core/parse-api-guide.js";
 import { spillResponse, formatSpillNotice } from "../core/response-spill.js";
-import { contentText, renderExpandedText } from "./utils.js";
+import { appendFooter, contentText } from "./utils.js";
 import type { Operation, ApiGuide } from "../core/api-guide-types.js";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -230,16 +231,13 @@ export const apiFetchTool = defineTool({
 				...(queryRes.absentRequired ?? []),
 			];
 			if (missingRequired.length > 0) {
+				const text =
+					`🔑 ${guide.shortName} requires a secret not yet provisioned: ` +
+					`${missingRequired.join(", ")}.\n` +
+					`Run /api secrets ${storeDomain} to provision it, then retry this call.` +
+					provisionedDomainsSuffix(storeDomain);
 				return {
-					content: [
-						{
-							type: "text",
-							text:
-								`🔑 ${guide.shortName} requires a secret not yet provisioned: ` +
-								`${missingRequired.join(", ")}.\n` +
-								`Run /api secrets ${storeDomain} to provision it, then retry this call.`,
-						},
-					],
+					content: [{ type: "text", text }],
 					details: {
 						error: "auth_required_not_provisioned",
 						domain,
@@ -458,14 +456,7 @@ export const apiFetchTool = defineTool({
 			text += `\n📦 ${totalFetched} item(s) fetched`;
 		}
 
-		const content = contentText(result);
-		if (expanded) {
-			text += "\n";
-			text = renderExpandedText(text, theme, content, 1000);
-		} else {
-			text += `\n${theme.fg("muted", `${content.length} chars (expand)`)}`;
-		}
-		return new Text(text, 0, 0);
+		return new Text(appendFooter(text, expanded, result, theme, 1000), 0, 0);
 	},
 });
 

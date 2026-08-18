@@ -15,7 +15,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { contentText, renderExpandedText } from "./utils.js";
+import { appendFooter, contentText } from "./utils.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseApiGuide } from "../core/parse-api-guide.js";
@@ -101,8 +101,7 @@ export const apiLearnTool = defineTool({
 	description:
 		"Save or update an API guide for a domain. " +
 		"The recipe is written in YAML frontmatter format. " +
-		"Call with no params to see the worked example recipe and field reference. " +
-		"Requires /api learn to be active.",
+		"Call with no params to see the worked example recipe and field reference.",
 
 	parameters: Type.Object({
 		domain: Type.Optional(
@@ -146,6 +145,7 @@ export const apiLearnTool = defineTool({
 				`  \`operations[].path\`   — path starting with /`,
 				"",
 				"## Key defaults",
+				`  \`apiHost\`      — base URL. \`path\` is always resolved relative to it — \`joinUrl\` strips a leading \`/\`, so \`/items\` + \`apiHost: https://host/v3\` → \`https://host/v3/items\`. Keep the version in \`apiHost\` (worked-example style) or leave it bare with the version in each \`path\` — pick one per guide; both at once doubles the segment (\`/v3/v3/items\` → 404)`,
 				`  \`auth\`           — omitted → kind: none`,
 				`  \`verified\`       — omitted → today's date`,
 				`  \`docs\`           — optional API documentation URL (http/https); omitted → no docs line`,
@@ -165,6 +165,13 @@ export const apiLearnTool = defineTool({
 				`  \`passthrough\` — true → forward undeclared caller params onto the query string`,
 				`  \`parse\`       — op-level responseShape override (format/charset) for this operation`,
 				"",
+				"## Executor semantics",
+				"  Pagination:",
+				`    \`pagination.base\` seeds the page param for offset-limit/page styles (caller value wins, then \`base\`, then the param \`default\`); use \`base: 1\` for 1-based offset APIs`,
+				`    The page-size param is a real knob: caller value → op param \`default\` → \`pagination.pageSize\` → 50`,
+				"  Auth:",
+				`    \`requires\` = fail-closed if unprovisioned; \`optional\` = proceeds unauthenticated if absent. Both are names only — values live in the secrets store.`,
+				"",
 				"Call api-learn({domain: '...', recipe: '...'}) to save the guide, then api-fetch({domain, operation: '...'}) to verify.",
 			].join("\n");
 			return {
@@ -181,10 +188,7 @@ export const apiLearnTool = defineTool({
 				content: [
 					{
 						type: "text",
-						text:
-							err instanceof Error
-								? err.message
-								: `Invalid domain '${domain}'.`,
+						text: err instanceof Error ? err.message : `Invalid domain '${domain}'.`,
 					},
 				],
 				details: { error: "invalid_domain", domain },
@@ -280,8 +284,7 @@ export const apiLearnTool = defineTool({
 		const opCount = parsed.guide.operations.length;
 		const opNames = parsed.guide.operations.map((o) => o.name).join(", ");
 
-		const warningBlock =
-			warnings.length > 0 ? warnings.join("\n") + "\n\n" : "";
+		const warningBlock = warnings.length > 0 ? warnings.join("\n") + "\n\n" : "";
 
 		return {
 			content: [
@@ -295,7 +298,8 @@ export const apiLearnTool = defineTool({
 						`  Verified: ${parsed.guide.verified}\n` +
 						`\n` +
 						warningBlock +
-						`Call api-fetch({domain: "${domain}", operation: "${parsed.guide.operations[0]!.name}"}) to verify.`,
+						`Call api-fetch({domain: "${domain}", operation: "${parsed.guide.operations[0]!.name}"}) to verify.` +
+						`\n⚠ Direct edits to guide.md are ignored until the next api-learn save (per-session cache). Re-run api-learn to apply changes.`,
 				},
 			],
 			details: {
@@ -336,13 +340,6 @@ export const apiLearnTool = defineTool({
 			text = theme.fg("dim", "📝 Worked example");
 		}
 
-		const content = contentText(result);
-		if (expanded) {
-			text += "\n";
-			text = renderExpandedText(text, theme, content, 600);
-		} else {
-			text += `\n${theme.fg("muted", `${content.length} chars (expand)`)}`;
-		}
-		return new Text(text, 0, 0);
+		return new Text(appendFooter(text, expanded, result, theme, 600), 0, 0);
 	},
 });

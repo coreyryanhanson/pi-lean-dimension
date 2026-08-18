@@ -985,6 +985,72 @@ body
 		expect(p.totalCountPath).toBeUndefined();
 	});
 
+	// #5 — `base` seeds the page param for the seeding styles; accepted and
+	// projected when present, absent stays undefined, non-finite rejected.
+	it("parses base for an offset-limit pagination", () => {
+		const raw = `---
+domains: [x.com]
+apiHost: https://api.x.com
+operations:
+  - name: list
+    via: paginate
+    path: /search
+    pagination:
+      style: offset-limit
+      pageParam: start
+      pageSizeParam: limit
+      itemsPath: results
+      base: 1
+---
+body
+`;
+		const guide = expectOk(raw);
+		const p = guide.operations[0]!.pagination!;
+		expect(p.base).toBe(1);
+	});
+
+	it("leaves base undefined when absent", () => {
+		const raw = `---
+domains: [x.com]
+apiHost: https://api.x.com
+operations:
+  - name: list
+    via: paginate
+    path: /search
+    pagination:
+      style: offset-limit
+      pageParam: start
+      pageSizeParam: limit
+      itemsPath: results
+---
+body
+`;
+		const guide = expectOk(raw);
+		const p = guide.operations[0]!.pagination!;
+		expect(p.base).toBeUndefined();
+	});
+
+	it("rejects a non-integer base", () => {
+		const raw = `---
+domains: [x.com]
+apiHost: https://api.x.com
+operations:
+  - name: list
+    via: paginate
+    path: /search
+    pagination:
+      style: offset-limit
+      pageParam: start
+      pageSizeParam: limit
+      itemsPath: results
+      base: 1.5
+---
+body
+`;
+		const err = expectErr(raw);
+		expect(err.field).toBe("operations[0].pagination.base");
+	});
+
 	it("rejects an empty totalCountPath", () => {
 		const raw = `---
 domains: [x.com]

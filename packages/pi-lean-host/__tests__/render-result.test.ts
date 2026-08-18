@@ -1,7 +1,7 @@
 /**
  * renderResult tests for the host api tools.
  *
- * Step 5 of the api-render-result plan: pure synchronous assertions on
+ * renderResult tests: pure synchronous assertions on
  * the `renderResult` method of api-fetch / api-guide / api-learn. No
  * `execute` is invoked — we feed synthetic result objects directly.
  *
@@ -13,6 +13,7 @@ import { describe, it, expect } from "vitest";
 import { apiFetchTool } from "../tools/api-fetch.js";
 import { apiGuideTool } from "../tools/api-guide.js";
 import { apiLearnTool } from "../tools/api-learn.js";
+import { apiProbeTool } from "../tools/api-probe.js";
 
 // ── Mock theme ───────────────────────────────────────────────────
 // fg(style, text) -> text  (drop styling so assertions see raw text).
@@ -349,5 +350,80 @@ describe("api-learn renderResult", () => {
 		expect(out.text).not.toContain("Saved guide");
 		expect(out.text).not.toContain("Worked example");
 		expect(out.text).not.toContain("(expand)");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// api-probe
+// ═══════════════════════════════════════════════════════════════════
+
+describe("api-probe renderResult", () => {
+	it("bare listSecrets (unscoped only) renders an unscoped-domains summary", () => {
+		const out = renderResult(
+			apiProbeTool,
+			{
+				content: [
+					{
+						type: "text",
+						text:
+							"🗂 unscoped store domains (provisioned, no guide)\n- api.github.com",
+					},
+				],
+				details: { unscoped: ["api.github.com"] },
+			},
+			{ expanded: false },
+		);
+		expect(out.text).toContain("🔑 api-probe");
+		expect(out.text).toContain("1 unscoped domains");
+		expect(out.text).toContain("(expand)");
+		// Must not fall through to the generic probe renderer.
+		expect(out.text).not.toContain("🔬");
+	});
+
+	it("per-domain listSecrets renders provisioned-secrets summary", () => {
+		const out = renderResult(
+			apiProbeTool,
+			{
+				content: [""],
+				details: {
+					secrets: { domain: "api.github.com", provisioned: ["token"] },
+				},
+			},
+			{ expanded: false },
+		);
+		expect(out.text).toContain("🔑 api-probe");
+		expect(out.text).toContain("secrets for api.github.com · 1 provisioned");
+	});
+
+	it("combined (apiHost, no domain) prioritizes the secrets summary", () => {
+		const out = renderResult(
+			apiProbeTool,
+			{
+				content: [""],
+				details: {
+					secrets: { domain: "api.github.com", provisioned: ["token"] },
+					unscoped: ["api.github.com", "api.gitlab.com"],
+				},
+			},
+			{ expanded: false },
+		);
+		expect(out.text).toContain("🔑 api-probe");
+		expect(out.text).toContain("secrets for api.github.com · 1 provisioned");
+		// The unscoped count must not replace the secrets summary.
+		expect(out.text).not.toContain("unscoped domains");
+	});
+
+	it("real probe renders 🔬 generic summary, not the 🔑 key glyph", () => {
+		const out = renderResult(
+			apiProbeTool,
+			{
+				content: [""],
+				details: { url: "https://api.github.com", status: 200 },
+			},
+			{ expanded: false },
+		);
+		expect(out.text).toContain("🔬 api-probe");
+		// New unscoped/secrets branches must not hijack the generic path.
+		expect(out.text).not.toContain("🔑");
 	});
 });

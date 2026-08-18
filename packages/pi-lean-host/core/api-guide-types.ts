@@ -89,6 +89,14 @@ export interface PaginationConfig {
 	pageSizeParam?: string;
 	/** offset-limit / page: requested page size. */
 	pageSize?: number;
+	/**
+	 * offset-limit / page: the seed value for the page param — where this
+	 * API's index starts (e.g. `base: 1` for 1-based offset APIs). Used only
+	 * as the pagination seed; the seed precedence is caller value → `base` →
+	 * the param `default` → the style fallback (0 for offset-limit, 1 for
+	 * page). Accepted but never read by the non-seeding styles.
+	 */
+	base?: number;
 	/** nextLink: JSON path to the next-page URL. */
 	nextLinkPath?: string;
 	/** cursor: the cursor query param name. */

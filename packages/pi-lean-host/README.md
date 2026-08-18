@@ -263,7 +263,11 @@ real transport (same UA, charset, 429-retry, ETag cache as `api-fetch` — the
 sanctioned way to reach even WAF'd hosts), summarizes the JSON shape, suggests
 `via` / `itemsPath` / pagination style, echoes a representative record id, and
 emits a **draft YAML operation block** to paste straight into a recipe. On 404
-it auto-tries `/v1` and `/v2` prefixes (disable with `tryPrefixes=false`).
+it walks the `apiHost` version backward (e.g. `/v3` → `/v2` → `/v1`) to recover
+an over-claimed version; a draft carries the version prefix that was actually
+fetched (disable with `walkVersions=false`). A stale version that still
+returns 200 is not detected as old — read the provider's docs to supply the
+newest version up front.
 
 `api-probe` only **suggests** — it never writes the guide. The operation must
 still be traceable to your plan source (the API docs or a working curl
@@ -510,7 +514,7 @@ patterns the recipe library (caritas) pressure-tested:
 
 | Style | What it sends | Key fields |
 |-------|---------------|------------|
-| `offset-limit` | absolute offset + page size | `pageParam`, `pageSizeParam`, `pageSize`, `itemsPath` |
+| `offset-limit` | absolute offset + page size | `pageParam`, `pageSizeParam`, `pageSize`, `base`, `itemsPath` |
 | `page` | 1-based page number + page size | same fields as `offset-limit` (semantic difference only) |
 | `nextLink` | follows a URL from the response body | `nextLinkPath`, `itemsPath` — the **only** SSRF-guarded path (see [Security](#security--scope)) |
 | `cursor` | echoes an opaque cursor query param | `cursorParam`, `cursorPath`, `itemsPath` |

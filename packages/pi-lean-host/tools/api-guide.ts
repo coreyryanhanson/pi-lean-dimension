@@ -13,7 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { contentText, renderExpandedText } from "./utils.js";
+import { appendFooter, contentText } from "./utils.js";
 import {
 	loadAllGuides,
 	findGuidesByDomain,
@@ -171,14 +171,7 @@ export const apiGuideTool = defineTool({
 			text += ` — ${guideCount} guides`;
 		}
 
-		const content = contentText(result);
-		if (expanded) {
-			text += "\n";
-			text = renderExpandedText(text, theme, content, 800);
-		} else {
-			text += `\n${theme.fg("muted", `${content.length} chars (expand)`)}`;
-		}
-		return new Text(text, 0, 0);
+		return new Text(appendFooter(text, expanded, result, theme, 800), 0, 0);
 	},
 });
 
@@ -252,6 +245,7 @@ function renderGuideDetail(
 				if (pagCfg.pageParam) bits.push(pagCfg.pageParam);
 				if (pagCfg.pageSizeParam)
 					bits.push(`${pagCfg.pageSizeParam}=${pagCfg.pageSize ?? 50}`);
+				if (pagCfg.base !== undefined) bits.push(`base=${pagCfg.base}`);
 				lines.push(`    pagination: ${bits.join(" ")}`);
 			}
 		}

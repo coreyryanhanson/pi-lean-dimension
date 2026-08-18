@@ -8,7 +8,7 @@
  */
 
 import type { AuthConfig, ApiGuide } from "./api-guide-types.js";
-import { readSecret } from "./secrets-store.js";
+import { readSecret, provisionedDomainsSuffix } from "./secrets-store.js";
 
 /**
  * The canonical secret-store key for a guide: its primary browsable domain.
@@ -121,7 +121,8 @@ export function authStatusLine(
 	if (absentRequired.length > 0) {
 		return (
 			`🔑 auth: requires ${absentRequired.join(", ")} — not provisioned. ` +
-			`Run /api secrets ${domain}.`
+			`Run /api secrets ${domain}.` +
+			provisionedDomainsSuffix(domain)
 		);
 	}
 	// The optional dimension only exists for optional names actually referenced
