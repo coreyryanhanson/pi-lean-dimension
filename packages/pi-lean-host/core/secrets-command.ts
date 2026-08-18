@@ -147,6 +147,26 @@ function declaredSecretNames(domain: string): string[] {
 	return [...names].sort((a, b) => a.localeCompare(b));
 }
 
+/**
+ * The guide-declared header prefix for a secret name, or undefined. When a
+ * guide maps a secret to a prefixed header, the store must hold the raw
+ * credential (the guide adds the prefix at fetch time) — surface that in the
+ * provisioning prompt so the user pastes the raw token, not the prefixed form.
+ */
+function declaredPrefixHint(domain: string, name: string): string | undefined {
+	for (const { guide } of findGuidesByDomain(domain)) {
+		if (guide.auth.kind !== "static-key") continue;
+		for (const [headerName, secretName] of Object.entries(
+			guide.auth.secretRefs ?? {},
+		)) {
+			if (secretName === name && guide.auth.headerPrefixes?.[headerName]) {
+				return guide.auth.headerPrefixes[headerName];
+			}
+		}
+	}
+	return undefined;
+}
+
 // ── Assisted entry: /api secrets <domain> ──────────────────────────
 
 async function assistedEntry(
@@ -213,9 +233,12 @@ async function promptAndStore(
 	domain: string,
 	name: string,
 ): Promise<void> {
+	const prefix = declaredPrefixHint(domain, name);
 	const value = await ctx.ui.input(
-		`Value for '${domain}'.${name}`,
-		"paste the secret value",
+		prefix
+			? `Value for '${domain}'.${name} (raw token — the guide adds \`${prefix}\`)`
+			: `Value for '${domain}'.${name}`,
+		prefix ? "paste the raw token" : "paste the secret value",
 	);
 	if (value === undefined) return; // cancelled
 	const trimmed = value.trim();

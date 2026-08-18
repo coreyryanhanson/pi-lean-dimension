@@ -52,6 +52,14 @@ export interface AuthConfig {
 	 */
 	secretRefs?: Record<string, string>;
 	/**
+	 * static-key only: maps request header name → prefix string prepended to
+	 * the stored secret value before it is sent. The store holds the raw
+	 * credential; the guide declares how it is presented (e.g.
+	 * `Authorization: "Bearer "`). Absent = verbatim value. Every key must
+	 * also appear in `secretRefs` (parser-enforced).
+	 */
+	headerPrefixes?: Record<string, string>;
+	/**
 	 * static-key only: maps query param name → secret store name.
 	 * Values are injected below the agent-supplied params map at fetch time
 	 * (never into it) and redacted from every surfaced URL. A param name

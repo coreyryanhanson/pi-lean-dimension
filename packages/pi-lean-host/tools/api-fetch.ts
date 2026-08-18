@@ -248,7 +248,9 @@ export const apiFetchTool = defineTool({
 				};
 			}
 		}
-		const headerValues = headerRes ? Object.values(headerRes.headers) : [];
+		const headerValues = headerRes
+			? [...Object.values(headerRes.headers), ...headerRes.rawHeaderValues]
+			: [];
 		const queryValues = queryRes ? Object.values(queryRes.queryParams) : [];
 		const authOpts: {
 			authHeaders?: Record<string, string>;

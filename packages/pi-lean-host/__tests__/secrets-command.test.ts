@@ -195,6 +195,49 @@ body
 			rmSync(guidesDir, { recursive: true, force: true });
 		}
 	});
+
+	it("guide-declared headerPrefixes → prompt hints the raw token", async () => {
+		const guidesDir = mkdtempSync(join(tmpdir(), "secrets-cmd-prefix-guides-"));
+		try {
+			mkdirSync(join(guidesDir, "d.example"), { recursive: true });
+			writeFileSync(
+				join(guidesDir, "d.example", "guide.md"),
+				`---
+domains: [d.example]
+apiHost: https://d.example
+auth:
+  kind: static-key
+  secretRefs:
+    Authorization: api_key
+  headerPrefixes:
+    Authorization: "Bearer "
+  requires:
+    - api_key
+operations:
+  - name: ping
+    via: restGet
+    path: /ping
+    accept: json
+---
+body
+`,
+			);
+			setUserGuidesDir(guidesDir);
+			invalidateCache();
+
+			const ctx = mockCtx();
+			ctx.ui.input.mockResolvedValueOnce("ghp_rawtoken");
+			await handleSecretsSubcommand("d.example", ctx);
+
+			expect(ctx.ui.input).toHaveBeenCalledTimes(1);
+			const prompt = ctx.ui.input.mock.calls[0]?.[0] as string;
+			expect(prompt).toContain("raw token");
+			expect(prompt).toContain("Bearer ");
+			expect(readSecret("d.example", "api_key")).toBe("ghp_rawtoken");
+		} finally {
+			rmSync(guidesDir, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("/api secrets <domain> <name> --delete", () => {

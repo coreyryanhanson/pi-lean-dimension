@@ -394,6 +394,43 @@ function validateResponseShape(
 // Auth
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * Validate a `Record<string, string>` auth sub-field (headers, secretRefs,
+ * secretQueryRefs, headerPrefixes). Returns the parsed record, or a ParseError
+ * when `raw` is absent/null/non-object/an array, or a value fails `valueOk`
+ * (default: any string; `headerPrefixes` passes a non-empty check).
+ */
+function parseStringRecord(
+	raw: unknown,
+	file: string | undefined,
+	fm: string,
+	field: string,
+	expect: string,
+	valueOk: (v: unknown) => boolean = (v) => typeof v === "string",
+): Record<string, string> | ParseApiGuideResult {
+	if (
+		raw === null ||
+		typeof raw !== "object" ||
+		Array.isArray(raw) ||
+		Object.values(raw).some((v) => !valueOk(v))
+	) {
+		return fail(file, field, expect, describeFound(raw), {
+			snippet: snippetFor(fm, "auth"),
+		});
+	}
+	return raw as Record<string, string>;
+}
+
+/** `true` when a `parseStringRecord` / validator result is a ParseError. */
+function isParseErr<T>(v: T | ParseApiGuideResult): v is ParseApiGuideResult {
+	return (
+		typeof v === "object" &&
+		v !== null &&
+		"ok" in v &&
+		(v as { ok: unknown }).ok === false
+	);
+}
+
 function validateAuth(
 	raw: unknown,
 	file: string | undefined,
@@ -436,66 +473,46 @@ function validateAuth(
 	}
 	// Parse optional headers (per-kind extra headers, e.g. X-Api-Key for DEMO_KEY).
 	let headers: Record<string, string> | undefined;
-	const headersRaw = a["headers"];
-	if (headersRaw !== undefined) {
-		if (
-			headersRaw === null ||
-			typeof headersRaw !== "object" ||
-			Array.isArray(headersRaw) ||
-			Object.values(headersRaw).some((v) => typeof v !== "string")
-		) {
-			return fail(
-				file,
-				"auth.headers",
-				"a YAML mapping of string → string",
-				describeFound(headersRaw),
-			);
-		}
-		headers = headersRaw as Record<string, string>;
+	if (a["headers"] !== undefined) {
+		const hr = parseStringRecord(
+			a["headers"],
+			file,
+			fm,
+			"auth.headers",
+			"a YAML mapping of string → string",
+		);
+		if (isParseErr(hr)) return hr;
+		headers = hr;
 	}
 
 	// static-key reference fields (secretRefs/requires/optional).
 	let secretRefs: Record<string, string> | undefined;
-	const refsRaw = a["secretRefs"];
-	if (refsRaw !== undefined) {
-		if (
-			refsRaw === null ||
-			typeof refsRaw !== "object" ||
-			Array.isArray(refsRaw) ||
-			Object.values(refsRaw).some((v) => typeof v !== "string")
-		) {
-			return fail(
-				file,
-				"auth.secretRefs",
-				"a YAML mapping of header name → secret name",
-				describeFound(refsRaw),
-				{ snippet: snippetFor(fm, "auth") },
-			);
-		}
-		secretRefs = refsRaw as Record<string, string>;
+	if (a["secretRefs"] !== undefined) {
+		const sr = parseStringRecord(
+			a["secretRefs"],
+			file,
+			fm,
+			"auth.secretRefs",
+			"a YAML mapping of header name → secret name",
+		);
+		if (isParseErr(sr)) return sr;
+		secretRefs = sr;
 	}
 
 	// Query-param secrets: maps query param name → secret store name.
 	// Same shape + consistency rules as secretRefs; the collision-with-op-`params`
 	// rule is enforced in parseApiGuide (auth is parsed before operations).
 	let secretQueryRefs: Record<string, string> | undefined;
-	const sqrRaw = a["secretQueryRefs"];
-	if (sqrRaw !== undefined) {
-		if (
-			sqrRaw === null ||
-			typeof sqrRaw !== "object" ||
-			Array.isArray(sqrRaw) ||
-			Object.values(sqrRaw).some((v) => typeof v !== "string")
-		) {
-			return fail(
-				file,
-				"auth.secretQueryRefs",
-				"a YAML mapping of query param name → secret name",
-				describeFound(sqrRaw),
-				{ snippet: snippetFor(fm, "auth") },
-			);
-		}
-		secretQueryRefs = sqrRaw as Record<string, string>;
+	if (a["secretQueryRefs"] !== undefined) {
+		const qr = parseStringRecord(
+			a["secretQueryRefs"],
+			file,
+			fm,
+			"auth.secretQueryRefs",
+			"a YAML mapping of query param name → secret name",
+		);
+		if (isParseErr(qr)) return qr;
+		secretQueryRefs = qr;
 	}
 
 	let requires: string[] | undefined;
@@ -536,10 +553,28 @@ function validateAuth(
 		optional = optRaw as string[];
 	}
 
+	// static-key header prefixes: header name → non-empty prefix string
+	// prepended to the resolved secret value. Same mapping shape as secretRefs;
+	// every key must also be a secretRefs header (a prefix for a non-secret
+	// header is a mistake).
+	let headerPrefixes: Record<string, string> | undefined;
+	if (a["headerPrefixes"] !== undefined) {
+		const hp = parseStringRecord(
+			a["headerPrefixes"],
+			file,
+			fm,
+			"auth.headerPrefixes",
+			"a YAML mapping of header name → non-empty prefix string",
+			(v) => typeof v === "string" && v.length > 0,
+		);
+		if (isParseErr(hp)) return hp;
+		headerPrefixes = hp;
+	}
+
 	// Fail-closed consistency rules.
 	if (
 		kindRaw === "none" &&
-		(secretRefs || secretQueryRefs || requires || optional)
+		(secretRefs || secretQueryRefs || requires || optional || headerPrefixes)
 	) {
 		return fail(
 			file,
@@ -617,10 +652,30 @@ function validateAuth(
 		const r4 = checkDeclared(optional ?? [], "auth.optional");
 		if (r4) return r4;
 	}
+	// Every headerPrefixes key must target a secret-injected header; a prefix
+	// for a header that isn't in secretRefs is a mistake. Checked outside the
+	// secretRefs/requires/optional block so a headerPrefixes-only guide fails
+	// too (the prefix would otherwise be dead at fetch time silently).
+	if (headerPrefixes) {
+		for (const headerName of Object.keys(headerPrefixes)) {
+			if (!secretRefs || !(headerName in secretRefs)) {
+				return fail(
+					file,
+					`auth.headerPrefixes.${headerName}`,
+					"a header name present in auth.secretRefs",
+					`"${headerName}" is not a secret-injected header`,
+					{
+						fix: `Add "${headerName}" to auth.secretRefs (or remove the prefix).`,
+					},
+				);
+			}
+		}
+	}
 
 	const result: AuthConfig = { kind: kindRaw as AuthKind };
 	if (headers !== undefined) result.headers = headers;
 	if (secretRefs !== undefined) result.secretRefs = secretRefs;
+	if (headerPrefixes !== undefined) result.headerPrefixes = headerPrefixes;
 	if (secretQueryRefs !== undefined) result.secretQueryRefs = secretQueryRefs;
 	if (requires !== undefined) result.requires = requires;
 	if (optional !== undefined) result.optional = optional;

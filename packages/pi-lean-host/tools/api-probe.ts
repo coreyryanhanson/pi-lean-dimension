@@ -89,6 +89,12 @@ export interface ProbeOptions {
 	auth?: {
 		secretRefs?: Record<string, string>;
 		secretQueryRefs?: Record<string, string>;
+		/**
+		 * Header name → prefix prepended to the resolved secret value (e.g.
+		 * `Authorization: "Bearer "`). The store holds the raw token; the prefix
+		 * is API knowledge. Keys must be present in `secretRefs`.
+		 */
+		headerPrefixes?: Record<string, string>;
 	};
 	/** Domain for secrets-store lookups; defaults to apiHost's hostname. */
 	domain?: string;
@@ -250,6 +256,7 @@ function resolveProbeAuth(
 		{
 			kind: "static-key",
 			...(auth!.secretRefs ? { secretRefs: auth!.secretRefs } : {}),
+			...(auth!.headerPrefixes ? { headerPrefixes: auth!.headerPrefixes } : {}),
 		},
 		domain,
 	);
@@ -270,6 +277,7 @@ function resolveProbeAuth(
 		secretQueryParamNames: new Set(Object.keys(queryRes.queryParams)),
 		secretValues: [
 			...Object.values(headerRes.headers),
+			...headerRes.rawHeaderValues,
 			...Object.values(queryRes.queryParams),
 		],
 		missingNames: [
@@ -666,6 +674,7 @@ export const apiProbeTool = defineTool({
 				{
 					secretRefs: Type.Optional(Type.Record(Type.String(), Type.String())),
 					secretQueryRefs: Type.Optional(Type.Record(Type.String(), Type.String())),
+					headerPrefixes: Type.Optional(Type.Record(Type.String(), Type.String())),
 				},
 				{
 					description:

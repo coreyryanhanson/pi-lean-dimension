@@ -362,6 +362,7 @@ laws (capped at 1000 by the op override). The `boe-datefmt` helper formats the
 | `auth.kind` | guide | `none` | `none` \| `static-key` (store-backed header/query secrets). `oauth2` is a declared-but-unrealized seam (rejected at parse) |
 | `auth.headers` | guide | — | literal extra headers merged into every request (e.g. X-Api-Key: DEMO_KEY) — **literal values only**, never the path for real credentials |
 | `auth.secretRefs` | guide | — | `Record<headerName, secretName>` — store-backed header injection (`static-key`) |
+| `auth.headerPrefixes` | guide | — | `Record<headerName, prefix>` — prefix prepended to a secretRefs header value, e.g. `Authorization: "Bearer "` (store holds the raw credential) |
 | `auth.secretQueryRefs` | guide | — | `Record<paramName, secretName>` — store-backed query-param injection (`static-key`) |
 | `auth.requires` | guide | — | secret names the guide hard-requires; absent → `api-fetch` fails closed before the request |
 | `auth.optional` | guide | — | secret names used if present, skipped if absent (e.g. GitHub rate-limit token) |
@@ -790,10 +791,18 @@ auth:
   requires: [api_key]            # absent → api-fetch fails closed
 # secretQueryRefs: { apikey: api_key }  # query-param injection (?key=)
 # optional: [api_key]            # used if present, skipped if absent
+# headerPrefixes:                # headerName → prefix for scheme-style headers
+#   Authorization: "Bearer "       #   (GitHub/GitLab) — the store holds the
+#                                 #   RAW token; the guide adds the prefix
 ```
 
 - **`auth.secretRefs`** — `Record<headerName, secretName>`: inject the store
   value into that request header.
+- **`auth.headerPrefixes`** — `Record<headerName, prefix>`: prepend a scheme
+  prefix to the resolved value for that header (e.g. `Authorization: "Bearer "`).
+  The store holds the **raw credential**; the guide declares how it is
+  presented. Absent = verbatim value. Every key must also be a `secretRefs`
+  header (parser-enforced).
 - **`auth.secretQueryRefs`** — `Record<paramName, secretName>`: inject the
   store value as that query param.
 - **`auth.requires`** — names the guide **hard-requires**. If one is absent

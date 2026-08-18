@@ -111,7 +111,10 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   in `paginate` only. Agent-supplied `restGet` URLs are **not** guarded (the
   agent has bash).
 - **Static-key auth** (`core/auth.ts` + schema): `auth.kind: static-key`
-  realizes `secretRefs` (`Record<headerName, secretName>`) and
+  realizes `secretRefs` (`Record<headerName, secretName>`),
+  `headerPrefixes` (`Record<headerName, prefix>` — store holds the raw
+  credential; the guide declares the scheme prefix e.g. `Authorization: "Bearer "`,
+  applied at resolution time; every key must be a `secretRefs` header, parser-enforced),
   `secretQueryRefs` (`Record<paramName, secretName>`, A2),
   `requires: string[]`, `optional: string[]` (parser-enforced: ref values and
   `requires ∪ optional` must coincide — every ref targets a declared secret

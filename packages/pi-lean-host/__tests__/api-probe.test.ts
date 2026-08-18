@@ -545,6 +545,59 @@ describe("probe redirect handling (live localhost)", () => {
 			).toBe(false);
 		});
 	});
+
+	describe("probe inline auth.headerPrefixes", () => {
+		it("prepends the prefix on the wire and scrubs the raw token from the body", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-prefix-secrets-"));
+			const prevDir = getSecretsDir();
+			setSecretsDir(tmp);
+			writeSecret("api.example.com", "api_key", "RAW-TOKEN");
+			let sawAuthHeader = "";
+			const server = http.createServer((req, res) => {
+				sawAuthHeader = (req.headers["x-api-key"] ?? "") as string;
+				// Echo the BARE token in the body — the probe scrub must redact it.
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1, echoed: "RAW-TOKEN" }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/packs",
+					{},
+					{
+						domain: "api.example.com",
+						auth: {
+							secretRefs: { "x-api-key": "api_key" },
+							headerPrefixes: { "x-api-key": "Bearer " },
+						},
+					},
+				);
+				expect(sawAuthHeader).toBe("Bearer RAW-TOKEN");
+				expect(result.raw).not.toContain("RAW-TOKEN");
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setSecretsDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("auth schema accepts a headerPrefixes injection block", () => {
+			const schema = apiProbeTool.parameters;
+			expect(
+				Check(schema, {
+					apiHost: "https://api.example.com",
+					path: "/items",
+					auth: {
+						secretRefs: { "x-api-key": "k" },
+						headerPrefixes: { "x-api-key": "Bearer " },
+					},
+				}),
+			).toBe(true);
+		});
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════

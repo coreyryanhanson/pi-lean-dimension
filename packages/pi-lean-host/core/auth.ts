@@ -24,8 +24,13 @@ export function canonicalStoreDomain(guide: ApiGuide): string {
 
 /** Result of resolving a guide's `auth.secretRefs` against the store. */
 export interface SecretResolution {
-	/** headerName → resolved value, ready to merge into the request. */
+	/** headerName → resolved value (with prefix applied), ready to merge into the request. */
 	headers: Record<string, string>;
+	/**
+	 * The unprefixed (raw) resolved secret values, for the output-channel
+	 * audit — a server may echo the bare token, not just the prefixed form.
+	 */
+	rawHeaderValues: string[];
 	/** secret names referenced by `requires` that are absent from the store. */
 	absentRequired: string[];
 	/** secret names referenced by `optional` that are absent from the store. */
@@ -38,6 +43,7 @@ export function resolveSecretHeaders(
 	domain: string,
 ): SecretResolution {
 	const headers: Record<string, string> = {};
+	const rawHeaderValues: string[] = [];
 	const absentRequired: string[] = [];
 	const absentOptional: string[] = [];
 	const requires = auth.requires ?? [];
@@ -47,10 +53,11 @@ export function resolveSecretHeaders(
 			if (requires.includes(secretName)) absentRequired.push(secretName);
 			else absentOptional.push(secretName);
 		} else {
-			headers[headerName] = value;
+			headers[headerName] = (auth.headerPrefixes?.[headerName] ?? "") + value;
+			rawHeaderValues.push(value);
 		}
 	}
-	return { headers, absentRequired, absentOptional };
+	return { headers, rawHeaderValues, absentRequired, absentOptional };
 }
 
 /** Result of resolving a guide's `auth.secretQueryRefs` against the store. */

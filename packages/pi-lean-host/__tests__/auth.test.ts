@@ -67,6 +67,14 @@ async function startAuthServer(): Promise<{
 				res.writeHead(401, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ error: `invalid key: ${xkey}` }));
 				return;
+			case "/api/auth-401-bare":
+				// 401 body that echoes the BARE token (no scheme prefix) — the audit
+				// must scrub the raw value, not just the prefixed "Bearer …" form.
+				res.writeHead(401, { "Content-Type": "application/json" });
+				res.end(
+					JSON.stringify({ error: `invalid key: ${xkey.replace(/^Bearer /, "")}` }),
+				);
+				return;
 			case "/api/auth-header-echo":
 				// Response header that echoes the auth secret — api-fetch must scrub it.
 				res.writeHead(200, {
@@ -336,6 +344,66 @@ body
 			expect(r.error.fix).toContain("not yet implemented");
 		}
 	});
+
+	it("headerPrefixes with a secretRefs key parses and is preserved", () => {
+		const r = parseAuthBlock(`  kind: static-key
+  secretRefs:
+    Authorization: api_key
+  headerPrefixes:
+    Authorization: "Bearer "
+  optional:
+    - api_key`);
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.guide.auth.headerPrefixes).toEqual({ Authorization: "Bearer " });
+		}
+	});
+
+	it("headerPrefixes key not in secretRefs → ParseError with fix", () => {
+		const r = parseAuthBlock(`  kind: static-key
+  secretRefs:
+    x-api-key: api_key
+  headerPrefixes:
+    X-Other: "Bearer "
+  requires:
+    - api_key`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.headerPrefixes.X-Other");
+			expect(r.error.fix).toContain("X-Other");
+		}
+	});
+
+	it("headerPrefixes with kind: none → ParseError (kind↔field consistency)", () => {
+		const r = parseAuthBlock(`  kind: none
+  headerPrefixes:
+    x-api-key: "Bearer "`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error.field).toBe("auth.secretRefs");
+	});
+
+	it("headerPrefixes with an empty prefix value → ParseError", () => {
+		const r = parseAuthBlock(`  kind: static-key
+  secretRefs:
+    x-api-key: api_key
+  headerPrefixes:
+    x-api-key: ""
+  requires:
+    - api_key`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error.field).toBe("auth.headerPrefixes");
+	});
+
+	it("headerPrefixes with no secretRefs → ParseError (dead prefix)", () => {
+		const r = parseAuthBlock(`  kind: static-key
+  headerPrefixes:
+    Authorization: "Bearer "`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.headerPrefixes.Authorization");
+			expect(r.error.fix).toContain("Authorization");
+		}
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -365,6 +433,25 @@ describe("resolveSecretHeaders (store-backed injection)", () => {
 		expect(res.headers).toEqual({});
 		expect(res.absentRequired).toEqual(["api_key"]);
 		expect(res.absentOptional).toEqual(["rate_key"]);
+	});
+
+	it("headerPrefixes prepends to the header and surfaces the raw value", () => {
+		const prefixed = {
+			kind: "static-key" as const,
+			secretRefs: { Authorization: "api_key" },
+			headerPrefixes: { Authorization: "Bearer " },
+			requires: ["api_key"],
+		};
+		const res = resolveSecretHeaders(prefixed, "auth.test");
+		expect(res.headers["Authorization"]).toBe("Bearer S3CRET-VALUE");
+		expect(res.rawHeaderValues).toEqual(["S3CRET-VALUE"]);
+	});
+
+	it("absent headerPrefixes → verbatim value (existing behavior)", () => {
+		const res = resolveSecretHeaders(auth, "auth.test");
+		expect(res.headers["x-api-key"]).toBe("S3CRET-VALUE");
+		// raw values still surfaced (identical when no prefix)
+		expect(res.rawHeaderValues).toContain("S3CRET-VALUE");
 	});
 });
 
@@ -399,6 +486,23 @@ describe("output-channel audit — 401 body scrub", () => {
 			expect.fail("should have thrown");
 		} catch (e) {
 			expect((e as Error).message.split("S3CRET").length).toBe(1); // absent
+		}
+	});
+
+	it("a bare-token echo is scrubbed when the prefixed form is also known", async () => {
+		// headerPrefixes in play: the wire carries "Bearer TOKEN", but a server
+		// may echo the bare token. Both forms must be redacted.
+		const guide = makeAuthGuide(server.url);
+		try {
+			await restGet(server.url, makeOp("/api/auth-401-bare"), {}, guide, {
+				authHeaders: { "x-api-key": "Bearer S3CRET" },
+				secretValues: ["Bearer S3CRET", "S3CRET"],
+			});
+			expect.fail("should have thrown");
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			expect(msg).not.toContain("S3CRET");
+			expect(msg).toContain("Unexpected HTTP 401");
 		}
 	});
 });
@@ -657,6 +761,44 @@ describe("api-fetch authenticated execution", () => {
 			expect(String(v)).not.toContain("S3CRET-VALUE");
 		}
 		expect(contentText(res)).toContain("auth: ok");
+	});
+
+	it("headerPrefixes: prefix on the wire, raw token scrubbed from a bare-token 401", async () => {
+		// Guide declares the Bearer prefix; the store holds the raw token. The
+		// server echoes the bare token — the union scrub must redact it.
+		writeGuideForDomain(
+			"auth.prefix",
+			`---
+domains: [auth.prefix]
+apiHost: ${server.url}
+auth:
+  kind: static-key
+  secretRefs:
+    x-api-key: api_key
+  headerPrefixes:
+    x-api-key: "Bearer "
+  requires:
+    - api_key
+operations:
+  - name: boomBare
+    via: restGet
+    path: /api/auth-401-bare
+    accept: json
+---
+body
+`,
+		);
+		writeSecret("auth.prefix", "api_key", "S3CRET-VALUE");
+		const res = await apiFetchTool.execute(
+			"t",
+			{ domain: "auth.prefix", operation: "boomBare" },
+			undefined,
+			undefined,
+			undefined as any,
+		);
+		const text = contentText(res);
+		expect(text).not.toContain("S3CRET-VALUE");
+		expect(text).toContain("Unexpected HTTP 401");
 	});
 
 	it("optional-only (no requires) missing secret → proceeds unauthenticated", async () => {
