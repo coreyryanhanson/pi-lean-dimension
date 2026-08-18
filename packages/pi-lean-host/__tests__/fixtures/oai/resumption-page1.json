@@ -1,0 +1,5 @@
+{
+  "status": 200,
+  "body": "{\"OAI-PMH\":{\"responseDate\":\"2026-07-25T12:00:00Z\",\"request\":{\"@_verb\":\"ListRecords\",\"@_metadataPrefix\":\"oai_dc\"},\"ListRecords\":{\"record\":[{\"id\":1,\"title\":\"Record 1\"},{\"id\":2,\"title\":\"Record 2\"}],\"resumptionToken\":{\"#text\":\"abc123\",\"@_completeListSize\":\"1915\",\"@_cursor\":\"0\"}}}}",
+  "_note": "First page of OAI-PMH ListRecords (XML→JSON via fast-xml-parser). resumptionToken carries #text + @_completeListSize/@_cursor attributes."
+}

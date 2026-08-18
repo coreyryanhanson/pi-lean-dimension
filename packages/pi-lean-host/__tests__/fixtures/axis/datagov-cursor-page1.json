@@ -1,0 +1,5 @@
+{
+  "status": 200,
+  "body": "{\"after\":\"Wzg3LjExMTQ5LDIsImZhZjhlMTEwLTA4YWYtNDcxNC1hMmVlLTUxZDk5MTkyZjY3NCJd\",\"results\":[{\"_score\":89.093254,\"description\":\"Amount of water produced by month and by source and the water delivered by type of use and by month for every Public Water System (PWS) reporting. Public Water Systems submit their annual inventory in\"},{\"_score\":87.11149,\"description\":\"<p>Public Water Systems (PWS) submit their annual reports with rate information using the Electronic Annual Report (EAR) submission process on the Drinking Water Information Clearinghouse (DRINC) port\"}]}",
+  "_note": "Captured from https://api.gsa.gov/technology/datagov/v4/search?q=water&per_page=2 on 2026-07-20. Trimmed to fields read by paginate: results[]._score/description, after"
+}

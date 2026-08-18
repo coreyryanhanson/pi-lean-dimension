@@ -160,7 +160,7 @@ packages/*/LICENSE
 packages/pi-lean-dimension/README.md
 
 # Scratch files (not part of the active branch)
-/.pi-subagents/
+/**/.pi-subagents/
 
 # Contributed backend templates: ignore everything under contributed/ by
 # default; whitelist only the shipped (tracked) camoufox set. Any user-

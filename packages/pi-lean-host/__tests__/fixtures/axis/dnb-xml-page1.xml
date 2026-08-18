@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<searchRetrieveResponse xmlns="http://www.loc.gov/zing/srw/"><version>1.1</version><numberOfRecords>1915</numberOfRecords><records><record><recordSchema>oai_dc</recordSchema><recordPacking>xml</recordPacking><recordData><dc xmlns:dnb="http://d-nb.de/standards/dnbterms" xmlns="http://www.openarchives.org/OAI/2.0/oai_dc/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>Informationen / Wasser- und Schifffahrtsdirektion Mitte / Wasser- und Schifffahrtsverwaltung des Bundes</dc:title>
+  <dc:creator>Deutschland / Wasser- und Schifffahrtsdirektion Mitte</dc:creator>
+  <dc:creator>Deutschland / Wasser- und Schifffahrtsverwaltung</dc:creator>
+  <dc:publisher>Hannover : Wasser- und Schifffahrtsdirektion Mitte</dc:publisher>
+  <dc:date>1994-2012</dc:date>
+  <dc:language>ger</dc:language>
+  <dc:identifier xsi:type="dnb:IDN">019584393</dc:identifier>
+  <dc:identifier xsi:type="dnb:ZDBID">1465172-5</dc:identifier>
+  <dc:subject>624 Ingenieurbau und Umwelttechnik</dc:subject>
+  <dc:subject>380 Handel, Kommunikation, Verkehr</dc:subject>
+  <dc:relation>http://d-nb.info/1066347999</dc:relation>
+</dc></recordData><recordPosition>1</recordPosition></record><record><recordSchema>oai_dc</recordSchema><recordPacking>xml</recordPacking><recordData><dc xmlns:dnb="http://d-nb.de/standards/dnbterms" xmlns="http://www.openarchives.org/OAI/2.0/oai_dc/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>Mitteilungsblatt Bürger- u. Ortschaftsamt Emmendingen-Wasser / Ortschaft Wasser</dc:title>
+  <dc:creator>Emmendingen-Wasser</dc:creator>
+  <dc:publisher>Emmendingen-Wasser : Ortschaftsverwaltung</dc:publisher>
+  <dc:date>1975-2002</dc:date>
+  <dc:language>ger</dc:language>
+  <dc:identifier xsi:type="dnb:IDN">012117633</dc:identifier>
+  <dc:identifier xsi:type="dnb:ZDBID">381485-3</dc:identifier>
+  <dc:relation>http://d-nb.info/012117641</dc:relation>
+</dc></recordData><recordPosition>2</recordPosition></record></records><nextRecordPosition>3</nextRecordPosition><echoedSearchRetrieveRequest><version>1.1</version><query>Wasser</query><xQuery xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/><maximumRecords>2</maximumRecords><recordSchema>oai_dc</recordSchema></echoedSearchRetrieveRequest></searchRetrieveResponse>

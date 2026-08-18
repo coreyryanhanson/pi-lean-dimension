@@ -1,0 +1,5 @@
+{
+  "status": 200,
+  "body": "{\"results\":[],\"pagination\":{}}",
+  "_note": "Placeholder — test only fetches 1 page (no gatherAll)."
+}

@@ -1,0 +1,5 @@
+{
+  "status": 200,
+  "body": "{\"OAI-PMH\":{\"responseDate\":\"2026-07-25T12:00:01Z\",\"request\":{\"@_verb\":\"ListRecords\",\"@_resumptionToken\":\"abc123\"},\"ListRecords\":{\"record\":[{\"id\":3,\"title\":\"Record 3\"},{\"id\":4,\"title\":\"Record 4\"}],\"resumptionToken\":{\"#text\":\"def456\",\"@_completeListSize\":\"1915\",\"@_cursor\":\"2\"}}}}",
+  "_note": "Second page — resumptionToken echoed, fresh token returned with updated cursor."
+}

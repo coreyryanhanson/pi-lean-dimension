@@ -1,0 +1,5 @@
+{
+  "status": 200,
+  "body": "{\"pagination\":{\"next\":\"https://www.loc.gov/search/?c=2&fo=json&q=earthquake&sp=2\"},\"results\":[{\"title\":\"Earthquake victims\",\"id\":\"http://www.loc.gov/item/2009631286/\",\"url\":\"https://www.loc.gov/item/2009631286/\"},{\"title\":\"[Earthquakes in Taiwan]\",\"id\":\"http://www.loc.gov/item/97681316/\",\"url\":\"https://www.loc.gov/item/97681316/\"}]}",
+  "_note": "Captured from https://www.loc.gov/search/?fo=json&q=earthquake&c=2 on 2026-07-20. Trimmed to fields read by paginate: results[].title/id/url, pagination.next"
+}

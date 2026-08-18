@@ -1,0 +1,5 @@
+{
+  "status": 200,
+  "body": "{\"continue\":{\"rccontinue\":\"20260115000000|0\",\"continue\":\"||\"},\"query\":{\"recentchanges\":[{\"title\":\"Page A\",\"type\":\"edit\"},{\"title\":\"Page B\",\"type\":\"new\"}]}}",
+  "_note": "First page of MediaWiki list=recentchanges with continue params."
+}
