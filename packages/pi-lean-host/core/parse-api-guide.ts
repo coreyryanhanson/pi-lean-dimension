@@ -1347,9 +1347,7 @@ function formatOpSummary(ops: { name: string }[]): string {
  * shortName + op names only (the status-quo shape), so un-backfilled
  * guides render consistently with those that have a one-line summary.
  */
-export function formatGuideListings(
-	entries: { guide: ApiGuide; dirName: string }[],
-): string {
+export function formatGuideListings(entries: { guide: ApiGuide }[]): string {
 	const lines: string[] = [];
 	for (const { guide } of entries) {
 		lines.push(

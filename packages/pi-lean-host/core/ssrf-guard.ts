@@ -29,6 +29,11 @@ const INTERNAL_IP_REGEX =
 
 // ─── Guard ───────────────────────────────────────────────────────────
 
+/**
+ * `reason` is hostname-only by design — never embed the full URL here:
+ * query secrets live in URLs, and transport surfaces `reason` verbatim
+ * (SsrfBlockedError, transport.ts).
+ */
 export function ssrfGuard(
 	rawUrl: string,
 ): { ok: true } | { ok: false; reason: string } {

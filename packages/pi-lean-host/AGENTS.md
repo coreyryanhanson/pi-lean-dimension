@@ -187,7 +187,9 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `parse-api-guide`, `all-guides-parse` (every bundled `guide.md` parses
   cleanly), `tools`, `helpers`, `local-helpers`, `api-toggle`,
    `secrets-store`, `secrets-command`, `auth` (static-key schema/injection/
-  output-channel audit/SSRF/footer structural tests),
+  output-channel audit/SSRF/footer structural tests), `query-secrets`
+  (query-param-secret injection, output-channel redaction, api-probe inline
+  auth / `listSecrets`),
   `portal-projection`, `render-result`, `response-spill`, `host-only-boundary`,
   `axis-units` (nextLink/XML/cursor/ETag via mocked transport; fixtures in
   `__tests__/fixtures/axis/`), `axis-coverage` (regression tripwire: the

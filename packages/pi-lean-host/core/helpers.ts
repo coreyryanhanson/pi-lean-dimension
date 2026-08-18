@@ -353,7 +353,6 @@ function fetchWithOpts(
 	fallbackCharset?: string,
 	secretHeaderNames?: Set<string>,
 	hasQuerySecret?: boolean,
-	secretQueryParamNames?: Set<string>,
 ): ReturnType<typeof fetchUrl> {
 	const opts: FetchOptions = { headers: { accept, ...extraHeaders } };
 	if (fresh !== undefined) opts.fresh = fresh;
@@ -361,7 +360,6 @@ function fetchWithOpts(
 	if (fallbackCharset) opts.fallbackCharset = fallbackCharset;
 	if (secretHeaderNames) opts.secretHeaderNames = secretHeaderNames;
 	if (hasQuerySecret) opts.hasQuerySecret = true;
-	if (secretQueryParamNames) opts.secretQueryParamNames = secretQueryParamNames;
 	return fetchUrl(url, opts);
 }
 
@@ -497,7 +495,6 @@ export async function restGet(
 		shape.charset,
 		opts?.secretHeaderNames,
 		hasQuerySecret,
-		opts?.secretQueryParamNames,
 	);
 
 	// 7. Check HTTP status before attempting to parse the body.
@@ -743,7 +740,6 @@ export async function paginate(
 			shape.charset,
 			opts?.secretHeaderNames,
 			hasQuerySecret,
-			opts?.secretQueryParamNames,
 		);
 
 		// Check HTTP status before attempting to parse. Secret values scrubbed

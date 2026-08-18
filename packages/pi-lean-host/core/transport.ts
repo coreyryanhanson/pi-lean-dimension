@@ -65,13 +65,6 @@ export interface FetchOptions {
 	 * private (never cached / served from cache) and redirects are guarded.
 	 */
 	hasQuerySecret?: boolean;
-	/**
-	 * Names of store-injected query-param secrets in the request URL. Used by
-	 * `fetchUrl` to redact the URL in any error message it surfaces, so a raw
-	 * query secret can never leak into agent context via a transport error
-	 * (output-channel audit).
-	 */
-	secretQueryParamNames?: Set<string>;
 	/** Charset to decode the body with when the response's Content-Type
 	 *  header omits one. Honors a guide's `responseShape.charset` for APIs
 	 *  that serve e.g. ISO-8859-1 bytes without a charset parameter. An
@@ -452,7 +445,7 @@ export async function fetchUrl(
 
 	const startTime = Date.now();
 
-	for (let attempt = 0; attempt <= maxRetries; attempt++) {
+	for (let attempt = 0; ; attempt++) {
 		const remaining = timeout - (Date.now() - startTime);
 		if (remaining <= 0) throw new Error("Request timeout");
 
@@ -543,11 +536,4 @@ export async function fetchUrl(
 			throw e;
 		}
 	}
-
-	// Output-channel audit: never embed the raw request URL in a surfaced
-	// message. If a query secret is in play, redact it so the fallthrough
-	// (or any future reachable variant) can't leak the key.
-	throw new Error(
-		`Failed to fetch ${redactSecretParams(url, opts?.secretQueryParamNames)} after ${maxRetries + 1} attempts`,
-	);
 }
