@@ -324,8 +324,7 @@ function buildUrl(
  * This dispatch is a deliberate seam, not dead code: keeping the field +
  * dispatch now makes the future keyed-auth build additive (a new `kind`
  * behind this same `if`/`throw`) rather than a retrofit of every `restGet`/
- * `paginate` call site and the guide schema. See
- * `docs/design/api-secrets-roadmap.md` for the build-out plan.
+ * `paginate` call site and the guide schema.
  */
 function checkAuth(auth: ApiGuide["auth"]): void {
 	const kind = auth.kind;
