@@ -520,8 +520,8 @@ Op-collide guide.
 
 /** An invalid recipe (missing leading / in path). */
 const INVALID_RECIPE = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: get
     via: restGet

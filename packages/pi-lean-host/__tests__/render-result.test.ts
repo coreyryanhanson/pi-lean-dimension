@@ -231,7 +231,8 @@ describe("api-guide renderResult", () => {
 	});
 
 	it("expanded catalog shows the catalog body, no expand hint", () => {
-		const content = "API guide catalog:\n  - BOE (boe.es)\n  - X (x.com)";
+		const content =
+			"API guide catalog:\n  - BOE (boe.es)\n  - Example (example.com)";
 		const out = renderResult(
 			apiGuideTool,
 			{

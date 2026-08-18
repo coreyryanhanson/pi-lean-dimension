@@ -233,8 +233,8 @@ function writeGuideForDomain(domain: string, yaml: string): void {
 describe("auth schema / parser", () => {
 	function parseAuthBlock(authYaml: string) {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 auth:
 ${authYaml}
 operations:
@@ -244,7 +244,7 @@ operations:
 ---
 body
 `;
-		return parseApiGuide(raw, { filename: "x.com" });
+		return parseApiGuide(raw, { filename: "example.com" });
 	}
 
 	it("static-key with consistent secretRefs/requires parses", () => {

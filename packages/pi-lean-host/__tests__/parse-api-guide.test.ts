@@ -420,8 +420,8 @@ operations:
 describe("parseApiGuide — malformed recipes", () => {
 	it("missing leading / in path → ParseError on operations[N].path", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: get
     via: restGet
@@ -438,8 +438,8 @@ body
 
 	it("unknown via → ParseError on operations[N].via", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: get
     via: restPost
@@ -455,8 +455,8 @@ body
 
 	it("unknown auth.kind → ParseError on auth.kind", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 auth:
   kind: basic
 operations:
@@ -474,8 +474,8 @@ body
 
 	it("paginate op with no pagination → ParseError", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: paginate
@@ -490,8 +490,8 @@ body
 
 	it("paginate op rescued by top-level pagination", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 pagination:
   style: offset-limit
   pageParam: page
@@ -512,7 +512,7 @@ body
 
 	it("missing apiHost → ParseError on apiHost", () => {
 		const raw = `---
-domains: [x.com]
+domains: [example.com]
 operations:
   - name: get
     via: restGet
@@ -526,7 +526,7 @@ body
 
 	it("missing domains → ParseError on domains", () => {
 		const raw = `---
-apiHost: https://api.x.com
+apiHost: https://api.example.com
 operations:
   - name: get
     via: restGet
@@ -540,8 +540,8 @@ body
 
 	it("missing operations → ParseError on operations", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 ---
 body
 `;
@@ -551,8 +551,8 @@ body
 
 	it("empty operations array → ParseError on operations", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations: []
 ---
 body
@@ -564,8 +564,8 @@ body
 
 	it("path param with required/default in params → ParseError", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: get
     via: restGet
@@ -585,8 +585,8 @@ body
 
 	it("accepts a docs-only description on a path param token", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: get
     via: restGet
@@ -607,8 +607,8 @@ body
 
 	it("accepts multiple path-param descriptions alongside query params", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: get
     via: restGet
@@ -635,8 +635,8 @@ body
 
 	it("rejects a non-string path-param description", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: get
     via: restGet
@@ -654,8 +654,8 @@ body
 
 	it("rejects a path param token carrying a non-description key", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: get
     via: restGet
@@ -673,8 +673,8 @@ body
 
 	it("rejects a bare path param token (null spec)", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: get
     via: restGet
@@ -692,8 +692,8 @@ body
 
 	it("rejects an explicitly empty path-param mapping", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: get
     via: restGet
@@ -711,8 +711,8 @@ body
 
 	it("captures param description hints", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: restGet
@@ -737,8 +737,8 @@ body
 
 	it("rejects a non-string param description", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: restGet
@@ -756,8 +756,8 @@ body
 
 	it("accepts passthrough: true on an operation", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: query
     via: restGet
@@ -777,8 +777,8 @@ body
 
 	it("rejects a non-boolean passthrough", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: query
     via: restGet
@@ -794,8 +794,8 @@ body
 
 	it("accepts transform: true on an operation", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: queryCdx
     via: restGet
@@ -810,8 +810,8 @@ body
 
 	it("rejects a non-boolean transform (string)", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://x.com
+domains: [example.com]
+apiHost: https://example.com
 operations:
   - name: queryCdx
     via: restGet
@@ -827,8 +827,8 @@ body
 
 	it("rejects a non-boolean transform (number)", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://x.com
+domains: [example.com]
+apiHost: https://example.com
 operations:
   - name: queryCdx
     via: restGet
@@ -854,7 +854,7 @@ body
 
 	it("invalid YAML → ParseError on frontmatter", () => {
 		const raw = `---
-domains: [x.com
+domains: [example.com
   bad: yaml: :
 ---
 body
@@ -866,8 +866,8 @@ body
 
 	it("apiHost without scheme → ParseError", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: api.x.com/v1
+domains: [example.com]
+apiHost: api.example.com/v1
 operations:
   - name: get
     via: restGet
@@ -877,13 +877,13 @@ body
 `;
 		const err = expectErr(raw);
 		expect(err.field).toBe("apiHost");
-		expect(err.found).toContain("api.x.com/v1");
+		expect(err.found).toContain("api.example.com/v1");
 	});
 
 	it("unknown pagination style → ParseError", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 pagination:
   style: infinite
   itemsPath: data
@@ -900,8 +900,8 @@ body
 
 	it("offset-limit missing pageParam → ParseError", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 pagination:
   style: offset-limit
   pageSizeParam: limit
@@ -919,8 +919,8 @@ body
 
 	it("valid resumptionToken config parses", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: paginate
@@ -944,8 +944,8 @@ body
 	// resumptionToken); absent → field is simply not set.
 	it("parses totalCountPath for an offset-limit pagination (any style)", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: paginate
@@ -966,8 +966,8 @@ body
 
 	it("parses totalCountPath without setting it when absent", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: paginate
@@ -989,8 +989,8 @@ body
 	// projected when present, absent stays undefined, non-finite rejected.
 	it("parses base for an offset-limit pagination", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: paginate
@@ -1011,8 +1011,8 @@ body
 
 	it("leaves base undefined when absent", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: paginate
@@ -1032,8 +1032,8 @@ body
 
 	it("rejects a non-integer base", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: paginate
@@ -1053,8 +1053,8 @@ body
 
 	it("rejects an empty totalCountPath", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: paginate
@@ -1074,8 +1074,8 @@ body
 
 	it("resumptionToken missing tokenParam → ParseError", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: paginate
@@ -1093,8 +1093,8 @@ body
 
 	it("resumptionToken missing tokenPath → ParseError", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: paginate
@@ -1112,8 +1112,8 @@ body
 
 	it("valid tokenBag config parses", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: paginate
@@ -1138,8 +1138,8 @@ body
 
 	it("tokenBag missing continuationParams → ParseError", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: paginate
@@ -1156,8 +1156,8 @@ body
 
 	it("tokenBag with empty continuationParams → ParseError", () => {
 		const raw = `---
-domains: [x.com]
-apiHost: https://api.x.com
+domains: [example.com]
+apiHost: https://api.example.com
 operations:
   - name: list
     via: paginate
