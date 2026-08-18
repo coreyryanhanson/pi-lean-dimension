@@ -28,7 +28,8 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { getUserGuidesDir, assertSafeDomain } from "./guide-store.js";
+import { getUserGuidesDir } from "./guide-store.js";
+import { assertSafeDomain } from "./path-template.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Session-level state

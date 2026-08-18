@@ -8,6 +8,7 @@
  * - `extractPathTokens` — pull `{token}` names out of a templated path.
  * - `fillPathTemplate` — substitute `{token}` placeholders from params.
  * - `joinUrl` — join a base host + path + query string into a full URL.
+ * - `assertSafeDomain` — reject a domain that could escape the guides dir.
  */
 
 /** Extract `{token}` names from a templated path, in order, deduplicated. */
@@ -46,5 +47,33 @@ export function joinUrl(baseHost: string, path: string, query: string): string {
 	const base = baseHost.endsWith("/") ? baseHost : `${baseHost}/`;
 	const rel = path.startsWith("/") ? path.slice(1) : path;
 	const url = new URL(rel, base).toString();
-	return query ? `${url}${url.includes("?") ? "&" : "?"}${query}` : url;
+	if (!query) return url;
+	const sep = url.includes("?") ? "&" : "?";
+	return `${url}${sep}${query}`;
+}
+
+/**
+ * Reject a `domain` that could escape the guides dir via path traversal.
+ *
+ * Domains are used in `join(guidesDir, domain, ...)` for helper lookups
+ * and guide writes. A user-typed `/api helpers ../../foo` or an agent
+ * `api-learn({domain: "../x"})` must not read or write outside the
+ * guides dir. Returns the domain if safe, throws otherwise.
+ */
+export function assertSafeDomain(domain: string): string {
+	// A safe domain is a single path segment: no separators, no NUL,
+	// and not "."/".." (self/parent). Anything else is a literal dir name.
+	if (
+		domain.length === 0 ||
+		domain.includes("/") ||
+		domain.includes("\\") ||
+		domain.includes("\0") ||
+		domain === "." ||
+		domain === ".."
+	) {
+		throw new Error(
+			`Invalid domain '${domain}': must be a single path segment with no '/', '\\', or '..'.`,
+		);
+	}
+	return domain;
 }

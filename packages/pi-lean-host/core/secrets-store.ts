@@ -26,7 +26,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { assertSafeDomain } from "./guide-store.js";
+import { assertSafeDomain } from "./path-template.js";
 
 /** A secret store: read/write/delete one name, list domain/name indexes. */
 export interface SecretStore {

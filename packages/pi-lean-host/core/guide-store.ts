@@ -50,32 +50,6 @@ export function invalidateCache(): void {
 	_cache = null;
 }
 
-/**
- * Reject a `domain` that could escape the guides dir via path traversal.
- *
- * Domains are used in `join(guidesDir, domain, ...)` for helper lookups
- * and guide writes. A user-typed `/api helpers ../../foo` or an agent
- * `api-learn({domain: "../x"})` must not read or write outside the
- * guides dir. Returns the domain if safe, throws otherwise.
- */
-export function assertSafeDomain(domain: string): string {
-	// A safe domain is a single path segment: no separators, no NUL,
-	// and not "."/".." (self/parent). Anything else is a literal dir name.
-	if (
-		domain.length === 0 ||
-		domain.includes("/") ||
-		domain.includes("\\") ||
-		domain.includes("\0") ||
-		domain === "." ||
-		domain === ".."
-	) {
-		throw new Error(
-			`Invalid domain '${domain}': must be a single path segment with no '/', '\\', or '..'.`,
-		);
-	}
-	return domain;
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // Internal load
 // ═══════════════════════════════════════════════════════════════════

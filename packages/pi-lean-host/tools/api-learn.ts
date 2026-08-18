@@ -22,9 +22,9 @@ import { parseApiGuide } from "../core/parse-api-guide.js";
 import {
 	invalidateCache,
 	getUserGuidesDir,
-	assertSafeDomain,
 	findGuidesByDomain,
 } from "../core/guide-store.js";
+import { assertSafeDomain } from "../core/path-template.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Worked example
