@@ -25,6 +25,7 @@ import {
 	resolveSecretQueryParams,
 	authStatusLine,
 	canonicalStoreDomain,
+	containsSecret,
 	type SecretResolution,
 	type QuerySecretResolution,
 } from "../core/auth.js";
@@ -634,7 +635,7 @@ function scrubSecretHeaders(
 	if (!secretValues || secretValues.length === 0) return headers;
 	const out: Record<string, string> = {};
 	for (const [k, v] of Object.entries(headers)) {
-		if (secretValues.some((s) => s && v.includes(s))) continue;
+		if (containsSecret(v, secretValues)) continue;
 		out[k] = v;
 	}
 	return out;

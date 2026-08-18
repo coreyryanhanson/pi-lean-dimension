@@ -21,6 +21,7 @@ function expandAccept(accept: string): string {
 
 import { XMLParser } from "fast-xml-parser";
 import { ssrfGuard } from "./ssrf-guard.js";
+import { scrubSecretValues } from "./auth.js";
 import {
 	fetchUrl,
 	redactSecretParams,
@@ -390,11 +391,7 @@ function checkResponseStatus(
 	// Output-channel audit: scrub known store-injected secret values from the
 	// error excerpt so a 401 body echoing an auth header can't leak the key
 	// into agent context.
-	if (secretValues && secretValues.length > 0) {
-		for (const v of secretValues) {
-			if (v && v.length > 0) message = message.split(v).join("***");
-		}
-	}
+	message = scrubSecretValues(message, secretValues);
 
 	throw new HelperError(
 		"response",

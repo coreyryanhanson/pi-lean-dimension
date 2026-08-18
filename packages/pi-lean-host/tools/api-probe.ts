@@ -29,6 +29,7 @@ import {
 import {
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
+	scrubSecretValues,
 } from "../core/auth.js";
 import {
 	listDomains,
@@ -441,10 +442,7 @@ async function fetchOne(
 	// Probe-local body scrub: the probe bypasses checkResponseStatus, so
 	// scrub known secret values from the raw slice directly — a 401 body
 	// echoing the key must not leak it into agent context.
-	let raw = res.body.slice(0, 800);
-	for (const v of authCtx.secretValues) {
-		if (v && v.length > 0) raw = raw.split(v).join("***");
-	}
+	const raw = scrubSecretValues(res.body.slice(0, 800), authCtx.secretValues);
 	const finalUrl = redactSecretParams(
 		res.finalUrl ?? rawUrl,
 		authCtx.secretQueryParamNames,

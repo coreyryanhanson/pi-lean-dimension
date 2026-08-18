@@ -148,3 +148,32 @@ export function authStatusLine(
 	}
 	return "🔑 auth: ok";
 }
+
+/**
+ * Output-channel audit — true when `value` contains any known store-injected
+ * secret value. Shared by the body/error scrub and the response-header
+ * echo drop.
+ */
+export function containsSecret(
+	value: string,
+	secretValues?: string[],
+): boolean {
+	if (!secretValues) return false;
+	return secretValues.some((s) => s && s.length > 0 && value.includes(s));
+}
+
+/**
+ * Output-channel audit — replace every occurrence of a known store-injected
+ * secret value in `text` with `***`, so a request/response body or error
+ * echoing the key can't leak it into agent context. No-op when no secrets.
+ */
+export function scrubSecretValues(
+	text: string,
+	secretValues?: string[],
+): string {
+	if (!secretValues) return text;
+	for (const v of secretValues) {
+		if (v && v.length > 0) text = text.split(v).join("***");
+	}
+	return text;
+}
