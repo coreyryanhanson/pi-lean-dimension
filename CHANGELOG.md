@@ -2,6 +2,105 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`pi-lean-host` — declarative REST API client package** — a new
+  workspace package giving the agent
+  recipe-based access to REST APIs. A guide is one markdown file with
+  YAML frontmatter (`guide.md`) declaring an API's host, endpoints,
+  auth, pagination, and response shape; a fixed executor runs the
+  declared operation so an API encoded once is reusable forever, not
+  re-derived each session. Guides live at
+  `~/.pi/agent/pi-lean-host/api-guides/<domain>/` and only files you
+  place there execute — bundled recipes are inert reference material.
+  Ships 4 tools (`api-guide`, `api-fetch`, `api-learn`, `api-probe`)
+  and the `/api` command. The package declares `pi-lean-portal` as an
+  **optional peer dependency** — host-only installs are valid.
+- **`/api` toggle — independent peer of `/web`** — `on|off|learn|status`
+  plus `helpers` and `secrets` subcommands. The two toggles compose
+  freely: each owns its own toolset and status-bar glyph, and
+  `/api on` + `/web off` yields a pure **api-only** context with zero
+  `browser-*` noise for batch structured-data pulls. Three states
+  (`on`, `learn`, `off`) with `api-learn`/`api-probe` gated behind
+  `learn`; starts **on**. State persists via `pi-tool-masking`
+  (`persistKey: toolset-state:pi-lean-dimension.api` / `.api-learn`),
+  with defaults overridable through the `toolsetDefaults` settings tier.
+  Actuating subcommands are refused while a focus mode is active
+  (read-only subcommands stay unguarded), mirroring the portal/search
+  focus-mode guard.
+- **Recipe schema and fixed executor** — `via: restGet|paginate` per
+  operation; `responseShape.format: json|xml|text` with an IANA
+  `charset` fallback (header charset always wins). Six pagination styles
+  cover the recipe-library axes: `offset-limit`, `page`, `nextLink`,
+  `cursor`, `resumptionToken`, `tokenBag`, with optional
+  `totalCountPath` for a server-reported total. `gatherAll` paginates
+  to exhaustion under a per-guide / per-op `gatherAllMax` ceiling
+  (default `1000`). v1 is **GET-read only** — no mutation helper.
+- **`api-learn` + `api-probe` authoring loop** — `api-learn` validates
+  a recipe string before touching disk and writes the guide (no draft
+  store; the file on disk *is* the working state, like `web-learn`).
+  `api-probe` fetches a templated path over the real transport,
+  summarizes the JSON shape, and emits a draft YAML operation block —
+  it only suggests, never writes. On 404 it walks the `apiHost` version
+  backward to recover an over-claimed version. Authoring is spec-first,
+  probe-second; the agent never authors guides unprompted outside
+  `/api learn`.
+- **Static-key auth and per-domain secrets store** — `auth.kind:
+  static-key` realizes store-backed `secretRefs` (header injection),
+  `secretQueryRefs` (query-param injection), and `requires`/`optional`
+  secret sets (parser-enforced to coincide with the refs). `api-fetch`
+  resolves and injects values in code — the value never enters agent
+  context; a missing `requires` secret **fails closed before the
+  request**. Secrets persist at
+  `~/.pi/agent/pi-lean-host/secrets/<domain>.json` (mode `0600`,
+  lazy-mkdir-on-write-only), provisioned transcript-safely via
+  `/api secrets` (names only, never values; headless hosts get direct
+  file-write instructions). An output-channel audit scrubs known secret
+  values from 401 bodies and `details.headers`, redacts query-param
+  secrets to `?param=***` on every surfaced URL, and forces any
+  auth-bearing call through the SSRF-guarded redirect loop with
+  injected secrets stripped on cross-domain hops. `oauth2` is a
+  declared-but-unrealized seam (rejected at parse); an OS-keychain
+  at-rest backend is deferred (the `0600` file stays the honest
+  default).
+- **Local user helpers** — a `helper.ts` alongside a guide runs
+  in-process via `import()` under a load/call guard that disables the
+  helper for the session on any in-frame throw (pi keeps running). The
+  pre-call contract `(params, ctx) => params` reshapes the request; an
+  optional gated `transform(data, ctx)` named export runs post-response
+  when an op declares `transform: true` (graceful — a throw returns raw
+  data, never disables the op). One helper per domain is the v1
+  contract; a failed helper is surfaced via `/api status` and the
+  status-bar glyph.
+- **Shared transport, SSRF guard, and response spill** — a per-domain
+  undici `Agent` with a fixed UA, 429-retry (Retry-After HTTP-date /
+  exponential backoff), redirect policy, and ETag/`Cache-Control`
+  caching is the sanctioned way to reach even WAF'd hosts. The SSRF
+  guard (`core/ssrf-guard.ts`) blocks loopback, private RFC1918 ranges,
+  link-local, and cloud-metadata endpoints on **server-supplied**
+  `nextLink` URLs only (agent-supplied `restGet` URLs are not guarded —
+  the agent has `bash`); it is now load-bearing under keyed auth. When
+  `api-fetch` truncates, the full JSON spills to disk (max 8 files per
+  session, oldest evicted; cleaned on `session_shutdown`).
+- **Multi-recipe domains and host-only boundary** — a domain may claim
+  multiple guides (each in its own directory); `api-guide` shows a
+  disambiguation menu and accepts a `guide` selector, `api-fetch`
+  resolves the operation by name across all matching guides, and
+  optional `organization:` / `description:` fields aid catalog grouping
+  and disambiguation. Host has **zero static imports** from
+  `pi-lean-portal`/`pi-lean-search` (enforced by a boundary test); a
+  runtime feature-detect registers a recipe-stripped projection with
+  portal's guide-source registry when co-installed, re-attempted on
+  `session_start`. The projection is inert until portal ships its
+  receiving global (planned for the 0.5.0 lockstep track).
+- **Synthetic axis-guide fixtures** — `api-guides/<domain>/` holds a
+  minimal coverage set (no `verified:` date, no live endpoints) that
+  keeps every guide-driven framework axis exercised via mocked
+  transport, pinned by `__tests__/axis-coverage.test.ts`. They are
+  framework fixtures excluded from the npm tarball, not recipes to
+  copy; a more comprehensive recipe library lives in the separate
+  `Caritas` repo.
+
 ### Changed
 
 - **Crash events now surface in navigate results** — `DialogEvent`
