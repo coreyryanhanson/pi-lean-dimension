@@ -20,7 +20,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { fetchUrl } from "../core/transport.js";
+import { fetchUrl, redactSecretParams } from "../core/transport.js";
 import {
 	extractPathTokens,
 	fillPathTemplate,
@@ -36,7 +36,6 @@ import {
 	provisionedDomainsSuffix,
 } from "../core/secrets-store.js";
 import { findGuidesByDomain } from "../core/guide-store.js";
-import { redactSecretParams } from "../core/helpers.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
 import { appendFooter, contentText } from "./utils.js";
 

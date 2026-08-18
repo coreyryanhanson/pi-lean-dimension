@@ -26,10 +26,6 @@ import {
 	redactSecretParams,
 	type FetchOptions,
 } from "./transport.js";
-// Re-export for callers (api-probe.ts) that surface redacted URLs; the
-// implementation now lives in transport.ts so the fetch layer can self-
-// redact any URL it embeds in an error message.
-export { redactSecretParams };
 import { fillPathTemplate, joinUrl } from "./path-template.js";
 import type { TransformFn } from "./local-helpers.js"; // type-only — no runtime import (flat dependency direction)
 import type {
