@@ -399,7 +399,13 @@ Two coordinated changes close issues #1, #4, #6, and #7:
    *whole* recipe skeleton — top-level fields (`domains` defaulted from
    hostname, `apiHost`, `responseShape`, `gatherAllMax`) + an `auth:` block
    *translated from the probe's auth-injection params* (synthesizing
-   `kind: static-key` + `requires: [<names>]`) + the op block.
+   `kind: static-key` + `requires: [<names>]`) + the op block. **Pagination
+   stays op-level only** — a single probe sees one response from one endpoint,
+   which can justify that op's `pagination:` block (as `emitDraft` already does
+   at `api-probe.ts:581`) but cannot justify a top-level `pagination:` default
+   claiming every op pages the same way. Top-level pagination is a manual
+   hoist during the D9 fetch→edit→save loop, once the author has verified
+   several ops page identically.
 2. **The worked example expands in-place** to document `static-key` alongside
    `none`, **and drops its hardcoded `updated`/`verified` dates** to
    demonstrate the omit-and-default pattern (with a comment noting the tool
@@ -594,9 +600,16 @@ human's judgment call.
 `scaffold: true` is **opt-in** and **auto-degrades**:
 
 - **No guide exists for the domain** → emit the full skeleton (bootstrap).
-- **A guide already exists** → emit a single guide-formatted op block (with a
-  merge note: "guide exists — here's the op to merge via api-learn fetch-recipe
-  and edit").
+- **One guide exists** → emit a single guide-formatted op block + a merge
+  note naming the target dir (e.g. "merge into `archive.org`").
+- **N guides claim the domain** (multi-recipe) → emit a single guide-formatted
+  op block + a merge note listing every candidate dirName ("guides exist for
+  this domain: `archive.org`, `archive.org-wayback` — fetch the target recipe
+  via `api-learn({domain, guide})` and merge"). The probe is per-endpoint and
+  domain-keyed, so it cannot know which guide a new op belongs to; it surfaces
+  the choice instead of guessing. The candidate `dirName`s come free from the
+  existing `findGuidesByDomain(domain)` lookup (returns `{ guide, dirName }[]`),
+  and the agent picks via D9's selector — no new param on `api-probe`.
 
 The tool decides based on guide presence; the agent can pass `scaffold: true`
 on every probe safely and never get conflicting `---` blocks.
@@ -735,10 +748,21 @@ verify` instead, and what the deferred staging feature would look like
   N identical op-failure lines; the partial-fail case lists which ops broke.
   `--force` is the documented escape when strictness produces a false negative
   (flaky API).
-- **Scaffold auto-degrade on multi-recipe domains.** The "guide exists" check
-  is per-domain, not per-directory. For a domain claiming several guides, the
-  merge note should name the *target guide dir* so the agent knows which guide
-  to merge into (composes with D12's selector).
+- **Scaffold auto-degrade on multi-recipe domains.** The "guide exists"
+  check is per-domain, not per-directory. For a domain claiming several
+  guides, the merge note lists *every* candidate `dirName` and defers the
+  merge-target choice to D9's `api-learn({domain, guide})` selector — the
+  probe cannot know which guide a new op belongs to, so it surfaces the
+  choice rather than guessing. No new param on `api-probe`; the candidate
+  `dirName`s are already in hand from the `findGuidesByDomain(domain)`
+  lookup.
+- **Scaffold top-level `pagination:`.** Scaffold mode emits pagination
+  per-op only (as `emitDraft` already does at `api-probe.ts:581`), never a
+  top-level `pagination:` default. A single probe sees one response from one
+  endpoint, which can justify that op's pagination but not an API-wide
+  default — generalizing from one sample would repeat the issue-#5 guesswork
+  the redesign explicitly scopes out. A verified top-level default is a
+  manual hoist during the D9 fetch→edit→save loop.
 - **`verified` backwards compat.** The parser already respects an
   agent-supplied `verified` and defaults to `TODAY()` when absent (L1109–1110)
   — this is exactly D2's target behavior, so the save path needs **no new
