@@ -77,9 +77,19 @@ isolation.
 
 - **D7 — Delimiter diagnostic.** In `parseApiGuide` (`core/parse-api-guide.ts`
   ~L1027–1036), the `!match` branch currently always says "no frontmatter
-  found". When the raw string *starts* with `---\n` (opening delimiter present)
-  but `FRONTMATTER_RE` doesn't match, the real cause is a missing closing
-  `---`. Diagnose that specifically.
+  found". When the opening delimiter is present but `FRONTMATTER_RE` doesn't
+  match, the real cause is a closing-`---` problem. Diagnose that specifically,
+  covering two edge cases a bare `startsWith("---\n")` check misses:
+  - **CRLF line endings.** Detect the opening delimiter with `/^---\r?\n/`
+    (not `startsWith("---\n")`) so a `---\r\n`-prefixed file is recognized as
+    having its opener and routed to the closing-`---` diagnostic instead of
+    the misleading "no frontmatter found".
+  - **Closing `---` present but malformed.** `FRONTMATTER_RE` requires a
+    trailing `\r?\n` after the closing `---`, so `---\nfoo: bar\n---` (no
+    trailing newline at EOF) fails to match even though the closer is there.
+  Distinguish "no closing `---` at all" from "closing `---` present but
+  malformed/missing trailing newline" (e.g. check whether `\n---` appears
+  after the opening delimiter) so the `fix` hint points at the right edit.
 - **D-bootstrap (parser) — absent `schemaVersion` defaults to `0` (floor).**
   In `parseApiGuide` (~L1172–1185) an absent `schemaVersion` is currently left
   `undefined`; default it to `0` (the floor / oldest known vintage), **not**
@@ -91,9 +101,8 @@ isolation.
 - **D-bootstrap (write path) — `api-learn` stamps `schemaVersion` on save.**
   On the save path (`api-learn.ts`, after `parseApiGuide` succeeds, before
   `writeFileSync`), ensure the raw recipe's frontmatter carries
-  `schemaVersion: <GUIDE_SCHEMA_VERSION>`. Reuse the same line-level
-  frontmatter-isolation approach S3's verify stamp uses (`FRONTMATTER_RE` →
-  operate on the frontmatter block only → reassemble): if the field is present,
+  `schemaVersion: <GUIDE_SCHEMA_VERSION>`. Implement the line-level frontmatter-isolation approach (`FRONTMATTER_RE` →
+  operate on the frontmatter block only → reassemble), which S3's verify stamp later reuses: if the field is present,
   line-replace `^schemaVersion:\s*.+$`; if absent, insert before the closing
   `---`. Do **not** YAML-round-trip (reformats + strips comments). This is the
   per-guide vintage that detection compares against.
@@ -101,9 +110,11 @@ isolation.
   Factor a pure helper `isStaleSchema(guideSchemaVersion, currentSchemaVersion):
   boolean` (so tests can exercise it without a real bump). When a loaded
   guide's `schemaVersion < GUIDE_SCHEMA_VERSION`:
-  - `api-guide()` catalog / disambiguation view: append a `⚠ schemaVersion N
+  - `api-guide()` catalog / disambiguation view **and `renderGuideDetail()`**: append a `⚠ schemaVersion N
     < current M — guide may need updating` line (peer of the existing
-    `⚠ malformed — <dirName>: <field>` line at `parse-api-guide.ts:1466`).
+    `⚠ malformed — <dirName>: <field>` line at `parse-api-guide.ts:1468` —
+    note the code reads `mal.filename`, which is set to the directory name at load
+    time, so the rendered text is the `dirName`).
   - `api-fetch`: append a staleness note to the fetch result text (not the
     `details` machine channel — the note is for the agent/human reader).
   - **Never a gate**: the guide still loads and `api-fetch` still runs. This is
@@ -303,7 +314,12 @@ Composes with S1 (probe op blocks merge into fetched recipes).
 
 - **D9 — Fetch-recipe affordance.** Repurpose the `domain + no recipe` branch
   of `api-learn` from "error" to "return current raw recipe", keyed by guide
-  count:
+  count. **Note: the guide store caches parsed `ApiGuide` objects only, not
+  raw strings** — returning the raw recipe requires a new
+  `readFileSync(join(getUserGuidesDir(), dirName, "guide.md"), "utf-8")` call
+  in the `api-learn` path; this is new file I/O, not wiring up an existing
+  primitive. The 0-guide and `new:true` branches return a template (no read
+  needed); only the 1-guide / N-guide branches read the raw file:
   - **0 guides** → fresh domain-specific template (pre-fills `domains:
     [<domain>]`; reuses the `new:true` template branch).
   - **1 guide** → that guide's raw recipe **with `dirName` surfaced** ("pass
@@ -318,15 +334,14 @@ Composes with S1 (probe op blocks merge into fetched recipes).
   domain-specific template regardless of existing guides (the second-guide-on-
   a-domain path). Pre-fills `domains` only; other fields are placeholders for
   the agent to fill (op block sourced from `api-probe({scaffold: true})` in
-  S1). Reuses the bootstrap template branch.
+  S1). Reuses the bootstrap template branch. Note: `new` is a reserved word — destructure as `{ new: isNew }` or access via `params['new']`.
 - **D9 — Entry-point split.** Bare `api-learn()` → the **manual** (field
   reference, defaults, semantics) + a pointer to `api-learn({domain, new:
   true})` for a domain-specific starter; **no** worked-example recipe
   (superseded by `new:true`). `api-learn({domain, new: true})` → the
-  **template** only, no instruction block. The template and the instruction
-  block are already separable strings in `api-learn.ts` (`WORKED_EXAMPLE` vs
-  the inline `## Required fields` block) — route them to distinct entry
-  points.
+  **template** only, no instruction block. The template is a separate const
+  (`WORKED_EXAMPLE`); the instruction block is inline in the `execute`
+  function and must be extracted into a named const before routing.
 - **D12 — Disambiguation menu.** When a domain claims N guides, both
   fetch-recipe and (later, S4) delete return a menu keyed by `shortName` /
   `dirName` and require a `guide` selector otherwise. Single-guide domains
@@ -425,7 +440,8 @@ landing S2 first keeps the two commands' dispatch wiring in one review arc.
   run**. Opt-in override: a co-located
   `~/.pi/agent/pi-lean-host/api-guides/<domain>/verify.json` sidecar, shape
   `{ "<opName>": { "<param>": "<value>" } }`, supplies the params map
-  **verbatim** to the existing executor (`helpers.ts:443` flat `params` map).
+  **verbatim** to the existing executor (`helpers.ts` ~L134 flat `params` map;
+  the `restGet`/`paginate` signatures sit ~L437–440).
   Best-effort load in the verify path only; file-miss = today's skip behavior;
   malformed file = parse error caught at load, not a runtime crash. Param
   resolution reuses the executor verbatim (no new resolution code):
@@ -442,7 +458,11 @@ landing S2 first keeps the two commands' dispatch wiring in one review arc.
 - **D4 — Fetch loop.** For each op (in declared order): skip if unsatisfiable
   params; otherwise run via the executor helpers + `auth.ts` + `transport.ts`
   **directly** (not the `api-fetch` tool — verify is a command with its own
-  internal loop, so tool masking is irrelevant). Bump `maxRetries` (e.g. 4)
+  internal loop, so tool masking is irrelevant). Note: Verify replicates
+  api-fetch's guide-resolution + auth-resolution + dispatch setup. Consider
+  extracting a shared `resolveOpForExecution(guide, op, params, opts)` helper
+  to avoid drift, or accept the duplication with a `ponytail:` marker. Bump
+  `maxRetries` (e.g. 4)
   on the verify fetch calls (deliberate one-shot gesture; reuses the
   transport's existing `waitForRetry` 429/Retry-After/exponential-backoff — no
   `--sleep` flag).
@@ -655,7 +675,12 @@ tell it to ask the human.
   `/api` subcommand list grows from `on | off | learn | status | helpers |
   secrets` to include `verify` and `delete`) and the `api-learn` / `api-probe`
   behavior descriptions (fetch-recipe, scaffold mode, save-stamps
-  `schemaVersion`). The `api-guides/` section's "synthetic axis guides"
+  `schemaVersion`). Also update the `schemaVersion` JSDoc on
+  `core/api-guide-types.ts` (`ApiGuide.schemaVersion`, ~L216–222), which still
+  says "absent stays `undefined` (semantic default 0). Never gates/warns/alters
+  parse." — after S0 it becomes "absent defaults to `0`; a stale value
+  (`< current`) warns non-blockingly in the `api-guide` catalog/detail and on
+  `api-fetch`; never gates." The `api-guides/` section's "synthetic axis guides"
   framing is unchanged.
 
 ### Acceptance criteria
