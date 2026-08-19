@@ -110,11 +110,21 @@ isolation.
   Factor a pure helper `isStaleSchema(guideSchemaVersion, currentSchemaVersion):
   boolean` (so tests can exercise it without a real bump). When a loaded
   guide's `schemaVersion < GUIDE_SCHEMA_VERSION`:
-  - `api-guide()` catalog / disambiguation view **and `renderGuideDetail()`**: append a `⚠ schemaVersion N
+  - **Per-guide line** (orgless catalog rows, the per-domain disambiguation
+    menu, and `renderGuideDetail()`): append a `⚠ schemaVersion N
     < current M — guide may need updating` line (peer of the existing
     `⚠ malformed — <dirName>: <field>` line at `parse-api-guide.ts:1468` —
     note the code reads `mal.filename`, which is set to the directory name at load
     time, so the rendered text is the `dirName`).
+  - **Org-grouped catalog rows** (`formatApiGuideCatalog` collapses guides by
+    `organization:` into one `🏛️ ${org} — N guides (domains)` line — see
+    `parse-api-guide.ts:1457`): append a `⚠` glyph to the row when **any** guide
+    in it is stale, e.g. `🏛️ ${org} — N guides (domains) ⚠`. The glyph is a hint
+    only (the row is collapsed by design — a full per-guide `⚠` line there would
+    bloat context for orgs with many guides); the per-guide `⚠ schemaVersion …`
+    line lives on the disambiguation menu / detail view, so the glyph just says
+    "drill in here." This mirrors how malformed guides already surface as a `⚠`-
+    prefixed catalog line while respecting the collapsed-row constraint.
   - `api-fetch`: append a staleness note to the fetch result text (not the
     `details` machine channel — the note is for the agent/human reader).
   - **Never a gate**: the guide still loads and `api-fetch` still runs. This is
@@ -162,7 +172,12 @@ isolation.
 - **D-bootstrap (detection)**
   - A loaded guide with `schemaVersion < GUIDE_SCHEMA_VERSION` renders a
     `⚠ schemaVersion N < current M — guide may need updating` line in the
-    `api-guide()` catalog and a staleness note on `api-fetch`.
+    `api-guide()` catalog (per-guide row / disambiguation menu / detail view)
+    and a staleness note on `api-fetch`.
+  - An **org-grouped** catalog row containing at least one stale guide gets a
+    trailing `⚠` glyph on the `🏛️ ${org} — N guides (domains)` line (hint only;
+    the per-guide `⚠` line lives on the disambiguation menu / detail view). An
+    org row whose guides are all current renders no glyph.
   - A guide with `schemaVersion === GUIDE_SCHEMA_VERSION` renders no warning.
   - The warning **never blocks** load or fetch — the guide still parses and
     `api-fetch` still executes (detection, not a gate).
@@ -454,26 +469,51 @@ landing S2 first keeps the two commands' dispatch wiring in one review arc.
   - *Passthrough ops*: verify.json may supply undeclared keys for
     `passthrough: true` ops (else they can't be verified at all).
   - Implementation is one line: `const params = verifyJson[opName] ?? {}`
-    before the existing precheck / executor call.
+    feeding the shared `resolveOpForExecution` routine (see Fetch loop) as
+    the user-supplied params — exactly the role `userParams` plays in
+    `api-fetch`. For `helper: true` ops these are the **pre-helper** inputs;
+    the helper transforms them before the executor sees them, mirroring
+    `api-fetch` (`tools/api-fetch.ts:183`).
 - **D4 — Fetch loop.** For each op (in declared order): skip if unsatisfiable
-  params; otherwise run via the executor helpers + `auth.ts` + `transport.ts`
-  **directly** (not the `api-fetch` tool — verify is a command with its own
-  internal loop, so tool masking is irrelevant). Note: Verify replicates
-  api-fetch's guide-resolution + auth-resolution + dispatch setup. Consider
-  extracting a shared `resolveOpForExecution(guide, op, params, opts)` helper
-  to avoid drift, or accept the duplication with a `ponytail:` marker. Bump
-  `maxRetries` (e.g. 4)
-  on the verify fetch calls (deliberate one-shot gesture; reuses the
-  transport's existing `waitForRetry` 429/Retry-After/exponential-backoff — no
-  `--sleep` flag).
+  params (or if the op's local helper is session-disabled — see *Strict
+  threshold*); otherwise run via the executor helpers + `auth.ts` +
+  `transport.ts` **directly** (not the `api-fetch` tool — verify is a command
+  with its own internal loop, so tool masking is irrelevant). Verify and
+  `api-fetch` share the same guide-resolution + helper-call + transform-load +
+  auth-resolution + dispatch sequence (~50 lines, two real call sites). The
+  duplication-with-`ponytail:`-marker path is the wrong rung here — it ships a
+  known second bug (drift between the two copies) to save one extraction — so
+  **extract a shared `resolveOpForExecution(guide, op, userParams, opts)`
+  helper** carrying the `callHelper` invocation, `loadTransform`, auth
+  resolution, and the executor dispatch. Verify and `api-fetch` both call it.
+  `maxRetries` stays at the transport default (`DEFAULT_MAX_RETRIES`, 2) —
+  the existing `waitForRetry` 429/Retry-After/exponential-backoff path already
+  handles transient rate limits, and threading a bumped value through
+  `fetchWithOpts` / `RestGetOptions` / `PaginateOptions` is plumbing with no
+  evidence it's needed. There is **no** `--sleep` flag. If verify-time rate
+  limits bite in practice, add `maxRetries?: number` to the executor options
+  then (YAGNI until a real user hits it).
 - **D4 — Strict threshold.** Any runnable-op failure (partial **or** all-fail)
   → **no stamp** + a report naming what's broken. Skipped ops are **not**
   failures and don't block the stamp, but are named in the report so the
-  signal isn't quietly inflated. **All ops skipped → no stamp** + a warning
-  naming the fix (`verify.json` or manual `api-fetch`). The all-fail case is N
-  identical lines (ugly but not incorrect — general root-cause detection is
-  deferred: `ponytail:` defer until a real user hits it and `--force` isn't
-  enough).
+  signal isn't quietly inflated. Two skip categories (both non-failing):
+  - **Unsatisfiable params** (no `verify.json` value, no default) → skip.
+  - **Helper-disabled op** — `callHelper` returns `ok: false` (a
+    session-persistent condition per `AGENTS.md`): the op is unverifiable
+    *this session*, not broken. Skip and name it in the report (peer of the
+    unsatisfiable-param skip). Do not run the op with untransformed params —
+    that would false-fail every helper-using guide.
+  A **transform failure** is **not** an op failure: the post-response
+  transform runs after the HTTP op succeeded (the executor already catches it
+  per-call and carries a `transformWarning` without disabling the op, per
+  `helpers.ts` restGet/paginate). Verify treats `transformWarning` as
+  non-blocking — the op ran, the HTTP shape is confirmed; a buggy transform
+  does not block the stamp. (A transform that throws on every real call is a
+  guide bug worth surfacing, but it is not a verify failure of the op.)
+  **All ops skipped → no stamp** + a warning naming the fix (`verify.json` or
+  manual `api-fetch`). The all-fail case is N identical lines (ugly but not
+  incorrect — general root-cause detection is deferred: `ponytail:` defer
+  until a real user hits it and `--force` isn't enough).
 - **D4 — Stamp-to-file routine.** On all-ops success,
   line-replace (or insert if absent) the `verified:` line with today's date in
   the raw `guide.md`. Three pinned rules, all reusing existing code:
@@ -549,8 +589,10 @@ landing S2 first keeps the two commands' dispatch wiring in one review arc.
     and invalidates the cache; documented as "human-attested."
   - There is **no** agent-facing `--force` surface (it's user-typed only).
 - **Rate limiting**
-  - Verify reuses the transport's existing 429 retry (`waitForRetry`) with a
-    bumped `maxRetries`; there is **no** `--sleep` flag.
+  - Verify reuses the transport's existing 429 retry (`waitForRetry`) at the
+    default `maxRetries` (no bump, no threading); there is **no** `--sleep`
+    flag. A human re-runs `/api verify` (or uses `--force`) if transient
+    limits persist.
 
 ### Tests to add
 
@@ -559,7 +601,9 @@ landing S2 first keeps the two commands' dispatch wiring in one review arc.
   all-fail → no stamp + N identical lines; all-skipped → no stamp + warning;
   auth-precheck short-circuit; param-precheck skip; verify.json makes a
   skipped op run; verify.json precedence over default; malformed verify.json
-  → load error; passthrough op verifiable via sidecar.
+  → load error; passthrough op verifiable via sidecar; **helper-disabled op
+  → skip (not fail), named in report**; **transform warning → op still
+  counts as pass (non-blocking)**.
 - `verify-stamp.test.ts`: stamp touches only the `verified:` line in the
   isolated frontmatter (the `verified:`-in-prose fixture is never matched);
   absent field inserted before closing `---`; existing line replaced in place
@@ -652,9 +696,13 @@ tell it to ask the human.
 - **Ship-manifest / `api-guides` exclusion** checks still pass (the axis
   guides are unaffected by this redesign — confirm `ship-manifest.test.ts`
   stays green and `api-guides/` is excluded from the npm tarball).
-- **CHANGELOG** entries per sprint (the package has no CHANGELOG today — add
-  one with entries for S0–S4, or fold into the monorepo CHANGELOG per the
-  repo's convention; confirm with the release script `scripts/release.mjs`).
+- **CHANGELOG** — there is no package-level CHANGELOG; refine the monorepo
+  root `CHANGELOG.md`'s **Unpublished** entry that will land as the `0.5.0`
+  release. These early versions are unstable and unofficial, so the entry is
+  written as-if-all-features-shipped-at-once (one consolidated `0.5.0` block,
+  not per-sprint sub-entries): each sprint (S0–S4) appends/edits that single
+  block incrementally as its behavior lands. Confirm the final wording with
+  `scripts/release.mjs` at S5.
 - **`schemaVersion` bump rule** (per `AGENTS.md`): this redesign adds no
   required field, no new enum value, and relaxes no parse-enforced constraint
   — the save-stamp and stale-detection are behavioral/doc changes, not schema
@@ -731,13 +779,35 @@ tell it to ask the human.
 
 The schemaVersion questions are settled (stamp on save; absent → `0`; warn on
 stale in catalog + fetch — see *Schema-version framing correction* under S0).
-Two S3-internal details remain, both "implementation details to pin" the
-design doc explicitly defers — neither affects sprint ordering:
+The four S3-internal / release details below are now **resolved** (review +
+owner sign-off); none affects sprint ordering:
 
 1. **Verify report UX format.** The semantic is pinned (strict any-runnable-op
    failure → no stamp; skips named; all-skipped → no stamp + warning). The
-   *exact* text layout of the partial-fail / all-fail / skipped report is left
-   to pin during S3 review. (D4: "The exact report format is an implementation
-   detail to pin.")
-2. **`maxRetries` bump value.** D4 says "e.g. 4" — confirm 4 (vs. the default
-   2) is the right verify-call value, or pick another during S3.
+   *exact* text layout of the partial-fail / all-fail / skipped report remains
+   an implementation detail to pin during S3 review. (D4: "The exact report
+   format is an implementation detail to pin.")
+2. **`maxRetries`.** **Resolved: keep the transport default (2), no bump, no
+   executor threading.** The existing `waitForRetry` path handles transient
+   429s; a human re-runs `/api verify` or uses `--force` if limits persist. Add
+   `maxRetries?: number` to executor options only if a real user hits
+   verify-time rate limits (YAGNI).
+3. **Transform failure during verify.** **Resolved: does not block the stamp.**
+   The transform is post-response; the executor already catches it per-call
+   and carries a `transformWarning` without disabling the op. Verify treats it
+   as non-blocking (the HTTP op succeeded). See S3 *Strict threshold*.
+4. **CHANGELOG.** **Resolved: refine the monorepo root `CHANGELOG.md`'s
+   Unpublished entry that will ship as `0.5.0`**, written as one consolidated
+   block (as-if-all-features-shipped-at-once), edited incrementally per
+   sprint. No package-level CHANGELOG file. See S5 *Scope*.
+
+Two further S3 details were settled during review and folded into the Scope
+above:
+
+- **Verify calls `callHelper` for `helper: true` ops** — verify.json params
+  are the pre-helper user inputs (mirroring `api-fetch`'s `userParams`); a
+  helper-disabled op is **skipped, not failed**. See S3 *Strict threshold*.
+- **Extract `resolveOpForExecution`** (not duplicate-with-`ponytail:`-marker)
+  — the shared routine carries `callHelper` + `loadTransform` + auth
+  resolution + executor dispatch; verify and `api-fetch` both call it. See S3
+  *Fetch loop*.
