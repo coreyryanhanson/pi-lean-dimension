@@ -87,8 +87,10 @@ order:
 These facts were established by reading the source, not assumed:
 
 - **`verified` & `updated` already default to `TODAY()`** in `parseApiGuide()`
-  (~L1098–1110) when omitted. The stamping *mechanism* exists; the gap is that
-  the agent still hand-writes them.
+  (~L1098–1110) when omitted, and an explicitly-supplied `verified` is
+  **respected** (not stripped). This is already D2's target behavior — the
+  gap is only that the worked example trains the agent to copy a stale literal
+  (closed by D6).
 - **The worked example hardcodes** `updated: 2026-07-15` / `verified:
   2026-07-15` — trains stale-literal copying. It also documents only `auth:
   kind: none` (the #1 root cause).
@@ -106,10 +108,13 @@ These facts were established by reading the source, not assumed:
 - **`/api secrets --delete`** exists as a user-typed destructive-op command
   precedent (interactive confirm for whole-domain, no-confirm for single name).
 - Frontmatter fields already tool-defaulted: `kind` (api), `icon` (📖),
-  `shortName` (filename), `updated` (TODAY), `verified` (TODAY), `gatherAllMax`
-  (1000), `responseShape` (json/utf-8), `schemaVersion` (0). Agent-authored:
-  `domains`, `apiHost`, `docs`, `organization`, `description`, `auth`,
-  `pagination`, `operations`.
+  `shortName` (filename), `updated` (TODAY), `verified` (TODAY),
+  `gatherAllMax` (1000), `responseShape` (json/utf-8). `schemaVersion` is
+  metadata-only and currently left `undefined` when absent — D-bootstrap
+  folds in a one-line default to `GUIDE_SCHEMA_VERSION` (currently `0`) so the
+  doc's "absent defaults to 0" claim holds. Agent-authored: `domains`,
+  `apiHost`, `docs`, `organization`, `description`, `auth`, `pagination`,
+  `operations`.
 
 ## Decisions
 
@@ -125,17 +130,33 @@ half-coordinated changes.
 **Rejected:** two workstreams (a small frontmatter change + a separate larger
 friction effort) — risks designing each without the other.
 
-### D2 — `verified` ownership: tool-stamped on save, no `lastModified`
+### D2 — `verified`: respect-if-present, default-today (no strip, no `lastModified`)
 
-The tool stamps `verified: <today>` on every save; the agent omits `verified`
-entirely, and the tool strips/ignores any agent-supplied value. No
-`lastModified` field is added — `verified` serves as the drift signal.
+The parser keeps its existing behavior unchanged: an explicitly-supplied
+`verified` is **respected**, an omitted one **defaults to `TODAY()`**. The tool
+does **not** strip or override agent-supplied values on the save path. No
+`lastModified` field is added — `verified` serves as the drift signal; `/api
+verify` (D4) is the authoritative refresh gesture that stamps today on
+deterministic success.
 
-**Rationale.** The stamping mechanism already exists (the parser defaults
-`verified` to `TODAY()`). The gap is purely that the agent still *writes* it
-(and copies stale literals from the worked example). Making the tool
-authoritative closes the gap with zero new mechanism; removing the stale literal
-from the worked example removes the training-to-copy.
+**Rationale.** The parser already implements respect-if-present /
+default-today (`parse-api-guide.ts` L1109:
+`typeof m["verified"] === "string" ? (m["verified"] as string) : TODAY()`), and
+`api-learn` writes the raw recipe string as-is — so this requires **zero new
+write mechanism** on the save path. The stale-literal root cause (agents
+copying the worked example's hardcoded `verified: 2026-07-15`) is closed by D6
+working the example to omit the dates and demonstrate the tool-stamped default,
+*not* by the parser outsmarting the agent.
+
+**Why respect a copied value instead of stripping it.** Distinguishing a
+deliberately-included `verified` from a copy-paste artifact would require
+heuristics (compare against the worked example's known stale date, etc.) —
+overengineering for a case `/api verify` already covers authoritatively: any
+stale `verified` is one verify gesture away from being corrected to today. If
+an author goes to the trouble of writing the field, we take it at face value.
+The semantic split is honest: `api-learn`'s `verified` = the author's assertion
+(porting a guide and preserving its prior date is legitimate); `/api verify`'s
+`verified` = last deterministically checked against the live API.
 
 **Why no `lastModified`.** `verified` already serves as the drift signal (a
 guide not touched since X). A separate `lastModified` would be a second date
@@ -146,10 +167,14 @@ downstream consumer of the distinction.
 
 **Rejected:**
 
+- *Strip/override agent-supplied `verified`; always tool-stamp today (the
+  brainstorm's first proposal).* Requires new write-path code (regex-replace
+  before write) to undo a value the parser currently respects — mechanism for a
+  signal `/api verify` already owns. Also discards legitimate intent (porting a
+  guide and preserving its prior verified date).
 - *Add `lastModified`; keep `verified` agent-owned/defaulted = "last confirmed
   via api-fetch."* Two distinct signals, but no downstream logic consumes the
-  distinction today, and it leaves `verified` in the agent's hands (the original
-  complaint).
+  distinction today, and it leaves `verified` in the agent's hands.
 - *Tool-stamp both.* Redundant — both track "when the file last moved."
 
 ### D3 — No passive `verified` bump on `api-fetch`
@@ -180,6 +205,15 @@ gesture, not something the agent should discover as another tool surface; and it
 keeps the manifest from growing. The all-ops threshold is the honest one: a
 guide is verified when every operation works, with a clear report when one
 doesn't.
+
+**Write mechanism (the one new stamp-to-file routine in this redesign).** On
+all-ops success, `/api verify` regex-replaces (or inserts if absent) the
+`verified:` line in the raw `guide.md` with today's date. There is no YAML
+serializer (see D5); the save path (`api-learn`) needs no such routine because
+D2 keeps the parser's respect-if-present default and writes the recipe as-is.
+The verify stamp is **unconditional** — it refreshes `verified` regardless of
+the prior value, which is the correct semantic for a "last deterministically
+checked" gesture (the one case where we *do* override, deliberately).
 
 **Why always-available, not learn-gated.** Verify is deterministic, safe, and
 idempotent — gating it would be ceremony that adds a gate check + a refusal
@@ -253,7 +287,11 @@ Two coordinated changes close issues #1, #4, #6, and #7:
    *translated from the probe's auth-injection params* (synthesizing
    `kind: static-key` + `requires: [<names>]`) + the op block.
 2. **The worked example expands in-place** to document `static-key` alongside
-   `none`.
+   `none`, **and drops its hardcoded `updated`/`verified` dates** to
+   demonstrate the omit-and-default pattern (with a comment noting the tool
+   stamps them). This is load-bearing for D2: the stale-literal root cause is
+   closed by not training the agent to copy a date, not by the parser
+   outsmarting a copied value.
 
 **Rationale.** The report's 3/4 rejections came from an agent reverse-engineering
 the `static-key` schema from error messages. The probe already takes
@@ -413,6 +451,29 @@ unambiguous when there's any doubt.
 - *Fetch returns all matching recipes concatenated.* Avoids a menu round-trip
   for fetch, but hands the agent a blob to split — a fumble source.
 
+### D-bootstrap — `schemaVersion` defaults to `GUIDE_SCHEMA_VERSION` when absent
+
+The parser currently leaves `schemaVersion` `undefined` when the frontmatter
+field is absent. Fold in a one-line default to `GUIDE_SCHEMA_VERSION`
+(currently `0`) — mirroring how `updated`/`verified` default to `TODAY()` — so
+the doc's "absent defaults to 0" claim holds and every parsed guide carries
+the attribution. Metadata-only as ever: never gates, warns, or alters parse
+behavior (per the schema-versioning rules in `AGENTS.md`); a malformed
+value still falls back to the default rather than rejecting the guide.
+
+**Rationale.** The reviewer found that the code-grounded starting points
+listed `schemaVersion (0)` as tool-defaulted when the code actually left it
+`undefined` — a doc/code drift. Bootstrapping the default is a one-line change
+that makes the claim true, closes the drift, and is zero behavioral risk
+(metadata stays silent). Clearly in scope of the frontmatter-ownership goal
+(D1).
+
+**Rejected:**
+
+- *Leave it `undefined` and fix only the doc.* Honest about current behavior,
+  but ships no attribution on absent-field guides and leaves the drift alive
+  on the code side.
+
 ### Dropped D8 — Validate-only flag (non-decision, recorded)
 
 A `validate: true` / `dryRun: true` flag on `api-learn` was proposed and
@@ -475,9 +536,13 @@ verify` instead, and what the deferred staging feature would look like
   is per-domain, not per-directory. For a domain claiming several guides, the
   merge note should name the *target guide dir* so the agent knows which guide
   to merge into (composes with D12's selector).
-- **`verified` backwards compat.** The loader must continue to tolerate (and
-  ignore) agent-written `verified` in old guides; new saves overwrite it. This
-  is already the parser's behavior (L1109–1110) — no migration needed.
+- **`verified` backwards compat.** The parser already respects an
+  agent-supplied `verified` and defaults to `TODAY()` when absent (L1109–1110)
+  — this is exactly D2's target behavior, so the save path needs **no new
+  write mechanism**. `/api verify` (D4) is the only new stamp-to-file routine:
+  it unconditionally refreshes `verified` to today on all-ops success. Existing
+  guides need no migration; an old guide with a stale agent-written `verified`
+  is one `/api verify` away from correction.
 - **Two new `/api` commands.** `/api delete` and `/api verify` join a surface
   currently of `on | off | learn | status | helpers | secrets`. They must
   integrate cleanly with the existing subcommand dispatch; both are
