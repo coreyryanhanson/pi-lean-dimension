@@ -267,6 +267,20 @@ target API (transport is GET-only, so no mutation side-effects, but real
 quota / rate-limit cost). Callers should treat it as a deliberate N-request
 check, not a zero-cost date refresh.
 
+**Rate limiting reuses the transport, not a new flag.** The transport already
+retries 429s adaptively — `waitForRetry()` honors `Retry-After` (seconds or
+HTTP-date), falling back to exponential backoff (1s → 2s → 4s, cap 30s), up to
+`maxRetries` (default 2). That adaptive path is strictly better than a fixed
+human-supplied inter-op sleep: it backs off based on what the server *says*,
+and it doesn't tax the common non-rate-limited verify by slowing every op.
+Verify's only rate-limit adjustment is to **bump `maxRetries` (e.g. 4)** on its
+fetch calls — verify is a deliberate one-shot gesture where the human is
+waiting, so spending more backoff attempts is the right trade. A 429'd op that
+exhausts retries is reported as failed → no stamp (the honest outcome: that
+op couldn't be confirmed in this window); the human re-runs verify or uses
+`--force`. No `--sleep` flag — it would re-invent `waitForRetry` with a worse
+human-guessed value, and `--force` already covers the tight-window case.
+
 **Write mechanism (the one new stamp-to-file routine in this redesign).** On
 all-ops success, `/api verify` regex-replaces (or inserts if absent) the
 `verified:` line in the raw `guide.md` with today's date. There is no YAML
@@ -328,6 +342,12 @@ agent tool surface) does not apply.
 - *Agent-facing `--force`.* Would re-open the D10 footgun (a self-serve
   destructive signal-mutation on an agent-invokable surface). Stays
   human-typed.
+- *`--sleep` / inter-op pacing flag.* Re-invents the transport's existing
+  429 retry (`waitForRetry` honors `Retry-After` + exponential backoff) with a
+  fixed human-guessed value that can't know the server's window, and taxes the
+  common non-rate-limited verify by slowing every op. The only adjustment
+  verify makes is bumping `maxRetries` on its fetch calls; an API so
+  rate-tight that even that fails is flaky by definition → `--force`.
 
 ### D5 — Monolithic-write mechanism: scaffold/docs + `/api verify` (no validate-only flag, no staging)
 
