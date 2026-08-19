@@ -110,11 +110,12 @@ These facts were established by reading the source, not assumed:
 - Frontmatter fields already tool-defaulted: `kind` (api), `icon` (📖),
   `shortName` (filename), `updated` (TODAY), `verified` (TODAY),
   `gatherAllMax` (1000), `responseShape` (json/utf-8). `schemaVersion` is
-  metadata-only and currently left `undefined` when absent — D-bootstrap
-  folds in a one-line default to `GUIDE_SCHEMA_VERSION` (currently `0`) so the
-  doc's "absent defaults to 0" claim holds. Agent-authored: `domains`,
-  `apiHost`, `docs`, `organization`, `description`, `auth`, `pagination`,
-  `operations`.
+  currently left `undefined` by the parser when the frontmatter field is
+  absent — D-bootstrap (revised by review, see below) folds in a default of
+  `0` (the floor, not current) **and** stamps `schemaVersion` on save **and**
+  warns on stale guides, turning the field from silent attribution into
+  breaking-change detection. Agent-authored: `domains`, `apiHost`, `docs`,
+  `organization`, `description`, `auth`, `pagination`, `operations`.
 
 ## Decisions
 
@@ -749,7 +750,79 @@ unambiguous when there's any doubt.
 - *Fetch returns all matching recipes concatenated.* Avoids a menu round-trip
   for fetch, but hands the agent a blob to split — a fumble source.
 
-### D-bootstrap — `schemaVersion` defaults to `GUIDE_SCHEMA_VERSION` when absent
+### D-bootstrap — `schemaVersion` as breaking-change detection (revised by review)
+
+> **Revision note.** This decision was revised after the doc was first
+> finalized. The original framing ("`schemaVersion` defaults to
+> `GUIDE_SCHEMA_VERSION` when absent; metadata-only, never gates/warns") is
+> preserved below as *Original framing (superseded)* for the audit trail; the
+> *Revised framing* is the live decision and is what the implementation plan
+> implements. The trigger: schema changes are treated as **breaking changes
+> with no backwards-compat shims** (guides are user-authored and easily
+> updateable; the field was introduced when `~/caritas` was split off), so
+> `schemaVersion`'s purpose is **detection of which guides might have been
+> broken by an intervening schema bump** — which the original framing
+> defeated.
+
+#### Revised framing (live)
+
+`schemaVersion` is **breaking-change detection**, realized as three
+coordinated behaviors:
+
+1. **Stamp on save** — `api-learn` writes `schemaVersion: <GUIDE_SCHEMA_VERSION>`
+   into `guide.md` on every save (line-level frontmatter stamp via
+   `FRONTMATTER_RE` isolation, the same approach D4's `verified` stamp uses;
+   no YAML round-trip). Each guide records the schema vintage it was authored
+   against — the per-guide vintage detection compares against. (The D6
+   scaffold template emits the same literal, so a probe-scaffolded guide is
+   detection-ready the moment it's saved.)
+2. **Absent-on-read defaults to `0` (the floor), not current** — the parser
+   defaults an absent `schemaVersion` to `0`, **not** `GUIDE_SCHEMA_VERSION`.
+   An unversioned guide must flag as potentially-stale after any bump, not
+   silently inherit the new current version. This realigns the code with the
+   existing `AGENTS.md` text ("absent defaults to `0`") and is what makes
+   drift detectable. A malformed (non-integer / negative) value still falls
+   back to `0` rather than rejecting the guide — the guide always loads.
+3. **Stale detection surface (non-blocking warning)** — a loaded guide whose
+   `schemaVersion < GUIDE_SCHEMA_VERSION` gets a `⚠ schemaVersion N < current
+   M — guide may need updating` line in the `api-guide()` catalog /
+   disambiguation view **and** a note on `api-fetch`. **Never a gate**: the
+   guide still loads and `api-fetch` still runs (detection, not enforcement).
+   The `api-fetch` note is render-only (writes nothing to `guide.md` — D3
+   read-only invariant holds; not learn-mode behavior — D1 invariant holds).
+
+The bump rule ("bump only when a guide that used to parse now fails to parse")
+is unchanged — it was always the breaking-change definition; what's new is
+the *response* to a bump (warn on stale guides) instead of silent attribution.
+
+**Why stamp on save rather than just default-on-read.** A read-side default to
+`GUIDE_SCHEMA_VERSION` (the original framing) would make every unversioned
+guide parse as "current" — defeating detection after the very first bump, since
+any guide never re-saved would silently inherit the new version and hide its
+own drift. Detection needs a per-guide vintage written to disk at authoring
+time; the save-stamp is the only honest place to record it. Defaulting
+absent-on-read to the floor (`0`) is the complement: pre-existing unversioned
+guides flag as stale after a bump rather than masquerading as current.
+
+**Why warn rather than gate.** Gating (refusing to load a stale guide) would
+break running guides that still work, and the guide's vintage is a *might be
+broken* signal, not a *is broken* one — a guide authored against schema 0 can
+still parse cleanly under schema 1 if it didn't use the changed field. The
+warning surfaces the drift so the human can re-verify (`/api verify`) or
+update; it never blocks a working guide.
+
+**Rejected (revised framing):**
+
+- *Default absent-on-read to current (the original framing).* Defeats
+  detection — an unversioned guide silently inherits the new version after a
+  bump and hides its own drift.
+- *Gate stale guides (refuse to load).* Breaks running guides that still work;
+  the vintage signal is "might be broken," not "is broken." Over-enforces.
+- *Warn only in the catalog, not on `api-fetch`.* Quieter, but the agent's
+  primary surface during a task is `api-fetch`, not the catalog — a
+  catalog-only warning is invisible at the moment it matters most.
+
+#### Original framing (superseded — preserved for the audit trail)
 
 The parser currently leaves `schemaVersion` `undefined` when the frontmatter
 field is absent. Fold in a one-line default to `GUIDE_SCHEMA_VERSION`
@@ -759,14 +832,24 @@ the attribution. Metadata-only as ever: never gates, warns, or alters parse
 behavior (per the schema-versioning rules in `AGENTS.md`); a malformed
 value still falls back to the default rather than rejecting the guide.
 
-**Rationale.** The reviewer found that the code-grounded starting points
-listed `schemaVersion (0)` as tool-defaulted when the code actually left it
-`undefined` — a doc/code drift. Bootstrapping the default is a one-line change
-that makes the claim true, closes the drift, and is zero behavioral risk
-(metadata stays silent). Clearly in scope of the frontmatter-ownership goal
-(D1).
+**Rationale (original).** The reviewer found that the code-grounded starting
+points listed `schemaVersion (0)` as tool-defaulted when the code actually
+left it `undefined` — a doc/code drift. Bootstrapping the default is a
+one-line change that makes the claim true, closes the drift, and is zero
+behavioral risk (metadata stays silent). Clearly in scope of the
+frontmatter-ownership goal (D1).
 
-**Rejected:**
+**Why superseded.** The original framing treated `schemaVersion` as silent
+attribution, but the field's purpose (introduced with the `caritas` split) is
+detection of breaking changes under a no-backwards-compat schema policy.
+Defaulting absent-on-read to *current* defeats that detection, and "never
+warns" under-builds for the stated purpose. The revised framing keeps the
+one-line read-side default (to the floor `0`, not current), adds the save-stamp
+that records each guide's authoring vintage, and adds the non-blocking warning
+that realizes detection. See the implementation plan's *Schema-version
+framing correction* for the realization.
+
+**Rejected (original):**
 
 - *Leave it `undefined` and fix only the doc.* Honest about current behavior,
   but ships no attribution on absent-field guides and leaves the drift alive
@@ -889,7 +972,9 @@ This doc is for review. After review:
 1. **Ship in two waves.** Wave 1 (independent, closes both HIGH-severity CMC
    issues first, no command-surface changes): D7 (delimiter diagnostic) + the
    worked-example half of D6 (drop stale dates, document `static-key`) +
-   D-bootstrap (one-line `schemaVersion` default). Wave 2 (composes on wave 1):
+   D-bootstrap (revised: `schemaVersion` read-defaults to `0`, save-stamps
+   current, and warns on stale guides — see the decision section). Wave 2
+   (composes on wave 1):
    D6 probe-scaffold half + D11 auto-degrade + D9 fetch-recipe + D12
    disambiguation + D4 `/api verify` + D10 `/api delete` (the two commands
    share dispatch plumbing). D2 and D3 are framing — D2 is already the parser's
