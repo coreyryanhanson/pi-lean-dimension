@@ -203,7 +203,10 @@ stamped on a broken guide, and a flaky-API false negative has a clean escape
 via `--force` (below) — so verify itself stays strict and never silently
 half-passes. Skipped ops (below — structurally unverifiable without
 agent-supplied params) are **not** failures; they don't block the stamp but
-are named in the report so the signal isn't quietly inflated.
+are named in the report so the signal isn't quietly inflated. **All ops
+skipped → no stamp** + a warning (stamping `verified: today` on a guide never
+actually tested would inflate the signal; the warning names the fix — supply
+params via `verify.json` or verify manually via `api-fetch`).
 
 **Rationale.** The CMC report shows the agent already runs a post-save
 `api-fetch` to verify — this names an existing behavior rather than inventing
@@ -219,8 +222,7 @@ MUST run the same auth-resolution precheck `api-fetch` does
 If any `requires` secret is unprovisioned, short-circuit with a single message
 naming the secret and the fix (`/api secrets <domain>`) — do **not** run N ops
 that all fail identically. This reuses `auth.ts`'s existing `absentRequired`
-machinery verbatim; it is the first instance of the all-fail root-cause
-pattern below. Without it, the most common verify failure on a fresh or
+machinery verbatim. Without it, the most common verify failure on a fresh or
 newly-installed host (an authed guide whose secrets haven't been provisioned
 yet — secrets don't travel with the guide) renders as N identical op failures
 with the actionable hint buried under the all-ops-threshold framing.
@@ -254,13 +256,52 @@ transport, and `api-guides/` is excluded from the npm tarball, so a user
 running `/api verify` in their pi session has neither the runner nor the
 files; verify cannot load them. The sidecar is the honest runtime shape.
 
-**All-fail is a systemic cause, not N independent failures.** When every op
-fails, the cause is almost always singular and foundational (unprovisioned
-secret, wrong `apiHost` / DNS / TLS, auth-schema mismatch, API moved or
-deprecated entirely). The all-fail report SHOULD detect and name the root
-cause once, not fan it out as N identical op-failure lines. A genuinely
-per-op-broken guide (each op a different failure) is rare and is already
-covered by the partial-failure report.
+**`verify.json` param-resolution mechanics (pin before implementation).**
+The sidecar reuses the executor's existing param mechanics verbatim — no
+new resolution code. `api-fetch`'s executor takes a single flat
+`params: Record<string, unknown>` map (`helpers.ts:443`) that feeds *both*
+`fillPathStrict(path, params)` for `{token}` path templating *and*
+`buildQueryParams(operation, params)` for query-string assembly; the op's
+existing `pathParams` set (inferred from `{token}` in `path`) is what splits
+a key into "path" vs "query" — there is no separate path-params input. So
+the sidecar's per-op object `{ "<param>": "<value>" }` **is that `params`
+map, passed verbatim** to the existing executor, and the contract is three
+lines:
+
+1. **Coverage:** a verify.json value feeds both path tokens and query
+   params, keyed by param name. Path vs query is determined by the op's
+   existing `pathParams` set — no new disambiguation, no separate path /
+   query namespaces in the sidecar.
+2. **Precedence:** verify.json value > op's `params[key].default` > missing.
+   This falls out of `buildQueryParams` L150–152
+   (`let val = params[key]; if (val === undefined && spec.default !== undefined) val = spec.default`):
+   verify.json sits in `params[key]`, so it wins; the default only fills
+   when verify.json omits the key. No new merge logic.
+3. **Skip vs. run:** a path param absent from verify.json makes
+   `fillPathStrict` throw → which is exactly the "unsatisfiable param" the
+   param-precheck detects → **skip**. When verify.json supplies it, the op
+   runs instead of skipping. The precheck and the sidecar compose: precheck
+   skips *unless* verify.json fills the gap.
+
+**One edge worth naming:** `passthrough: true` ops (`helpers.ts:173–184`)
+forward undeclared caller params onto the query string. Since verify is the
+sole param source in the verify path, verify.json **must be allowed to
+supply undeclared keys** for passthrough ops (otherwise a passthrough op
+can't be verified at all). This falls out of passing verify.json as the
+`params` map, but is non-obvious enough to state explicitly.
+
+In code the sidecar is one line: `const params = verifyJson[opName] ?? {}`
+before the existing precheck / executor call — the op then either runs
+(params satisfy every unsatisfiable slot) or is skipped (they don't). No
+params-store, no param-resolution DSL — the flat map already does it.
+
+**All-fail root-cause detection — deferred (YAGNI).** A general "detect the
+singular root cause when every op fails" heuristic is deferred: the auth
+precheck (above) already fail-fasts the most common all-fail case
+(unprovisioned secrets), and `--force` lets a human override a strict false
+negative. The partial-failure report lists which ops broke; the all-fail case
+is just N identical lines (ugly but not incorrect). `ponytail:` defer general
+root-cause detection until a real user hits it and `--force` isn't enough.
 
 **Verify is not free.** `/api verify` makes N live HTTP requests against the
 target API (transport is GET-only, so no mutation side-effects, but real
@@ -282,13 +323,44 @@ op couldn't be confirmed in this window); the human re-runs verify or uses
 human-guessed value, and `--force` already covers the tight-window case.
 
 **Write mechanism (the one new stamp-to-file routine in this redesign).** On
-all-ops success, `/api verify` regex-replaces (or inserts if absent) the
+all-ops success, `/api verify` line-replaces (or inserts if absent) the
 `verified:` line in the raw `guide.md` with today's date. There is no YAML
 serializer (see D5); the save path (`api-learn`) needs no such routine because
 D2 keeps the parser's respect-if-present default and writes the recipe as-is.
 The verify stamp is **unconditional** — it refreshes `verified` regardless of
 the prior value, which is the correct semantic for a "last confirmed
 all-ops-good" gesture (the one case where we *do* override, deliberately).
+
+**The stamp swaps one predictable line, it does not parse dates.** The match
+keys on the `verified:` key, not on a date-shaped value — the existing date is
+irrelevant to the match and is simply overwritten. The mechanics are three
+pinned rules, all reusing code that already exists:
+
+1. **Anchor inside the frontmatter block** (the real fragility the stamp must
+   avoid is matching a stray `verified:` in the prose body or in a
+   `description:` field). Isolate the block first with the existing
+   `FRONTMATTER_RE` (`parse-api-guide.ts:42`: `^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$`),
+   which yields `(frontmatter, body)`; operate on `frontmatter` only and
+   reassemble. A `verified:` string outside the block can never be touched.
+2. **Line-match the key, tolerate format variance.** Within the isolated
+   frontmatter, match `^verified:\s*.+$` (anchored to line start) — so
+   `verified: 2026-07-15`, `verified:"2026-07-15"`, and `verified: "x"` all
+   match and the whole line is replaced with `verified: <TODAY()>`. Do **not**
+   match a date pattern; match the key.
+3. **Absent → insert before the closing `---`.** The parser already defaults an
+   absent `verified` to `TODAY()` on read (`parse-api-guide.ts:1109`), so an
+   absent field is already semantically "today" — the insert just makes it
+   visibly present. Append the line as the last frontmatter entry, immediately
+   before the closing `---`.
+
+This is line-level replacement within a well-delimited block, not YAML
+round-tripping. The alternative — `yamlParse` → mutate → `yaml.stringify` —
+is worse here: re-serialization reformats the *entire* frontmatter (reorders
+keys, normalizes quoting, **strips comments**), clobbering a hand-tuned guide
+everywhere instead of on one line. The doc already rejected building a YAML
+serializer for the save path (D5); the same reasoning applies to the verify
+stamp. Touching one predictable line preserves the agent's formatting
+elsewhere.
 
 **Why always-available, not learn-gated.** Verify is deterministic, safe, and
 idempotent — gating it would be ceremony that adds a gate check + a refusal
@@ -298,6 +370,22 @@ honest reading is that `verified` = "last confirmed all-ops-good" is a
 *refreshable* signal, and a user who wants to refresh it in any mode shouldn't
 have to toggle learn mode on first. Gating restricts what users can do with
 their own software for no real payoff.
+
+**Focus-mode guard does not apply (corollary, grounded in the `secrets`
+precedent).** The guard at `api-toggle.ts:232` refuses exactly the actuating
+subcommands (`on` / `off` / `learn`) while `pi-tool-masking` holds focus
+(inclusion mode or allowlist focus) — those write `{enabled}` entries that
+would be focus-indistinguishable. `/api verify` and `/api delete` do **not**
+write toolset state (verify stamps a date in `guide.md`; delete removes a
+directory + invalidates the guide-store cache), so they are non-actuating
+peers of `secrets` / `status` / `helpers`, which are already exempt
+(`api-toggle.ts:285–286`, `secrets-command.ts:18`). This is a decision, not a
+risk to confirm — the precedent is in code. Verify also does not depend on
+the `api-fetch` / `api-guide` tools being enabled: it is a command with its
+own internal fetch loop that calls the executor helpers (`helpers.ts`),
+`auth.ts` resolution, and `transport.ts` directly, not the `api-fetch` tool —
+so tool masking (which gates agent-invokable tool surfaces, not commands) is
+irrelevant to whether verify runs.
 
 **`--force` escape valve (human-typed only).** `/api verify <domain> --force`
 stamps `verified: today` **without running any ops**, then `invalidateCache()`s.
@@ -743,11 +831,13 @@ verify` instead, and what the deferred staging feature would look like
   "skipped — requires agent-supplied params" list. The exact report format is
   an implementation detail to pin; the semantic is **strict any-runnable-op
   failure → no stamp** (partial or all-fail), skips don't block the stamp but
-  are named so the signal isn't quietly inflated. The all-fail case SHOULD
-  surface a single root-cause hint (auth precheck, `apiHost`, etc.) rather than
-  N identical op-failure lines; the partial-fail case lists which ops broke.
-  `--force` is the documented escape when strictness produces a false negative
-  (flaky API).
+  are named so the signal isn't quietly inflated — **except the all-ops-skipped
+  case, which produces no stamp + a warning** (stamping `verified: today` on a
+  guide never actually tested would inflate the signal; the warning names the
+  fix — `verify.json` or manual `api-fetch`). The partial-fail case lists which
+  ops broke; the all-fail case is N identical lines (ugly but not incorrect —
+  general root-cause detection is deferred, see D4). `--force` is the
+  documented escape when strictness produces a false negative (flaky API).
 - **Scaffold auto-degrade on multi-recipe domains.** The "guide exists"
   check is per-domain, not per-directory. For a domain claiming several
   guides, the merge note lists *every* candidate `dirName` and defers the
@@ -778,10 +868,6 @@ verify` instead, and what the deferred staging feature would look like
 - **Deferred staging.** If editing-clobber pain proves real, a `_staging/` dir +
   promote command is additive — safe to defer with a `ponytail:` marker. The
   git-init-your-api-guides-dir safety net is the honest v1 answer.
-- **Focus-mode guard.** `/api delete` and `/api verify` are read-only-ish /
-  user-typed peers of `status` / `helpers` / `secrets`; the focus-mode guard
-  that refuses actuating subcommands (`on` / `off` / `learn`) should not apply.
-  Confirm at implementation.
 
 ## Out of scope
 
@@ -800,9 +886,16 @@ verify` instead, and what the deferred staging feature would look like
 
 This doc is for review. After review:
 
-1. Sequence the 11 decisions into an implementation plan (dependencies: D7 and
-   the worked-example half of D6 are independent; D9 + D12 compose; D4 and D10
-   are command-surface additions that share dispatch plumbing).
+1. **Ship in two waves.** Wave 1 (independent, closes both HIGH-severity CMC
+   issues first, no command-surface changes): D7 (delimiter diagnostic) + the
+   worked-example half of D6 (drop stale dates, document `static-key`) +
+   D-bootstrap (one-line `schemaVersion` default). Wave 2 (composes on wave 1):
+   D6 probe-scaffold half + D11 auto-degrade + D9 fetch-recipe + D12
+   disambiguation + D4 `/api verify` + D10 `/api delete` (the two commands
+   share dispatch plumbing). D2 and D3 are framing — D2 is already the parser's
+   target behavior (zero new write code; the only D2 code is the worked-example
+   edit in D6), and D3 is a non-change (`api-fetch` stays read-only). D1 is the
+   one-workstream framing decision, not code.
 2. Testing plan — structural: parser diagnostic (D7), scaffold auto-degrade
    (D11), fetch-recipe + disambiguation (D9/D12), tool-stamped `verified`
    (D2); behavioral: `/api verify` partial-failure, `/api delete` cache
