@@ -1,0 +1,519 @@
+# API-Guide Authoring-Flow Redesign
+
+> Design record for the `api-learn` / `api-probe` authoring loop in
+> `pi-lean-host`. The *what* of the current tools is visible in the code; this
+> doc captures the *why* behind the redesign — the evidence that drove it, the
+> 11 decisions (and one deliberate non-decision) that compose the target flow,
+> the tradeoffs each one rejected, and the risks a future implementer should
+> know. It is the output of a brainstorming session; review precedes any
+> implementation plan.
+
+## Goals
+
+1. **Close the observed authoring friction** documented in the CoinMarketCap
+   authoring report (below) — primarily round-trip cost, not character-level
+   correctness.
+2. **Fix frontmatter ownership** — deterministic fields should be tool-stamped,
+   not hand-written by an agent that copies stale literals.
+3. **Keep the agent off the filesystem** during authoring — every authoring
+   activity (draft, edit, validate, recover) should flow through tools, not
+   `bash`-reading `guide.md`.
+4. **Preserve the clean mode boundary** — use-mode tools stay use-mode;
+   learn-mode behavior is never smuggled onto a use-mode tool; irreversible ops
+   stay with the human.
+
+## Evidence: CoinMarketCap authoring friction report
+
+A live `/api-learn` authoring session against a keyed, header-auth,
+per-endpoint-versioned API. The guide saved successfully; the friction, in cost
+order:
+
+- **5 `api-learn` calls** (1 success, 4 validation rejections).
+- **3 of 4 rejections = auth-schema guessing** — the worked example documents
+  only `kind: none`; a keyed-API author reverse-engineered `static-key` from
+  error messages.
+- **1 rejection = misleading frontmatter error** — the validator said "no
+  frontmatter found" when the real problem was a missing closing `---`.
+- Validator error messages were praised (precise field paths, expected values,
+  fix hints) — the pain was *upstream* of them.
+
+### Ranked issue ledger
+
+| # | Severity | Issue | Closed by |
+|---|---|---|---|
+| 1 | HIGH | Static-key auth schema undocumented → 3 wasted round-trips. | D6 |
+| 2 | HIGH | Misleading frontmatter error: "no frontmatter found" when closing `---` missing. | D7 |
+| 3 | MEDIUM | No validate-only / dry-run; every rejection re-sends the whole (~200-line) recipe. | D5 (rejection-count lever + `/api verify` behavioral check) |
+| 4 | MEDIUM | `api-probe` auth shape ≠ guide auth schema; probe draft omits the `auth:` block. | D6 |
+| 5 | MEDIUM | Probe can't infer pagination from a single response (inherent; comment already honest). | Out of scope |
+| 6 | LOW | Probe draft omits top-level fields — no full-scaffold mode. | D6 |
+| 7 | LOW | No existing keyed-auth guide to crib from (chicken-and-egg). | D6 |
+| 8 | LOW (env) | web-fetch temp files vanished mid-session (portal issue, not api-learn). | Out of scope |
+
+### What went right (preserve)
+
+- Validator error messages: precise, actionable field paths + fix hints.
+- `api-probe` version resolution, `itemsPath` detection, paste-ready op block.
+- **`api-fetch` end-to-end verification right after save** — the de-facto
+  verify step the agent already performs. The redesign *names* this behavior
+  rather than inventing a new one.
+- `requires` / `secretRefs` cross-check guard.
+
+## Constraints & assumptions
+
+- **Agent is the author; human is the reviewer/owner of saved guides** —
+  including irreversible ops like deletion.
+- **Backwards compatibility is loader-side and already handled.** The parser
+  reads an agent-written `verified` today (`parse-api-guide.ts` L1109–1110) and
+  tolerates it; new saves overwrite it. Existing guides need no migration.
+- **The parser is one-way.** No YAML serializer exists, and building one for an
+  incremental-edit feature was rejected (see D5). Edits are whole-recipe
+  re-send.
+- **The store caches per session.** `guide-store.ts` caches loaded guides and
+  invalidates on write; there is no delete primitive today, and `bash rm` leaves
+  a ghost guide in the cache until reload.
+- **The toggle already gates `api-learn`.** Learn-mode-only behavior is free to
+  add to `api-learn` / `api-probe`; use-mode tools (`api-guide`, `api-fetch`)
+  must stay free of learn-mode behavior.
+- **`api-fetch` is read-only w.r.t. `guide.md`** (confirmed: it imports only
+  `findGuidesByDomain`; writes go to `/tmp` spill). This is a load-bearing
+  invariant — D3 and D4 both depend on it.
+- **Users who want version control can `git init` the api-guides dir
+  themselves.** This is the editing-clobber safety net that lets the redesign
+  defer staging (see Dropped D8).
+
+## Code-grounded starting points
+
+These facts were established by reading the source, not assumed:
+
+- **`verified` & `updated` already default to `TODAY()`** in `parseApiGuide()`
+  (~L1098–1110) when omitted. The stamping *mechanism* exists; the gap is that
+  the agent still hand-writes them.
+- **The worked example hardcodes** `updated: 2026-07-15` / `verified:
+  2026-07-15` — trains stale-literal copying. It also documents only `auth:
+  kind: none` (the #1 root cause).
+- **`api-learn` already validates-then-writes** (parse → no write on error →
+  `writeFileSync` on success). Structural validation is free on every save.
+- **`api-probe` `emitDraft()`** emits only the `operations[]` block — no
+  top-level scaffold, no `auth:`. Its `auth` injection param uses `secretRefs` /
+  `headerPrefixes` / `secretQueryRefs` but **not** `kind` / `requires` — the
+  shape mismatch behind issue #4. Probe is **per-endpoint** (one call = one op
+  block).
+- **`api-guide({domain})` returns a rendered human-readable view, not the raw
+  recipe string.** Editing an existing guide today requires `bash`-reading
+  `guide.md` from disk; `domain + no recipe` currently errors ("Recipe is
+  required").
+- **`/api secrets --delete`** exists as a user-typed destructive-op command
+  precedent (interactive confirm for whole-domain, no-confirm for single name).
+- Frontmatter fields already tool-defaulted: `kind` (api), `icon` (📖),
+  `shortName` (filename), `updated` (TODAY), `verified` (TODAY), `gatherAllMax`
+  (1000), `responseShape` (json/utf-8), `schemaVersion` (0). Agent-authored:
+  `domains`, `apiHost`, `docs`, `organization`, `description`, `auth`,
+  `pagination`, `operations`.
+
+## Decisions
+
+### D1 — One workstream
+
+Frontmatter-stamping is folded into the same flow redesign as the friction
+fixes (round-trips, auth docs, scaffold). The user's original framing emphasized
+frontmatter hygiene (`verified` deterministic, `lastModified`); the CMC report
+emphasized friction. These optimize for different things, but treating them as
+one coherent authoring-flow overhaul keeps the design legible and avoids two
+half-coordinated changes.
+
+**Rejected:** two workstreams (a small frontmatter change + a separate larger
+friction effort) — risks designing each without the other.
+
+### D2 — `verified` ownership: tool-stamped on save, no `lastModified`
+
+The tool stamps `verified: <today>` on every save; the agent omits `verified`
+entirely, and the tool strips/ignores any agent-supplied value. No
+`lastModified` field is added — `verified` serves as the drift signal.
+
+**Rationale.** The stamping mechanism already exists (the parser defaults
+`verified` to `TODAY()`). The gap is purely that the agent still *writes* it
+(and copies stale literals from the worked example). Making the tool
+authoritative closes the gap with zero new mechanism; removing the stale literal
+from the worked example removes the training-to-copy.
+
+**Why no `lastModified`.** `verified` already serves as the drift signal (a
+guide not touched since X). A separate `lastModified` would be a second date
+field tracking the same thing (file mtime) — redundant. The two-fields options
+considered (`lastModified` + semantic `verified` = "last confirmed against live
+API"; or tool-stamping both) added either machinery or ambiguity without a clear
+downstream consumer of the distinction.
+
+**Rejected:**
+
+- *Add `lastModified`; keep `verified` agent-owned/defaulted = "last confirmed
+  via api-fetch."* Two distinct signals, but no downstream logic consumes the
+  distinction today, and it leaves `verified` in the agent's hands (the original
+  complaint).
+- *Tool-stamp both.* Redundant — both track "when the file last moved."
+
+### D3 — No passive `verified` bump on `api-fetch`
+
+`api-fetch` stays read-only w.r.t. `guide.md`. A successful fetch during a task
+does not advance `verified`.
+
+**Rationale.** Passive bumping conflates "used" with "verified" — a single
+working endpoint would mark the whole guide "verified today" while masking a
+broken one (the partial-success problem). It would also add a write side-effect
+to a currently stateless tool, with cache-invalidation and concurrency costs.
+Keeping `verified` as a save-date drift signal (honest, if coarse) and adding an
+*explicit* verify gesture (D4) keeps "using" and "verifying" cleanly separated.
+
+### D4 — Explicit verify gesture: `/api verify` command, always-available
+
+A dedicated **`/api verify <domain> [guide]`** command — **always-available
+(not learn-gated)** — fetches the guide's operations and stamps `verified:
+today` only on success. `api-fetch` stays pure read-only; no new manifest tool.
+All-ops threshold with a partial-failure report (op X of N failed → not
+verified, here's which). `verified` now means "last deterministically checked
+against the live API."
+
+**Rationale.** The CMC report shows the agent already runs a post-save
+`api-fetch` to verify — this names an existing behavior rather than inventing
+one. A *command* (not a tool) is the right shape because verify is a deliberate
+gesture, not something the agent should discover as another tool surface; and it
+keeps the manifest from growing. The all-ops threshold is the honest one: a
+guide is verified when every operation works, with a clear report when one
+doesn't.
+
+**Why always-available, not learn-gated.** Verify is deterministic, safe, and
+idempotent — gating it would be ceremony that adds a gate check + a refusal
+message + a test for the refusal, all to protect a faint signal-hygiene
+preference ("`verified` should only move during deliberate authoring"). The
+honest reading is that `verified` = "last deterministically checked" is a
+*refreshable* signal, and a user who wants to refresh it in any mode shouldn't
+have to toggle learn mode on first. Gating restricts what users can do with
+their own software for no real payoff.
+
+**Rejected:**
+
+- *`api-fetch verify:true` flag (per-op threshold).* Smuggles a learn-mode
+  behavior (writing `guide.md`) onto a use-mode tool, breaking the mode boundary
+  and undoing D3's read-only invariant. The per-op threshold also conflates
+  one-good-op with guide-verified.
+- *Per-operation `lastVerified` (sidecar or op field).* Fully resolves partial
+  success by granularity, but it's a runtime-health feature — schema change or
+  sidecar — bigger than the authoring-flow scope.
+- *Learn-gated `/api verify`.* See "why always-available" above — ceremony.
+
+### D5 — Monolithic-write mechanism: scaffold/docs + `/api verify` (no validate-only flag, no staging)
+
+The monolithic-write pain (issue #3) is addressed by a **combo of two levers**:
+
+1. **Scaffold/docs to cut rejection count** (D6) — the report's 3/4 rejections
+   were an undocumented auth schema; better discoverability means the agent's
+   first save is far more likely valid.
+2. **`/api verify` behavioral check** (D4) — catches the semantic errors a
+   structural validator cannot (wrong `itemsPath`, dead endpoint), which are the
+   class of "valid-but-broken" saves that a dry-run flag would *not* have caught
+   anyway.
+
+**No `validate:true` / dry-run flag.** Structural validation already happens
+free on every save (invalid recipes don't write); the flag's only added
+behavior would be "don't write a structurally-valid recipe" — ceremony. The
+token saving it appeared to offer is marginal (the recipe is already in the
+agent's context; re-sending it as a tool arg costs output tokens either way).
+The flag was dropped after interrogation.
+
+**No incremental-patch / add-op / staging machinery.** The parser is one-way;
+building a YAML serializer for structured edits is substantial machinery for a
+residual-rejection case that the scaffold/docs lever already shrinks. The
+editing-clobber case (experimenting with a variation on a working guide) is
+covered *enough* by D9 (fetch-recipe) + git/re-authoring as the safety net.
+
+**Deferred (additive future).** If editing-clobber pain proves real, a
+`_staging/` directory + promote command is an additive feature that breaks
+nothing existing — safe to defer with a `ponytail:` marker.
+
+**Rejected:**
+
+- *Validate-only flag.* Dropped (see above). Oversold as a token saver; its real
+  value ("check before mutate") is covered by fetch-recipe + the fact that
+  saves already validate.
+- *Incremental/structured edit ops (`add-op`, `set-auth`).* Heaviest machinery;
+  reopens the serializer question; merge/overwrite semantics + collision with
+  hand-edits become real. Not worth it for the residual case.
+- *Scaffold/docs alone (no behavioral check).* Leaves the wrong-`itemsPath`
+  class undetected until a real `api-fetch` fails in the wild.
+- *Validate-only alone (no scaffold/docs).* Reduces cost-per-rejection but not
+  rejection count — the report's dominant pain.
+
+### D6 — Auth discoverability: probe scaffold mode + expanded worked example
+
+Two coordinated changes close issues #1, #4, #6, and #7:
+
+1. **`api-probe` grows a scaffold mode** (`scaffold: true`) that emits the
+   *whole* recipe skeleton — top-level fields (`domains` defaulted from
+   hostname, `apiHost`, `responseShape`, `gatherAllMax`) + an `auth:` block
+   *translated from the probe's auth-injection params* (synthesizing
+   `kind: static-key` + `requires: [<names>]`) + the op block.
+2. **The worked example expands in-place** to document `static-key` alongside
+   `none`.
+
+**Rationale.** The report's 3/4 rejections came from an agent reverse-engineering
+the `static-key` schema from error messages. The probe already takes
+auth-injection params; translating them into the guide's `auth:` schema at
+scaffold time removes the hand-assembly that caused the guessing. The worked
+example is the other discoverability surface — expanding it in-place (rather
+than a separate reference doc) meets the agent where it already looks.
+
+**Rejected:**
+
+- *Docs-only (expanded example + a dedicated auth field reference; probe
+  unchanged).* Least machinery, but bets on the agent reading docs — the CMC
+  report shows it doesn't always.
+- *Multi-example picker (replace the single worked example with a menu of
+  none/static-key-header/static-key-query).* More explicit discoverability, but
+  more example surface to maintain and a two-step (pick then fill) the
+  in-place expansion avoids.
+- *Probe scaffold + multi-example picker (both).* Max discoverability, max
+  maintenance surface — more than the pain warrants.
+
+### D7 — Delimiter error fix: diagnose the missing closing `---`
+
+Change the "no frontmatter found" diagnostic in `parseApiGuide` to diagnose a
+*missing closing `---` delimiter* when the opening `---` is present but the
+closer isn't.
+
+**Rationale.** Issue #2 was a misleading error that cost a round-trip. The
+worked example shows the closing `---`, but it's easy to drop when pasting a
+recipe together. A correct message points at the cause. Low-cost, in-scope
+regardless of the other decisions.
+
+### D9 — Editing existing guides: fetch-recipe affordance on `api-learn`
+
+`api-learn` with `domain` but **no `recipe`** returns the current raw recipe
+string (instead of today's "Recipe is required" error). Edit stays
+whole-recipe re-send; it composes with the (now-dropped) validate flag's
+absence by relying on the save path's existing structural validation.
+
+**Role split (load-bearing):**
+
+| Tool | Mode available | Returns | Job |
+|---|---|---|---|
+| `api-guide` | on + learn | **rendered** view (op list, prose, auth summary) | *use* a guide / navigate the API |
+| `api-learn` | learn only | **raw** recipe (template, or existing guide to edit) | *author/edit* a guide |
+
+**Rationale.** The real editing friction wasn't the edit mechanism (whole-recipe
+re-send works) — it was that there was no tool path to *fetch the current raw
+recipe*, because `api-guide` returns a rendered view only, forcing a `bash`-read
+of `guide.md`. Repurposing the `domain + no-recipe` branch from "error" to
+"return current recipe" closes the read loop so the whole edit flow (fetch →
+modify → save) runs through tools. The role split is clean: on-mode = use
+(rendered); learn-mode = author (raw). The affordance is learn-gated for free
+because `api-learn` is learn-only.
+
+**Rejected:**
+
+- *Nothing — editing already works via bash-read + re-send.* Maximalist-minimal,
+  but leaves the filesystem detour that's a real fumble source for an agent that
+  doesn't always know the on-disk path.
+- *Structured edit ops (`add-op`, `set-auth`).* Disruptive — reopens the
+  incremental-patch machinery rejected in D5 (needs a serializer; parser is
+  one-way).
+
+### D10 — Recovery by deletion: `/api delete` command, always-available
+
+**Delete is a new capability, realized as a user-typed `/api delete <domain>
+[guide]` command, always-available (like `/api secrets`).** There is no delete
+path today — neither a tool nor a command; the only way to remove a guide is
+`bash rm`. Interactive confirm for a whole-domain; mirroring `/api secrets
+--delete`. The agent is **not** given a delete tool; `api-learn`'s docs +
+collision/malformed errors tell it the path exists ("if a guide is wrong, ask
+the user to run `/api delete <domain>`").
+
+**Rationale.** A destructive, irreversible op on an agent-invokable tool is a
+footgun — the agent is demonstrably fallible (the CMC report), the human is the
+owner of saved guides, and deletion can't be undone. Realizing delete as a
+user-typed command (not an `api-learn` param) keeps the destructive op off the
+agent's tool surface entirely, eliminating both the footgun and the context
+clutter of a destructive param. The command earns its keep over `bash rm`
+because it **invalidates the per-session cache** (a `bash rm` leaves a ghost
+guide that `api-guide` / `api-fetch` still see until reload), plus path
+discoverability and consistency with the existing `/api secrets --delete`
+precedent.
+
+Recovery-by-rewriting (API changed / bad content) — the more common case — is
+covered by D9 (fetch-recipe) + re-save + `/api verify`. Full removal is the
+human's judgment call.
+
+**Rejected:**
+
+- *An `api-learn({domain, delete: true})` affordance (the brainstorm's first
+  proposal).* Keeps the agent off the filesystem but puts a destructive mutation
+  on a tool whose other branches are read/validate/write — and gives the agent a
+  self-serve destructive op.
+- *Nothing — `bash rm` is enough.* Leaves the filesystem detour and the
+  ghost-guide cache bug.
+- *Soft delete / archive.* Over-engineered for a flat-file store the user can
+  git-track; an archived-state concept the loader must skip is more machinery
+  than the case warrants.
+
+### D11 — Scaffold mode default + multi-probe: opt-in, auto-degrade
+
+`scaffold: true` is **opt-in** and **auto-degrades**:
+
+- **No guide exists for the domain** → emit the full skeleton (bootstrap).
+- **A guide already exists** → emit a single guide-formatted op block (with a
+  merge note: "guide exists — here's the op to merge via api-learn fetch-recipe
+  and edit").
+
+The tool decides based on guide presence; the agent can pass `scaffold: true`
+on every probe safely and never get conflicting `---` blocks.
+
+**Rationale.** The user caught a real flaw in "always emit the full skeleton":
+probe is per-endpoint, so `scaffold: true` on every probe would emit N
+conflicting full skeletons. The full skeleton only makes sense *once*
+(bootstrap); subsequent probes should contribute op-only blocks to merge.
+Auto-degrade removes that decision from the agent (which the CMC report shows
+doesn't always choose well) at the cost of one guide-store lookup in the probe.
+
+**Why opt-in, not always-on.** Always-on would break the current paste-just-op
+workflow the CMC author actually used successfully; opt-in preserves it and adds
+the scaffold as a discoverability lever for first-time authors.
+
+**Rejected:**
+
+- *Always full skeleton + docs say "first probe only."* Simplest, but bets on
+  the agent reading docs — and re-introduces the exact fumble this redesign
+  prevents.
+- *Separate bootstrap gesture (scaffold off the probe).* Cleanest separation,
+  but a second surface, and detaches the scaffold from the live fetch that
+  informed it.
+- *Enum `scaffold: full | op | single`.* With `single` defined as "one
+  guide-formatted op block" (= today's default), the enum collapses to
+  `full | single` — a two-value enum that's the boolean renamed, with
+  auto-degrade removed. Lateral move: it trades implicit-but-safe for
+  explicit-but-requires-choosing, re-introducing a decision the agent can get
+  wrong.
+
+### D12 — Multi-recipe composition: disambiguation menu + selector
+
+When a domain claims multiple guides, **both** fetch-recipe (D9) and the delete
+command (D10) require a guide selector (`shortName` / `dirName`) and return a
+disambiguation menu otherwise. Single-guide domains need no selector. The
+delete guard is: require-exists + selector-disambiguates + clear confirmation
+naming the exact directory removed.
+
+**Rationale.** Mirrors `api-guide`'s existing disambiguation pattern (which
+already resolves multi-recipe domains by `shortName`). Keeps the common
+single-guide case zero-friction while making the destructive delete op
+unambiguous when there's any doubt.
+
+**Rejected:**
+
+- *Operate on `dirName == domain` directly.* Simpler, but leans on the agent
+  knowing the subtle routing-domain vs. dirName distinction (e.g.
+  `archive.org-wayback`).
+- *Fetch returns all matching recipes concatenated.* Avoids a menu round-trip
+  for fetch, but hands the agent a blob to split — a fumble source.
+
+### Dropped D8 — Validate-only flag (non-decision, recorded)
+
+A `validate: true` / `dryRun: true` flag on `api-learn` was proposed and
+**dropped**. Structural validation already happens on every save (invalid
+recipes don't write); the flag's only added behavior would be "don't write a
+structurally-valid recipe" — ceremony. It appeared to offer a token saving, but
+the recipe is already in the agent's context and is re-emitted as a tool arg in
+both scenarios, so the saving is marginal. Its real value ("check before
+mutate" during editing) is covered by D9 (fetch-recipe) + the save path's
+existing validation + git/re-authoring as the clobber safety net. The staging
+feature that would have filled the genuine gap (behaviorally verify a candidate
+without saving it as the real guide) is deferred as an additive future feature.
+
+**Why this is recorded.** A future implementer who reads the CMC report's "no
+dry-run mode" complaint (issue #3) will reasonably reach for a validate flag.
+This record explains why the redesign answers #3 with scaffold/docs + `/api
+verify` instead, and what the deferred staging feature would look like
+(`_staging/` dir + promote command) if the editing-clobber pain proves real.
+
+## The target authoring flow (end-to-end)
+
+**Initial authoring (no guide exists for the domain):**
+
+1. `api-probe({apiHost, path, params, scaffold: true, auth: {...}})` → emits
+   the full recipe skeleton (top-level + `auth:` translated from injection
+   params + op block).
+2. Agent fills in the skeleton, calls `api-learn({domain, recipe})` → validates
+   and writes (structural validation free on every save; `verified` tool-stamped).
+3. `/api verify <domain>` (user-typed, or the agent's post-save `api-fetch`
+   self-check first) → fetches all ops, stamps `verified` on success, reports
+   partial failure otherwise.
+
+**Adding an operation to an existing guide:**
+
+1. `api-probe({apiHost, path, params, scaffold: true})` → auto-degrades to a
+   single op block + merge note (guide already exists).
+2. `api-learn({domain})` (no recipe) → returns the current raw recipe.
+3. Agent merges the new op block into the recipe, calls `api-learn({domain,
+   recipe})` → validates + writes.
+4. `/api verify <domain>` → confirms the new op works.
+
+**Recovering from a bad/obsolete guide:**
+
+- *Fix it:* `api-learn({domain})` → fetch raw recipe → edit → `api-learn({domain,
+  recipe})` → `/api verify`.
+- *Remove it:* user runs `/api delete <domain> [guide]` (interactive confirm;
+  cache invalidated).
+
+**Drift check on a stale guide:**
+
+- User runs `/api verify <domain>` in any mode → stamps `verified: today` if
+  every op still works, reports which failed otherwise.
+
+## Risks, tensions & edge cases
+
+- **Verify partial-failure UX.** `/api verify` reports "op X of N failed → not
+  verified, here's which." The exact report format is an implementation detail
+  to pin; the semantic is "any failure → no stamp."
+- **Scaffold auto-degrade on multi-recipe domains.** The "guide exists" check
+  is per-domain, not per-directory. For a domain claiming several guides, the
+  merge note should name the *target guide dir* so the agent knows which guide
+  to merge into (composes with D12's selector).
+- **`verified` backwards compat.** The loader must continue to tolerate (and
+  ignore) agent-written `verified` in old guides; new saves overwrite it. This
+  is already the parser's behavior (L1109–1110) — no migration needed.
+- **Two new `/api` commands.** `/api delete` and `/api verify` join a surface
+  currently of `on | off | learn | status | helpers | secrets`. They must
+  integrate cleanly with the existing subcommand dispatch; both are
+  always-available (peer of `status` / `helpers` / `secrets`, not of
+  `on` / `off` / `learn`).
+- **Deferred staging.** If editing-clobber pain proves real, a `_staging/` dir +
+  promote command is additive — safe to defer with a `ponytail:` marker. The
+  git-init-your-api-guides-dir safety net is the honest v1 answer.
+- **Focus-mode guard.** `/api delete` and `/api verify` are read-only-ish /
+  user-typed peers of `status` / `helpers` / `secrets`; the focus-mode guard
+  that refuses actuating subcommands (`on` / `off` / `learn`) should not apply.
+  Confirm at implementation.
+
+## Out of scope
+
+- **Probe pagination inference (issue #5)** — inherent to single-shot probing;
+  the existing honest comment is the fix.
+- **web-fetch temp-file lifetime (issue #8)** — a portal issue, not an
+  api-learn concern.
+- **Staging / candidate-guide verification** — deferred additive future feature
+  (see Dropped D8).
+- **Per-operation `lastVerified` runtime health** — a runtime-health feature,
+  bigger than the authoring-flow scope.
+- **`oauth2` realization, cookie-login, general mutations** — pre-existing
+  deferred seams, unaffected by this redesign.
+
+## Rollout / next steps
+
+This doc is for review. After review:
+
+1. Sequence the 11 decisions into an implementation plan (dependencies: D7 and
+   the worked-example half of D6 are independent; D9 + D12 compose; D4 and D10
+   are command-surface additions that share dispatch plumbing).
+2. Testing plan — structural: parser diagnostic (D7), scaffold auto-degrade
+   (D11), fetch-recipe + disambiguation (D9/D12), tool-stamped `verified`
+   (D2); behavioral: `/api verify` partial-failure, `/api delete` cache
+   invalidation + confirm.
+3. Ship-manifest / `api-guides` exclusion checks still apply (the axis guides
+   are unaffected).
