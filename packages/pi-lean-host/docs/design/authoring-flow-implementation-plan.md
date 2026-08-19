@@ -91,13 +91,27 @@ isolation.
   malformed/missing trailing newline" (e.g. check whether `\n---` appears
   after the opening delimiter) so the `fix` hint points at the right edit.
 - **D-bootstrap (parser) — absent `schemaVersion` defaults to `0` (floor).**
-  In `parseApiGuide` (~L1172–1185) an absent `schemaVersion` is currently left
-  `undefined`; default it to `0` (the floor / oldest known vintage), **not**
-  `GUIDE_SCHEMA_VERSION`. This realigns the code with the existing `AGENTS.md`
-  text ("absent defaults to `0`") and is what makes drift detectable after a
-  bump (an unversioned guide must not silently inherit the new current). A
-  malformed (non-integer / negative / non-integer-float) value still falls back
-  to `0` rather than rejecting the guide — the guide always loads.
+In `parseApiGuide` (~L1172–1185) `schemaVersion` currently ends up
+`undefined` in two situations — absent, or present-but-malformed (non-integer /
+negative / non-integer-float) — because the outer `if (raw !== undefined)`
+guards the absent case and the inner valid-integer check guards the malformed
+case. Collapse both to the floor: default `schemaVersion` to `0` at
+declaration and only overwrite on the valid-integer branch (drop the outer
+`if (raw !== undefined)` wrapper). Both absent and malformed then fall out of
+the same default with no else branch to write. The default is **not**
+`GUIDE_SCHEMA_VERSION` — this realigns the code with the existing `AGENTS.md`
+text ("absent defaults to `0`") and is what makes drift detectable after a
+bump (an unversioned guide must not silently inherit the new current). The
+guide always loads (never rejects on a malformed value). **Rewrite the inline
+block comment above this logic** (currently ~L1172–1176, verbatim: *"schemaVersion
+— metadata-only attribution … left `undefined` when absent. Never gates,
+warns, or alters parse. A malformed (non-integer/negative) value is tolerated
+and ignored"*) in the same S0 PR — it encodes the exact "never warns / left
+undefined" framing S0 overturns and would drift from the code the moment the
+edit lands. The replacement states the floor default + valid-integer override
+- the detection framing (stale `< current` warns non-blockingly; never gates).
+The `api-guide-types.ts` JSDoc rewrite is a separate S5 task.
+
 - **D-bootstrap (write path) — `api-learn` stamps `schemaVersion` on save.**
   On the save path (`api-learn.ts`, after `parseApiGuide` succeeds, before
   `writeFileSync`), ensure the raw recipe's frontmatter carries
@@ -126,7 +140,11 @@ isolation.
     "drill in here." This mirrors how malformed guides already surface as a `⚠`-
     prefixed catalog line while respecting the collapsed-row constraint.
   - `api-fetch`: append a staleness note to the fetch result text (not the
-    `details` machine channel — the note is for the agent/human reader).
+    `details` machine channel — the note is for the agent/human reader). The
+    per-guide `⚠ schemaVersion …` line **also appears on `api-fetch`'s own
+    disambiguation menu** (the N-guide domain case, `tools/api-fetch.ts`
+    ~L576), mirroring `api-guide`'s menu so a stale candidate is flagged
+    wherever the agent picks among multiple guides for a domain.
   - **Never a gate**: the guide still loads and `api-fetch` still runs. This is
     detection, not enforcement.
   - **Mode boundary**: the `api-fetch` note is read-only (writes nothing to
@@ -173,7 +191,8 @@ isolation.
   - A loaded guide with `schemaVersion < GUIDE_SCHEMA_VERSION` renders a
     `⚠ schemaVersion N < current M — guide may need updating` line in the
     `api-guide()` catalog (per-guide row / disambiguation menu / detail view)
-    and a staleness note on `api-fetch`.
+    and on `api-fetch`'s disambiguation menu, plus a staleness note on the
+    resolved-op `api-fetch` result.
   - An **org-grouped** catalog row containing at least one stale guide gets a
     trailing `⚠` glyph on the `🏛️ ${org} — N guides (domains)` line (hint only;
     the per-guide `⚠` line lives on the disambiguation menu / detail view). An
@@ -697,7 +716,7 @@ tell it to ask the human.
   guides are unaffected by this redesign — confirm `ship-manifest.test.ts`
   stays green and `api-guides/` is excluded from the npm tarball).
 - **CHANGELOG** — there is no package-level CHANGELOG; refine the monorepo
-  root `CHANGELOG.md`'s **Unpublished** entry that will land as the `0.5.0`
+  root `CHANGELOG.md`'s **Unreleased** entry that will land as the `0.5.0`
   release. These early versions are unstable and unofficial, so the entry is
   written as-if-all-features-shipped-at-once (one consolidated `0.5.0` block,
   not per-sprint sub-entries): each sprint (S0–S4) appends/edits that single
@@ -728,7 +747,9 @@ tell it to ask the human.
   says "absent stays `undefined` (semantic default 0). Never gates/warns/alters
   parse." — after S0 it becomes "absent defaults to `0`; a stale value
   (`< current`) warns non-blockingly in the `api-guide` catalog/detail and on
-  `api-fetch`; never gates." The `api-guides/` section's "synthetic axis guides"
+  `api-fetch`; never gates." (The parser inline comment at `parse-api-guide.ts`
+  ~L1172 was rewritten in S0 with the logic — S5 owns only the types JSDoc +
+  AGENTS.md prose.) The `api-guides/` section's "synthetic axis guides"
   framing is unchanged.
 
 ### Acceptance criteria
@@ -797,7 +818,7 @@ owner sign-off); none affects sprint ordering:
    and carries a `transformWarning` without disabling the op. Verify treats it
    as non-blocking (the HTTP op succeeded). See S3 *Strict threshold*.
 4. **CHANGELOG.** **Resolved: refine the monorepo root `CHANGELOG.md`'s
-   Unpublished entry that will ship as `0.5.0`**, written as one consolidated
+   Unreleased entry that will ship as `0.5.0`**, written as one consolidated
    block (as-if-all-features-shipped-at-once), edited incrementally per
    sprint. No package-level CHANGELOG file. See S5 *Scope*.
 
