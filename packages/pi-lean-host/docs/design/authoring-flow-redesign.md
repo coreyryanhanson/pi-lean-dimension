@@ -346,6 +346,73 @@ modify → save) runs through tools. The role split is clean: on-mode = use
 (rendered); learn-mode = author (raw). The affordance is learn-gated for free
 because `api-learn` is learn-only.
 
+**Fetch-recipe behavior by guide count** (`api-learn({domain})` with no
+`recipe`, no `new`):
+
+| Guides for `domain` | Behavior | Calls to edit |
+|---|---|---|
+| 0 | fresh domain-specific template (bootstrap — same path as `new:true`) | 1 |
+| 1 | that guide's raw recipe, **with the `dirName` surfaced** (see below) | 1 |
+| N | D12 disambiguation menu (by `shortName`), then the selected guide's raw recipe **with `dirName` surfaced** | 2 |
+
+The **0-guide row** is the natural bootstrap: no existing recipe to fetch, so
+return a fresh template (pre-filling `domains: [<domain>]`). This is the same
+template path `new:true` reuses, so there is one template-producing branch,
+gated by "(no guide exists) OR `new:true`."
+
+**`dirName` surfacing (load-bearing — overwrite mitigation).** The write path
+keys on `domain` = literal subdirectory name (`api-learn.ts:277–281`:
+`join(guidesDir, domain)`), while the D12 disambiguation menu resolves by
+`shortName`. For a multi-guide domain (`archive.org` claims `archive.org/` +
+`archive.org-wayback/`), an agent that fetches via routing `domain: "archive.org"`
+- `guide: "wayback"` and then re-passes that routing `domain` on save would
+write to `archive.org/guide.md` and **clobber the sibling guide**. The
+fetch-recipe response therefore **must surface the resolved `dirName`**
+(e.g. `Directory: archive.org-wayback — pass this as \`domain\` when re-saving`)
+so the agent passes the dirName, not the routing domain, back on save. This is
+the smallest close: zero new write-path params, zero new resolution logic on
+the write side — the agent copies the dirName it was just shown. (Read-side
+disambiguation alone is necessary but not sufficient; it makes the agent *aware*
+which guide it's editing but does not hand it the key the write path needs.)
+
+**Fresh-template gesture: `new:true`.** `api-learn({domain, new: true})` returns
+a domain-specific starter template regardless of existing guides for that
+domain — the path for authoring a *second* guide on a domain that already has
+one. Pre-fills only what is reliably known: `domains: [<domain>]`. Other fields
+(`apiHost`, `organization`, `shortName`, `operations`) are left as placeholders
+for the agent to fill, with the op block sourced from `api-probe({scaffold:
+true})` (D6). Reuses the bootstrap template branch; does not touch existing
+guides. The agent already knows whether it is editing or creating, so an
+explicit `new:true` is cheaper than forcing every edit through a menu.
+
+**Entry-point split (load-bearing).** The template and the instruction/field-
+reference blocks are already separable strings in `api-learn.ts` (`WORKED_EXAMPLE`
+const at L37 vs the inline `## Required fields` block at L138–180); the split
+routes them to distinct entry points so each does one thing:
+
+- Bare `api-learn()` → the **manual** (field reference, defaults, semantics) +
+  a pointer to `api-learn({domain, new: true})` for a domain-specific starter.
+  No worked-example recipe (superseded by `new:true`, which is domain-specific
+  and therefore strictly more useful than a generic `boe.es` example).
+- `api-learn({domain, new: true})` → the **template** (domain-specific,
+  `domains` pre-filled), no instruction block.
+
+Tool description updated to name both entry points.
+
+**Scope:** D9 covers well-formed guides only. `api-learn` validates-then-writes
+(`parseApiGuide` → no write on error → `writeFileSync` on success), so the
+agent **cannot produce a malformed guide** through the tool path. Malformed
+guides arise only from hand-edits, schema drift, or pre-existing files — all
+human-initiated or migration edges, not agent authoring flows. They are already
+surfaced by the `api-guide()` catalog (`⚠ malformed — <dirName>: <field>` at
+`parse-api-guide.ts:1466`), and recovery is the human's (`bash`-read at the
+known path, or `/api delete <dirName>` from D10) — not D9's. `findGuidesByDomain`
+cannot address a malformed sibling by routing domain (its `domains:` block is
+unreadable), so any fallback there would only catch the degenerate
+no-healthy-siblings slice and produce mixed behavior; `ponytail:` defer
+malformed-recipe fetch until a metadata sidecar lets malformed guides be
+addressed by routing domain without guessing.
+
 **Rejected:**
 
 - *Nothing — editing already works via bash-read + re-send.* Maximalist-minimal,
@@ -354,6 +421,21 @@ because `api-learn` is learn-only.
 - *Structured edit ops (`add-op`, `set-auth`).* Disruptive — reopens the
   incremental-patch machinery rejected in D5 (needs a serializer; parser is
   one-way).
+- *Malformed-guide fallback in `api-learn({domain})`.* Only catches the
+degenerate no-healthy-siblings slice (routing domain unknown when `domains:` is
+unreadable); produces mixed behavior — raw-recipe in some cases, raw+error in
+others — while silently missing the 1-of-n case it nominally covered. See Scope
+above.
+- *Always show the disambiguation menu when a domain is claimed (even for
+1 guide).* Taxes the common single-guide edit (1 call → 2) to serve the rare
+"fresh template for a second guide" case — backwards from D12's stated
+zero-friction-on-the-common-case rationale. The rare case is better served by
+an explicit `new:true` gesture that lets the agent say "fresh template"
+directly, without a menu round-trip on every edit.
+- *Read-side disambiguation alone (no `dirName` surfacing).* Necessary but not
+sufficient: the menu resolves by `shortName`, the write keys on `dirName`, and
+the agent cannot pass the key it was never shown. Leaves the sibling-clobber
+accident open. See `dirName` surfacing above.
 
 ### D10 — Recovery by deletion: `/api delete` command, always-available
 
