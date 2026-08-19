@@ -191,12 +191,19 @@ Keeping `verified` as a save-date drift signal (honest, if coarse) and adding an
 
 ### D4 — Explicit verify gesture: `/api verify` command, always-available
 
-A dedicated **`/api verify <domain> [guide]`** command — **always-available
+A dedicated **`/api verify <domain> [guide] [--force]`** command — **always-available
 (not learn-gated)** — fetches the guide's operations and stamps `verified:
-today` only on success. `api-fetch` stays pure read-only; no new manifest tool.
-All-ops threshold with a partial-failure report (op X of N failed → not
-verified, here's which). `verified` now means "last deterministically checked
-against the live API."
+today` only on **all-runnable-ops success**. `api-fetch` stays pure read-only;
+no new manifest tool. All-ops threshold with a partial-failure report (op X of
+N failed → not verified, here's which). `verified` means **"last confirmed
+all-ops-good as of `<date>`"** — not merely "last checked." The threshold is
+**strict: any runnable-op failure (partial *or* all-fail) → no stamp** + a
+report naming what's broken. A stale date is more honest than a fresh one
+stamped on a broken guide, and a flaky-API false negative has a clean escape
+via `--force` (below) — so verify itself stays strict and never silently
+half-passes. Skipped ops (below — structurally unverifiable without
+agent-supplied params) are **not** failures; they don't block the stamp but
+are named in the report so the signal isn't quietly inflated.
 
 **Rationale.** The CMC report shows the agent already runs a post-save
 `api-fetch` to verify — this names an existing behavior rather than inventing
@@ -206,23 +213,92 @@ keeps the manifest from growing. The all-ops threshold is the honest one: a
 guide is verified when every operation works, with a clear report when one
 doesn't.
 
+**Auth precheck (fail-fast before the loop).** Before the fetch loop, verify
+MUST run the same auth-resolution precheck `api-fetch` does
+(`resolveSecretHeaders` + `resolveSecretQueryParams`, check `absentRequired`).
+If any `requires` secret is unprovisioned, short-circuit with a single message
+naming the secret and the fix (`/api secrets <domain>`) — do **not** run N ops
+that all fail identically. This reuses `auth.ts`'s existing `absentRequired`
+machinery verbatim; it is the first instance of the all-fail root-cause
+pattern below. Without it, the most common verify failure on a fresh or
+newly-installed host (an authed guide whose secrets haven't been provisioned
+yet — secrets don't travel with the guide) renders as N identical op failures
+with the actionable hint buried under the all-ops-threshold framing.
+
+**Param-precheck + `verify.json` sidecar (opt-in override for skipped ops).**
+Before the fetch loop, verify checks each op for **unsatisfiable params**: a
+path param with no default (a `{token}` that needs an agent-supplied value),
+or a query param with `required: true` and no `default`. Such an op is
+**skipped, not run** — there's no plugin-owned param resolution (values are
+agent-supplied per-task from context; there's no params-store and there
+shouldn't be — a second secrets-store for non-secret data is overengineering).
+Skipped ops are reported as "skipped — requires agent-supplied params (`{id}`,
+`query.since`) — verify manually via `api-fetch`" and don't block the stamp.
+
+The fix for a user who wants full verify coverage on a required-param guide is
+a co-located **`verify.json`** sidecar at
+`~/.pi/agent/pi-lean-host/api-guides/<domain>/verify.json`, shape
+`{ "<opName>": { "<param>": "<value>" } }` — just the param values that make
+the op runnable. Best-effort load in the verify path only: file-miss = today's
+skip behavior; a malformed file is a parse error caught at load, not a runtime
+crash. When the sidecar supplies an op's params, the op runs instead of
+skipping. This reuses the established co-location convention
+(`local-helpers.ts` already loads a co-located `helper.ts` from the same
+directory via dynamic `import()`), but with a deliberate downgrade:
+`verify.json` is **JSON data, not executable code** (params are values, not
+logic), so there's no user-code execution surface and no output-channel-audit
+concern (values are agent-visible params, not secrets). The co-located vitest
+`.test.ts` files (e.g. `api-guides/api.github.com/static-key.test.ts`) are a
+**category mismatch** for this — they need the vitest runner, use mocked
+transport, and `api-guides/` is excluded from the npm tarball, so a user
+running `/api verify` in their pi session has neither the runner nor the
+files; verify cannot load them. The sidecar is the honest runtime shape.
+
+**All-fail is a systemic cause, not N independent failures.** When every op
+fails, the cause is almost always singular and foundational (unprovisioned
+secret, wrong `apiHost` / DNS / TLS, auth-schema mismatch, API moved or
+deprecated entirely). The all-fail report SHOULD detect and name the root
+cause once, not fan it out as N identical op-failure lines. A genuinely
+per-op-broken guide (each op a different failure) is rare and is already
+covered by the partial-failure report.
+
+**Verify is not free.** `/api verify` makes N live HTTP requests against the
+target API (transport is GET-only, so no mutation side-effects, but real
+quota / rate-limit cost). Callers should treat it as a deliberate N-request
+check, not a zero-cost date refresh.
+
 **Write mechanism (the one new stamp-to-file routine in this redesign).** On
 all-ops success, `/api verify` regex-replaces (or inserts if absent) the
 `verified:` line in the raw `guide.md` with today's date. There is no YAML
 serializer (see D5); the save path (`api-learn`) needs no such routine because
 D2 keeps the parser's respect-if-present default and writes the recipe as-is.
 The verify stamp is **unconditional** — it refreshes `verified` regardless of
-the prior value, which is the correct semantic for a "last deterministically
-checked" gesture (the one case where we *do* override, deliberately).
+the prior value, which is the correct semantic for a "last confirmed
+all-ops-good" gesture (the one case where we *do* override, deliberately).
 
 **Why always-available, not learn-gated.** Verify is deterministic, safe, and
 idempotent — gating it would be ceremony that adds a gate check + a refusal
 message + a test for the refusal, all to protect a faint signal-hygiene
 preference ("`verified` should only move during deliberate authoring"). The
-honest reading is that `verified` = "last deterministically checked" is a
+honest reading is that `verified` = "last confirmed all-ops-good" is a
 *refreshable* signal, and a user who wants to refresh it in any mode shouldn't
 have to toggle learn mode on first. Gating restricts what users can do with
 their own software for no real payoff.
+
+**`--force` escape valve (human-typed only).** `/api verify <domain> --force`
+stamps `verified: today` **without running any ops**, then `invalidateCache()`s.
+Use case: a flaky API 503s on one endpoint *after* a prior successful verify,
+and the human judges the guide still good — they outsource the judgment
+entirely outside the plugin. `--force` earns its keep over `bash`-editing the
+date for the same reason `/api delete` earns its keep over `bash rm`: the
+command invalidates the per-session guide-store cache, so the next
+`api-guide` / `api-fetch` sees the fresh date immediately (a raw file edit
+leaves a ghost-date until reload). The semantic is explicit and documented:
+`--force` makes `verified` = "human-attested good" for that one stamp, not
+"confirmed by running ops" — an escape valve, not a shortcut past a genuinely
+broken guide. Stays user-typed (peer of `/api delete`); the agent has no
+`--force` surface, so the footgun that drove D10 (keep destructive ops off the
+agent tool surface) does not apply.
 
 **Rejected:**
 
@@ -234,6 +310,24 @@ their own software for no real payoff.
   success by granularity, but it's a runtime-health feature — schema change or
   sidecar — bigger than the authoring-flow scope.
 - *Learn-gated `/api verify`.* See "why always-available" above — ceremony.
+- *Retry logic / flake detection / partial-pass thresholds in the verify
+  loop.* The machinery `--force` lets you defer: retry-with-backoff, flake
+  heuristics, "M of N ops passing counts as verified" thresholds. A blunt
+  human-judgment flag is one boolean on an existing command; flake-tolerance
+  is a subsystem. Defer with a `ponytail:` marker until a real user hits
+  flaky-verify often enough that `--force` isn't enough.
+- *Reusing the co-located vitest `.test.ts` files at runtime.* Category
+  mismatch — they need the vitest runner, use mocked transport, and
+  `api-guides/` is excluded from the npm tarball, so end users have neither
+  the runner nor the files. The `verify.json` sidecar is the honest runtime
+  shape.
+- *A `/api params` command or param-store.* Overengineering a second
+  secrets-store for non-secret data. The sidecar covers the opt-in case; the
+  skip covers the default. Add when a user genuinely needs runtime param
+  provisioning beyond a static file.
+- *Agent-facing `--force`.* Would re-open the D10 footgun (a self-serve
+  destructive signal-mutation on an agent-invokable surface). Stays
+  human-typed.
 
 ### D5 — Monolithic-write mechanism: scaffold/docs + `/api verify` (no validate-only flag, no staging)
 
@@ -365,6 +459,7 @@ keys on `domain` = literal subdirectory name (`api-learn.ts:277–281`:
 `join(guidesDir, domain)`), while the D12 disambiguation menu resolves by
 `shortName`. For a multi-guide domain (`archive.org` claims `archive.org/` +
 `archive.org-wayback/`), an agent that fetches via routing `domain: "archive.org"`
+
 - `guide: "wayback"` and then re-passes that routing `domain` on save would
 write to `archive.org/guide.md` and **clobber the sibling guide**. The
 fetch-recipe response therefore **must surface the resolved `dirName`**
@@ -611,9 +706,15 @@ verify` instead, and what the deferred staging feature would look like
 
 ## Risks, tensions & edge cases
 
-- **Verify partial-failure UX.** `/api verify` reports "op X of N failed → not
-  verified, here's which." The exact report format is an implementation detail
-  to pin; the semantic is "any failure → no stamp."
+- **Verify report UX.** `/api verify` reports runnable-op pass/fail plus a
+  "skipped — requires agent-supplied params" list. The exact report format is
+  an implementation detail to pin; the semantic is **strict any-runnable-op
+  failure → no stamp** (partial or all-fail), skips don't block the stamp but
+  are named so the signal isn't quietly inflated. The all-fail case SHOULD
+  surface a single root-cause hint (auth precheck, `apiHost`, etc.) rather than
+  N identical op-failure lines; the partial-fail case lists which ops broke.
+  `--force` is the documented escape when strictness produces a false negative
+  (flaky API).
 - **Scaffold auto-degrade on multi-recipe domains.** The "guide exists" check
   is per-domain, not per-directory. For a domain claiming several guides, the
   merge note should name the *target guide dir* so the agent knows which guide
