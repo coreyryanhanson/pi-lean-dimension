@@ -31,7 +31,13 @@ import {
 	setSecretsDir,
 	getSecretsDir,
 } from "../core/secrets-store.js";
-import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
+import {
+	setUserGuidesDir,
+	getUserGuidesDir,
+	invalidateCache,
+} from "../core/guide-store.js";
+import { parseApiGuide } from "../core/parse-api-guide.js";
+import { GUIDE_SCHEMA_VERSION } from "../core/api-guide-types.js";
 import {
 	_setToggleStateForTest,
 	_resetToggleStateForTest,
@@ -827,5 +833,169 @@ describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
 		expect(contentText(res)).toContain(
 			"probe suppressed because listSecrets: true",
 		);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// S1 — probe scaffold (D6 probe-scaffold + D11 auto-degrade)
+// ═══════════════════════════════════════════════════════════════════
+
+const SCAFFOLD_GUIDE = `---
+domains: [archive.org]
+apiHost: https://archive.org/wayback
+responseShape:
+  format: json
+operations:
+  - name: ping
+    via: restGet
+    path: /
+    accept: json
+    params: {}
+---
+`;
+
+// The probe hits a live localhost server; the scaffold decision is driven by
+// guides on a temp dir (0 / 1 / N claiming the routed domain).
+describe("api-probe scaffold (D6/D11)", () => {
+	let scaffoldTmpGuides: string;
+	let prevGuidesDir: string;
+	let server: http.Server;
+	let base: string;
+
+	beforeAll(async () => {
+		prevGuidesDir = getUserGuidesDir();
+		scaffoldTmpGuides = mkdtempSync(
+			join(tmpdir(), "host-probe-scaffold-guides-"),
+		);
+		// 1-guide domain: archive.org
+		const one = join(scaffoldTmpGuides, "archive.org");
+		mkdirSync(one, { recursive: true });
+		writeFileSync(join(one, "guide.md"), SCAFFOLD_GUIDE);
+		// N-guide domain: two dirs both claiming multi.test
+		for (const dir of ["multi-a", "multi-b"]) {
+			const d = join(scaffoldTmpGuides, dir);
+			mkdirSync(d, { recursive: true });
+			writeFileSync(
+				join(d, "guide.md"),
+				SCAFFOLD_GUIDE.replace("archive.org", "multi.test"),
+			);
+		}
+		setUserGuidesDir(scaffoldTmpGuides);
+		invalidateCache();
+		server = http.createServer((_req, res) => {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ data: [{ id: 1 }], total_count: 10 }));
+		});
+		await new Promise<void>((r) => server.listen(0, r));
+		base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+	});
+
+	afterAll(() => {
+		server.close();
+		server.closeAllConnections?.();
+		setUserGuidesDir(prevGuidesDir);
+		invalidateCache();
+		rmSync(scaffoldTmpGuides, { recursive: true, force: true });
+	});
+
+	it("bootstrap (0 guides): parseable full skeleton with static-key auth translated from injection params", async () => {
+		const result = await probe(
+			base,
+			"/items",
+			{},
+			{
+				scaffold: true,
+				domain: "api.example.com",
+				auth: {
+					secretRefs: { Authorization: "apiKey" },
+					headerPrefixes: { Authorization: "Bearer " },
+				},
+			},
+		);
+		const draft = result.draft;
+		expect(draft).toContain("---");
+		expect(draft).toContain("kind: api");
+		expect(draft).toContain("domains: [api.example.com]");
+		expect(draft).toContain(`apiHost: ${base}`);
+		expect(draft).toContain("responseShape:");
+		expect(draft).toContain("gatherAllMax: 1000");
+		expect(draft).toContain(`schemaVersion: ${GUIDE_SCHEMA_VERSION}`);
+		expect(draft).toContain("auth:");
+		expect(draft).toContain("kind: static-key");
+		expect(draft).toContain("requires: [apiKey]");
+		expect(draft).toContain("secretRefs:");
+		expect(draft).toContain("Authorization: apiKey");
+		expect(draft).toContain("headerPrefixes:");
+		expect(draft).toContain('Authorization: "Bearer "');
+		// Pagination stays op-level only — no top-level pagination (issue #5).
+		expect(draft).not.toMatch(/^pagination:/m);
+		// The skeleton parses cleanly and carries the detection-ready vintage.
+		const parsed = parseApiGuide(draft, { filename: "scaffold" });
+		expect(parsed.ok).toBe(true);
+		if (parsed.ok) {
+			expect(parsed.guide.auth.kind).toBe("static-key");
+			expect(parsed.guide.auth.requires).toEqual(["apiKey"]);
+			expect(parsed.guide.auth.secretRefs).toEqual({ Authorization: "apiKey" });
+			expect(parsed.guide.schemaVersion).toBe(GUIDE_SCHEMA_VERSION);
+		}
+	});
+
+	it("translates secretQueryRefs into the auth block too", async () => {
+		const result = await probe(
+			base,
+			"/items",
+			{},
+			{
+				scaffold: true,
+				domain: "api.example.com",
+				auth: { secretQueryRefs: { apikey: "api_key" } },
+			},
+		);
+		expect(result.draft).toContain("kind: static-key");
+		expect(result.draft).toContain("requires: [api_key]");
+		expect(result.draft).toContain("secretQueryRefs:");
+		expect(result.draft).toContain("apikey: api_key");
+	});
+
+	it("1 guide: op block only + merge note naming the one dirName", async () => {
+		const result = await probe(
+			base,
+			"/items",
+			{},
+			{
+				scaffold: true,
+				domain: "archive.org",
+			},
+		);
+		expect(result.draft).not.toContain("---");
+		expect(result.draft).toContain("  - name:");
+		expect(result.note ?? "").toContain("merge into `archive.org`");
+	});
+
+	it("N guides: op block only + merge note listing every candidate dirName", async () => {
+		const result = await probe(
+			base,
+			"/items",
+			{},
+			{
+				scaffold: true,
+				domain: "multi.test",
+			},
+		);
+		expect(result.draft).not.toContain("---");
+		expect(result.note ?? "").toContain("merge into one of: multi-a, multi-b");
+	});
+
+	it("scaffold absent: output unchanged (op block only, no frontmatter)", async () => {
+		const plain = await probe(base, "/items", {});
+		const explicitFalse = await probe(base, "/items", {}, { scaffold: false });
+		expect(explicitFalse.draft).toBe(plain.draft);
+		expect(plain.draft).not.toContain("---");
+		expect(plain.draft).not.toMatch(/^pagination:/m);
+	});
+
+	it("tool description names scaffold: true and its auto-degrade behavior", () => {
+		expect(apiProbeTool.description).toContain("scaffold: true");
+		expect(apiProbeTool.description).toContain("auto-degrades");
 	});
 });
