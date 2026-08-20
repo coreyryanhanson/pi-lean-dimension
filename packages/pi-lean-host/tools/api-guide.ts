@@ -21,6 +21,7 @@ import {
 } from "../core/guide-store.js";
 import {
 	formatGuideListings,
+	selectGuideByShortName,
 	TODAY,
 	staleSchemaLine,
 } from "../core/parse-api-guide.js";
@@ -86,39 +87,34 @@ export const apiGuideTool = defineTool({
 		// No substring fallback — exact match is sufficient for v1 and avoids
 		// the unambiguous-or-error branch the substring path forces.
 		if (guideSelector) {
-			const lc = guideSelector.toLowerCase();
-			const selected = matches.filter(
-				(m) => m.guide.shortName.toLowerCase() === lc,
-			);
-			if (selected.length === 0) {
-				const valid = matches.map((m) => m.guide.shortName).join(", ");
-				return {
-					content: [
-						{
-							type: "text",
-							text:
-								`No guide named '${guideSelector}' for '${domain}'. ` +
-								`Available guides: ${valid}. ` +
-								`Call api-guide({domain: "${domain}"}) to see the menu.`,
+			const sel = selectGuideByShortName(matches, guideSelector);
+			if (!sel.ok) {
+				if (sel.reason === "no_match") {
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									`No guide named '${guideSelector}' for '${domain}'. ` +
+									`Available guides: ${sel.valid.join(", ")}. ` +
+									`Call api-guide({domain: "${domain}"}) to see the menu.`,
+							},
+						],
+						details: {
+							error: "no_guide_by_shortname",
+							domain,
+							guide: guideSelector,
 						},
-					],
-					details: {
-						error: "no_guide_by_shortname",
-						domain,
-						guide: guideSelector,
-					},
-				};
-			}
-			if (selected.length > 1) {
-				const dirs = selected.map((s) => s.dirName).join(", ");
+					};
+				}
 				return {
 					content: [
 						{
 							type: "text",
 							text:
 								`Ambiguous guide '${guideSelector}' for '${domain}' — ` +
-								`${selected.length} guides share shortName '${guideSelector}' ` +
-								`(directories: ${dirs}). Rename one guide's shortName to ` +
+								`${sel.directories.length} guides share shortName '${guideSelector}' ` +
+								`(directories: ${sel.directories.join(", ")}). Rename one guide's shortName to ` +
 								`disambiguate. Call api-guide({domain: "${domain}"}) to see the menu.`,
 						},
 					],
@@ -126,11 +122,11 @@ export const apiGuideTool = defineTool({
 						error: "ambiguous_shortname",
 						domain,
 						guide: guideSelector,
-						directories: selected.map((s) => s.dirName),
+						directories: sel.directories,
 					},
 				};
 			}
-			return renderGuideDetail(selected[0]!.guide, domain);
+			return renderGuideDetail(sel.guide, domain);
 		}
 
 		if (matches.length === 1) {

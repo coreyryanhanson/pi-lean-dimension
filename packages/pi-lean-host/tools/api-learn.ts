@@ -31,6 +31,7 @@ import {
 	parseApiGuide,
 	stampFrontmatterField,
 	formatGuideListings,
+	selectGuideByShortName,
 } from "../core/parse-api-guide.js";
 import {
 	GUIDE_SCHEMA_VERSION,
@@ -348,39 +349,34 @@ export const apiLearnTool = defineTool({
 			if (!guideSelector) {
 				return renderFetchMenu(domain, matches);
 			}
-			const lc = guideSelector.toLowerCase();
-			const selected = matches.filter(
-				(m) => m.guide.shortName.toLowerCase() === lc,
-			);
-			if (selected.length === 0) {
-				const valid = matches.map((m) => m.guide.shortName).join(", ");
-				return {
-					content: [
-						{
-							type: "text",
-							text:
-								`No guide named '${guideSelector}' for '${domain}'. ` +
-								`Available guides: ${valid}. ` +
-								`Call api-learn({domain: "${domain}"}) to see the menu.`,
+			const sel = selectGuideByShortName(matches, guideSelector);
+			if (!sel.ok) {
+				if (sel.reason === "no_match") {
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									`No guide named '${guideSelector}' for '${domain}'. ` +
+									`Available guides: ${sel.valid.join(", ")}. ` +
+									`Call api-learn({domain: "${domain}"}) to see the menu.`,
+							},
+						],
+						details: {
+							error: "no_guide_by_shortname",
+							domain,
+							guide: guideSelector,
 						},
-					],
-					details: {
-						error: "no_guide_by_shortname",
-						domain,
-						guide: guideSelector,
-					},
-				};
-			}
-			if (selected.length > 1) {
-				const dirs = selected.map((s) => s.dirName).join(", ");
+					};
+				}
 				return {
 					content: [
 						{
 							type: "text",
 							text:
 								`Ambiguous guide '${guideSelector}' for '${domain}' — ` +
-								`${selected.length} guides share shortName '${guideSelector}' ` +
-								`(directories: ${dirs}). Rename one guide's shortName to ` +
+								`${sel.directories.length} guides share shortName '${guideSelector}' ` +
+								`(directories: ${sel.directories.join(", ")}). Rename one guide's shortName to ` +
 								`disambiguate. Call api-learn({domain: "${domain}"}) to see the menu.`,
 						},
 					],
@@ -388,12 +384,11 @@ export const apiLearnTool = defineTool({
 						error: "ambiguous_shortname",
 						domain,
 						guide: guideSelector,
-						directories: selected.map((s) => s.dirName),
+						directories: sel.directories,
 					},
 				};
 			}
-			const { guide, dirName } = selected[0]!;
-			return fetchGuideRecipe(domain, guide, dirName);
+			return fetchGuideRecipe(domain, sel.guide, sel.dirName);
 		}
 
 		const parsed = parseApiGuide(recipe, { filename: domain });

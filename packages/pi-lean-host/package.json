@@ -50,6 +50,8 @@
 		"core/auth.ts",
 		"core/portal-projection.ts",
 		"core/response-spill.ts",
+		"core/resolve-op.ts",
+		"core/verify-command.ts",
 		"core/verify-ship-manifest.ts",
 		"tools/index.ts",
 		"tools/api-guide.ts",

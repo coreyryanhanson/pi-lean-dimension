@@ -30,6 +30,7 @@ import {
 import type { ToolsetSpec } from "pi-tool-masking";
 import { handleHelpersSubcommand } from "./helpers-command.js";
 import { handleSecretsSubcommand } from "./secrets-command.js";
+import { handleVerifySubcommand } from "./verify-command.js";
 import { loadAllGuides } from "./guide-store.js";
 import { getAllHelpers, getDisabledHelperDomains } from "./local-helpers.js";
 
@@ -187,6 +188,7 @@ function handleStatusSubcommand(
 		`  /api on      enable api-guide + api-fetch`,
 		`  /api learn   enable all four tools (adds api-learn + api-probe)`,
 		`  /api off     disable all API tools`,
+		`  /api verify  verify a guide's ops against its live API (stamps verified)`,
 	);
 
 	ctx.ui.notify(lines.join("\n"), "info");
@@ -217,7 +219,7 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 	pi.registerCommand("api", {
 		description:
 			"Enable/disable API tools. " +
-			"Usage: /api on | off | learn | status | helpers [domain] | secrets [domain [name] | --help]",
+			"Usage: /api on | off | learn | status | helpers [domain] | secrets [domain [name] | --help] | verify <domain> [guide] [--force]",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const trimmed = args.trim();
 			const parts = trimmed.split(/\s+/);
@@ -288,6 +290,14 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 					return;
 				}
 
+				case "verify": {
+					// Peer of status/helpers/secrets — verifies a guide's ops and
+					// stamps verified: (writes guide.md, not toolset state), so the
+					// focus-mode guard does not apply.
+					await handleVerifySubcommand(rest, ctx);
+					return;
+				}
+
 				default: {
 					const apiStatus = apiToolset.isEnabled(pi) ? "✅ on" : "❌ off";
 					const learnStatus = learnToolset.isEnabled(pi) ? "✅ on" : "❌ off";
@@ -302,6 +312,7 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 						`   /api status       detailed status (guides, helpers)`,
 						`   /api helpers      list local helpers`,
 						`   /api secrets      list/provision stored secrets (names only)`,
+						`   /api verify       verify a guide's ops against its live API (stamps verified)`,
 						`   /api              show this status`,
 					];
 

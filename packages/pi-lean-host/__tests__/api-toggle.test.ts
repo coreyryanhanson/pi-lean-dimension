@@ -19,6 +19,12 @@ import initApiToggle, {
 	_resetToggleStateForTest,
 } from "../core/api-toggle.js";
 
+// The verify subcommand is a peer of secrets/status — mock it so the dispatch
+// tests assert routing without running live HTTP.
+vi.mock("../core/verify-command.js", () => ({
+	handleVerifySubcommand: vi.fn(),
+}));
+
 // Clean globalThis registry between test files
 const REGISTRY_KEY = "__piToolMaskingRegistry";
 const RESTORE_EVENT_KEY = "__piToolMaskingLastRestoreEvent";
@@ -73,8 +79,7 @@ function mockPi(initialTools?: string[]): MockPi {
 		}),
 		get events() {
 			return {
-				emit: (channel: string, data: unknown) =>
-					eventEmitter.emit(channel, data),
+				emit: (channel: string, data: unknown) => eventEmitter.emit(channel, data),
 				on: (channel: string, handler: (data: unknown) => void) => {
 					eventEmitter.on(channel, handler);
 					return () => eventEmitter.off(channel, handler);
@@ -290,6 +295,44 @@ describe("session_start integration", () => {
 // ==================================================================
 //  Focus-mode guard — /api on/off/learn refuse during inclusion
 // ==================================================================
+describe("/api verify dispatch", () => {
+	it("recognizes verify and routes to handleVerifySubcommand", async () => {
+		const { pi } = mockPi([]);
+		initApiToggle(pi);
+		const ctx = mockCtx();
+		await captureApiHandler(pi)("verify verify.test", ctx);
+		const { handleVerifySubcommand } = await import("../core/verify-command.js");
+		expect(handleVerifySubcommand).toHaveBeenCalledWith("verify.test", ctx);
+	});
+
+	it("verify is not refused by the focus-mode guard (writes no toolset state)", async () => {
+		const { pi } = mockPi([]);
+		initApiToggle(pi);
+		setDefaultResolutionMode(pi, "inclusion");
+		const ctx = mockCtx();
+		await captureApiHandler(pi)("verify verify.test", ctx);
+
+		expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+			expect.stringContaining("Another plugin has active inclusion mode"),
+			"warning",
+		);
+		expect(pi.setActiveTools).not.toHaveBeenCalled();
+	});
+
+	it("verify routes regardless of tool masking (no toolset actuation)", async () => {
+		// No tools active — verify is a command that calls the executor/
+		// auth/transport directly, so masking api-fetch/api-guide is irrelevant.
+		const { pi } = mockPi([]);
+		initApiToggle(pi);
+		const ctx = mockCtx();
+		await captureApiHandler(pi)("verify verify.test", ctx);
+
+		const { handleVerifySubcommand } = await import("../core/verify-command.js");
+		expect(handleVerifySubcommand).toHaveBeenCalled();
+		expect(pi.setActiveTools).not.toHaveBeenCalled();
+	});
+});
+
 describe("/api focus-mode guard", () => {
 	it("refuses /api on/off/learn while inclusion focus is active", async () => {
 		const { pi } = mockPi([]);

@@ -1508,6 +1508,39 @@ export function formatGuideListings(
 	return lines.join("\n");
 }
 
+/**
+ * Resolve a guide by shortName across a domain's matches (exact,
+ * case-insensitive). Shared by api-guide, api-learn's fetch-recipe, and
+ * /api verify — three call sites, one resolution rule (a drifted copy would
+ * ship a known second bug). Returns a structured outcome; each caller renders
+ * its own message (tool result vs command notify).
+ */
+export function selectGuideByShortName(
+	matches: { guide: ApiGuide; dirName: string }[],
+	selector: string,
+):
+	| { ok: true; guide: ApiGuide; dirName: string }
+	| { ok: false; reason: "no_match"; valid: string[] }
+	| { ok: false; reason: "ambiguous"; directories: string[] } {
+	const lc = selector.toLowerCase();
+	const sel = matches.filter((m) => m.guide.shortName.toLowerCase() === lc);
+	if (sel.length === 0) {
+		return {
+			ok: false,
+			reason: "no_match",
+			valid: matches.map((m) => m.guide.shortName),
+		};
+	}
+	if (sel.length > 1) {
+		return {
+			ok: false,
+			reason: "ambiguous",
+			directories: sel.map((s) => s.dirName),
+		};
+	}
+	return { ok: true, guide: sel[0]!.guide, dirName: sel[0]!.dirName };
+}
+
 // ════════════════════════════════════════════════════════════════════
 // Catalog rendering — healthy + ⚠ malformed together
 //
