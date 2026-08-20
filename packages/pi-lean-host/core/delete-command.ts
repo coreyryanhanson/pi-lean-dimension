@@ -32,6 +32,7 @@ import {
 	formatGuideListings,
 	selectGuideByShortName,
 } from "./parse-api-guide.js";
+import { pickGuide } from "./guide-picker.js";
 import { assertSafeDomain } from "./path-template.js";
 
 /** Usage, surfaced by `--help`. */
@@ -140,15 +141,21 @@ export async function handleDeleteSubcommand(
 		return;
 	}
 
-	// N guides, no selector → D12 disambiguation menu, nothing removed.
-	ctx.ui.notify(
-		[
-			`${matches.length} API guides for '${domain}':`,
-			formatGuideListings(matches),
-			`Call /api delete ${domain} <shortName> to delete one guide (no confirm).`,
-		].join("\n"),
-		"info",
-	);
+	// N guides, no selector → interactive pick (TUI) or the D12 menu
+	// fallback (headless/RPC/print or cancelled), nothing removed.
+	const picked = await pickGuide(ctx, matches);
+	if (!picked) {
+		ctx.ui.notify(
+			[
+				`${matches.length} API guides for '${domain}':`,
+				formatGuideListings(matches),
+				`Call /api delete ${domain} <shortName> to delete one guide (no confirm).`,
+			].join("\n"),
+			"info",
+		);
+		return;
+	}
+	await deleteDir(ctx, picked.dirName, false);
 }
 
 /**

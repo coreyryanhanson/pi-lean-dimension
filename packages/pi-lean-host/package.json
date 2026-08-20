@@ -51,6 +51,7 @@
 		"core/portal-projection.ts",
 		"core/response-spill.ts",
 		"core/resolve-op.ts",
+		"core/guide-picker.ts",
 		"core/verify-command.ts",
 		"core/delete-command.ts",
 		"core/verify-ship-manifest.ts",

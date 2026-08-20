@@ -47,6 +47,7 @@ import {
 	stampFrontmatterField,
 	TODAY,
 } from "./parse-api-guide.js";
+import { pickGuide } from "./guide-picker.js";
 import {
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
@@ -146,13 +147,21 @@ export async function handleVerifySubcommand(
 		}
 		selected = sel;
 	} else {
-		const lines = [
-			`${matches.length} API guides for '${domain}':`,
-			formatGuideListings(matches),
-			`Call /api verify ${domain} <shortName> to pick one.`,
-		];
-		ctx.ui.notify(lines.join("\n"), "info");
-		return;
+		// N guides, no selector → interactive pick (TUI) or the D12 menu
+		// fallback (headless/RPC/print or cancelled), nothing run yet.
+		const picked = await pickGuide(ctx, matches);
+		if (!picked) {
+			ctx.ui.notify(
+				[
+					`${matches.length} API guides for '${domain}':`,
+					formatGuideListings(matches),
+					`Call /api verify ${domain} <shortName> to pick one.`,
+				].join("\n"),
+				"info",
+			);
+			return;
+		}
+		selected = picked;
 	}
 
 	const { guide, dirName } = selected;

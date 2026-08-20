@@ -182,7 +182,16 @@ function setupGuide(
 	recipeText: string,
 	opts?: { verifyJson?: string; helper?: { content: string } },
 ): void {
-	const dir = join(tmpGuidesDir, "verify.test");
+	setupGuideIn("verify.test", recipeText, opts);
+}
+
+/** Setup a guide in an explicit directory (multi-guide domains). */
+function setupGuideIn(
+	dirName: string,
+	recipeText: string,
+	opts?: { verifyJson?: string; helper?: { content: string } },
+): void {
+	const dir = join(tmpGuidesDir, dirName);
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(join(dir, "guide.md"), recipeText, "utf-8");
 	if (opts?.verifyJson !== undefined) {
@@ -195,11 +204,15 @@ function setupGuide(
 }
 
 function readGuide(): string {
-	return readFileSync(join(tmpGuidesDir, "verify.test", "guide.md"), "utf-8");
+	return readGuideIn("verify.test");
 }
 
-function mockCtx(): any {
-	return { ui: { notify: vi.fn() }, hasUI: true };
+function readGuideIn(dirName: string): string {
+	return readFileSync(join(tmpGuidesDir, dirName, "guide.md"), "utf-8");
+}
+
+function mockCtx(overrides: Record<string, unknown> = {}): any {
+	return { ui: { notify: vi.fn() }, hasUI: true, ...overrides };
 }
 
 function notifyText(ctx: any): string {
@@ -229,6 +242,29 @@ describe("/api verify — threshold + stamp", () => {
 		expect(readGuide()).toContain(`verified: ${TODAY()}`);
 		// Cache invalidated — a fresh lookup sees the new date without a reload.
 		expect(findGuidesByDomain("verify.test")[0]!.guide.verified).toBe(TODAY());
+	});
+
+	it("picks a guide interactively (TUI) and verifies only that guide", async () => {
+		// Two guides claim verify.test; the picker resolves to the second.
+		setupGuideIn("verify-a", recipe(opBlock(OP_HEALTH)));
+		setupGuideIn("verify-b", recipe(opBlock(OP_LIST)));
+		const ctx = mockCtx({
+			mode: "tui",
+			ui: {
+				notify: vi.fn(),
+				custom: vi.fn(async () => "verify-b"),
+			},
+		});
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain(
+			`✅ All runnable ops passed — stamped verified: ${TODAY()}`,
+		);
+		expect(text).toContain("✓ list — 0 item(s) (paginate)");
+		// Only the picked guide's file is stamped; the sibling is untouched.
+		expect(readGuideIn("verify-b")).toContain(`verified: ${TODAY()}`);
+		expect(readGuideIn("verify-a")).toContain("verified: 2026-07-17");
 	});
 
 	it("does not stamp on partial failure and names the failing op", async () => {

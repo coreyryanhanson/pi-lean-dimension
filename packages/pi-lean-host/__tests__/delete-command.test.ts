@@ -181,6 +181,30 @@ describe("/api delete — not-found / menu / malformed fallback", () => {
 		expect(existsSync(join(tmpGuidesDir, "multi-b"))).toBe(true);
 	});
 
+	it("picks a guide interactively (TUI) and deletes it without confirm", async () => {
+		setupGuide("multi-a", recipe("multi.example", "Alpha"));
+		setupGuide("multi-b", recipe("multi.example", "Beta"));
+		const ctx = mockCtx({
+			mode: "tui",
+			ui: {
+				notify: vi.fn(),
+				confirm: vi.fn(),
+				custom: vi.fn(async () => "multi-b"),
+			},
+		});
+		await handleDeleteSubcommand("multi.example", ctx);
+
+		// Picked the specific guide — no confirm (explicit selection), only that
+		// directory removed, cache invalidated, sibling intact.
+		expect(ctx.ui.confirm).not.toHaveBeenCalled();
+		expect(existsSync(join(tmpGuidesDir, "multi-b"))).toBe(false);
+		expect(existsSync(join(tmpGuidesDir, "multi-a"))).toBe(true);
+		expect(notifyText(ctx)).toContain("Deleted API guide 'multi-b'");
+		expect(findGuidesByDomain("multi.example").map((m) => m.dirName)).toEqual([
+			"multi-a",
+		]);
+	});
+
 	it("deletes a malformed guide by its literal dirName (unreadable domains block)", async () => {
 		// A guide whose frontmatter won't parse — findGuidesByDomain can't
 		// address it by routing domain, but the malformed catalog line shows
