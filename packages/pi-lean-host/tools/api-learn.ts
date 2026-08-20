@@ -45,75 +45,71 @@ import {
 import { assertSafeDomain } from "../core/path-template.js";
 
 // ═══════════════════════════════════════════════════════════════════
-// Worked example
+// Placeholder skeleton (retired worked example)
 // ═══════════════════════════════════════════════════════════════════
 
 /** Max length for `description:` enforced on the write path (strict-on-write,
  * lenient-on-read — the loader accepts any length). One-liner, not prose. */
 const DESCRIPTION_MAX = 200;
 
-const WORKED_EXAMPLE = `---
-kind: api
-domains: [boe.es, www.boe.es]
-organization: boe.es          # optional — org identity across guides (registrable domain)
-description: Spanish official gazette legislation API.  # optional — one-line summary; aids disambiguation
-icon: ⚖️
-shortName: BOE
-# updated / verified are stamped by the tool when omitted (defaults to today)
-apiHost: https://apidatos.boe.es/v1
-docs: https://www.boe.es/datosabiertos/api/api.php
-gatherAllMax: 500
-
-auth:
-  kind: none
-  # Keyed API? Use kind: static-key — values live in the secrets store (/api secrets), never in the recipe:
+/** Commented static-key auth block — the issue-#5 auth-wiring teaching,
+ * API-agnostic, kept after the worked example retired. */
+const STATIC_KEY_BLOCK = `  # Keyed API? Use kind: static-key — values live in the secrets store (/api secrets), never in the recipe:
   #   kind: static-key
   #   requires: [apiKey]
   #   secretRefs:
-  #     Authorization: apiKey
+  #     Authorization: apiKey        # header name → secret name
   #   headerPrefixes:
-  #     Authorization: "Bearer "
+  #     Authorization: "Bearer "`;
+
+/** Placeholder starter template — only `domains:` is real (the requested
+ * domain). Every other field is a placeholder the agent fills (op blocks
+ * sourced from api-probe({scaffold: true})). Fails closed: an unsaved,
+ * as-is template is rejected by the parser because `apiHost: <base url>`
+ * is not a valid URL — no wrong-API guide can be saved silently. */
+function placeholderSkeleton(domain: string): string {
+	return `---
+kind: api
+domains: [${domain}]
+organization: <org>          # optional — org identity across guides (registrable domain)
+description: <one-line summary>  # optional — one-line summary; aids disambiguation
+icon: <emoji>
+shortName: <short>
+# updated / verified are stamped by the tool when omitted (defaults to today)
+apiHost: <base url>          # REQUIRED — base URL including version prefix
+# docs: <api docs url>       # optional — API documentation URL
+gatherAllMax: 1000           # omitted → 1000
+
+auth:
+  kind: none
+${STATIC_KEY_BLOCK}
 
 pagination:
   style: offset-limit
   pageParam: page
   pageSizeParam: limit
   pageSize: 50
-  itemsPath: data
+  itemsPath: results
 
 responseShape:
   format: json
   charset: utf-8
 
-operations:
-  - name: searchDiary
-    via: restGet
-    path: /diario/{date}
-    accept: json
-    dateParams:    # normalize a date QUERY param before sending (path tokens aren't reached by dateParams)
-      since: yyyy-mm-dd
-    params:
-      date:        # docs-only — describes the {date} path token; never a query param
-        description: Diary date in yyyy-mm-dd form (e.g. 2026-07-15).
-      since:
-        description: Lower-bound publication date; ISO YYYY-MM-DD auto-converted to yyyy-mm-dd.
-      limit:
-        default: 50
-    parse:
-      format: xml
-      charset: iso-8859-1
-
-  - name: listConsolidada
-    via: paginate
-    path: /legislacion-consolidada
-    accept: json
-    pagination:
-      style: cursor
-      cursorParam: cursor
-      cursorPath: pagination.nextCursor
-      itemsPath: results
+# Add one operation per endpoint here — source the block from
+# api-probe({apiHost, path, scaffold: true}) (it drafts real ops with real
+# values):
+# operations:
+#   - name: <op>
+#     via: restGet
+#     path: /<path>
+#     accept: json
 ---
+
+# Optional agent-instruction prose goes AFTER the closing --- and is surfaced
+# to the reading agent (as "Guide notes" via api-guide): date formats, auth
+# caveats, field semantics, endpoint quirks. Delete this note before saving.
 `;
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // Authoring manual + templates
@@ -139,7 +135,7 @@ const AUTHORING_MANUAL = [
 	`  \`operations[].path\`   — path starting with /`,
 	"",
 	"## Key defaults",
-	`  \`apiHost\`      — base URL. \`path\` is always resolved relative to it — \`joinUrl\` strips a leading \`/\`, so \`/items\` + \`apiHost: https://host/v3\` → \`https://host/v3/items\`. Keep the version in \`apiHost\` (worked-example style) or leave it bare with the version in each \`path\` — pick one per guide; both at once doubles the segment (\`/v3/v3/items\` → 404)`,
+	`  \`apiHost\`      — base URL. \`path\` is always resolved relative to it — \`joinUrl\` strips a leading \`/\`, so \`/items\` + \`apiHost: https://host/v3\` → \`https://host/v3/items\`. Keep the version in \`apiHost\` (e.g. \`https://api.example.com/v3\`) or leave it bare with the version in each \`path\` — pick one per guide; both at once doubles the segment (\`/v3/v3/items\` → 404)`,
 	`  \`auth\`           — omitted → kind: none`,
 	`  \`verified\`       — omitted → today's date`,
 	`  \`docs\`           — optional API documentation URL (http/https); omitted → no docs line`,
@@ -166,18 +162,21 @@ const AUTHORING_MANUAL = [
 	"  Auth:",
 	`    \`requires\` = fail-closed if unprovisioned; \`optional\` = proceeds unauthenticated if absent. Both are names only — values live in the secrets store.`,
 	"",
+	"## Guide prose (agent instructions)",
+	"  After the closing `---`, optional plaintext guidance for the reading agent —",
+	"  date formats, auth caveats, field semantics, endpoint quirks. Surfaced by",
+	"  api-guide as 'Guide notes'.",
+	"",
 	"Call api-learn({domain: '...', recipe: '...'}) to save the guide, then api-fetch({domain, operation: '...'}) to verify.",
 ].join("\n");
 
-/** Domain-specific starter template — the worked example with `domains:`
+/** Domain-specific starter template — a placeholder skeleton with `domains:`
  * pre-filled for the requested domain. Other fields are placeholders the
- * agent fills (op block sourced from api-probe({scaffold: true})). */
-function domainTemplate(domain: string): string {
-	return WORKED_EXAMPLE.replace(/^domains:.*$/m, `domains: [${domain}]`);
-}
-
+ * agent fills (op block sourced from api-probe({scaffold: true})).
+ * Fail-closed: the as-is template cannot save (placeholder `apiHost`
+ * is rejected by requireHttpUrl). */
 function renderTemplate(domain: string): string {
-	return `\`\`\`yaml\n${domainTemplate(domain)}\n\`\`\``;
+	return `\`\`\`yaml\n${placeholderSkeleton(domain)}\n\`\`\``;
 }
 
 /** Fetch-recipe response — the raw recipe wrapped for the agent, with the
@@ -259,7 +258,7 @@ export const apiLearnTool = defineTool({
 		domain: Type.Optional(
 			Type.String({
 				description:
-					"Domain (e.g. 'boe.es'). With `recipe` it's the save directory; " +
+					"Domain (e.g. 'example.com'). With `recipe` it's the save directory; " +
 					"with no recipe it's the routing domain for fetch-recipe lookup.",
 			}),
 		),

@@ -69,14 +69,23 @@ function callLearn(
 }
 
 describe("api-learn fetch-recipe (D9)", () => {
-	it("0 guides → domain-specific template with domains pre-filled", async () => {
+	it("0 guides → placeholder template with domains pre-filled (fails closed)", async () => {
 		const text = contentText(await callLearn("fresh.example"));
 		expect(text).toContain("```yaml");
 		expect(text).toContain("domains: [fresh.example]");
 		const m = text.match(/```yaml\n([\s\S]*?)```/);
 		expect(m).not.toBeNull();
-		const parsed = parseApiGuide(m![1]!, { filename: "fresh.example" });
-		expect(parsed.ok).toBe(true);
+		const template = m![1]!;
+		// Placeholders, not another API's real values (gap 1).
+		expect(template).toContain("<base url>");
+		expect(template).toContain("<short>");
+		expect(template).toContain("<emoji>");
+		expect(template).not.toMatch(
+			/apidatos|boe\.es|BOE|searchDiary|listConsolidada/,
+		);
+		// Fail-closed: the as-is template cannot save (placeholder apiHost
+		// is rejected by requireHttpUrl).
+		expect(parseApiGuide(template, { filename: "fresh.example" }).ok).toBe(false);
 	});
 
 	it("1 guide → raw recipe + dirName surfaced", async () => {

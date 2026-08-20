@@ -6,7 +6,7 @@
  *  - api-guide({}) catalog and api-guide({domain}) detail shapes.
  *  - api-learn validate-before-write (no half-write on invalid recipe).
  *  - api-fetch execute-fail message points at remediation paths.
- *  - api-learn with no domain returns worked example.
+ *  - api-learn with no domain returns the authoring manual.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -718,33 +718,39 @@ describe("api-learn", () => {
 		expect(text).toContain("pagination.base` seeds the page param");
 		expect(text).toContain("page-size param is a real knob");
 		expect(text).toContain("requires` = fail-closed if unprovisioned");
+		// Guide-prose (agent-instructions) ability is taught, not lost.
+		expect(text).toContain("Guide prose");
+		expect(text).toContain("Guide notes");
 		// Points at the template entry point; no recipe body.
 		expect(text).toContain("new: true");
 		expect(text).not.toContain("searchDiary");
 		expect(text).not.toContain("```yaml");
 	});
 
-	// Regression for issues 1a/1b/2a: the worked example must copy-paste
-	// cleanly (closing ---), demonstrate dateParams on a query param, and
-	// document path tokens via the docs-only params.<token>.description.
-	it("worked example validates and documents param channels", async () => {
+	// Gap 1: the template is a placeholder skeleton, not a worked example. It
+	// must fail closed (placeholder apiHost rejected) and carry no foreign API
+	// literals. The dateParams/path-token-doc demonstration moved to the
+	// probe-scaffold path (api-probe({scaffold: true}) emits real ops).
+	it("template is a placeholder skeleton that fails closed", async () => {
 		const text = contentText(
 			await callLearn("example.com", undefined, { new: true }),
 		);
 		const m = text.match(/```yaml\n([\s\S]*?)```/);
 		expect(m).not.toBeNull();
-		const example = m![1]!;
-		const parsed = parseApiGuide(example, { filename: "example.com" });
-		expect(parsed.ok).toBe(true);
-		if (parsed.ok) {
-			const diary = parsed.guide.operations.find((o) => o.name === "searchDiary")!;
-			expect(diary.dateParams).toEqual({ since: "yyyy-mm-dd" });
-			expect(diary.pathParamDocs).toEqual({
-				date: "Diary date in yyyy-mm-dd form (e.g. 2026-07-15).",
-			});
-			// The path token must NOT leak into query params.
-			expect(diary.params["date"]).toBeUndefined();
-		}
+		const template = m![1]!;
+		expect(template).toContain("domains: [example.com]");
+		expect(template).toContain("<base url>");
+		expect(template).toContain("<short>");
+		expect(template).toContain("<emoji>");
+		expect(template).not.toMatch(
+			/apidatos|boe\.es|BOE|searchDiary|listConsolidada/,
+		);
+		// The prose-body (agent-instructions) ability is surfaced, not lost.
+		expect(template).toContain("agent-instruction prose");
+		expect(template).toContain("the closing ---");
+		// Fail-closed: the as-is template cannot save (placeholder apiHost
+		// is rejected by requireHttpUrl).
+		expect(parseApiGuide(template, { filename: "example.com" }).ok).toBe(false);
 	});
 
 	it("validates and writes a valid recipe", async () => {
@@ -989,10 +995,10 @@ operations:
 		expect(text).not.toContain("Multi-recipe");
 	});
 
-	// D6 — the worked example is the docs-side discoverability: no hardcoded
+	// D6 — the template is the docs-side discoverability: no hardcoded
 	// updated/verified dates (the tool stamps them when omitted — the
 	// load-bearing D2 close) and a static-key auth block to crib from.
-	it("worked example has no hardcoded updated/verified dates", async () => {
+	it("template has no hardcoded updated/verified dates", async () => {
 		const text = contentText(
 			await callLearn("example.com", undefined, { new: true }),
 		);
@@ -1004,7 +1010,7 @@ operations:
 		expect(example).toContain("stamped by the tool when omitted");
 	});
 
-	it("worked example documents the static-key auth block", async () => {
+	it("template documents the static-key auth block", async () => {
 		const text = contentText(
 			await callLearn("example.com", undefined, { new: true }),
 		);

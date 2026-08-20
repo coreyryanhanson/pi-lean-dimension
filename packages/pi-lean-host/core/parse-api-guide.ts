@@ -1159,7 +1159,7 @@ export function parseApiGuide(
 	// ── recipe slice ──────────────────────────────────────────────
 	const apiHostRes = requireHttpUrl(m["apiHost"], "apiHost", file, fm, {
 		protocolFix: "Use https:// as the scheme",
-		invalidFix: "Include the scheme, e.g. https://apidatos.boe.es/v1",
+		invalidFix: "Include the scheme, e.g. https://api.example.com/v1",
 	});
 	if (typeof apiHostRes !== "string") return apiHostRes;
 	const apiHost = apiHostRes;
