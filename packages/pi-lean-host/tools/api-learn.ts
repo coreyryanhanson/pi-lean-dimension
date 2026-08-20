@@ -1,10 +1,16 @@
 /**
  * api-learn tool definition.
  *
- * Validates and writes an API guide recipe.
+ * Authoring entry points:
+ *  - No params → authoring manual (field reference + defaults + semantics)
+ *    with a pointer to `{domain, new: true}` for a domain-specific starter.
+ *  - `{domain, new: true}` → fresh template with `domains: [<domain>]`
+ *    pre-filled (regardless of existing guides).
+ *  - `{domain}` (no recipe) → fetch the current raw recipe of an existing
+ *    guide (0 guides → template; 1 guide → raw recipe + dirName surfaced;
+ *    N guides → disambiguation menu by shortName).
  *  - `{domain, recipe}` → validates via `parseApiGuide()`, writes to
  *    `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`.
- *  - No `domain` → returns the worked-example recipe for authoring.
  *
  * No half-write on validation error (validate first, write only on success).
  * Defaults are filled by the validator before writing.
@@ -12,17 +18,24 @@
  * Mirrors portal's `web-learn`.
  */
 
-import { defineTool } from "@earendil-works/pi-coding-agent";
+import {
+	defineTool,
+	type AgentToolResult,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { appendFooter, contentText } from "./utils.js";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	parseApiGuide,
 	stampFrontmatterField,
+	formatGuideListings,
 } from "../core/parse-api-guide.js";
-import { GUIDE_SCHEMA_VERSION } from "../core/api-guide-types.js";
+import {
+	GUIDE_SCHEMA_VERSION,
+	type ApiGuide,
+} from "../core/api-guide-types.js";
 import {
 	invalidateCache,
 	getUserGuidesDir,
@@ -102,6 +115,132 @@ operations:
 `;
 
 // ═══════════════════════════════════════════════════════════════════
+// Authoring manual + templates
+// ═══════════════════════════════════════════════════════════════════
+
+/** Bare `api-learn()` output — the field reference + defaults + semantics
+ * manual. No recipe body (superseded by `{domain, new: true}`); points at
+ * the template entry point. */
+const AUTHORING_MANUAL = [
+	"# API guide authoring manual",
+	"",
+	"💡 Start a new guide: call api-learn({domain: '<domain>', new: true}) — it returns a ",
+	"   template with `domains` pre-filled. Discover the API's shape first with ",
+	"   api-probe({apiHost, path, scaffold: true}) — it drafts a YAML operation block ",
+	"   to paste into the template.",
+	"",
+	"## Required fields",
+	`  \`domains\`       — list of domain names this guide applies to`,
+	`  \`apiHost\`       — base URL including version prefix`,
+	`  \`operations\`    — at least one operation mapping`,
+	`  \`operations[].name\`   — unique operation name`,
+	`  \`operations[].via\`    — "restGet" or "paginate"`,
+	`  \`operations[].path\`   — path starting with /`,
+	"",
+	"## Key defaults",
+	`  \`apiHost\`      — base URL. \`path\` is always resolved relative to it — \`joinUrl\` strips a leading \`/\`, so \`/items\` + \`apiHost: https://host/v3\` → \`https://host/v3/items\`. Keep the version in \`apiHost\` (worked-example style) or leave it bare with the version in each \`path\` — pick one per guide; both at once doubles the segment (\`/v3/v3/items\` → 404)`,
+	`  \`auth\`           — omitted → kind: none`,
+	`  \`verified\`       — omitted → today's date`,
+	`  \`docs\`           — optional API documentation URL (http/https); omitted → no docs line`,
+	`  \`gatherAllMax\`   — omitted → 1000`,
+	`  \`responseShape\`  — omitted → json/utf-8`,
+	`  \`operation.accept\` — omitted → json`,
+	"",
+	"## Optional fields (multi-recipe disambiguation)",
+	`  \`organization\`  — org identity across guides (use the org's registrable domain, e.g. archive.org)`,
+	`  \`description\`    — one-line API summary (≤${DESCRIPTION_MAX} chars); the primary signal when several guides share a domain`,
+	"",
+	"## Optional fields (operation-level)",
+	`  \`dateParams\`  — normalize date QUERY params before sending: map name → iso8601 | yyyymmdd | yyyy-mm-dd (path tokens are documented via params.<token>.description; core dateParams does not reach path tokens)`,
+	`  \`helper\`      — true → call this domain's local helper.ts for this op`,
+	`  \`transform\`   — true → run the helper.ts \`transform\` export on the parsed response`,
+	`  \`params.<token>.description\` — docs-only description for a {token} path param (format, e.g. 'yyyy-mm-dd'); never sent as a query param, shown in api-guide`,
+	`  \`passthrough\` — true → forward undeclared caller params onto the query string`,
+	`  \`parse\`       — op-level responseShape override (format/charset) for this operation`,
+	"",
+	"## Executor semantics",
+	"  Pagination:",
+	`    \`pagination.base\` seeds the page param for offset-limit/page styles (caller value wins, then \`base\`, then the param \`default\`); use \`base: 1\` for 1-based offset APIs`,
+	`    The page-size param is a real knob: caller value → op param \`default\` → \`pagination.pageSize\` → 50`,
+	"  Auth:",
+	`    \`requires\` = fail-closed if unprovisioned; \`optional\` = proceeds unauthenticated if absent. Both are names only — values live in the secrets store.`,
+	"",
+	"Call api-learn({domain: '...', recipe: '...'}) to save the guide, then api-fetch({domain, operation: '...'}) to verify.",
+].join("\n");
+
+/** Domain-specific starter template — the worked example with `domains:`
+ * pre-filled for the requested domain. Other fields are placeholders the
+ * agent fills (op block sourced from api-probe({scaffold: true})). */
+function domainTemplate(domain: string): string {
+	return WORKED_EXAMPLE.replace(/^domains:.*$/m, `domains: [${domain}]`);
+}
+
+function renderTemplate(domain: string): string {
+	return `\`\`\`yaml\n${domainTemplate(domain)}\n\`\`\``;
+}
+
+/** Fetch-recipe response — the raw recipe wrapped for the agent, with the
+ * resolved dirName surfaced so re-save keys on the directory, not the
+ * routing domain (sibling-clobber mitigation). */
+function renderFetchedRecipe(
+	domain: string,
+	guide: ApiGuide,
+	dirName: string,
+	raw: string,
+): string {
+	const body = raw.endsWith("\n") ? raw : raw + "\n";
+	return (
+		`📖 Current recipe for '${domain}' — guide '${guide.shortName}'\n` +
+		`  Directory: ${dirName}\n` +
+		`  To edit: copy the recipe below, modify it, and call ` +
+		`api-learn({domain: "${dirName}", recipe: "..."}) — pass the directory name ` +
+		`as \`domain\` on re-save so a sibling guide is not clobbered.\n\n` +
+		"```yaml\n" +
+		body +
+		"```"
+	);
+}
+
+/** D12 disambiguation menu for the N-guide fetch-recipe case (mirrors
+ * api-guide's menu). */
+function renderFetchMenu(
+	domain: string,
+	matches: { guide: ApiGuide; dirName: string }[],
+): AgentToolResult<unknown> {
+	const lines: string[] = [];
+	lines.push(`${matches.length} API guides for '${domain}':`);
+	lines.push(formatGuideListings(matches));
+	const example = matches[0]!.guide.shortName;
+	lines.push(
+		`Call api-learn({domain: "${domain}", guide: "${example}"}) to fetch one guide's recipe.`,
+	);
+	return {
+		content: [{ type: "text", text: lines.join("\n") }],
+		details: { mode: "menu", domain, disambiguation: matches.length },
+	};
+}
+
+/** Read a guide's raw recipe from disk and build the fetch-recipe result
+ * (dirName surfaced so re-save keys on the directory, not the routing
+ * domain). Shared by the 1-guide and N-guide-with-selector branches. */
+function fetchGuideRecipe(
+	domain: string,
+	guide: ApiGuide,
+	dirName: string,
+): AgentToolResult<unknown> {
+	const raw = readFileSync(
+		join(getUserGuidesDir(), dirName, "guide.md"),
+		"utf-8",
+	);
+	return {
+		content: [
+			{ type: "text", text: renderFetchedRecipe(domain, guide, dirName, raw) },
+		],
+		details: { mode: "fetch", domain, dirName, guide: guide.shortName },
+	};
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Tool definition
 // ═══════════════════════════════════════════════════════════════════
 
@@ -109,84 +248,61 @@ export const apiLearnTool = defineTool({
 	name: "api-learn",
 	label: "API Learn",
 	description:
-		"Save or update an API guide for a domain. " +
-		"The recipe is written in YAML frontmatter format. " +
-		"Call with no params to see the worked example recipe and field reference.",
+		"Author an API guide for a domain. " +
+		"Call with no params for the authoring manual (field reference + defaults + semantics). " +
+		"Call with {domain, new: true} for a fresh domain-specific template. " +
+		"Call with {domain} and no recipe to fetch an existing guide's current raw recipe. " +
+		"Call with {domain, recipe} to validate and save.",
 
 	parameters: Type.Object({
 		domain: Type.Optional(
 			Type.String({
 				description:
-					"Primary domain (e.g. 'boe.es'). Used as the filename. Omit to see the worked example.",
+					"Domain (e.g. 'boe.es'). With `recipe` it's the save directory; " +
+					"with no recipe it's the routing domain for fetch-recipe lookup.",
 			}),
 		),
 		recipe: Type.Optional(
 			Type.String({
 				description:
-					"Full recipe string including YAML frontmatter (---\\n...\\n---) and optional prose body. Required when domain is provided.",
+					"Full recipe string including YAML frontmatter (---\\n...\\n---) and optional prose body. " +
+					"Omit to fetch the current raw recipe of an existing guide (or get a template when none exists).",
+			}),
+		),
+		guide: Type.Optional(
+			Type.String({
+				description:
+					"When a domain claims multiple guides, select one by shortName (shown in the disambiguation menu). " +
+					"Only used with the fetch-recipe path (no recipe).",
+			}),
+		),
+		new: Type.Optional(
+			Type.Boolean({
+				description:
+					"true → return a fresh domain-specific template (domains pre-filled) regardless of existing guides. " +
+					"Does not touch any existing guide.",
 			}),
 		),
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-		const { domain, recipe } = params as {
+		const {
+			domain,
+			recipe,
+			guide: guideSelector,
+			new: isNew,
+		} = params as {
 			domain?: string;
 			recipe?: string;
+			guide?: string;
+			new?: boolean;
 		};
 
-		// ── No domain → return worked example ────────────────────
+		// ── No domain → authoring manual ─────────────────────────
 		if (!domain) {
-			const text = [
-				"# Example recipe — copy, edit, and call api-learn({domain: '...', recipe: '...'})",
-				"",
-				"💡 For a not-yet-guided API, discover its shape first with api-probe({apiHost, path, params}) ",
-				"   — it drafts a YAML operation block to paste straight into the recipe below.",
-				"",
-				"```yaml",
-				WORKED_EXAMPLE,
-				"```",
-				"",
-				"## Required fields",
-				`  \`domains\`       — list of domain names this guide applies to`,
-				`  \`apiHost\`       — base URL including version prefix`,
-				`  \`operations\`    — at least one operation mapping`,
-				`  \`operations[].name\`   — unique operation name`,
-				`  \`operations[].via\`    — "restGet" or "paginate"`,
-				`  \`operations[].path\`   — path starting with /`,
-				"",
-				"## Key defaults",
-				`  \`apiHost\`      — base URL. \`path\` is always resolved relative to it — \`joinUrl\` strips a leading \`/\`, so \`/items\` + \`apiHost: https://host/v3\` → \`https://host/v3/items\`. Keep the version in \`apiHost\` (worked-example style) or leave it bare with the version in each \`path\` — pick one per guide; both at once doubles the segment (\`/v3/v3/items\` → 404)`,
-				`  \`auth\`           — omitted → kind: none`,
-				`  \`verified\`       — omitted → today's date`,
-				`  \`docs\`           — optional API documentation URL (http/https); omitted → no docs line`,
-				`  \`gatherAllMax\`   — omitted → 1000`,
-				`  \`responseShape\`  — omitted → json/utf-8`,
-				`  \`operation.accept\` — omitted → json`,
-				"",
-				"## Optional fields (multi-recipe disambiguation)",
-				`  \`organization\`  — org identity across guides (use the org's registrable domain, e.g. archive.org)`,
-				`  \`description\`    — one-line API summary (≤${DESCRIPTION_MAX} chars); the primary signal when several guides share a domain`,
-				"",
-				"## Optional fields (operation-level)",
-				`  \`dateParams\`  — normalize date QUERY params before sending: map name → iso8601 | yyyymmdd | yyyy-mm-dd (path tokens are documented via params.<token>.description; core dateParams does not reach path tokens)`,
-				`  \`helper\`      — true → call this domain's local helper.ts for this op`,
-				`  \`transform\`   — true → run the helper.ts \`transform\` export on the parsed response`,
-				`  \`params.<token>.description\` — docs-only description for a {token} path param (format, e.g. 'yyyy-mm-dd'); never sent as a query param, shown in api-guide`,
-				`  \`passthrough\` — true → forward undeclared caller params onto the query string`,
-				`  \`parse\`       — op-level responseShape override (format/charset) for this operation`,
-				"",
-				"## Executor semantics",
-				"  Pagination:",
-				`    \`pagination.base\` seeds the page param for offset-limit/page styles (caller value wins, then \`base\`, then the param \`default\`); use \`base: 1\` for 1-based offset APIs`,
-				`    The page-size param is a real knob: caller value → op param \`default\` → \`pagination.pageSize\` → 50`,
-				"  Auth:",
-				`    \`requires\` = fail-closed if unprovisioned; \`optional\` = proceeds unauthenticated if absent. Both are names only — values live in the secrets store.`,
-				"",
-				"Call api-learn({domain: '...', recipe: '...'}) to save the guide, then api-fetch({domain, operation: '...'}) to verify.",
-			].join("\n");
 			return {
-				content: [{ type: "text", text }],
-				details: {},
+				content: [{ type: "text", text: AUTHORING_MANUAL }],
+				details: { mode: "manual" },
 			};
 		}
 
@@ -205,17 +321,79 @@ export const apiLearnTool = defineTool({
 			};
 		}
 
-		// ── Validate recipe ──────────────────────────────────────
-		if (!recipe || !recipe.trim()) {
+		// ── new: true → fresh template regardless of existing guides ──
+		if (isNew) {
 			return {
-				content: [
-					{
-						type: "text",
-						text: `Recipe is required when domain is provided. Call api-learn() with no params to see the worked example.`,
-					},
-				],
-				details: { error: "missing_recipe" },
+				content: [{ type: "text", text: renderTemplate(domain) }],
+				details: { mode: "template", domain },
 			};
+		}
+
+		// ── No recipe → fetch-recipe (D9) ────────────────────────
+		// 0 guides → template; 1 guide → raw recipe + dirName surfaced;
+		// N guides → D12 disambiguation menu (guide selector resolves it).
+		if (!recipe || !recipe.trim()) {
+			const matches = findGuidesByDomain(domain);
+			if (matches.length === 0) {
+				return {
+					content: [{ type: "text", text: renderTemplate(domain) }],
+					details: { mode: "template", domain },
+				};
+			}
+			if (matches.length === 1) {
+				const { guide, dirName } = matches[0]!;
+				return fetchGuideRecipe(domain, guide, dirName);
+			}
+			// N guides → disambiguation by shortName (mirrors api-guide).
+			if (!guideSelector) {
+				return renderFetchMenu(domain, matches);
+			}
+			const lc = guideSelector.toLowerCase();
+			const selected = matches.filter(
+				(m) => m.guide.shortName.toLowerCase() === lc,
+			);
+			if (selected.length === 0) {
+				const valid = matches.map((m) => m.guide.shortName).join(", ");
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`No guide named '${guideSelector}' for '${domain}'. ` +
+								`Available guides: ${valid}. ` +
+								`Call api-learn({domain: "${domain}"}) to see the menu.`,
+						},
+					],
+					details: {
+						error: "no_guide_by_shortname",
+						domain,
+						guide: guideSelector,
+					},
+				};
+			}
+			if (selected.length > 1) {
+				const dirs = selected.map((s) => s.dirName).join(", ");
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`Ambiguous guide '${guideSelector}' for '${domain}' — ` +
+								`${selected.length} guides share shortName '${guideSelector}' ` +
+								`(directories: ${dirs}). Rename one guide's shortName to ` +
+								`disambiguate. Call api-learn({domain: "${domain}"}) to see the menu.`,
+						},
+					],
+					details: {
+						error: "ambiguous_shortname",
+						domain,
+						guide: guideSelector,
+						directories: selected.map((s) => s.dirName),
+					},
+				};
+			}
+			const { guide, dirName } = selected[0]!;
+			return fetchGuideRecipe(domain, guide, dirName);
 		}
 
 		const parsed = parseApiGuide(recipe, { filename: domain });
@@ -322,6 +500,7 @@ export const apiLearnTool = defineTool({
 				},
 			],
 			details: {
+				mode: "saved",
 				filePath: filepath,
 				domain,
 				operations: opCount,
@@ -334,9 +513,11 @@ export const apiLearnTool = defineTool({
 		const parts: string[] = [theme.fg("toolTitle", theme.bold("api-learn "))];
 		if (args.domain) {
 			parts.push(theme.fg("accent", `"${args.domain}"`));
-			parts.push(theme.fg("dim", "📝"));
+			if (args.new) parts.push(theme.fg("dim", "✨new"));
+			else if (args.recipe) parts.push(theme.fg("dim", "📝"));
+			else parts.push(theme.fg("dim", "📖"));
 		} else {
-			parts.push(theme.fg("dim", "(example)"));
+			parts.push(theme.fg("dim", "(manual)"));
 		}
 		return new Text(parts.join(" "), 0, 0);
 	},
@@ -348,15 +529,26 @@ export const apiLearnTool = defineTool({
 			return new Text(theme.fg("error", `⚠ ${contentText(result, "?")}`), 0, 0);
 		}
 
+		const mode = d?.mode as string | undefined;
 		const domain = d?.domain as string | undefined;
 		const opCount = d?.operations as number | undefined;
+		const dirName = d?.dirName as string | undefined;
+		const disambig = d?.disambiguation as number | undefined;
 
 		let text: string;
-		if (domain && opCount !== undefined) {
+		if (mode === "fetch" && dirName) {
+			text = theme.fg("accent", theme.bold(`📖 ${dirName}`));
+			text += " — fetched recipe";
+		} else if (mode === "template" && domain) {
+			text = theme.fg("accent", theme.bold(`📝 Template for ${domain}`));
+		} else if (mode === "menu" && domain) {
+			text = theme.fg("dim", theme.bold("📖 menu"));
+			text += ` — ${disambig ?? "?"} guides for ${domain}`;
+		} else if (domain && opCount !== undefined) {
 			text = theme.fg("accent", theme.bold(`📝 Saved guide for ${domain}`));
 			text += ` — ${opCount} ops`;
 		} else {
-			text = theme.fg("dim", "📝 Worked example");
+			text = theme.fg("dim", "📝 Authoring manual");
 		}
 
 		return new Text(appendFooter(text, expanded, result, theme, 600), 0, 0);

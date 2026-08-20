@@ -320,18 +320,61 @@ describe("api-learn renderResult", () => {
 		expect(out.text).not.toContain("(expand)");
 	});
 
-	it("collapsed worked-example shows 📝 Worked example header", () => {
-		const content = "# Example recipe\n```yaml\n---\nkind: api\n...\n```";
+	it("collapsed manual shows 📝 Authoring manual header", () => {
+		const content = "# API guide authoring manual\n## Required fields\n...";
 		const out = renderResult(
 			apiLearnTool,
 			{
 				content: [{ type: "text", text: content }],
-				details: {},
+				details: { mode: "manual" },
 			},
 			{ expanded: false },
 		);
-		expect(out.text).toContain("📝 Worked example");
+		expect(out.text).toContain("📝 Authoring manual");
 		expect(out.text).toContain(`${content.length} chars (expand)`);
+	});
+
+	it("template mode shows 📝 Template for <domain>", () => {
+		const content = "```yaml\n---\nkind: api\n...\n```";
+		const out = renderResult(
+			apiLearnTool,
+			{
+				content: [{ type: "text", text: content }],
+				details: { mode: "template", domain: "boe.es" },
+			},
+			{ expanded: false },
+		);
+		expect(out.text).toContain("📝 Template for boe.es");
+	});
+
+	it("fetch mode shows 📖 <dirName> — fetched recipe", () => {
+		const out = renderResult(
+			apiLearnTool,
+			{
+				content: [{ type: "text", text: "..." }],
+				details: {
+					mode: "fetch",
+					domain: "archive.org",
+					dirName: "archive.org-wayback",
+				},
+			},
+			{ expanded: false },
+		);
+		expect(out.text).toContain("📖 archive.org-wayback");
+		expect(out.text).toContain("fetched recipe");
+	});
+
+	it("menu mode shows 📖 menu — N guides for <domain>", () => {
+		const out = renderResult(
+			apiLearnTool,
+			{
+				content: [{ type: "text", text: "..." }],
+				details: { mode: "menu", domain: "archive.org", disambiguation: 2 },
+			},
+			{ expanded: false },
+		);
+		expect(out.text).toContain("📖 menu");
+		expect(out.text).toContain("2 guides for archive.org");
 	});
 
 	it("error details render a red ⚠ single line", () => {
@@ -339,17 +382,17 @@ describe("api-learn renderResult", () => {
 			apiLearnTool,
 			{
 				content: [
-					{ type: "text", text: "Recipe is required when domain is provided." },
+					{ type: "text", text: "No guide named 'nope' for 'archive.org'." },
 				],
-				details: { error: "missing_recipe" },
+				details: { error: "no_guide_by_shortname" },
 			},
 			{ expanded: false },
 		);
 		expect(out.text).toContain("⚠");
-		expect(out.text).toContain("Recipe is required when domain is provided.");
+		expect(out.text).toContain("No guide named 'nope' for 'archive.org'.");
 		// No header or expand hint on the error path.
 		expect(out.text).not.toContain("Saved guide");
-		expect(out.text).not.toContain("Worked example");
+		expect(out.text).not.toContain("Authoring manual");
 		expect(out.text).not.toContain("(expand)");
 	});
 });

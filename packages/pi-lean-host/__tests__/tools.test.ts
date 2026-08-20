@@ -590,10 +590,16 @@ function callFetch(
 	);
 }
 
-function callLearn(domain?: string, recipe?: string) {
+function callLearn(
+	domain?: string,
+	recipe?: string,
+	extra?: { new?: boolean; guide?: string },
+) {
 	const p: Record<string, unknown> = {};
 	if (domain !== undefined) p.domain = domain;
 	if (recipe !== undefined) p.recipe = recipe;
+	if (extra?.new !== undefined) p.new = extra.new;
+	if (extra?.guide !== undefined) p.guide = extra.guide;
 	return apiLearnTool.execute("test", p, undefined, undefined, undefined as any);
 }
 
@@ -701,33 +707,34 @@ describe("api-guide", () => {
 // ═══════════════════════════════════════════════════════════════════
 
 describe("api-learn", () => {
-	it("returns worked example when no domain is given", async () => {
+	it("returns the authoring manual when no domain is given", async () => {
 		const text = contentText(await callLearn());
-		expect(text).toContain("Example recipe");
-		expect(text).toContain("boe.es");
-		expect(text).toContain("apiHost");
-		expect(text).toContain("operations");
+		expect(text).toContain("authoring manual");
+		// Field reference + defaults + semantics stay.
 		expect(text).toContain("Required fields");
 		expect(text).toContain("Key defaults");
-
-		// Executor-semantics reference (item 2) — the in-transcript authoring
-		// facts for path resolution, pagination seeding, and auth.
 		expect(text).toContain("Executor semantics");
 		expect(text).toContain("joinUrl` strips a leading `/");
 		expect(text).toContain("pagination.base` seeds the page param");
 		expect(text).toContain("page-size param is a real knob");
 		expect(text).toContain("requires` = fail-closed if unprovisioned");
+		// Points at the template entry point; no recipe body.
+		expect(text).toContain("new: true");
+		expect(text).not.toContain("searchDiary");
+		expect(text).not.toContain("```yaml");
 	});
 
 	// Regression for issues 1a/1b/2a: the worked example must copy-paste
 	// cleanly (closing ---), demonstrate dateParams on a query param, and
 	// document path tokens via the docs-only params.<token>.description.
 	it("worked example validates and documents param channels", async () => {
-		const text = contentText(await callLearn());
+		const text = contentText(
+			await callLearn("example.com", undefined, { new: true }),
+		);
 		const m = text.match(/```yaml\n([\s\S]*?)```/);
 		expect(m).not.toBeNull();
 		const example = m![1]!;
-		const parsed = parseApiGuide(example, { filename: "boe.es" });
+		const parsed = parseApiGuide(example, { filename: "example.com" });
 		expect(parsed.ok).toBe(true);
 		if (parsed.ok) {
 			const diary = parsed.guide.operations.find((o) => o.name === "searchDiary")!;
@@ -763,9 +770,10 @@ describe("api-learn", () => {
 		expect(() => readFileSync(filepath, "utf-8")).toThrow();
 	});
 
-	it("requires recipe when domain is provided", async () => {
+	it("returns a domain template when no recipe and no guide exists", async () => {
 		const text = contentText(await callLearn("somedomain.com"));
-		expect(text).toContain("Recipe is required");
+		expect(text).toContain("```yaml");
+		expect(text).toContain("domains: [somedomain.com]");
 	});
 
 	it("rejects a path-traversal domain without writing", async () => {
@@ -945,7 +953,9 @@ operations:
 	// updated/verified dates (the tool stamps them when omitted — the
 	// load-bearing D2 close) and a static-key auth block to crib from.
 	it("worked example has no hardcoded updated/verified dates", async () => {
-		const text = contentText(await callLearn());
+		const text = contentText(
+			await callLearn("example.com", undefined, { new: true }),
+		);
 		const m = text.match(/```yaml\n([\s\S]*?)```/);
 		expect(m).not.toBeNull();
 		const example = m![1]!;
@@ -955,7 +965,9 @@ operations:
 	});
 
 	it("worked example documents the static-key auth block", async () => {
-		const text = contentText(await callLearn());
+		const text = contentText(
+			await callLearn("example.com", undefined, { new: true }),
+		);
 		const m = text.match(/```yaml\n([\s\S]*?)```/);
 		expect(m).not.toBeNull();
 		const example = m![1]!;
