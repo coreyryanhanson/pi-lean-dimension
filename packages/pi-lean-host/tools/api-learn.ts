@@ -18,7 +18,11 @@ import { Text } from "@earendil-works/pi-tui";
 import { appendFooter, contentText } from "./utils.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseApiGuide } from "../core/parse-api-guide.js";
+import {
+	parseApiGuide,
+	stampFrontmatterField,
+} from "../core/parse-api-guide.js";
+import { GUIDE_SCHEMA_VERSION } from "../core/api-guide-types.js";
 import {
 	invalidateCache,
 	getUserGuidesDir,
@@ -41,14 +45,20 @@ organization: boe.es          # optional — org identity across guides (registr
 description: Spanish official gazette legislation API.  # optional — one-line summary; aids disambiguation
 icon: ⚖️
 shortName: BOE
-updated: 2026-07-15
+# updated / verified are stamped by the tool when omitted (defaults to today)
 apiHost: https://apidatos.boe.es/v1
-verified: 2026-07-15
 docs: https://www.boe.es/datosabiertos/api/api.php
 gatherAllMax: 500
 
 auth:
   kind: none
+  # Keyed API? Use kind: static-key — values live in the secrets store (/api secrets), never in the recipe:
+  #   kind: static-key
+  #   requires: [apiKey]
+  #   secretRefs:
+  #     Authorization: apiKey
+  #   headerPrefixes:
+  #     Authorization: "Bearer "
 
 pagination:
   style: offset-limit
@@ -278,7 +288,16 @@ export const apiLearnTool = defineTool({
 		mkdirSync(domainDir, { recursive: true });
 		const filepath = join(domainDir, "guide.md");
 
-		writeFileSync(filepath, recipe, "utf-8");
+		// Stamp schemaVersion on save — each guide records the schema vintage
+		// it was authored against (the per-guide vintage that stale detection
+		// compares against). Line-level frontmatter edit; comments + key order
+		// preserved (no YAML round-trip).
+		const stamped = stampFrontmatterField(
+			recipe,
+			"schemaVersion",
+			String(GUIDE_SCHEMA_VERSION),
+		);
+		writeFileSync(filepath, stamped, "utf-8");
 		invalidateCache(); // next api-fetch / api-guide read picks it up
 
 		const opCount = parsed.guide.operations.length;

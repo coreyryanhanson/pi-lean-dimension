@@ -19,7 +19,11 @@ import {
 	findGuidesByDomain,
 	getCatalogText,
 } from "../core/guide-store.js";
-import { formatGuideListings, TODAY } from "../core/parse-api-guide.js";
+import {
+	formatGuideListings,
+	TODAY,
+	staleSchemaLine,
+} from "../core/parse-api-guide.js";
 import { authStatusLine, canonicalStoreDomain } from "../core/auth.js";
 import type { ApiGuide } from "../core/api-guide-types.js";
 
@@ -189,6 +193,8 @@ function renderGuideDetail(
 	lines.push(`  Domains: ${guide.domains?.join(", ") ?? "—"}`);
 	lines.push(`  Host: ${guide.apiHost}`);
 	lines.push(`  Verified: ${guide.verified} · Updated: ${guide.updated}`);
+	const stale = staleSchemaLine(guide);
+	if (stale) lines.push(stale);
 	if (guide.docs) lines.push(`  Docs: ${guide.docs}`);
 	lines.push(`  Auth: ${guide.auth.kind}`);
 	// Auth status footer — shared with api-fetch. Metadata only (names,

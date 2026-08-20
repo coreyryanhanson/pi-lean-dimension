@@ -940,6 +940,98 @@ operations:
 		expect(text).toContain("Guide saved");
 		expect(text).not.toContain("Multi-recipe");
 	});
+
+	// D6 — the worked example is the docs-side discoverability: no hardcoded
+	// updated/verified dates (the tool stamps them when omitted — the
+	// load-bearing D2 close) and a static-key auth block to crib from.
+	it("worked example has no hardcoded updated/verified dates", async () => {
+		const text = contentText(await callLearn());
+		const m = text.match(/```yaml\n([\s\S]*?)```/);
+		expect(m).not.toBeNull();
+		const example = m![1]!;
+		expect(example).not.toMatch(/^updated:/m);
+		expect(example).not.toMatch(/^verified:/m);
+		expect(example).toContain("stamped by the tool when omitted");
+	});
+
+	it("worked example documents the static-key auth block", async () => {
+		const text = contentText(await callLearn());
+		const m = text.match(/```yaml\n([\s\S]*?)```/);
+		expect(m).not.toBeNull();
+		const example = m![1]!;
+		expect(example).toContain("kind: static-key");
+		expect(example).toContain("requires: [apiKey]");
+		expect(example).toContain("secretRefs:");
+		expect(example).toContain("headerPrefixes:");
+	});
+
+	// D-bootstrap (write path) — api-learn stamps schemaVersion on save.
+	it("stamps schemaVersion on save when the recipe omits it", async () => {
+		setUserGuidesDir(tmpGuidesDir);
+		invalidateCache();
+		const recipe = `---\nkind: api\ndomains: [stamp-absent.example]\nshortName: StampAbsent\napiHost: ${ctx.serverUrl}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\nProse body.\n`;
+		await callLearn("stamp-absent.example", recipe);
+		const raw = readFileSync(
+			join(tmpGuidesDir, "stamp-absent.example", "guide.md"),
+			"utf-8",
+		);
+		expect(raw).toMatch(/^schemaVersion: 0$/m);
+		// Prose body untouched.
+		expect(raw).toContain("Prose body.");
+	});
+
+	it("replaces an explicit older schemaVersion on save", async () => {
+		setUserGuidesDir(tmpGuidesDir);
+		invalidateCache();
+		const recipe = `---\nkind: api\nschemaVersion: 5\ndomains: [stamp-replace.example]\nshortName: StampReplace\napiHost: ${ctx.serverUrl}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		await callLearn("stamp-replace.example", recipe);
+		const raw = readFileSync(
+			join(tmpGuidesDir, "stamp-replace.example", "guide.md"),
+			"utf-8",
+		);
+		expect(raw).toMatch(/^schemaVersion: 0$/m);
+		expect(raw).not.toMatch(/^schemaVersion: 5$/m);
+	});
+
+	it("never touches a schemaVersion string in the prose body", async () => {
+		setUserGuidesDir(tmpGuidesDir);
+		invalidateCache();
+		const recipe = `---\nkind: api\ndomains: [stamp-prose.example]\nshortName: StampProse\napiHost: ${ctx.serverUrl}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\nThe schemaVersion: 5 in this prose must stay untouched.\n`;
+		await callLearn("stamp-prose.example", recipe);
+		const raw = readFileSync(
+			join(tmpGuidesDir, "stamp-prose.example", "guide.md"),
+			"utf-8",
+		);
+		// Frontmatter got the stamp...
+		expect(raw).toMatch(/^schemaVersion: 0$/m);
+		// ...and the prose line is untouched (still schemaVersion: 5).
+		expect(raw).toContain(
+			"The schemaVersion: 5 in this prose must stay untouched.",
+		);
+	});
+
+	it("preserves comments and key order when stamping", async () => {
+		setUserGuidesDir(tmpGuidesDir);
+		invalidateCache();
+		const recipe = `---\nkind: api\ndomains: [stamp-order.example]\n# a comment that must survive\nshortName: StampOrder\napiHost: ${ctx.serverUrl}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		await callLearn("stamp-order.example", recipe);
+		const raw = readFileSync(
+			join(tmpGuidesDir, "stamp-order.example", "guide.md"),
+			"utf-8",
+		);
+		expect(raw).toContain("# a comment that must survive");
+		// Key order preserved; schemaVersion inserted after operations, before
+		// the closing --- (no YAML round-trip).
+		const idxDomains = raw.indexOf("domains:");
+		const idxShort = raw.indexOf("shortName:");
+		const idxApi = raw.indexOf("apiHost:");
+		const idxOps = raw.indexOf("operations:");
+		const idxSV = raw.indexOf("schemaVersion: 0");
+		expect(idxDomains).toBeLessThan(idxShort);
+		expect(idxShort).toBeLessThan(idxApi);
+		expect(idxApi).toBeLessThan(idxOps);
+		expect(idxOps).toBeLessThan(idxSV);
+	});
 });
 
 /** A recipe for the large-response endpoint (spill truncation). */
@@ -1012,6 +1104,20 @@ describe("api-fetch", () => {
 		expect(details.via).toBe("restGet");
 		expect(details.domain).toBe("boe.es");
 		expect(details.operation).toBe("searchDiary");
+	});
+
+	it("does not append a stale-schema note for a current guide", async () => {
+		// GUIDE_SCHEMA_VERSION is 0 during beta, so a freshly-saved guide is
+		// current — the staleness note must not appear on its fetch result
+		// (proves the api-fetch note wiring is active without a real bump).
+		const result = await callFetch({
+			domain: "boe.es",
+			operation: "searchDiary",
+			params: { date: "2026-07-17" },
+		});
+		const text = contentText(result);
+		expect(text).toContain("BOE");
+		expect(text).not.toContain("⚠ schemaVersion");
 	});
 
 	it("executes a paginate operation against the test server", async () => {

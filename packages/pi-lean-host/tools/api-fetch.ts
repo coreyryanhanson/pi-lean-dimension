@@ -30,7 +30,10 @@ import {
 	type QuerySecretResolution,
 } from "../core/auth.js";
 import { provisionedDomainsSuffix } from "../core/secrets-store.js";
-import { formatGuideListings } from "../core/parse-api-guide.js";
+import {
+	formatGuideListings,
+	staleSchemaLine,
+} from "../core/parse-api-guide.js";
 import { spillResponse, formatSpillNotice } from "../core/response-spill.js";
 import { appendFooter, contentText } from "./utils.js";
 import type { Operation, ApiGuide } from "../core/api-guide-types.js";
@@ -306,6 +309,8 @@ export const apiFetchTool = defineTool({
 					text += `\n⚠ gatherAll ignored — ${operation} is not paginated (via: restGet).`;
 				}
 				if (authFooter) text += `\n${authFooter}`;
+				const staleNote = staleSchemaLine(guide);
+				if (staleNote) text += `\n${staleNote}`;
 				return {
 					content: [{ type: "text", text }],
 					details: {
@@ -357,6 +362,8 @@ export const apiFetchTool = defineTool({
 								result.failedItems,
 							);
 				if (authFooter) text += `\n${authFooter}`;
+				const staleNote = staleSchemaLine(guide);
+				if (staleNote) text += `\n${staleNote}`;
 				return {
 					content: [{ type: "text", text }],
 					details: {

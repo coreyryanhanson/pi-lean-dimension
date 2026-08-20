@@ -852,6 +852,53 @@ body
 		expect(err.field).toBe("frontmatter");
 	});
 
+	// D7 — the opener-present cases route to a closing-`---` diagnostic
+	// instead of the misleading "no frontmatter found".
+	it("opening --- with no closing --- → names the missing closer", () => {
+		const err = expectErr(
+			`---\ndomains: [example.com]\napiHost: https://api.example.com`,
+		);
+		expect(err.field).toBe("frontmatter");
+		expect(err.found).toBe("missing closing ---");
+		expect(err.found).not.toContain("no frontmatter");
+		expect(err.fix).toContain("---");
+	});
+
+	it("opening --- with a malformed closer (no trailing newline) → diagnosed", () => {
+		// FRONTMATTER_RE needs a newline after the closing ---; a closer at EOF
+		// without one is present-but-malformed, not missing.
+		const err = expectErr(
+			`---\ndomains: [example.com]\napiHost: https://api.example.com\n---`,
+		);
+		expect(err.field).toBe("frontmatter");
+		expect(err.found).toContain("closing --- present but malformed");
+		expect(err.fix).toContain("newline");
+	});
+
+	it("CRLF opening --- with no closing --- → names the missing closer", () => {
+		const err = expectErr(
+			`---\r\ndomains: [example.com]\r\napiHost: https://api.example.com`,
+		);
+		expect(err.field).toBe("frontmatter");
+		expect(err.found).toBe("missing closing ---");
+	});
+
+	it("CRLF opening --- with a malformed closer → diagnosed", () => {
+		const err = expectErr(
+			`---\r\ndomains: [example.com]\r\napiHost: https://api.example.com\r\n---`,
+		);
+		expect(err.field).toBe("frontmatter");
+		expect(err.found).toContain("closing --- present but malformed");
+	});
+
+	it("no opening --- at all → existing 'no frontmatter found' preserved", () => {
+		// Starts with prose, not ---; a stray --- later in the body is not an
+		// opening delimiter, so the common no-frontmatter diagnostic stays.
+		const err = expectErr("prose\n---\nmore prose");
+		expect(err.field).toBe("frontmatter");
+		expect(err.found).toBe("no frontmatter found");
+	});
+
 	it("invalid YAML → ParseError on frontmatter", () => {
 		const raw = `---
 domains: [example.com

@@ -15,6 +15,7 @@ import type { Guide } from "./guide-loader.js";
 import { extractPathTokens } from "./path-template.js";
 import {
 	GATHER_ALL_MAX_FALLBACK,
+	GUIDE_SCHEMA_VERSION,
 	KNOWN_AUTH_KINDS,
 	type ApiGuide,
 	type DateParamFormat,
@@ -42,6 +43,35 @@ import {
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
 
 export const TODAY = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * Line-level frontmatter stamp — replace (or insert) a single `key: value`
+ * line inside the isolated frontmatter block, preserving comments and key
+ * order (no YAML round-trip — a round-trip reformats and strips comments).
+ * Used by api-learn (schemaVersion save-stamp) and /api verify (verified
+ * stamp). Returns the document unchanged when it has no frontmatter block.
+ */
+export function stampFrontmatterField(
+	raw: string,
+	key: string,
+	value: string,
+): string {
+	const match = raw.match(FRONTMATTER_RE);
+	if (!match) return raw;
+	const fm = match[1] ?? "";
+	const content = match[2] ?? "";
+	const nl = /^---(\r?\n)/.exec(raw)?.[1] ?? "\n";
+	const lines = fm.split(nl);
+	const keyRe = new RegExp(`^${key}:\\s*.+$`);
+	const idx = lines.findIndex((l) => keyRe.test(l));
+	const line = `${key}: ${value}`;
+	if (idx === -1) {
+		lines.push(line);
+	} else {
+		lines[idx] = line;
+	}
+	return `---${nl}${lines.join(nl)}${nl}---${nl}${content}`;
+}
 
 const VALID_VIA: ReadonlySet<string> = new Set(["restGet", "paginate"]);
 // accept is a free-form string — any media type is valid (`json`/`xml`
@@ -1026,6 +1056,34 @@ export function parseApiGuide(
 
 	const match = raw.match(FRONTMATTER_RE);
 	if (!match) {
+		// Opening delimiter present → the failure is on the closing side, not
+		// a missing frontmatter block. Detect the opener with /^---\r?\n/ (not
+		// startsWith("---\n")) so a CRLF-prefixed file is routed here too.
+		if (/^---\r?\n/.test(raw)) {
+			// A `\n---` after the opener means a closer exists but FRONTMATTER_RE
+			// still failed — the closer is malformed (e.g. no trailing newline
+			// at EOF). Otherwise there is no closer at all.
+			if (/\n---/.test(raw.replace(/^---\r?\n/, ""))) {
+				return fail(
+					file,
+					"frontmatter",
+					"a closing --- followed by a newline",
+					"closing --- present but malformed (missing trailing newline after it)",
+					{
+						fix: "Ensure the closing --- is on its own line and followed by a newline before any prose.",
+					},
+				);
+			}
+			return fail(
+				file,
+				"frontmatter",
+				"YAML frontmatter delimited by ---",
+				"missing closing ---",
+				{
+					fix: "Close the frontmatter block with a --- line after the YAML.",
+				},
+			);
+		}
 		return fail(
 			file,
 			"frontmatter",
@@ -1169,22 +1227,22 @@ export function parseApiGuide(
 		description = descriptionRaw;
 	}
 
-	// schemaVersion — metadata-only attribution (design: "schemaVersion is
-	// attribution, not enforcement"). Read from frontmatter, surfaced on the
-	// parsed guide when present, left `undefined` when absent. Never gates,
-	// warns, or alters parse. A malformed (non-integer/negative) value is
-	// tolerated and ignored — it must never reject a guide.
-	let schemaVersion: number | undefined;
+	// schemaVersion — breaking-change detection (design: "schemaVersion is
+	// detection, not enforcement"). Stamped on save by api-learn; absent-on-
+	// read defaults to 0 (the floor), so an unversioned guide flags as
+	// potentially stale after any schema bump rather than silently inheriting
+	// the new current. A valid-integer frontmatter value overrides the floor.
+	// A stale value (< current) warns non-blockingly in the api-guide catalog/
+	// detail and on api-fetch; never gates. A malformed (non-integer/negative)
+	// value falls back to 0 and never rejects a guide.
+	let schemaVersion = 0;
 	const schemaVersionRaw = m["schemaVersion"];
-	if (schemaVersionRaw !== undefined) {
-		if (
-			typeof schemaVersionRaw === "number" &&
-			Number.isInteger(schemaVersionRaw) &&
-			schemaVersionRaw >= 0
-		) {
-			schemaVersion = schemaVersionRaw;
-		}
-		// else: tolerated + ignored — metadata stays silent on malformed input.
+	if (
+		typeof schemaVersionRaw === "number" &&
+		Number.isInteger(schemaVersionRaw) &&
+		schemaVersionRaw >= 0
+	) {
+		schemaVersion = schemaVersionRaw;
 	}
 
 	let gatherAllMax = GATHER_ALL_MAX_FALLBACK;
@@ -1291,7 +1349,7 @@ export function parseApiGuide(
 		...(docs ? { docs } : {}),
 		...(organization ? { organization } : {}),
 		...(description ? { description } : {}),
-		...(schemaVersion === undefined ? {} : { schemaVersion }),
+		schemaVersion,
 		gatherAllMax,
 		auth,
 		responseShape,
@@ -1374,6 +1432,37 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// Schema-version staleness — detection, never a gate
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * Pure staleness predicate: a guide is stale when its schemaVersion predates
+ * the current schema (a bump may have broken it). A forward-stamped guide
+ * (authored against a newer schema than the running host) is NOT stale.
+ */
+export function isStaleSchema(
+	guideSchemaVersion: number,
+	currentSchemaVersion: number,
+): boolean {
+	return guideSchemaVersion < currentSchemaVersion;
+}
+
+/**
+ * Non-blocking stale-schema warning line for a guide, or undefined when the
+ * guide is current. Peer of the `⚠ malformed` catalog line — detection,
+ * never a gate (the guide still loads and runs). `current` defaults to
+ * GUIDE_SCHEMA_VERSION; tests pass a bumped value to force staleness.
+ */
+export function staleSchemaLine(
+	guide: ApiGuide,
+	current: number = GUIDE_SCHEMA_VERSION,
+): string | undefined {
+	const v = guide.schemaVersion ?? 0;
+	if (!isStaleSchema(v, current)) return undefined;
+	return `  ⚠ schemaVersion ${v} < current ${current} — guide may need updating`;
+}
+
+// ════════════════════════════════════════════════════════════════════
 // Disambiguation helpers — shared by the api-guide menu and the
 // api-fetch ambiguous-operation error. One rendering of the per-guide
 // listing so the two surfaces stay visually consistent.
@@ -1402,7 +1491,10 @@ function formatOpSummary(ops: { name: string }[]): string {
  * shortName + op names only (the status-quo shape), so un-backfilled
  * guides render consistently with those that have a one-line summary.
  */
-export function formatGuideListings(entries: { guide: ApiGuide }[]): string {
+export function formatGuideListings(
+	entries: { guide: ApiGuide }[],
+	current: number = GUIDE_SCHEMA_VERSION,
+): string {
 	const lines: string[] = [];
 	for (const { guide } of entries) {
 		lines.push(
@@ -1410,6 +1502,8 @@ export function formatGuideListings(entries: { guide: ApiGuide }[]): string {
 				(guide.description ? ` — ${guide.description}` : ""),
 		);
 		lines.push(`    ${formatOpSummary(guide.operations)}`);
+		const stale = staleSchemaLine(guide, current);
+		if (stale) lines.push(stale);
 	}
 	return lines.join("\n");
 }
@@ -1425,7 +1519,10 @@ export function formatGuideListings(entries: { guide: ApiGuide }[]): string {
 // here, where they'd bloat context for orgs with many guides.
 // ════════════════════════════════════════════════════════════════════
 
-export function formatApiGuideCatalog(loaded: LoadedApiGuides): string {
+export function formatApiGuideCatalog(
+	loaded: LoadedApiGuides,
+	current: number = GUIDE_SCHEMA_VERSION,
+): string {
 	const lines: string[] = ["API guides:"];
 
 	// Org-grouped rows preserve first-appearance order; guides without
@@ -1454,7 +1551,14 @@ export function formatApiGuideCatalog(loaded: LoadedApiGuides): string {
 		}
 		const domList = domains.size > 0 ? [...domains].join(", ") : "—";
 		const n = row.guides.length;
-		lines.push(`  🏛️ ${row.org} — ${n} guide${n > 1 ? "s" : ""} (${domList})`);
+		// Collapsed org row: a trailing ⚠ glyph when ANY guide in it is stale
+		// (hint only — the per-guide ⚠ line lives on the menu / detail view).
+		const stale = row.guides.some((g) =>
+			isStaleSchema(g.schemaVersion ?? 0, current),
+		);
+		lines.push(
+			`  🏛️ ${row.org} — ${n} guide${n > 1 ? "s" : ""} (${domList})${stale ? " ⚠" : ""}`,
+		);
 	}
 	for (const { name, guide } of orgless) {
 		const domains =
@@ -1462,6 +1566,8 @@ export function formatApiGuideCatalog(loaded: LoadedApiGuides): string {
 		lines.push(
 			`  ${guide.icon} ${guide.shortName} — ${domains} (verified ${guide.verified}, ${guide.operations.length} ops)`,
 		);
+		const stale = staleSchemaLine(guide, current);
+		if (stale) lines.push(stale);
 	}
 	for (const mal of loaded.malformed) {
 		lines.push(
