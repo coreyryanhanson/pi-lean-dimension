@@ -437,8 +437,14 @@ export const apiLearnTool = defineTool({
 		// so the routing-vs-identity distinction is explicit.
 		const warnings: string[] = [];
 		const collidingDomains: string[] = [];
+		const collidingDirs: string[] = [];
 		for (const d of parsed.guide.domains ?? []) {
 			const existing = findGuidesByDomain(d);
+			for (const m of existing) {
+				if (m.dirName !== domain && !collidingDirs.includes(m.dirName)) {
+					collidingDirs.push(m.dirName);
+				}
+			}
 			if (existing.some((m) => m.dirName !== domain)) {
 				collidingDomains.push(d);
 			}
@@ -453,6 +459,9 @@ export const apiLearnTool = defineTool({
 					`  \`description:\` is absent — adding one is recommended when several guides share a domain (it's the primary disambiguation signal).`,
 				);
 			}
+			warnings.push(
+				`  If an existing guide is wrong, ask the user to run /api delete ${collidingDirs.join(" ")} to remove it (the agent has no delete tool).`,
+			);
 		}
 
 		// ── Write guide ──────────────────────────────────────────

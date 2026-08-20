@@ -25,6 +25,11 @@ vi.mock("../core/verify-command.js", () => ({
 	handleVerifySubcommand: vi.fn(),
 }));
 
+// Same for delete — a destructive command must never run in a dispatch test.
+vi.mock("../core/delete-command.js", () => ({
+	handleDeleteSubcommand: vi.fn(),
+}));
+
 // Clean globalThis registry between test files
 const REGISTRY_KEY = "__piToolMaskingRegistry";
 const RESTORE_EVENT_KEY = "__piToolMaskingLastRestoreEvent";
@@ -329,6 +334,42 @@ describe("/api verify dispatch", () => {
 
 		const { handleVerifySubcommand } = await import("../core/verify-command.js");
 		expect(handleVerifySubcommand).toHaveBeenCalled();
+		expect(pi.setActiveTools).not.toHaveBeenCalled();
+	});
+});
+
+describe("/api delete dispatch", () => {
+	it("recognizes delete and routes to handleDeleteSubcommand", async () => {
+		const { pi } = mockPi([]);
+		initApiToggle(pi);
+		const ctx = mockCtx();
+		await captureApiHandler(pi)("delete delete.test", ctx);
+		const { handleDeleteSubcommand } = await import("../core/delete-command.js");
+		expect(handleDeleteSubcommand).toHaveBeenCalledWith("delete.test", ctx);
+	});
+
+	it("delete is not refused by the focus-mode guard (writes no toolset state)", async () => {
+		const { pi } = mockPi([]);
+		initApiToggle(pi);
+		setDefaultResolutionMode(pi, "inclusion");
+		const ctx = mockCtx();
+		await captureApiHandler(pi)("delete delete.test", ctx);
+
+		expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+			expect.stringContaining("Another plugin has active inclusion mode"),
+			"warning",
+		);
+		expect(pi.setActiveTools).not.toHaveBeenCalled();
+	});
+
+	it("delete routes regardless of tool masking (no toolset actuation)", async () => {
+		const { pi } = mockPi([]);
+		initApiToggle(pi);
+		const ctx = mockCtx();
+		await captureApiHandler(pi)("delete delete.test", ctx);
+
+		const { handleDeleteSubcommand } = await import("../core/delete-command.js");
+		expect(handleDeleteSubcommand).toHaveBeenCalled();
 		expect(pi.setActiveTools).not.toHaveBeenCalled();
 	});
 });

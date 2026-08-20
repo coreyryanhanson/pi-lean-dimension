@@ -924,6 +924,46 @@ operations:
 		expect(text).toContain("recommended");
 	});
 
+	it("collision warning names /api delete as the recovery gesture", async () => {
+		// The agent has no delete tool — when an existing guide is wrong, the
+		// collision warning must point at the human-typed /api delete command,
+		// naming the colliding directory (the one to remove).
+		setUserGuidesDir(tmpGuidesDir);
+		invalidateCache();
+		const first = `---
+kind: api
+domains: [recover.example]
+organization: recover.org
+shortName: First
+apiHost: ${ctx.serverUrl}
+operations:
+  - name: getFirst
+    via: restGet
+    path: /x
+    accept: json
+---
+`;
+		const second = `---
+kind: api
+domains: [recover.example]
+organization: recover.org
+shortName: Second
+apiHost: ${ctx.serverUrl}
+operations:
+  - name: getSecond
+    via: restGet
+    path: /x
+    accept: json
+---
+`;
+		await callLearn("recover-first", first);
+		invalidateCache();
+		const text = contentText(await callLearn("recover-second", second));
+		expect(text).toContain("Multi-recipe");
+		expect(text).toContain("/api delete recover-first");
+		expect(text).toContain("the agent has no delete tool");
+	});
+
 	it("does not warn when updating the same guide's own directory", async () => {
 		// Updating `foo.example` when `foo.example` already claims the domain is
 		// not a collision — same dirName. No warning.
