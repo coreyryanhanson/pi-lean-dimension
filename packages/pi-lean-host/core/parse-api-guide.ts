@@ -703,7 +703,8 @@ function validateAuth(
 			fm,
 			"auth.headerPrefixes",
 			"a YAML mapping of header name → non-empty prefix string",
-			(v) => typeof v === "string" && v.length > 0,
+			(v) =>
+				typeof v === "string" && v.length > 0 && !/^\{[a-zA-Z0-9_]+\}$/.test(v),
 		);
 		if (isParseErr(hp)) return hp;
 		headerPrefixes = hp;

@@ -626,6 +626,225 @@ describe("probe redirect handling (live localhost)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// Final fix wave — 401/403 wording + headerPrefixes-without-secretRefs
+// (see docs/design/api-probe-final-fix-wave.md)
+// ═══════════════════════════════════════════════════════════════════
+
+/** Tiny stub: a JSON server that always replies with the given status. */
+async function stubProbeServer(
+	status: number,
+): Promise<{ server: http.Server; base: string }> {
+	const server = http.createServer((_req, res) => {
+		res.writeHead(status, { "Content-Type": "application/json" });
+		res.end(JSON.stringify({ data: [{ id: 1 }] }));
+	});
+	await new Promise<void>((r) => server.listen(0, r));
+	const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+	return { server, base };
+}
+
+describe("api-probe 401/403 wording", () => {
+	it("no auth block, 401 → endpoint-requires-auth wording (no stale guide phrase)", async () => {
+		const { server, base } = await stubProbeServer(401);
+		try {
+			const result = await probe(base, "/packs");
+			expect(result.note ?? "").toContain(
+				"endpoint requires auth; configure auth injection",
+			);
+			expect(result.note ?? "").not.toContain("guide is auth:none");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+		}
+	});
+
+	it("auth injected (secret provisioned) but server 401 → injected-but-rejected wording", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-401-secrets-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "K");
+		const { server, base } = await stubProbeServer(401);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			const note = result.note ?? "";
+			expect(note).toContain("auth injected but rejected; verify header name");
+			expect(note).not.toContain("not found in store");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("auth injected, secret missing from store → auth rejected; names the secret", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-401-miss-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		const { server, base } = await stubProbeServer(401);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			const note = result.note ?? "";
+			expect(note).toContain("auth rejected;");
+			expect(note).toContain(
+				'secret "api_key" not found in store for domain "api.example.com"',
+			);
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("auth injected, nothing missing, server 403 → injected-but-rejected wording (403 variant)", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-secrets-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "K");
+		const { server, base } = await stubProbeServer(403);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			expect(result.note ?? "").toContain(
+				"auth injected but rejected; verify header name",
+			);
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("api-probe headerPrefixes without secretRefs", () => {
+	const ROOT_CAUSE = "headerPrefixes ignored: no secretRefs to apply them to";
+
+	it("headerPrefixes-only, server 2xx → warning fires", async () => {
+		const { server, base } = await stubProbeServer(200);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{ auth: { headerPrefixes: { "x-api-key": "Bearer " } } },
+			);
+			expect(result.note ?? "").toContain(ROOT_CAUSE);
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+		}
+	});
+
+	it("headerPrefixes-only, server 401 → both the auth wording and the root cause", async () => {
+		const { server, base } = await stubProbeServer(401);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{ auth: { headerPrefixes: { "x-api-key": "Bearer " } } },
+			);
+			const note = result.note ?? "";
+			expect(note).toContain("endpoint requires auth; configure auth injection");
+			expect(note).toContain(ROOT_CAUSE);
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+		}
+	});
+
+	it("headerPrefixes-only, server 500 → warning surfaces on non-auth errors too", async () => {
+		const { server, base } = await stubProbeServer(500);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{ auth: { headerPrefixes: { "x-api-key": "Bearer " } } },
+			);
+			expect(result.note ?? "").toContain(ROOT_CAUSE);
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+		}
+	});
+
+	it("secretQueryRefs + headerPrefixes, no secretRefs, server 2xx → warning fires (edge case)", async () => {
+		const { server, base } = await stubProbeServer(200);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					auth: {
+						secretQueryRefs: { token: "t" },
+						headerPrefixes: { "x-api-key": "Bearer " },
+					},
+				},
+			);
+			expect(result.note ?? "").toContain(ROOT_CAUSE);
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+		}
+	});
+
+	it("correct shape (secretRefs + headerPrefixes) with secret provisioned → no warning", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-prefix-ok-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "K");
+		const { server, base } = await stubProbeServer(200);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: {
+						secretRefs: { "x-api-key": "api_key" },
+						headerPrefixes: { "x-api-key": "Bearer " },
+					},
+				},
+			);
+			expect(result.note ?? "").not.toContain("headerPrefixes ignored");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // List mode — learn-gated secrets discovery (the bootstrap-gap closure)
 // ═══════════════════════════════════════════════════════════════════
 

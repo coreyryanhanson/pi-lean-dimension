@@ -236,6 +236,9 @@ interface ProbeAuthCtx {
 	secretQueryParamNames: Set<string>;
 	secretValues: string[];
 	missingNames: string[];
+	/** headerPrefixes declared but no secretRefs to apply them to — the
+	 *  prefixes would be silently dropped. Surfaced as a note, not an error. */
+	misconfiguredPrefixes: boolean;
 }
 
 /**
@@ -249,6 +252,16 @@ function resolveProbeAuth(
 	auth: NonNullable<ProbeOptions["auth"]> | undefined,
 	domain: string,
 ): ProbeAuthCtx {
+	// Computed before the hasRefs check so the flag survives both paths: a
+	// headerPrefixes-only block (hasRefs false → early return) and a
+	// secretQueryRefs block with prefixes but no secretRefs (hasRefs true →
+	// normal path, where resolveSecretHeaders would silently drop the
+	// prefixes). Query secrets never take prefixes, so secretQueryRefs is
+	// deliberately excluded from the flag.
+	const misconfiguredPrefixes =
+		!!auth &&
+		Object.keys(auth.headerPrefixes ?? {}).length > 0 &&
+		Object.keys(auth.secretRefs ?? {}).length === 0;
 	const hasRefs =
 		!!auth &&
 		(Object.keys(auth.secretRefs ?? {}).length > 0 ||
@@ -262,6 +275,7 @@ function resolveProbeAuth(
 			secretQueryParamNames: new Set(),
 			secretValues: [],
 			missingNames: [],
+			misconfiguredPrefixes,
 		};
 	}
 	const headerRes = resolveSecretHeaders(
@@ -298,8 +312,16 @@ function resolveProbeAuth(
 			...queryRes.absentRequired,
 			...queryRes.absentOptional,
 		],
+		misconfiguredPrefixes,
 	};
 }
+
+/** Root-cause note for a headerPrefixes-only auth block (no secretRefs to
+ *  apply the prefixes to). `:`/`;` internal separators keep the combined
+ *  error note from stacking three ` — ` joins when it composes with the
+ *  401/403 wording. */
+const MISCONFIGURED_PREFIXES_NOTE =
+	"headerPrefixes ignored: no secretRefs to apply them to; put the secret name in auth.secretRefs";
 
 /** First missing secret name as a one-line note (names only, never values). */
 function missNote(authCtx: ProbeAuthCtx, domain: string): string {
@@ -476,15 +498,25 @@ async function fetchOne(
 		const is401 = res.status === 401 || res.status === 403;
 		const miss = missNote(authCtx, domain);
 		let note: string;
-		if (authCtx.hasAuthBlock) {
-			// Auth block present → never the stale auth:none text; report the
-			// store miss (or a bare requires-auth hint when nothing was missing).
-			note = `${res.status}${is401 ? " — requires authentication?" : ""}${miss ? ` ${miss}` : ""}`;
-		} else {
-			// No auth block → the existing auth:none wording.
+		if (!authCtx.hasAuthBlock) {
+			// No auth injected — a 401/403 means the endpoint is gated and the
+			// probe sent nothing. Pre-guide authoring tool: no guide in scope,
+			// so no stale "(guide is auth:none)" wording.
 			note = is401
-				? `${res.status} — requires authentication? (guide is auth:none)`
+				? `${res.status} — endpoint requires auth; configure auth injection (auth.secretRefs)`
 				: `${res.status}`;
+		} else if (miss) {
+			// Auth injected but a required secret was missing — the miss names it.
+			note = `${res.status}${is401 ? " — auth rejected;" : ""} ${miss}`;
+		} else {
+			// Auth injected, nothing missing — rejection means the credentials
+			// were wrong (header name / secret value), not the endpoint.
+			note = is401
+				? `${res.status} — auth injected but rejected; verify header name and secret value`
+				: `${res.status}`;
+		}
+		if (authCtx.misconfiguredPrefixes) {
+			note += ` — ${MISCONFIGURED_PREFIXES_NOTE}`;
 		}
 		return {
 			url,
@@ -523,6 +555,9 @@ async function fetchOne(
 		const sc = emitScaffold({ apiHost, domain, draft, auth: opts.auth });
 		draft = sc.draft;
 		if (sc.note) note = [note, sc.note].filter(Boolean).join(" — ");
+	}
+	if (authCtx.misconfiguredPrefixes) {
+		note = [note, MISCONFIGURED_PREFIXES_NOTE].filter(Boolean).join(" — ");
 	}
 	// Targeted scaffold nudge (issue #6): only when the caller didn't pass
 	// scaffold: true AND no guide claims the domain yet — authors who already
