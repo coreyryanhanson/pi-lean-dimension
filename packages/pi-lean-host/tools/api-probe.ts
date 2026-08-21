@@ -88,6 +88,7 @@ export interface ProbeOptions {
 	 * Values resolve from the secrets store and never enter the transcript.
 	 */
 	auth?: {
+		/** Maps header name → secret name, same direction as the guide schema. */
 		secretRefs?: Record<string, string>;
 		secretQueryRefs?: Record<string, string>;
 		/**
