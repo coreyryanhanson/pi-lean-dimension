@@ -155,16 +155,17 @@ const AUTHORING_MANUAL = [
 	`  \`passthrough\` — true → forward undeclared caller params onto the query string`,
 	`  \`parse\`       — op-level responseShape override (format/charset) for this operation`,
 	"",
-	"## Executor semantics",
-	"  Pagination:",
-	`    \`pagination.base\` seeds the page param for offset-limit/page styles (caller value wins, then \`base\`, then the param \`default\`); use \`base: 1\` for 1-based offset APIs`,
-	`    The page-size param is a real knob: caller value → op param \`default\` → \`pagination.pageSize\` → 50`,
-	"  Auth:",
-	`    \`requires\` = fail-closed if unprovisioned; \`optional\` = proceeds unauthenticated if absent. Both are names only — values live in the secrets store.`,
+	"## Auth",
+	`  \`requires\` = fail-closed if unprovisioned; \`optional\` = proceeds unauthenticated if absent. Both are names only — values live in the secrets store.`,
 	"  static-key (keyed APIs):",
 	`    \`secretRefs\`      — { <header name>: <secret name> }  ← header → secret direction`,
 	`    \`headerPrefixes\`  — { <header>: "Bearer " }  ← scheme prefix; store holds the raw token`,
 	`    \`requires\`        — [apiKey]  ← fail-closed if unprovisioned`,
+	"",
+	"## Executor semantics",
+	"  Pagination:",
+	`    \`pagination.base\` seeds the page param for offset-limit/page styles (caller value wins, then \`base\`, then the param \`default\`); use \`base: 1\` for 1-based offset APIs`,
+	`    The page-size param is a real knob: caller value → op param \`default\` → \`pagination.pageSize\` → 50`,
 	"",
 	"## Guide prose (agent instructions)",
 	"  After the closing `---`, optional plaintext guidance for the reading agent —",
@@ -173,6 +174,37 @@ const AUTHORING_MANUAL = [
 	"",
 	"Call api-learn({domain: '...', recipe: '...'}) to save the guide, then api-fetch({domain, operation: '...'}) to verify.",
 ].join("\n");
+
+/** Manual section that governs a failing parser field — the validation-error
+ * closing line routes the author to the manual (gap 2). Ordered rules, first
+ * match wins; undefined → generic manual pointer. Names must match the
+ * `##` headings in AUTHORING_MANUAL above. */
+const MANUAL_SECTION_RULES: ReadonlyArray<[RegExp, string]> = [
+	[/^auth(\.|$)/, "Auth"],
+	[/^operations(\[\d+\])?\.params(\.|$)/, "Optional fields (operation-level)"],
+	[/^operations(\[\d+\])?\.(via|name|path)$/, "Required fields"],
+	[
+		/^operations(\[\d+\])?\.(dateParams|helper|transform|passthrough|parse)(\.|$)/,
+		"Optional fields (operation-level)",
+	],
+	[/^operations(\[\d+\])?\.pagination(\.|$)/, "Executor semantics"],
+	[/^pagination(\.|$)/, "Executor semantics"],
+	[/^operations(\[\d+\])?\.(accept|gatherAllMax)(\.|$)/, "Key defaults"],
+	[/^responseShape(\.|$)/, "Key defaults"],
+	[
+		/^(organization|description)$/,
+		"Optional fields (multi-recipe disambiguation)",
+	],
+	[/^(domains|apiHost|kind|operations)$/, "Required fields"],
+	[/^(verified|docs|gatherAllMax)$/, "Key defaults"],
+];
+
+function manualSectionFor(field: string): string | undefined {
+	for (const [re, section] of MANUAL_SECTION_RULES) {
+		if (re.test(field)) return section;
+	}
+	return undefined;
+}
 
 /** Domain-specific starter template — a placeholder skeleton with `domains:`
  * pre-filled for the requested domain. Other fields are placeholders the
@@ -404,7 +436,13 @@ export const apiLearnTool = defineTool({
 				`  Found: ${err.found}`,
 			];
 			if (err.fix) lines.push(`  Fix: ${err.fix}`);
+			const section = manualSectionFor(err.field);
 			lines.push("");
+			lines.push(
+				section
+					? `See the \`${section}\` section of the authoring manual — call api-learn() with no params.`
+					: `Call api-learn() with no params for the authoring manual.`,
+			);
 			lines.push("Fix the recipe and call api-learn again.");
 			return {
 				content: [{ type: "text", text: lines.join("\n") }],

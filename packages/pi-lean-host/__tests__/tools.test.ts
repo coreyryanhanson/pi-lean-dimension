@@ -776,6 +776,64 @@ describe("api-learn", () => {
 		expect(() => readFileSync(filepath, "utf-8")).toThrow();
 	});
 
+	// Gap 2: a validation failure names the manual section governing the
+	// failing field, so a first-time author who wrote from memory is routed
+	// to the manual instead of re-guessing. auth.* → Auth, operations[*].via
+	// → Required fields, unmapped fields → generic manual pointer.
+	it("routes validation failures to the governing manual section (gap 2)", async () => {
+		setUserGuidesDir(tmpGuidesDir);
+
+		// Gap 1's wrong-auth shape → Auth section.
+		const authText = contentText(
+			await callLearn(
+				"authbad.example",
+				`---
+domains: [authbad.example]
+apiHost: https://api.example.com
+auth:
+  kind: static-key
+  name: X-CMC_PRO_API_KEY
+  secret: api_key
+operations:
+  - name: get
+    via: restGet
+    path: /things
+---
+`,
+			),
+		);
+		expect(authText).toContain("auth.name");
+		expect(authText).toContain("`Auth` section of the authoring manual");
+
+		// Bad via → Required fields.
+		const viaText = contentText(
+			await callLearn(
+				"viabad.example",
+				`---
+domains: [viabad.example]
+apiHost: https://api.example.com
+operations:
+  - name: get
+    via: post
+    path: /things
+---
+`,
+			),
+		);
+		expect(viaText).toContain("operations[0].via");
+		expect(viaText).toContain(
+			"`Required fields` section of the authoring manual",
+		);
+
+		// Unmapped field (frontmatter) → generic manual pointer.
+		const fmText = contentText(await callLearn("fmbad.example", "just prose"));
+		expect(fmText).toContain("frontmatter");
+		expect(fmText).toContain(
+			"Call api-learn() with no params for the authoring manual",
+		);
+		expect(fmText).not.toContain("` section of the authoring manual");
+	});
+
 	it("returns a domain template when no recipe and no guide exists", async () => {
 		const text = contentText(await callLearn("somedomain.com"));
 		expect(text).toContain("```yaml");
