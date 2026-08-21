@@ -224,9 +224,10 @@ transform, static-key-auth, multi-recipe-domains, resumptionToken, tokenBag).
 No `_shared/`, `WAF-NOTES.md`, or `CONTRIBUTING.md` remain here — those moved
 to caritas along with the real recipes.
 
-The inline worked-example recipe in `tools/api-learn.ts` (no-`domain`
-call, the BOE shape) stays in host — it's a self-contained authoring aid,
-separate from the full reference recipes in caritas.
+The inline `api-learn({domain, new: true})` placeholder skeleton (a
+fail-closed starter template — only `domains` real, other fields `<placeholder>`)
+stays in host as a self-contained authoring aid, separate from the full
+reference recipes in caritas.
 
 For the **comprehensive recipe library** (real endpoints, live tests, per-recipe
 `verified:`-date drift disclaimer), see the
@@ -236,11 +237,14 @@ disclaimer; host ships only the synthetic axis fixtures.
 ### Guide schema versioning
 
 `core/api-guide-types.ts` exports `GUIDE_SCHEMA_VERSION` (currently `0`,
-beta). Guides may carry a `schemaVersion` frontmatter field (absent defaults
-to `0`), surfaced on the parsed guide as metadata — **attribution, never
-enforcement**: it never gates, warns, or alters parse behavior (proved by
-`__tests__/schema-version.test.ts`). At the lockstep release it bumps to `1`
-(the frozen-beta label change) with a CHANGELOG line.
+beta). `schemaVersion` is **breaking-change detection**: `api-learn` stamps it
+on save (each guide records its authoring vintage), absent-on-read defaults
+to `0` (the floor, not current), and a stale guide (`schemaVersion <
+current`) gets a **non-blocking `⚠` warning** in the `api-guide` catalog /
+detail / disambiguation and a note on `api-fetch`. **Never a gate** — the
+guide always loads and runs (proved by `__tests__/schema-version.test.ts`).
+At the lockstep release it bumps to `1` (the frozen-beta label change) with
+a CHANGELOG line.
 
 **Bump rule (post-v1):** do not bump unless a guide that used to parse now
 fails to parse. Adding an optional field, a new enum value, or relaxing a

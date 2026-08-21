@@ -627,7 +627,7 @@ describe("probe redirect handling (live localhost)", () => {
 
 // ═══════════════════════════════════════════════════════════════════
 // Final fix wave — 401/403 wording + headerPrefixes-without-secretRefs
-// (see docs/design/api-probe-final-fix-wave.md)
+// (see docs/design/authoring-flow-history.md, wave 5)
 // ═══════════════════════════════════════════════════════════════════
 
 /** Tiny stub: a JSON server that always replies with the given status. */
