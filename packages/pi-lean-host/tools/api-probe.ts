@@ -884,8 +884,10 @@ export const apiProbeTool = defineTool({
 				},
 				{
 					description:
-						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Injection fields only — values resolve from the secrets store and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
+						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Accepts only secretRefs, secretQueryRefs, and headerPrefixes. Values resolve from the secrets store and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
 					// Tight: unknown keys (e.g. a stray `domain`) are rejected before execute runs.
+					// The description above names the allowed fields explicitly — keep it in
+					// sync when adding/renaming a field here, or the prose lies to agents.
 					additionalProperties: false,
 				},
 			),
