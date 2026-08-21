@@ -210,10 +210,13 @@ function requireStringArray(
 	key: string,
 	file: string | undefined,
 	fm: string,
+	opts?: { missingFix?: string },
 ): string[] | ParseApiGuideResult {
 	const v = m[key];
 	if (v === undefined) {
-		return fail(file, key, "a list of strings", "missing");
+		return fail(file, key, "a list of strings", "missing", {
+			...(opts?.missingFix ? { fix: opts.missingFix } : {}),
+		});
 	}
 	if (!Array.isArray(v) || v.length === 0) {
 		return fail(file, key, "a non-empty list of strings", describeFound(v), {
@@ -567,7 +570,7 @@ function validateAuth(
 			"a string",
 			kindRaw === undefined ? "missing" : describeFound(kindRaw),
 			{
-				fix: "kind is one of: none | static-key — use `kind: none` (public) or `kind: static-key` (keyed header)",
+				fix: "kind is one of: none | static-key — use `kind: none` (public) or `kind: static-key` (keyed header); or call api-learn({domain, new: true}) for a full skeleton",
 			},
 		);
 	}
@@ -1324,7 +1327,10 @@ export function parseApiGuide(
 	}
 	const kind = "api";
 
-	const domainsRes = requireStringArray(m, "domains", file, fm);
+	const domainsRes = requireStringArray(m, "domains", file, fm, {
+		missingFix:
+			"Call api-learn({domain: '<domain>', new: true}) — it returns a template with `domains` pre-filled",
+	});
 	if (!Array.isArray(domainsRes)) return domainsRes;
 	const domains = domainsRes;
 

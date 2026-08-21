@@ -492,6 +492,7 @@ body
 		expect(err.found).toBe("missing");
 		expect(err.fix).toContain("none | static-key");
 		expect(err.fix).toContain("kind: static-key");
+		expect(err.fix).toContain("new: true");
 	});
 
 	it("unknown auth key (name/secret wrong shape) → ParseError with fix pointing at secretRefs/requires", () => {
@@ -602,6 +603,7 @@ body
 `;
 		const err = expectErr(raw);
 		expect(err.field).toBe("domains");
+		expect(err.fix).toContain("new: true");
 	});
 
 	it("missing operations → ParseError on operations", () => {

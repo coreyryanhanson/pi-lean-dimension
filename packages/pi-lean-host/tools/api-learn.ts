@@ -154,7 +154,7 @@ const AUTHORING_MANUAL = [
 	"## Required fields",
 	`  \`domains\`       — list of domain names this guide applies to`,
 	`  \`apiHost\`       — base URL including version prefix`,
-	`  \`operations\`    — at least one operation mapping`,
+	`  \`operations\`    — a LIST of operation mappings — at least one entry`,
 	`  \`operations[].name\`   — unique operation name`,
 	`  \`operations[].via\`    — "restGet" or "paginate"`,
 	`  \`operations[].path\`   — path starting with /`,

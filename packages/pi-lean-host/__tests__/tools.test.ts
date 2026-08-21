@@ -712,6 +712,7 @@ describe("api-learn", () => {
 		expect(text).toContain("authoring manual");
 		// Field reference + defaults + semantics stay.
 		expect(text).toContain("Required fields");
+		expect(text).toContain("a LIST of operation mappings");
 		expect(text).toContain("Key defaults");
 		expect(text).toContain("Executor semantics");
 		expect(text).toContain("joinUrl` strips a leading `/");
