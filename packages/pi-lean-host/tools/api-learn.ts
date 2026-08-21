@@ -36,6 +36,7 @@ import {
 import {
 	GUIDE_SCHEMA_VERSION,
 	type ApiGuide,
+	type AuthConfig,
 } from "../core/api-guide-types.js";
 import {
 	invalidateCache,
@@ -109,6 +110,25 @@ responseShape:
 # to the reading agent (as "Guide notes" via api-guide): date formats, auth
 # caveats, field semantics, endpoint quirks. Delete this note before saving.
 `;
+}
+
+/** Save-summary auth line — names the header→secret mapping (names only,
+ * never values: values live in the store). e.g.
+ * `static-key · Authorization ← secret apiKey (Bearer )`. */
+function authSummary(auth: AuthConfig): string {
+	const parts: string[] = [];
+	for (const [header, secretName] of Object.entries(auth.secretRefs ?? {})) {
+		const prefix = auth.headerPrefixes?.[header];
+		parts.push(
+			`${header} ← secret ${secretName}${prefix === undefined ? "" : ` (${prefix})`}`,
+		);
+	}
+	for (const [param, secretName] of Object.entries(auth.secretQueryRefs ?? {})) {
+		parts.push(`?${param} ← secret ${secretName}`);
+	}
+	return parts.length === 0
+		? `Auth: ${auth.kind}`
+		: `Auth: ${auth.kind} · ${parts.join(", ")}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -538,7 +558,7 @@ export const apiLearnTool = defineTool({
 						`📖 Guide saved to ~/.pi/agent/pi-lean-host/api-guides/${domain}/guide.md\n` +
 						`  Domain: ${domain}\n` +
 						`  Operations: ${opCount} — ${opNames}\n` +
-						`  Auth: ${parsed.guide.auth.kind}\n` +
+						`  ${authSummary(parsed.guide.auth)}\n` +
 						`  Verified: ${parsed.guide.verified}\n` +
 						`  Schema version: ${GUIDE_SCHEMA_VERSION}\n` +
 						`\n` +
