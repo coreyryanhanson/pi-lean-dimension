@@ -566,6 +566,9 @@ function validateAuth(
 			"auth.kind",
 			"a string",
 			kindRaw === undefined ? "missing" : describeFound(kindRaw),
+			{
+				fix: "kind is one of: none | static-key — use `kind: none` (public) or `kind: static-key` (keyed header)",
+			},
 		);
 	}
 	if (!KNOWN_AUTH_KINDS.has(kindRaw)) {

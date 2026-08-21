@@ -473,6 +473,27 @@ body
 		expect(err.found).toBe("basic");
 	});
 
+	it("missing auth.kind → ParseError with fix naming none | static-key", () => {
+		const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+auth:
+  secretRefs:
+    Authorization: apiKey
+operations:
+  - name: get
+    via: restGet
+    path: /things
+---
+body
+`;
+		const err = expectErr(raw);
+		expect(err.field).toBe("auth.kind");
+		expect(err.found).toBe("missing");
+		expect(err.fix).toContain("none | static-key");
+		expect(err.fix).toContain("kind: static-key");
+	});
+
 	it("unknown auth key (name/secret wrong shape) → ParseError with fix pointing at secretRefs/requires", () => {
 		const raw = `---
 domains: [example.com]

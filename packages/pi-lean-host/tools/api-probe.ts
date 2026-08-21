@@ -75,6 +75,9 @@ export interface ProbeResult {
 	raw: string;
 	/** Human note (auth-required, 404, version-prefix hit, non-JSON, …). */
 	note?: string;
+	/** True when the caller didn't pass scaffold: true and no guide claims the
+	 *  domain yet — the authoring loop should surface the skeleton option. */
+	scaffoldNudge?: boolean;
 }
 
 export interface ProbeOptions {
@@ -521,6 +524,11 @@ async function fetchOne(
 		draft = sc.draft;
 		if (sc.note) note = [note, sc.note].filter(Boolean).join(" — ");
 	}
+	// Targeted scaffold nudge (issue #6): only when the caller didn't pass
+	// scaffold: true AND no guide claims the domain yet — authors who already
+	// used the skeleton (or who have a guide) see no noise.
+	const scaffoldNudge =
+		opts.scaffold !== true && findGuidesByDomain(domain).length === 0;
 	return {
 		url,
 		finalUrl,
@@ -530,6 +538,7 @@ async function fetchOne(
 		draft,
 		raw,
 		...(note ? { note } : {}),
+		...(scaffoldNudge ? { scaffoldNudge } : {}),
 	};
 }
 
@@ -1056,7 +1065,13 @@ export function formatProbeResult(r: ProbeResult): string {
 		lines.push(r.raw);
 	}
 	lines.push("");
-	lines.push(`  ${DOCS_NUDGE.join("\n  ")}`);
+	const footer = [...DOCS_NUDGE];
+	if (r.scaffoldNudge) {
+		footer.push(
+			"No guide for this domain yet — pass scaffold: true to emit a full recipe skeleton.",
+		);
+	}
+	lines.push(`  ${footer.join("\n  ")}`);
 	return lines.join("\n");
 }
 

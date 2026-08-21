@@ -185,6 +185,7 @@ const AUTHORING_MANUAL = [
 	`  \`parse\`       — op-level responseShape override (format/charset) for this operation`,
 	"",
 	"## Auth",
+	`  \`kind: static-key\` — keyed-header auth mode (values live in the secrets store, never in the recipe):`,
 	`  \`requires\` = fail-closed if unprovisioned; \`optional\` = proceeds unauthenticated if absent. Both are names only — values live in the secrets store.`,
 	"  static-key (keyed APIs):",
 	`    \`secretRefs\`      — { <header name>: <secret name> }  ← header → secret direction`,

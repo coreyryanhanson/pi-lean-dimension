@@ -448,6 +448,27 @@ describe("formatProbeResult docs-first nudge", () => {
 		expect(text).toContain(NUDGE);
 		expect(text).toContain("llms.txt");
 	});
+
+	it("scaffoldNudge: true appends the scaffold: true footer line", () => {
+		const text = formatProbeResult({
+			...base,
+			status: 200,
+			ok: true,
+			shape: summarize({ data: [1, 2, 3] }),
+			scaffoldNudge: true,
+		});
+		expect(text).toContain("pass scaffold: true to emit a full recipe skeleton");
+	});
+
+	it("no scaffoldNudge → no scaffold footer line", () => {
+		const text = formatProbeResult({
+			...base,
+			status: 200,
+			ok: true,
+			shape: summarize({ data: [1, 2, 3] }),
+		});
+		expect(text).not.toContain("pass scaffold: true");
+	});
 });
 
 describe("probe redirect handling (live localhost)", () => {
@@ -518,18 +539,16 @@ describe("probe redirect handling (live localhost)", () => {
 	// A misplaced top-level key inside params errors loudly before
 	// any request; unknown keys inside auth are rejected by the schema.
 	describe("probe reserve-guard", () => {
-		it.each([
-			"domain",
-			"apiHost",
-			"path",
-			"auth",
-		])("throws naming %s when it appears inside params (no request)", async (reserved) => {
-			await expect(
-				probe("https://api.example.com", "/items", { [reserved]: "x" }),
-			).rejects.toThrow(
-				`"${reserved}" is a top-level param, not a query param — move it out of params`,
-			);
-		});
+		it.each(["domain", "apiHost", "path", "auth"])(
+			"throws naming %s when it appears inside params (no request)",
+			async (reserved) => {
+				await expect(
+					probe("https://api.example.com", "/items", { [reserved]: "x" }),
+				).rejects.toThrow(
+					`"${reserved}" is a top-level param, not a query param — move it out of params`,
+				);
+			},
+		);
 
 		it("auth schema rejects an unknown key (additionalProperties: false)", () => {
 			const schema = apiProbeTool.parameters;
@@ -992,6 +1011,29 @@ describe("api-probe scaffold (D6/D11)", () => {
 		expect(explicitFalse.draft).toBe(plain.draft);
 		expect(plain.draft).not.toContain("---");
 		expect(plain.draft).not.toMatch(/^pagination:/m);
+	});
+
+	it("scaffold absent + no guide → scaffoldNudge true (footer suggests scaffold: true)", async () => {
+		const result = await probe(base, "/items", {}, { domain: "api.example.com" });
+		expect(result.scaffoldNudge).toBe(true);
+		expect(formatProbeResult(result)).toContain(
+			"pass scaffold: true to emit a full recipe skeleton",
+		);
+	});
+
+	it("scaffold absent + guide exists → no nudge", async () => {
+		const result = await probe(base, "/items", {}, { domain: "archive.org" });
+		expect(result.scaffoldNudge).toBeUndefined();
+	});
+
+	it("scaffold: true + no guide → no nudge (already used the skeleton)", async () => {
+		const result = await probe(
+			base,
+			"/items",
+			{},
+			{ domain: "api.example.com", scaffold: true },
+		);
+		expect(result.scaffoldNudge).toBeUndefined();
 	});
 
 	it("tool description names scaffold: true and its auto-degrade behavior", () => {
