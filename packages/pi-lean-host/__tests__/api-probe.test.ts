@@ -22,6 +22,7 @@ import {
 	probe,
 	formatProbeResult,
 	MAX_VERSION_WALK,
+	resolveProbeStoreDomain,
 } from "../tools/api-probe.js";
 import { apiProbeTool } from "../tools/index.js";
 import { contentText } from "../tools/utils.js";
@@ -527,9 +528,89 @@ describe("probe redirect handling (live localhost)", () => {
 					'secret "api_key" not found in store for domain "api.example.com"',
 				);
 				expect(result.note ?? "").toContain("provisioned domains: example.com");
+				// Prescriptive: a miss tells the author to pass domain: <one>.
+				expect(result.note ?? "").toContain("pass domain:");
 			} finally {
 				server.close();
 				server.closeAllConnections?.();
+				setSecretsDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+	});
+
+	// The probe infers the store domain from apiHost; a secret filed under the
+	// registrable domain must be found when the probe hits an api subdomain.
+	describe("resolveProbeStoreDomain (secret-domain fallback)", () => {
+		it("falls back to the provisioned parent domain (pro-api → registrable) when the hostname isn't provisioned", () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-fallback-secrets-"));
+			const prevDir = getSecretsDir();
+			setSecretsDir(tmp);
+			writeSecret("coinmarketcap.com", "api_key", "K");
+			try {
+				expect(resolveProbeStoreDomain("pro-api.coinmarketcap.com")).toBe(
+					"coinmarketcap.com",
+				);
+			} finally {
+				setSecretsDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("exact-match hostname beats the parent fallback", () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-exact-secrets-"));
+			const prevDir = getSecretsDir();
+			setSecretsDir(tmp);
+			writeSecret("api.example.com", "api_key", "EXACT");
+			writeSecret("example.com", "api_key", "PARENT");
+			try {
+				expect(resolveProbeStoreDomain("api.example.com")).toBe("api.example.com");
+			} finally {
+				setSecretsDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("picks the longest matching parent when several are provisioned", () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-longest-secrets-"));
+			const prevDir = getSecretsDir();
+			setSecretsDir(tmp);
+			writeSecret("example.com", "api_key", "A");
+			writeSecret("api.example.com", "api_key", "B");
+			try {
+				expect(resolveProbeStoreDomain("graphql.api.example.com")).toBe(
+					"api.example.com",
+				);
+			} finally {
+				setSecretsDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("no provisioned parent → returns the hostname as-is", () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-noparent-secrets-"));
+			const prevDir = getSecretsDir();
+			setSecretsDir(tmp);
+			try {
+				expect(resolveProbeStoreDomain("api.unknown.test")).toBe(
+					"api.unknown.test",
+				);
+			} finally {
+				setSecretsDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("leading-dot guard: a sibling hostname never matches (malicious-example.com ≠ example.com)", () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-dotguard-secrets-"));
+			const prevDir = getSecretsDir();
+			setSecretsDir(tmp);
+			writeSecret("example.com", "api_key", "K");
+			try {
+				expect(resolveProbeStoreDomain("malicious-example.com")).toBe(
+					"malicious-example.com",
+				);
+			} finally {
 				setSecretsDir(prevDir);
 				rmSync(tmp, { recursive: true, force: true });
 			}
@@ -956,6 +1037,32 @@ describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
 		};
 		expect(secrets.domain).toBe("api.github.com");
 		expect(secrets.provisioned).toContain("gh_token");
+	});
+
+	it("apiHost without domain falls back to the provisioned parent domain in the report", async () => {
+		// Isolated store: the secret lives under the registrable domain; the
+		// apiHost is the api subdomain. listSecrets must report the parent.
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-list-fallback-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("coinmarketcap.com", "api_key", "CMC-KEY");
+		try {
+			const res = await runList({
+				apiHost: "https://pro-api.coinmarketcap.com",
+				path: "/v1/cryptocurrency/map",
+				listSecrets: true,
+			});
+			const secrets = (res.details as Record<string, unknown>).secrets as {
+				domain: string;
+				provisioned: string[];
+			};
+			expect(secrets.domain).toBe("coinmarketcap.com");
+			expect(secrets.provisioned).toEqual(["api_key"]);
+			expect(contentText(res)).not.toContain("CMC-KEY"); // names only
+		} finally {
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
 	});
 
 	it("names only — never emits a secret value", async () => {

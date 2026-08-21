@@ -1027,6 +1027,30 @@ body
 			expect(err.expected).toContain("not also required");
 			expect(err.fix).toContain("Remove required: true");
 		});
+
+		it("rejects a requiresAnyOf member that carries a default (mutually exclusive peers)", () => {
+			const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: getResource
+    via: restGet
+    path: /resources
+    requiresAnyOf: [id, code]
+    params:
+      id:
+        default: 1027
+      code:
+        description: Resource code.
+---
+body
+`;
+			const err = expectErr(raw);
+			expect(err.field).toBe("operations[0].requiresAnyOf.id");
+			expect(err.expected).toContain("not also declare a default");
+			expect(err.fix).toContain("Remove the default from params.id");
+			expect(err.fix).toContain("mutually exclusive peers");
+		});
 	});
 
 	it("no frontmatter → ParseError on frontmatter", () => {

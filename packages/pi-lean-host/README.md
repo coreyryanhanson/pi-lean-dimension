@@ -348,7 +348,7 @@ recipe library and copy a domain folder that matches your target.
 | `operations[].dateParams` | op | — | optional `{param: format}` → normalizes ISO dates to `iso8601` \| `yyyymmdd` \| `yyyy-mm-dd` (query params only) |
 | `operations[].helper` | op | `false` | `true` runs this domain's local helper for the op |
 | `operations[].transform` | op | `false` | `true` runs the helper's `transform` export on the parsed response (graceful — a throw returns raw data, never disables the op) |
-| `operations[].requiresAnyOf` | op | — | `[param, ...]` — at least one of these params must be supplied (single group per op, v1; members are plain optional params, not `required: true`) |
+| `operations[].requiresAnyOf` | op | — | `[param, ...]` — at least one of these params must be supplied (single group per op, v1; members are plain optional params — not `required: true`, not `default`-bearing: both rejected at parse) |
 | `operations[].passthrough` | op | `false` | `true` forwards undeclared caller params onto the query string (for open-param APIs) |
 | `operations[].parse` | op | inherits `responseShape` | op-level override of format/charset |
 | `operations[].pagination` | op | inherits top-level | op-level override of pagination |

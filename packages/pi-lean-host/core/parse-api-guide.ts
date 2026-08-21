@@ -1009,8 +1009,10 @@ function validateOperation(
 	// requiresAnyOf — at-least-one-of constraint (one group per op, v1).
 	// Parser cross-field checks, same class as the secretQueryRefs collision
 	// guard: empty-array reject (check #0, before member inspection),
-	// member-exists, path-param reject, no `required: true` overlap. A
-	// group member that is `required` would defeat the group at runtime.
+	// member-exists, path-param reject, no `required: true` overlap, no
+	// `default` on a member. A group member that is `required` would defeat
+	// the group at runtime; a `default` would fire alongside a caller-supplied
+	// sibling (the members are mutually exclusive peers).
 	const requiresAnyOfRaw = o["requiresAnyOf"];
 	let requiresAnyOf: string[] | undefined;
 	if (requiresAnyOfRaw !== undefined) {
@@ -1056,6 +1058,17 @@ function validateOperation(
 					`"${member}" is required: true`,
 					{
 						fix: `Remove required: true from params.${member} — it is governed by the requiresAnyOf group, not per-param required.`,
+					},
+				);
+			}
+			if (spec.default !== undefined) {
+				return fail(
+					file,
+					fieldPath(`requiresAnyOf.${member}`),
+					"a param that does not also declare a default",
+					`"${member}" has a default`,
+					{
+						fix: `Remove the default from params.${member} — requiresAnyOf members are mutually exclusive peers, so a default would fire alongside a caller-supplied sibling.`,
 					},
 				);
 			}

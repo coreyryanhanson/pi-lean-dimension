@@ -176,11 +176,11 @@ export interface Operation {
 	pathParamDocs?: Record<string, string>;
 	/**
 	 * At-least-one-of constraint: at least one of these param names must be
-	 * supplied. Members may not be `required: true` (parser-enforced); a
-	 * member may carry a `default` (applied when the group is otherwise
-	 * satisfied), but a default does not itself satisfy the group — one
-	 * member must still be supplied. One group per op (v1); a multi-group
-	 * `requiresAnyOfGroups` upgrade is purely additive.
+	 * supplied. Members may not be `required: true` nor carry a `default`
+	 * (both parser-enforced) — they are mutually exclusive peers, so a
+	 * default would fire alongside a caller-supplied sibling and a
+	 * `required` flag would defeat the group. One group per op (v1); a
+	 * multi-group `requiresAnyOfGroups` upgrade is purely additive.
 	 */
 	requiresAnyOf?: string[];
 	/**

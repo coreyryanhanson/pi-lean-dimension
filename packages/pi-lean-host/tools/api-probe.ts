@@ -31,11 +31,7 @@ import {
 	resolveSecretQueryParams,
 	scrubSecretValues,
 } from "../core/auth.js";
-import {
-	listDomains,
-	listNames,
-	provisionedDomainsSuffix,
-} from "../core/secrets-store.js";
+import { listDomains, listNames } from "../core/secrets-store.js";
 import { findGuidesByDomain } from "../core/guide-store.js";
 import { GUIDE_SCHEMA_VERSION } from "../core/api-guide-types.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
@@ -101,7 +97,7 @@ export interface ProbeOptions {
 		 */
 		headerPrefixes?: Record<string, string>;
 	};
-	/** Domain for secrets-store lookups; defaults to apiHost's hostname. */
+	/** Domain for secrets-store lookups; defaults to apiHost's hostname (or its provisioned parent domain). */
 	domain?: string;
 	/**
 	 * Emit a full recipe skeleton (frontmatter + auth + operations) when no
@@ -323,13 +319,32 @@ function resolveProbeAuth(
 const MISCONFIGURED_PREFIXES_NOTE =
 	"headerPrefixes ignored: no secretRefs to apply them to; put the secret name in auth.secretRefs";
 
-/** First missing secret name as a one-line note (names only, never values). */
+/** First missing secret name as a one-line note (names only, never values).
+ *  Prescriptive: names the other provisioned domains and tells the author to
+ *  pass `domain:` — the probe's domain is inferred from apiHost, so a miss is
+ *  usually a domain-mismatch, not a missing secret. */
 function missNote(authCtx: ProbeAuthCtx, domain: string): string {
 	if (authCtx.missingNames.length === 0) return "";
-	return (
-		`secret "${authCtx.missingNames[0]}" not found in store for domain "${domain}"` +
-		provisionedDomainsSuffix(domain)
-	);
+	const others = listDomains().filter((d) => d !== domain);
+	const tail =
+		others.length > 0
+			? ` — provisioned domains: ${others.join(", ")}; pass domain: <one> to use its secret`
+			: "";
+	return `secret "${authCtx.missingNames[0]}" not found in store for domain "${domain}"${tail}`;
+}
+
+/** Resolve the secrets-store domain for a probe: the apiHost hostname when it
+ *  is itself provisioned, else the longest provisioned parent domain
+ *  (pro-api.coinmarketcap.com → coinmarketcap.com), else the hostname as-is.
+ *  ponytail: parent-suffix match against the store, not a public-suffix list —
+ *  no dep, and the store is the source of truth for where secrets live. */
+export function resolveProbeStoreDomain(hostname: string): string {
+	const domains = listDomains();
+	if (domains.includes(hostname)) return hostname;
+	const parent = domains
+		.filter((d) => hostname.endsWith(`.${d}`))
+		.sort((a, b) => b.length - a.length)[0];
+	return parent ?? hostname;
 }
 
 /** Hostname of an apiHost URL (falls back to the raw string). */
@@ -360,7 +375,7 @@ export async function probe(
 ): Promise<ProbeResult> {
 	const accept = opts.accept ?? "application/json";
 	const walkVersions = opts.walkVersions ?? true;
-	const domain = opts.domain ?? hostnameOf(apiHost);
+	const domain = opts.domain ?? resolveProbeStoreDomain(hostnameOf(apiHost));
 	const authCtx = resolveProbeAuth(opts.auth, domain);
 
 	// Base case only carries the apiHost version prefix; a walk-hit draft
@@ -868,7 +883,7 @@ export const apiProbeTool = defineTool({
 		domain: Type.Optional(
 			Type.String({
 				description:
-					"Domain for secrets-store lookups; defaults to apiHost's hostname.",
+					"Domain for secrets-store lookups; defaults to apiHost's hostname (or its provisioned parent domain).",
 			}),
 		),
 		listSecrets: Type.Optional(
@@ -924,7 +939,9 @@ export const apiProbeTool = defineTool({
 			const unscoped = domain ? undefined : unscopedStoreDomains();
 			const blocks: string[] = [];
 			if (unscoped !== undefined) blocks.push(formatUnscopedDomains(unscoped));
-			const target = domain ?? (apiHost ? hostnameOf(apiHost) : undefined);
+			const target =
+				domain ??
+				(apiHost ? resolveProbeStoreDomain(hostnameOf(apiHost)) : undefined);
 			if (target !== undefined) {
 				const secrets = listDomainSecrets(target);
 				blocks.push(formatSecretsResult(secrets));

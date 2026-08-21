@@ -153,8 +153,11 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   decoupled from the routing `domain` the agent supplies, so `/api secrets
   github.com` feeds a guide regardless of whether the agent routed it as
   `github.com` or an api-subdomain alias. `api-probe` (no `guide` object)
-  defaults its store domain to `hostnameOf(apiHost)`, overridable via an
-  agent-visible `domain` param. `hasAuth` (any non-accept header ∨ injected query secret)
+  defaults its store domain to `hostnameOf(apiHost)`, falling back to the
+  longest provisioned parent domain (`pro-api.coinmarketcap.com` →
+  `coinmarketcap.com`) before declaring a secret missing, overridable via an
+  agent-visible `domain` param; a store-miss note is prescriptive (names the
+  provisioned domains + "pass domain: <one>"). `hasAuth` (any non-accept header ∨ injected query secret)
   forces the guarded-redirect path in the transport, so an auth-bearing call
   is always SSRF-checked hop-by-hop and store-injected headers +
   `Authorization` are stripped on **cross-domain** redirect hops (literal
