@@ -18,6 +18,7 @@ import {
 	projectToGuide,
 	loadApiGuidesFromDir,
 	formatApiGuideCatalog,
+	stampFrontmatterField,
 } from "../core/parse-api-guide.js";
 import {
 	GATHER_ALL_MAX_FALLBACK,
@@ -1478,5 +1479,38 @@ org guide.
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// stampFrontmatterField — save-stamp blank-line separation (G3)
+// ═══════════════════════════════════════════════════════════════════
+
+describe("stampFrontmatterField", () => {
+	it("inserts a blank line before a new key when the preceding line is non-empty", () => {
+		const out = stampFrontmatterField(
+			"---\nfoo: bar\n---\n",
+			"schemaVersion",
+			"0",
+		);
+		expect(out).toBe("---\nfoo: bar\n\nschemaVersion: 0\n---\n");
+	});
+
+	it("does not double-blank when the preceding line is already empty", () => {
+		const out = stampFrontmatterField(
+			"---\nfoo: bar\n\n---\n",
+			"schemaVersion",
+			"0",
+		);
+		expect(out).toBe("---\nfoo: bar\n\nschemaVersion: 0\n---\n");
+	});
+
+	it("replaces an existing key without introducing a blank line (idempotent re-stamp)", () => {
+		const out = stampFrontmatterField(
+			"---\nfoo: bar\nschemaVersion: 0\n---\n",
+			"schemaVersion",
+			"1",
+		);
+		expect(out).toBe("---\nfoo: bar\nschemaVersion: 1\n---\n");
 	});
 });

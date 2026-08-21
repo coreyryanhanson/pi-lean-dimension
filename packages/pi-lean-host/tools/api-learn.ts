@@ -500,6 +500,7 @@ export const apiLearnTool = defineTool({
 						`  Operations: ${opCount} — ${opNames}\n` +
 						`  Auth: ${parsed.guide.auth.kind}\n` +
 						`  Verified: ${parsed.guide.verified}\n` +
+						`  Schema version: ${GUIDE_SCHEMA_VERSION}\n` +
 						`\n` +
 						warningBlock +
 						`Call api-fetch({domain: "${domain}", operation: "${parsed.guide.operations[0]!.name}"}) to verify.` +

@@ -66,6 +66,13 @@ export function stampFrontmatterField(
 	const idx = lines.findIndex((l) => keyRe.test(l));
 	const line = `${key}: ${value}`;
 	if (idx === -1) {
+		// Insert-only separation: a new key would land flush against the
+		// preceding line (e.g. under the last op's params block). Push a
+		// blank line first when the preceding line is non-empty. Replace
+		// must NOT do this — every /api verify re-stamp would drift the file.
+		if (lines.length > 0 && lines.at(-1)?.trim() !== "") {
+			lines.push("");
+		}
 		lines.push(line);
 	} else {
 		lines[idx] = line;
