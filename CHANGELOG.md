@@ -45,14 +45,14 @@
   (stamped on save by `api-learn`) drives breaking-change detection: a
   stale guide warns non-blockingly in `api-guide`/`api-fetch`, never
   gating the load. v1 is **GET-read only** — no mutation helper.
-- **`api-learn` + `api-probe` authoring loop** — `api-learn` validates
-  a recipe string before touching disk and writes the guide (no draft
-  store; the file on disk *is* the working state, like `web-learn`).
-  Its entry point splits: a bare call returns a field reference plus a
-  pointer to `{domain, new: true}` (a fail-closed starter template whose
-  only real field is `domains`), and `{domain}` with no recipe fetches
-  an existing guide's raw recipe (surfacing `dirName` to prevent
-  sibling-clobber in multi-recipe domains). `api-probe` fetches a
+- **`api-learn` + `api-probe` authoring loop** — `api-learn` stages the
+  working copy to `/tmp/pi-lean-host/<domain>/guide.md` and saves from a
+  file path (`recipeFile`), so the model never round-trips a giant recipe
+  string. Its entry point splits: a bare call returns a field reference
+  plus a pointer to `{domain, new: true}` (a fail-closed starter template
+  whose only real field is `domains`), and `{domain}` with no `recipeFile`
+  fetches an existing guide's raw recipe into the staged file (surfacing
+  `dirName` to prevent sibling-clobber in multi-recipe domains). `api-probe` fetches a
   templated path over the real transport, summarizes the JSON shape,
   and emits a draft YAML operation block — it only suggests, never
   writes. `api-probe({scaffold: true})` emits a full recipe skeleton

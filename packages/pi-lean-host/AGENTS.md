@@ -219,14 +219,16 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `ssrf-guard.ts`, `response-spill.ts`, `api-toggle.ts` (`/api` toggle —
   dispatches all 8 subcommands), `portal-projection.ts`,
   `verify-ship-manifest.ts` (vendored host-only copy of the portal utility).
-- `tools/` — `api-guide.ts`, `api-fetch.ts`, `api-learn.ts` (also a
-  fetch-recipe mode: no recipe body → reads the raw guide from disk for
-  re-save/disambiguation; `{domain, new: true}` → fresh placeholder
-  template), `api-probe.ts`, `utils.ts`, `index.ts`.
+- `tools/` — `api-guide.ts`, `api-fetch.ts`, `api-learn.ts` (staged-file
+  authoring: fetch-recipe/template paths write the working copy to
+  `/tmp/pi-lean-host/<domain>/guide.md`; save reads a `recipeFile` path —
+  `{domain, new: true}` → fresh placeholder template), `api-probe.ts`,
+  `utils.ts`, `index.ts`.
 - `__tests__/` — framework structural tests (no network): `smoke`,
   `parse-api-guide`, `all-guides-parse` (every bundled `guide.md` parses
   cleanly), `tools`, `api-learn-fetch-recipe` (fetch-recipe + entry-point
-  split + N-guide disambiguation), `helpers`, `local-helpers`, `api-toggle`,
+  split + N-guide disambiguation + file staging), `helpers`, `local-helpers`,
+  `api-toggle`,
   `secrets-store`, `secrets-command`, `auth` (static-key schema/injection/
   output-channel audit/SSRF/footer structural tests), `query-secrets`
   (query-param-secret injection, output-channel redaction, api-probe inline

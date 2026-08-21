@@ -67,7 +67,8 @@ From a fresh install you have no guides yet, so the workflow is:
 1. **`/api learn`** — enable the authoring tools (`api-learn` + `api-probe`).
 2. **`api-probe({apiHost, path})`** — discover the shape of a not-yet-guided
    endpoint; it drafts a YAML operation block to paste into a recipe.
-3. **`api-learn({domain, recipe})`** — write the guide to
+3. **`api-learn({domain, recipeFile})`** — validate the staged draft and write
+   the guide to
    `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`.
 4. **`api-fetch({domain, operation})`** — execute and verify.
 
@@ -238,28 +239,32 @@ one) — turning a failed execute into a discovery moment in one round-trip.
 
 ```text
 api-learn                                       → field reference + pointer to the starter template
-api-learn domain="arxiv.org" new=true           → fresh domain-specific starter template
-api-learn domain="arxiv.org"                    → fetch an existing guide's current raw recipe
-api-learn domain="arxiv.org" recipe="---\nkind: api\n…"  → writes the guide to disk
+api-learn domain="arxiv.org" new=true           → stages a fresh placeholder template to /tmp/pi-lean-host/arxiv.org/guide.md
+api-learn domain="arxiv.org"                    → fetches an existing guide's raw recipe into the staged file
+api-learn domain="arxiv.org" recipeFile="/tmp/pi-lean-host/arxiv.org/guide.md"  → validates + writes the guide to disk
 ```
 
 - No parameters → a concise field reference plus a pointer to
   `{domain, new: true}` for a domain-specific starter template.
-- `{domain, new: true}` → a fresh starter template with `domains: [<domain>]`.
-  Only `domains` is real; the other fields are `<placeholder>` values that
-  **fail closed**, so a pasted template cannot save until you fill it in.
-- `{domain}` (no recipe) → fetch the current raw recipe of an existing guide
-  (surfaces `dirName` to prevent sibling-clobber in multi-recipe domains); a
-  disambiguation menu if several guides claim the domain.
-- `{domain, recipe}` → validates the recipe string **before** touching disk,
-  then writes to `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`,
-  overwriting any existing guide for that domain. On a structural error it
-  names the field, the expected shape, and what was found — the file on disk
-  is left untouched (no half-written guide). Requires `/api learn`.
+- `{domain, new: true}` → a fresh starter template with `domains: [<domain>]`
+  **staged to `/tmp/pi-lean-host/<domain>/guide.md`**. Only `domains` is real;
+  the other fields are `<placeholder>` values that **fail closed**, so a
+  pasted template cannot save until you fill it in.
+- `{domain}` (no `recipeFile`) → fetch the current raw recipe of an existing
+  guide into the staged file (surfaces `dirName` to prevent sibling-clobber
+  in multi-recipe domains); a disambiguation menu if several guides claim the
+  domain.
+- `{domain, recipeFile}` → reads the staged draft, validates it **before**
+  touching disk, then writes to
+  `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`, overwriting any
+  existing guide for that domain. On a structural error it names the field,
+  the expected shape, and what was found — the file on disk is left untouched
+  (no half-written guide). Requires `/api learn`.
 
-There is no draft store, no `/api save`, no session-held state — the file on
-disk *is* the working state, exactly like `web-learn`. If the recipe is wrong,
-call `api-learn` again to overwrite.
+The working copy is staged at `/tmp/pi-lean-host/<domain>/guide.md` (`/tmp`
+self-cleans, so drafts don't accumulate) — fetch/template calls write the
+draft there and you edit that file between saves; saving reads it and
+publishes to the guides dir. No session-held state, no `/api save`.
 
 ### 4. `api-probe` — Discover an Endpoint's Shape (network read, exploratory)
 
