@@ -893,6 +893,7 @@ export const apiProbeTool = defineTool({
 				auth?: {
 					secretRefs?: Record<string, string>;
 					secretQueryRefs?: Record<string, string>;
+					headerPrefixes?: Record<string, string>;
 				};
 				domain?: string;
 				listSecrets?: boolean;

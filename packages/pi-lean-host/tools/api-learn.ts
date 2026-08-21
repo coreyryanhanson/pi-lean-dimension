@@ -32,6 +32,7 @@ import {
 	stampFrontmatterField,
 	formatGuideListings,
 	selectGuideByShortName,
+	shortNameErrorText,
 } from "../core/parse-api-guide.js";
 import {
 	GUIDE_SCHEMA_VERSION,
@@ -414,41 +415,27 @@ export const apiLearnTool = defineTool({
 			}
 			const sel = selectGuideByShortName(matches, guideSelector);
 			if (!sel.ok) {
-				if (sel.reason === "no_match") {
-					return {
-						content: [
-							{
-								type: "text",
-								text:
-									`No guide named '${guideSelector}' for '${domain}'. ` +
-									`Available guides: ${sel.valid.join(", ")}. ` +
-									`Call api-learn({domain: "${domain}"}) to see the menu.`,
-							},
-						],
-						details: {
-							error: "no_guide_by_shortname",
-							domain,
-							guide: guideSelector,
-						},
-					};
-				}
 				return {
 					content: [
 						{
 							type: "text",
-							text:
-								`Ambiguous guide '${guideSelector}' for '${domain}' — ` +
-								`${sel.directories.length} guides share shortName '${guideSelector}' ` +
-								`(directories: ${sel.directories.join(", ")}). Rename one guide's shortName to ` +
-								`disambiguate. Call api-learn({domain: "${domain}"}) to see the menu.`,
+							text: shortNameErrorText(
+								sel,
+								domain,
+								guideSelector,
+								`Call api-learn({domain: "${domain}"}) to see the menu.`,
+							),
 						},
 					],
-					details: {
-						error: "ambiguous_shortname",
-						domain,
-						guide: guideSelector,
-						directories: sel.directories,
-					},
+					details:
+						sel.reason === "no_match"
+							? { error: "no_guide_by_shortname", domain, guide: guideSelector }
+							: {
+									error: "ambiguous_shortname",
+									domain,
+									guide: guideSelector,
+									directories: sel.directories,
+								},
 				};
 			}
 			return fetchGuideRecipe(domain, sel.guide, sel.dirName);

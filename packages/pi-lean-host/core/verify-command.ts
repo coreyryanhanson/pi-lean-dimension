@@ -44,6 +44,7 @@ import {
 import {
 	formatGuideListings,
 	selectGuideByShortName,
+	shortNameErrorText,
 	stampFrontmatterField,
 	TODAY,
 } from "./parse-api-guide.js";
@@ -127,20 +128,13 @@ export async function handleVerifySubcommand(
 	} else if (guideSelector) {
 		const sel = selectGuideByShortName(matches, guideSelector);
 		if (!sel.ok) {
-			if (sel.reason === "no_match") {
-				ctx.ui.notify(
-					`No guide named '${guideSelector}' for '${domain}'. ` +
-						`Available guides: ${sel.valid.join(", ")}. ` +
-						`Call /api verify ${domain} to see the menu.`,
-					"warning",
-				);
-				return;
-			}
 			ctx.ui.notify(
-				`Ambiguous guide '${guideSelector}' for '${domain}' — ` +
-					`${sel.directories.length} guides share that shortName ` +
-					`(directories: ${sel.directories.join(", ")}). ` +
-					`Rename one guide's shortName to disambiguate.`,
+				shortNameErrorText(
+					sel,
+					domain,
+					guideSelector,
+					`Call /api verify ${domain} to see the menu.`,
+				),
 				"warning",
 			);
 			return;

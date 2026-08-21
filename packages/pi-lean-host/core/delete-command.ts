@@ -31,6 +31,7 @@ import {
 import {
 	formatGuideListings,
 	selectGuideByShortName,
+	shortNameErrorText,
 } from "./parse-api-guide.js";
 import { pickGuide } from "./guide-picker.js";
 import { assertSafeDomain } from "./path-template.js";
@@ -113,20 +114,13 @@ export async function handleDeleteSubcommand(
 	if (guideSelector) {
 		const sel = selectGuideByShortName(matches, guideSelector);
 		if (!sel.ok) {
-			if (sel.reason === "no_match") {
-				ctx.ui.notify(
-					`No guide named '${guideSelector}' for '${domain}'. ` +
-						`Available guides: ${sel.valid.join(", ")}. ` +
-						`Call /api delete ${domain} to see the menu.`,
-					"warning",
-				);
-				return;
-			}
 			ctx.ui.notify(
-				`Ambiguous guide '${guideSelector}' for '${domain}' — ` +
-					`${sel.directories.length} guides share that shortName ` +
-					`(directories: ${sel.directories.join(", ")}). ` +
-					`Rename one guide's shortName to disambiguate.`,
+				shortNameErrorText(
+					sel,
+					domain,
+					guideSelector,
+					`Call /api delete ${domain} to see the menu.`,
+				),
 				"warning",
 			);
 			return;

@@ -1711,6 +1711,34 @@ export function selectGuideByShortName(
 	return { ok: true, guide: sel[0]!.guide, dirName: sel[0]!.dirName };
 }
 
+/**
+ * Render the no-match / ambiguous error text for a failed
+ * `selectGuideByShortName` result. `callToAction` is the trailing
+ * "how to see the menu" sentence — it differs per surface (tool vs
+ * command), so callers pass their own.
+ */
+export function shortNameErrorText(
+	sel: Extract<ReturnType<typeof selectGuideByShortName>, { ok: false }>,
+	domain: string,
+	selector: string,
+	callToAction: string,
+): string {
+	if (sel.reason === "no_match") {
+		return (
+			`No guide named '${selector}' for '${domain}'. ` +
+			`Available guides: ${sel.valid.join(", ")}. ` +
+			callToAction
+		);
+	}
+	return (
+		`Ambiguous guide '${selector}' for '${domain}' — ` +
+		`${sel.directories.length} guides share shortName '${selector}' ` +
+		`(directories: ${sel.directories.join(", ")}). Rename one guide's shortName to ` +
+		`disambiguate. ` +
+		callToAction
+	);
+}
+
 // ════════════════════════════════════════════════════════════════════
 // Catalog rendering — healthy + ⚠ malformed together
 //
