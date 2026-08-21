@@ -473,6 +473,50 @@ body
 		expect(err.found).toBe("basic");
 	});
 
+	it("unknown auth key (name/secret wrong shape) → ParseError with fix pointing at secretRefs/requires", () => {
+		const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+auth:
+  kind: static-key
+  name: X-CMC_PRO_API_KEY
+  secret: api_key
+operations:
+  - name: get
+    via: restGet
+    path: /things
+---
+body
+`;
+		const err = expectErr(raw);
+		expect(err.field).toBe("auth.name");
+		expect(err.found).toBe("unknown key(s): name, secret");
+		expect(err.fix).toContain("secretRefs");
+		expect(err.fix).toContain("requires");
+	});
+
+	it("near-miss auth key (requiers:) → fix says did you mean requires", () => {
+		const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+auth:
+  kind: static-key
+  secretRefs:
+    x-api-key: api_key
+  requiers:
+    - api_key
+operations:
+  - name: get
+    via: restGet
+    path: /things
+---
+body
+`;
+		const err = expectErr(raw);
+		expect(err.field).toBe("auth.requiers");
+		expect(err.fix).toContain('did you mean "requires"?');
+	});
+
 	it("paginate op with no pagination → ParseError", () => {
 		const raw = `---
 domains: [example.com]
