@@ -153,6 +153,8 @@ touches the other's tools.
 | `/api status` | Detailed runtime status — state, active guides, domains, helpers. |
 | `/api helpers` | List local user helpers (or `/api helpers <domain>` to view one's source). |
 | `/api secrets [<domain> [<name>]]` | Manage stored API secrets — list, provision, delete (see [Authentication & Secrets](#authentication--secrets)). |
+| `/api verify <domain> [guide] [--force]` | Run every runnable op against the live API and stamp `verified` on success — strict: any runnable-op failure → no stamp; skipped ops named in the report (see [Recipe drift](#recipe-drift)). |
+| `/api delete <domain> [guide]` | Remove a guide directory and invalidate the guide-store cache — a human-typed recovery gesture (no agent tool surface); interactive confirm for a whole-domain delete. |
 
 ### Why a peer toggle?
 
@@ -235,13 +237,20 @@ one) — turning a failed execute into a discovery moment in one round-trip.
 ### 3. `api-learn` — Author / Update a Guide (local write)
 
 ```text
-api-learn                                       → worked example recipe + field reference
-api-learn domain="boe.es" recipe="---\nkind: api\n…"   → writes the guide to disk
+api-learn                                       → field reference + pointer to the starter template
+api-learn domain="arxiv.org" new=true           → fresh domain-specific starter template
+api-learn domain="arxiv.org"                    → fetch an existing guide's current raw recipe
+api-learn domain="arxiv.org" recipe="---\nkind: api\n…"  → writes the guide to disk
 ```
 
-- No parameters → a complete worked-example recipe (the BOE shape, exercising
-  the core fields) plus a concise field reference. Read once at
-  authoring time, never carried on executing turns.
+- No parameters → a concise field reference plus a pointer to
+  `{domain, new: true}` for a domain-specific starter template.
+- `{domain, new: true}` → a fresh starter template with `domains: [<domain>]`.
+  Only `domains` is real; the other fields are `<placeholder>` values that
+  **fail closed**, so a pasted template cannot save until you fill it in.
+- `{domain}` (no recipe) → fetch the current raw recipe of an existing guide
+  (surfaces `dirName` to prevent sibling-clobber in multi-recipe domains); a
+  disambiguation menu if several guides claim the domain.
 - `{domain, recipe}` → validates the recipe string **before** touching disk,
   then writes to `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`,
   overwriting any existing guide for that domain. On a structural error it
@@ -269,6 +278,13 @@ fetched (disable with `walkVersions=false`). A stale version that still
 returns 200 is not detected as old — read the provider's docs to supply the
 newest version up front.
 
+Pass `scaffold: true` to emit a **full recipe skeleton** (frontmatter +
+`auth:` translated from the inline auth block + a draft op block) instead of
+just the op block — opt-in, and auto-degrades by guide count (0 guides →
+skeleton, 1/N → op block + a merge note). The scaffolded `schemaVersion`
+matches what `api-learn` stamps on save, so the guide is detection-ready the
+moment it's saved.
+
 `api-probe` only **suggests** — it never writes the guide. The operation must
 still be traceable to your plan source (the API docs or a working curl
 example); this tool surfaces evidence, not authority. Requires `/api learn`.
@@ -283,68 +299,20 @@ agent (advisory). `api-fetch` reads the recipe slice and executes against it;
 `api-guide` reads the detail slice for introspection. **The prose is
 advisory, the frontmatter is authoritative.**
 
-### A complete example (the BOE shape)
+### File shape
 
-```yaml
----
-kind: api
-domains: [boe.es, www.boe.es]
-icon: ⚖️
-shortName: BOE
-updated: 2026-07-17
-# organization: boe.es        # optional — org identity across guides
-# description: BOE open-data API.  # optional — ≤200 chars, one line; aids disambiguation
-apiHost: https://apidatos.boe.es/v1
-verified: 2026-07-17
-gatherAllMax: 500
+A `guide.md` opens with a `---`-delimited YAML frontmatter block and
+closes it with a second `---`; the prose body follows. An operation can
+override the guide-level `pagination` / `responseShape` with its own block
+in the frontmatter.
 
-auth:
-  kind: none
-
-pagination:
-  style: offset-limit
-  pageParam: page
-  pageSizeParam: limit
-  pageSize: 50
-  itemsPath: data
-  # totalCountPath: meta.totalCount   # optional, any style → server total in the footer
-
-responseShape:
-  format: json
-  charset: utf-8
-
-operations:
-  - name: searchDiary
-    via: restGet
-    path: /diario/{date}
-    accept: json
-    params:
-      limit:
-        default: 50
-    helper: true          # run this domain's local helper.ts for this op
-    parse:
-      format: xml
-      charset: iso-8859-1
-
-  - name: listConsolidada
-    via: paginate
-    path: /legislacion-consolidada
-    accept: json
-    pagination:
-      style: cursor
-      cursorParam: cursor
-      cursorPath: pagination.nextCursor
-      itemsPath: results
-    gatherAllMax: 1000     # op-level ceiling override
----
-# BOE Legislación Consolidada — structured API access
-
-Use `api-fetch` with `searchDiary` to pull a day's dispatch (pass `date` as
-`YYYYMMDD`). Use `listConsolidada` with `gatherAll: true` to walk consolidated
-laws (capped at 1000 by the op override). The `boe-datefmt` helper formats the
-`date` param; it lives at
-`~/.pi/agent/pi-lean-host/api-guides/boe.es/helper.ts`.
-```
+The fastest way to a first guide is to let the tools draft it:
+`api-learn({domain, new: true})` returns a fail-closed starter template,
+and `api-probe({scaffold: true})` emits a full skeleton from a live
+endpoint — fill the placeholders, then save with `api-learn`. For
+**complete worked recipes** (real endpoints, `verified:` provenance,
+auth-in-place, helper examples), see the [Caritas](#bundled-reference-recipes)
+recipe library and copy a domain folder that matches your target.
 
 ### Field reference
 
@@ -357,7 +325,8 @@ laws (capped at 1000 by the op override). The `boe-datefmt` helper formats the
 | `organization` | guide | — | optional org identity (registrable domain); catalog grouping + disambiguation. Recipe-slice only |
 | `description` | guide | — | optional one-line summary (≤200 chars); primary disambiguation signal for multi-guide domains |
 | `docs` | guide | — | optional canonical API documentation URL (http/https); surfaced in api-guide detail |
-| `verified` | guide | creation date | drift signal — **defaulted, not enforced** |
+| `verified` | guide | creation date | drift signal — **defaulted, not enforced**; stamped on success by `/api verify` |
+| `schemaVersion` | guide | `0` (floor) | breaking-change detection — stamped on save by `api-learn`; a stale guide (`< current`) gets a non-blocking `⚠` warning in `api-guide`/`api-fetch`, **never a gate** |
 | `gatherAllMax` | guide / op | `1000` | `gatherAll` ceiling; an op can override |
 | `auth.kind` | guide | `none` | `none` \| `static-key` (store-backed header/query secrets). `oauth2` is a declared-but-unrealized seam (rejected at parse) |
 | `auth.headers` | guide | — | literal extra headers merged into every request (e.g. X-Api-Key: DEMO_KEY) — **literal values only**, never the path for real credentials |
@@ -379,6 +348,7 @@ laws (capped at 1000 by the op override). The `boe-datefmt` helper formats the
 | `operations[].dateParams` | op | — | optional `{param: format}` → normalizes ISO dates to `iso8601` \| `yyyymmdd` \| `yyyy-mm-dd` (query params only) |
 | `operations[].helper` | op | `false` | `true` runs this domain's local helper for the op |
 | `operations[].transform` | op | `false` | `true` runs the helper's `transform` export on the parsed response (graceful — a throw returns raw data, never disables the op) |
+| `operations[].requiresAnyOf` | op | — | `[param, ...]` — at least one of these params must be supplied (single group per op, v1; members are plain optional params, not `required: true`) |
 | `operations[].passthrough` | op | `false` | `true` forwards undeclared caller params onto the query string (for open-param APIs) |
 | `operations[].parse` | op | inherits `responseShape` | op-level override of format/charset |
 | `operations[].pagination` | op | inherits top-level | op-level override of pagination |
@@ -411,7 +381,10 @@ loader enforces:
 - The `verified` frontmatter date records when a guide was last verified
   against the live API (defaulted to creation date, **never enforced**). It's
   rendered in the guide-detail footer alongside the current date — the agent
-  reads both and judges.
+  reads both and judges. `/api verify <domain>` runs every runnable op
+  against the live API and stamps `verified` on success (strict: any
+  runnable-op failure → no stamp; skipped ops named in the report; `--force`
+  is human-typed only, no agent tool surface).
 - The **live HTTP response is the actual drift signal.** A 401 on a no-auth
   guide, a 404 on a pinned path, a changed response shape — the agent reads
   those directly. The `verified` date is predictive; the response is actual.
@@ -538,7 +511,7 @@ Agents mangle encodings constantly; `parseResponse` fixes it once. Declared
 per-guide (top-level `responseShape`) and overridable per-op (`parse:`):
 
 - `format: json | xml | text` — XML is converted to JSON via `fast-xml-parser`; `text` is raw passthrough.
-- `charset: utf-8 | <IANA name>` — the transport decodes using the response's Content-Type charset, falling back to this value when the header omits one (essential for Latin-1 / ISO-8859-1 APIs like BOE that serve bytes without a charset parameter). An explicit header charset always wins.
+- `charset: utf-8 | <IANA name>` — the transport decodes using the response's Content-Type charset, falling back to this value when the header omits one (essential for Latin-1 / ISO-8859-1 APIs that serve bytes without a charset parameter). An explicit header charset always wins.
 - `accept` (request-side, on each operation) is declared **independently**
   from `responseShape.format` (response-side) — they usually match but an API
   may return XML regardless of `Accept`, so they're separate fields.
@@ -844,9 +817,10 @@ never the value, so it's safe anywhere it renders.
 `api-probe` accepts an inline `auth` block (injection fields only) plus a
 `domain` selector, so you can prove a keyed shape before writing the guide —
 a store miss reports the name and fetches unauthenticated (authoring is
-human-in-the-loop, not fail-closed). One of the keyed recipes in caritas is a
-better starting template than `boe.es` for your first keyed guide — see
-caritas's `CONTRIBUTING.md`.
+human-in-the-loop, not fail-closed). A learn-gated `listSecrets: true` mode
+lists provisioned secret names (names only) to close the authoring bootstrap
+gap; a bare `listSecrets` call (no `domain`, no `apiHost`) lists
+provisioned-but-guideless store domains first.
 
 ## Security & Scope
 
