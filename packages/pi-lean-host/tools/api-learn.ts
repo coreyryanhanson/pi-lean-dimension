@@ -57,9 +57,9 @@ const DESCRIPTION_MAX = 200;
  * API-agnostic, kept after the worked example retired. */
 const STATIC_KEY_BLOCK = `  # Keyed API? Use kind: static-key — values live in the secrets store (/api secrets), never in the recipe:
   #   kind: static-key
-  #   requires: [apiKey]
+  #   requires: [<secret-name>]
   #   secretRefs:
-  #     Authorization: apiKey        # header name → secret name
+  #     Authorization: <secret-name>   # header name → secret name (must match the name provisioned via /api secrets)
   #   headerPrefixes:
   #     Authorization: "Bearer "`;
 
@@ -184,11 +184,11 @@ const AUTHORING_MANUAL = [
 	"",
 	"## Auth",
 	`  \`kind: static-key\` — keyed-header auth mode (values live in the secrets store, never in the recipe):`,
-	`  \`requires\` = fail-closed if unprovisioned; \`optional\` = proceeds unauthenticated if absent. Both are names only — values live in the secrets store.`,
+	`  \`requires\` = fail-closed if unprovisioned; \`optional\` = proceeds unauthenticated if absent. Both are names only — values live in the secrets store, and each name must match exactly the one passed to /api secrets. Each \`requires\` / \`optional\` name must also appear as a secretRefs/secretQueryRefs value (parser-enforced).`,
 	"  static-key (keyed APIs):",
 	`    \`secretRefs\`      — { <header name>: <secret name> }  ← header → secret direction`,
 	`    \`headerPrefixes\`  — { <header>: "Bearer " }  ← scheme prefix; store holds the raw token`,
-	`    \`requires\`        — [apiKey]  ← fail-closed if unprovisioned`,
+	`    \`requires\`        — [<secret-name>]  ← fail-closed if unprovisioned (literal name, must match the store)`,
 	"",
 	"## Executor semantics",
 	"  Pagination:",

@@ -1092,7 +1092,7 @@ operations:
 		expect(m).not.toBeNull();
 		const example = m![1]!;
 		expect(example).toContain("kind: static-key");
-		expect(example).toContain("requires: [apiKey]");
+		expect(example).toContain("requires: [<secret-name>]");
 		expect(example).toContain("secretRefs:");
 		expect(example).toContain("headerPrefixes:");
 	});
