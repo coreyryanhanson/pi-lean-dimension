@@ -1,16 +1,23 @@
 /**
  * Agent-facing tools tests.
  *
- * Covers the acceptance criteria:
+ * Covers:
  *  - Full write→verify→fix loop against local test server.
  *  - api-guide({}) catalog and api-guide({domain}) detail shapes.
  *  - api-learn validate-before-write (no half-write on invalid recipe).
  *  - api-fetch execute-fail message points at remediation paths.
- *  - api-learn with no domain returns worked example.
+ *  - api-learn with no domain returns the authoring manual.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startTestServer } from "../../pi-lean-portal/__tests__/helpers/test-server.js";
@@ -23,7 +30,7 @@ import {
 	apiFetchTool,
 	__test__setBypassUrlSafety,
 } from "../tools/api-fetch.js";
-import { apiLearnTool } from "../tools/api-learn.js";
+import { apiLearnTool, setStagingRoot } from "../tools/api-learn.js";
 import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
 import { parseApiGuide } from "../core/parse-api-guide.js";
 
@@ -536,12 +543,15 @@ body
 
 let ctx: TestCtx;
 let tmpGuidesDir: string;
+let tmpStagingRoot: string;
 let tmpDir: string;
 
 beforeAll(async () => {
 	ctx = await createApiTestServer();
 	tmpGuidesDir = mkdtempSync(join(tmpdir(), "host-guides-tools-"));
 	setUserGuidesDir(tmpGuidesDir);
+	tmpStagingRoot = mkdtempSync(join(tmpdir(), "host-staging-tools-"));
+	setStagingRoot(tmpStagingRoot);
 	invalidateCache();
 	__test__setBypassUrlSafety(true);
 
@@ -554,6 +564,7 @@ afterAll(async () => {
 	delete process.env.PI_HOST_TEMP_DIR;
 	await ctx.stop();
 	rmSync(tmpGuidesDir, { recursive: true, force: true });
+	rmSync(tmpStagingRoot, { recursive: true, force: true });
 	rmSync(tmpDir, { recursive: true, force: true });
 	__test__setBypassUrlSafety(false);
 });
@@ -590,11 +601,28 @@ function callFetch(
 	);
 }
 
-function callLearn(domain?: string, recipe?: string) {
+function callLearn(
+	domain?: string,
+	recipe?: string,
+	extra?: { new?: boolean; guide?: string },
+) {
 	const p: Record<string, unknown> = {};
 	if (domain !== undefined) p.domain = domain;
-	if (recipe !== undefined) p.recipe = recipe;
+	if (recipe !== undefined) {
+		// Stage the working copy, then save from the file (recipeFile).
+		const staged = join(tmpStagingRoot, domain!, "guide.md");
+		mkdirSync(join(tmpStagingRoot, domain!), { recursive: true });
+		writeFileSync(staged, recipe, "utf-8");
+		p.recipeFile = staged;
+	}
+	if (extra?.new !== undefined) p.new = extra.new;
+	if (extra?.guide !== undefined) p.guide = extra.guide;
 	return apiLearnTool.execute("test", p, undefined, undefined, undefined as any);
+}
+
+/** Staged draft path for a domain (mirrors api-learn's stagingPathFor). */
+function stagedPath(domain: string): string {
+	return join(tmpStagingRoot, domain, "guide.md");
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -701,43 +729,51 @@ describe("api-guide", () => {
 // ═══════════════════════════════════════════════════════════════════
 
 describe("api-learn", () => {
-	it("returns worked example when no domain is given", async () => {
+	it("returns the authoring manual when no domain is given", async () => {
 		const text = contentText(await callLearn());
-		expect(text).toContain("Example recipe");
-		expect(text).toContain("boe.es");
-		expect(text).toContain("apiHost");
-		expect(text).toContain("operations");
+		expect(text).toContain("authoring manual");
+		// Field reference + defaults + semantics stay.
 		expect(text).toContain("Required fields");
+		expect(text).toContain("a LIST of operation mappings");
 		expect(text).toContain("Key defaults");
-
-		// Executor-semantics reference (item 2) — the in-transcript authoring
-		// facts for path resolution, pagination seeding, and auth.
 		expect(text).toContain("Executor semantics");
 		expect(text).toContain("joinUrl` strips a leading `/");
 		expect(text).toContain("pagination.base` seeds the page param");
 		expect(text).toContain("page-size param is a real knob");
 		expect(text).toContain("requires` = fail-closed if unprovisioned");
+		// Guide-prose (agent-instructions) ability is taught, not lost.
+		expect(text).toContain("Guide prose");
+		expect(text).toContain("Guide notes");
+		// Points at the template entry point; no recipe body.
+		expect(text).toContain("new: true");
+		expect(text).not.toContain("searchDiary");
+		expect(text).not.toContain("```yaml");
 	});
 
-	// Regression for issues 1a/1b/2a: the worked example must copy-paste
-	// cleanly (closing ---), demonstrate dateParams on a query param, and
-	// document path tokens via the docs-only params.<token>.description.
-	it("worked example validates and documents param channels", async () => {
-		const text = contentText(await callLearn());
-		const m = text.match(/```yaml\n([\s\S]*?)```/);
-		expect(m).not.toBeNull();
-		const example = m![1]!;
-		const parsed = parseApiGuide(example, { filename: "boe.es" });
-		expect(parsed.ok).toBe(true);
-		if (parsed.ok) {
-			const diary = parsed.guide.operations.find((o) => o.name === "searchDiary")!;
-			expect(diary.dateParams).toEqual({ since: "yyyy-mm-dd" });
-			expect(diary.pathParamDocs).toEqual({
-				date: "Diary date in yyyy-mm-dd form (e.g. 2026-07-15).",
-			});
-			// The path token must NOT leak into query params.
-			expect(diary.params["date"]).toBeUndefined();
-		}
+	// Gap 1: the template is a placeholder skeleton, not a worked example. It
+	// must fail closed (placeholder apiHost rejected) and carry no foreign API
+	// literals. The dateParams/path-token-doc demonstration moved to the
+	// probe-scaffold path (api-probe({scaffold: true}) emits real ops).
+	it("template is a placeholder skeleton that fails closed", async () => {
+		const text = contentText(
+			await callLearn("example.com", undefined, { new: true }),
+		);
+		// Result surfaces the staged path, not an inline yaml block.
+		expect(text).toContain(stagedPath("example.com"));
+		const template = readFileSync(stagedPath("example.com"), "utf-8");
+		expect(template).toContain("domains: [example.com]");
+		expect(template).toContain("<base url>");
+		expect(template).toContain("<short>");
+		expect(template).toContain("<emoji>");
+		expect(template).not.toMatch(
+			/apidatos|boe\.es|BOE|searchDiary|listConsolidada/,
+		);
+		// The prose-body (agent-instructions) ability is surfaced, not lost.
+		expect(template).toContain("agent-instruction prose");
+		expect(template).toContain("the closing ---");
+		// Fail-closed: the as-is template cannot save (placeholder apiHost
+		// is rejected by requireHttpUrl).
+		expect(parseApiGuide(template, { filename: "example.com" }).ok).toBe(false);
 	});
 
 	it("validates and writes a valid recipe", async () => {
@@ -752,6 +788,21 @@ describe("api-learn", () => {
 		expect(content).toContain("apiHost:");
 	});
 
+	// Companion — save summary echoes the resolved auth mapping (names only,
+	// never values): wrong-shape is loud (gap 1), right-shape-but-wrong-name
+	// is eyeballable at save.
+	it("save summary names the auth header→secret mapping, never values", async () => {
+		setUserGuidesDir(tmpGuidesDir);
+		invalidateCache();
+		const recipe = `---\nkind: api\ndomains: [authmap.example]\nshortName: AuthMap\napiHost: ${ctx.serverUrl}\nauth:\n  kind: static-key\n  secretRefs:\n    Authorization: apiKey\n    X-CMC-Pro-Key: cmc_key\n  headerPrefixes:\n    Authorization: "Bearer "\n  requires: [apiKey, cmc_key]\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		const text = contentText(await callLearn("authmap.example", recipe));
+		expect(text).toContain("Auth: static-key");
+		expect(text).toContain("Authorization ← secret apiKey (Bearer )");
+		expect(text).toContain("X-CMC-Pro-Key ← secret cmc_key");
+		// Names only — never the store values.
+		expect(text).not.toContain("s3cr3t");
+	});
+
 	it("rejects an invalid recipe without writing", async () => {
 		setUserGuidesDir(tmpGuidesDir);
 		const text = contentText(await callLearn("broken", INVALID_RECIPE));
@@ -763,15 +814,85 @@ describe("api-learn", () => {
 		expect(() => readFileSync(filepath, "utf-8")).toThrow();
 	});
 
-	it("requires recipe when domain is provided", async () => {
+	// Gap 2: a validation failure names the manual section governing the
+	// failing field, so a first-time author who wrote from memory is routed
+	// to the manual instead of re-guessing. auth.* → Auth, operations[*].via
+	// → Required fields, unmapped fields → generic manual pointer.
+	it("routes validation failures to the governing manual section (gap 2)", async () => {
+		setUserGuidesDir(tmpGuidesDir);
+
+		// Gap 1's wrong-auth shape → Auth section.
+		const authText = contentText(
+			await callLearn(
+				"authbad.example",
+				`---
+domains: [authbad.example]
+apiHost: https://api.example.com
+auth:
+  kind: static-key
+  name: X-CMC_PRO_API_KEY
+  secret: api_key
+operations:
+  - name: get
+    via: restGet
+    path: /things
+---
+`,
+			),
+		);
+		expect(authText).toContain("auth.name");
+		expect(authText).toContain("`Auth` section of the authoring manual");
+
+		// Bad via → Required fields.
+		const viaText = contentText(
+			await callLearn(
+				"viabad.example",
+				`---
+domains: [viabad.example]
+apiHost: https://api.example.com
+operations:
+  - name: get
+    via: post
+    path: /things
+---
+`,
+			),
+		);
+		expect(viaText).toContain("operations[0].via");
+		expect(viaText).toContain(
+			"`Required fields` section of the authoring manual",
+		);
+
+		// Unmapped field (frontmatter) → generic manual pointer.
+		const fmText = contentText(await callLearn("fmbad.example", "just prose"));
+		expect(fmText).toContain("frontmatter");
+		expect(fmText).toContain(
+			"Call api-learn() with no params for the authoring manual",
+		);
+		expect(fmText).not.toContain("` section of the authoring manual");
+	});
+
+	it("returns a domain template when no recipe and no guide exists", async () => {
 		const text = contentText(await callLearn("somedomain.com"));
-		expect(text).toContain("Recipe is required");
+		expect(text).toContain(stagedPath("somedomain.com"));
+		const draft = readFileSync(stagedPath("somedomain.com"), "utf-8");
+		expect(draft).toContain("domains: [somedomain.com]");
 	});
 
 	it("rejects a path-traversal domain without writing", async () => {
 		// Guards assertSafeDomain at the api-learn write boundary.
 		setUserGuidesDir(tmpGuidesDir);
-		const result = await callLearn("../../escape", boeRecipe(ctx.serverUrl));
+		const result = await apiLearnTool.execute(
+			"test",
+			{
+				domain: "../../escape",
+				// assertSafeDomain rejects before this path is ever read.
+				recipeFile: join(tmpStagingRoot, "escape", "guide.md"),
+			},
+			undefined,
+			undefined,
+			undefined as any,
+		);
 		const text = contentText(result);
 		expect(text).toContain("Invalid domain");
 		expect(result.details).toMatchObject({
@@ -916,6 +1037,46 @@ operations:
 		expect(text).toContain("recommended");
 	});
 
+	it("collision warning names /api delete as the recovery gesture", async () => {
+		// The agent has no delete tool — when an existing guide is wrong, the
+		// collision warning must point at the human-typed /api delete command,
+		// naming the colliding directory (the one to remove).
+		setUserGuidesDir(tmpGuidesDir);
+		invalidateCache();
+		const first = `---
+kind: api
+domains: [recover.example]
+organization: recover.org
+shortName: First
+apiHost: ${ctx.serverUrl}
+operations:
+  - name: getFirst
+    via: restGet
+    path: /x
+    accept: json
+---
+`;
+		const second = `---
+kind: api
+domains: [recover.example]
+organization: recover.org
+shortName: Second
+apiHost: ${ctx.serverUrl}
+operations:
+  - name: getSecond
+    via: restGet
+    path: /x
+    accept: json
+---
+`;
+		await callLearn("recover-first", first);
+		invalidateCache();
+		const text = contentText(await callLearn("recover-second", second));
+		expect(text).toContain("Multi-recipe");
+		expect(text).toContain("/api delete recover-first");
+		expect(text).toContain("the agent has no delete tool");
+	});
+
 	it("does not warn when updating the same guide's own directory", async () => {
 		// Updating `foo.example` when `foo.example` already claims the domain is
 		// not a collision — same dirName. No warning.
@@ -939,6 +1100,100 @@ operations:
 		const text = contentText(await callLearn("solo.example", r2));
 		expect(text).toContain("Guide saved");
 		expect(text).not.toContain("Multi-recipe");
+	});
+
+	// The template is the docs-side discoverability: no hardcoded
+	// updated/verified dates (the tool stamps them when omitted) and a
+	// static-key auth block to crib from.
+	it("template has no hardcoded updated/verified dates", async () => {
+		const text = contentText(
+			await callLearn("example.com", undefined, { new: true }),
+		);
+		expect(text).toContain(stagedPath("example.com"));
+		const example = readFileSync(stagedPath("example.com"), "utf-8");
+		expect(example).not.toMatch(/^updated:/m);
+		expect(example).not.toMatch(/^verified:/m);
+		expect(example).toContain("stamped by the tool when omitted");
+	});
+
+	it("template documents the static-key auth block", async () => {
+		const text = contentText(
+			await callLearn("example.com", undefined, { new: true }),
+		);
+		expect(text).toContain(stagedPath("example.com"));
+		const example = readFileSync(stagedPath("example.com"), "utf-8");
+		expect(example).toContain("kind: static-key");
+		expect(example).toContain("requires: [<secret-name>]");
+		expect(example).toContain("secretRefs:");
+		expect(example).toContain("headerPrefixes:");
+	});
+
+	// Write path — api-learn stamps schemaVersion on save.
+	it("stamps schemaVersion on save when the recipe omits it", async () => {
+		setUserGuidesDir(tmpGuidesDir);
+		invalidateCache();
+		const recipe = `---\nkind: api\ndomains: [stamp-absent.example]\nshortName: StampAbsent\napiHost: ${ctx.serverUrl}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\nProse body.\n`;
+		await callLearn("stamp-absent.example", recipe);
+		const raw = readFileSync(
+			join(tmpGuidesDir, "stamp-absent.example", "guide.md"),
+			"utf-8",
+		);
+		expect(raw).toMatch(/^schemaVersion: 0$/m);
+		// Prose body untouched.
+		expect(raw).toContain("Prose body.");
+	});
+
+	it("replaces an explicit older schemaVersion on save", async () => {
+		setUserGuidesDir(tmpGuidesDir);
+		invalidateCache();
+		const recipe = `---\nkind: api\nschemaVersion: 5\ndomains: [stamp-replace.example]\nshortName: StampReplace\napiHost: ${ctx.serverUrl}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		await callLearn("stamp-replace.example", recipe);
+		const raw = readFileSync(
+			join(tmpGuidesDir, "stamp-replace.example", "guide.md"),
+			"utf-8",
+		);
+		expect(raw).toMatch(/^schemaVersion: 0$/m);
+		expect(raw).not.toMatch(/^schemaVersion: 5$/m);
+	});
+
+	it("never touches a schemaVersion string in the prose body", async () => {
+		setUserGuidesDir(tmpGuidesDir);
+		invalidateCache();
+		const recipe = `---\nkind: api\ndomains: [stamp-prose.example]\nshortName: StampProse\napiHost: ${ctx.serverUrl}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\nThe schemaVersion: 5 in this prose must stay untouched.\n`;
+		await callLearn("stamp-prose.example", recipe);
+		const raw = readFileSync(
+			join(tmpGuidesDir, "stamp-prose.example", "guide.md"),
+			"utf-8",
+		);
+		// Frontmatter got the stamp...
+		expect(raw).toMatch(/^schemaVersion: 0$/m);
+		// ...and the prose line is untouched (still schemaVersion: 5).
+		expect(raw).toContain(
+			"The schemaVersion: 5 in this prose must stay untouched.",
+		);
+	});
+
+	it("preserves comments and key order when stamping", async () => {
+		setUserGuidesDir(tmpGuidesDir);
+		invalidateCache();
+		const recipe = `---\nkind: api\ndomains: [stamp-order.example]\n# a comment that must survive\nshortName: StampOrder\napiHost: ${ctx.serverUrl}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		await callLearn("stamp-order.example", recipe);
+		const raw = readFileSync(
+			join(tmpGuidesDir, "stamp-order.example", "guide.md"),
+			"utf-8",
+		);
+		expect(raw).toContain("# a comment that must survive");
+		// Key order preserved; schemaVersion inserted after operations, before
+		// the closing --- (no YAML round-trip).
+		const idxDomains = raw.indexOf("domains:");
+		const idxShort = raw.indexOf("shortName:");
+		const idxApi = raw.indexOf("apiHost:");
+		const idxOps = raw.indexOf("operations:");
+		const idxSV = raw.indexOf("schemaVersion: 0");
+		expect(idxDomains).toBeLessThan(idxShort);
+		expect(idxShort).toBeLessThan(idxApi);
+		expect(idxApi).toBeLessThan(idxOps);
+		expect(idxOps).toBeLessThan(idxSV);
 	});
 });
 
@@ -1012,6 +1267,20 @@ describe("api-fetch", () => {
 		expect(details.via).toBe("restGet");
 		expect(details.domain).toBe("boe.es");
 		expect(details.operation).toBe("searchDiary");
+	});
+
+	it("does not append a stale-schema note for a current guide", async () => {
+		// GUIDE_SCHEMA_VERSION is 0 during beta, so a freshly-saved guide is
+		// current — the staleness note must not appear on its fetch result
+		// (proves the api-fetch note wiring is active without a real bump).
+		const result = await callFetch({
+			domain: "boe.es",
+			operation: "searchDiary",
+			params: { date: "2026-07-17" },
+		});
+		const text = contentText(result);
+		expect(text).toContain("BOE");
+		expect(text).not.toContain("⚠ schemaVersion");
 	});
 
 	it("executes a paginate operation against the test server", async () => {

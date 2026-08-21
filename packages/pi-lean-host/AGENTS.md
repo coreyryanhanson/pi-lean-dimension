@@ -17,10 +17,32 @@
   `api-probe` is the shape-discovery tool for the authoring loop (fetch an
   exploratory path, summarize the JSON shape, emit a draft YAML op block);
   it never writes the guide.
-- Registers the **`/api`** command with `on|off|learn|status/helpers|secrets`
-  subcommands — an independent peer toggle that composes freely with
-  portal's `/web` (additive-on / filter-off semantics).
-   `/api secrets [domain [name]]` lists/provisions/deletes the per-domain
+- Registers the **`/api`** command with
+  `on|off|learn|status|helpers|secrets|verify|delete` subcommands — an
+  independent peer toggle that composes freely with portal's `/web`
+  (additive-on / filter-off semantics).
+  - `/api verify <domain> [guide] [--force]` runs every runnable op of a
+    guide against its live API and stamps `verified: today` into the guide's
+    frontmatter **only when all runnable ops pass** (skips ≠ failures;
+    transform failures are non-blocking). `--force` stamps without any HTTP
+    (human-attested escape valve). Strict threshold: any partial/all-fail →
+    no stamp. Opt-in params sidecar
+    `~/.pi/agent/pi-lean-host/api-guides/<dirName>/verify.json`
+    (`{ "<opName>": { "<param>": "<value>" } }`) supplies inputs for ops
+    with unsatisfiable params (path `{token}` / required query with no
+    default). Runs in **on** mode, not learn-gated, and not refused by the
+    focus-mode guard (writes no toolset state). Shares the
+    guide-resolution → helper → transform → auth → dispatch sequence with
+    `api-fetch` via `core/resolve-op.ts` — one implementation, two call
+    sites (don't duplicate it).
+  - `/api delete <domain> [guide]` `rm -rf`s a guide directory **and**
+    `invalidateCache()`s the per-session guide-store so the next
+    `api-guide`/`api-fetch` doesn't see a ghost guide — the load-bearing
+    reason this beats `bash rm`. Whole-domain = interactive confirm;
+    single-guide (by shortName) = no confirm. Also always-available /
+    not focus-guarded. The agent has **no** delete surface: `api-learn`'s
+    collision/malformed errors tell it to ask the human to run this.
+  - `/api secrets [domain [name]]` lists/provisions/deletes the per-domain
   secrets store (`core/secrets-store.ts`,
   `~/.pi/agent/pi-lean-host/secrets/<domain>.json`, 0600,
   lazy-mkdir-on-write-only). Names only, never values; headless
@@ -31,8 +53,10 @@
   picker, and the detail view surfaces declared-vs-stored gaps; `<domain>
   <name>` is the manual escape valve (warns when the name isn't a declared
   secret). `--delete` removes all secrets for a `<domain>` (interactive confirm) or
-  a single `<domain> <name>` (no confirm). Peer of `status`/`helpers`/
-  bare `/api` — the focus-mode guard does not apply.
+  a single `<domain> <name>` (no confirm).
+  - `/api helpers`, `/api status`, and bare `/api` are read-only — the
+    focus-mode guard does not apply to any of them, nor to `secrets`,
+    `verify`, or `delete`.
 - Manages the **`api` status bar glyph**, shown as `● api` when `/api` is on
   (colored by learn state) and `○ api` when off.
 - Declares `pi-lean-portal` as an **optional peer dependency**. Host-only
@@ -129,8 +153,11 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   decoupled from the routing `domain` the agent supplies, so `/api secrets
   github.com` feeds a guide regardless of whether the agent routed it as
   `github.com` or an api-subdomain alias. `api-probe` (no `guide` object)
-  defaults its store domain to `hostnameOf(apiHost)`, overridable via an
-  agent-visible `domain` param. `hasAuth` (any non-accept header ∨ injected query secret)
+  defaults its store domain to `hostnameOf(apiHost)`, falling back to the
+  longest provisioned parent domain (`pro-api.coinmarketcap.com` →
+  `coinmarketcap.com`) before declaring a secret missing, overridable via an
+  agent-visible `domain` param; a store-miss note is prescriptive (names the
+  provisioned domains + "pass domain: <one>"). `hasAuth` (any non-accept header ∨ injected query secret)
   forces the guarded-redirect path in the transport, so an auth-bearing call
   is always SSRF-checked hop-by-hop and store-injected headers +
   `Authorization` are stripped on **cross-domain** redirect hops (literal
@@ -173,36 +200,53 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `GATHER_ALL_MAX_FALLBACK`), `parse-api-guide.ts` (the parser +
   `projectToGuide()` + `loadApiGuidesFromDir()` + `formatApiGuideCatalog()`),
   `guide-loader.ts` + `guide-store.ts` (multi-valued domain map,
-  `findGuidesByDomain` returns `{ guide, dirName }[]`), `helpers.ts`
-  (built-in executor helpers), `local-helpers.ts` (user helper loader),
-  `helpers-command.ts` (`/api helpers`), `secrets-store.ts` (per-domain
-  secrets store — swappable `SecretStore` interface, 0600 file backend,
-   lazy-mkdir-on-write-only, single-key + whole-domain delete), `secrets-command.ts` (`/api secrets`),
+  `findGuidesByDomain` returns `{ guide, dirName }[]`, `invalidateCache()`),
+  `resolve-op.ts` (shared guide→helper→transform→auth→dispatch sequence for
+  `api-fetch` + `/api verify` — one implementation, two call sites),
+  `guide-picker.ts` (TUI `SelectList` for N-guide `/api verify` + `/api delete`,
+  headless falls back to text menu), `helpers.ts` (built-in executor helpers),
+  `local-helpers.ts` (user helper loader), `helpers-command.ts` (`/api helpers`),
+  `secrets-store.ts` (per-domain secrets store — swappable `SecretStore`
+  interface, 0600 file backend, lazy-mkdir-on-write-only, single-key +
+  whole-domain delete), `secrets-command.ts` (`/api secrets`),
+  `verify-command.ts` (`/api verify` — strict-threshold live verify +
+  `verified:` stamp, `--force`, `verify.json` sidecar),
+  `verify-stamp` logic lives in `parse-api-guide.ts` (`stampFrontmatterField`),
+  `delete-command.ts` (`/api delete` — `rm -rf` + `invalidateCache()`),
   `auth.ts` (static-key secret resolution + shared auth-status footer),
-  `transport.ts` (shared fetch
-  pipeline: UA, charset, 429-retry, ETag cache — the sanctioned way to reach
-  even WAF'd hosts), `path-template.ts`, `ssrf-guard.ts`, `response-spill.ts`,
-  `api-toggle.ts` (`/api` toggle), `portal-projection.ts`,
+  `transport.ts` (shared fetch pipeline: UA, charset, 429-retry, ETag cache —
+  the sanctioned way to reach even WAF'd hosts), `path-template.ts`,
+  `ssrf-guard.ts`, `response-spill.ts`, `api-toggle.ts` (`/api` toggle —
+  dispatches all 8 subcommands), `portal-projection.ts`,
   `verify-ship-manifest.ts` (vendored host-only copy of the portal utility).
-- `tools/` — `api-guide.ts`, `api-fetch.ts`, `api-learn.ts`, `api-probe.ts`,
+- `tools/` — `api-guide.ts`, `api-fetch.ts`, `api-learn.ts` (staged-file
+  authoring: fetch-recipe/template paths write the working copy to
+  `/tmp/pi-lean-host/<domain>/guide.md`; save reads a `recipeFile` path —
+  `{domain, new: true}` → fresh placeholder template), `api-probe.ts`,
   `utils.ts`, `index.ts`.
 - `__tests__/` — framework structural tests (no network): `smoke`,
   `parse-api-guide`, `all-guides-parse` (every bundled `guide.md` parses
-  cleanly), `tools`, `helpers`, `local-helpers`, `api-toggle`,
-   `secrets-store`, `secrets-command`, `auth` (static-key schema/injection/
+  cleanly), `tools`, `api-learn-fetch-recipe` (fetch-recipe + entry-point
+  split + N-guide disambiguation + file staging), `helpers`, `local-helpers`,
+  `api-toggle`,
+  `secrets-store`, `secrets-command`, `auth` (static-key schema/injection/
   output-channel audit/SSRF/footer structural tests), `query-secrets`
   (query-param-secret injection, output-channel redaction, api-probe inline
-  auth / `listSecrets`),
-  `portal-projection`, `render-result`, `response-spill`, `host-only-boundary`,
-  `axis-units` (nextLink/XML/cursor/ETag via mocked transport; fixtures in
-  `__tests__/fixtures/axis/`), `axis-coverage` (regression tripwire: the
-  synthetic axis-guide set's union covers every guide-driven axis — removing
-  an axis guide or dropping an axis-exercising op fails it), `schema-version`
-  (metadata-only guard on `schemaVersion` frontmatter), `transform-{restget,paginate,render}`,
+  auth / `listSecrets`), `portal-projection`, `render-result`,
+  `response-spill`, `host-only-boundary`, `axis-units` (nextLink/XML/cursor/
+  ETag via mocked transport; fixtures in `__tests__/fixtures/axis/`),
+  `axis-coverage` (regression tripwire: the synthetic axis-guide set's union
+  covers every guide-driven axis — removing an axis guide or dropping an
+  axis-exercising op fails it), `schema-version` (metadata-only guard on
+  `schemaVersion` frontmatter), `transform-{restget,paginate,render}`,
   `transport` (A3 Retry-After HTTP-date / exponential-backoff parsing — no
   recipe can reliably force a 429, so the unit test is the proof),
-  `api-probe`, `ship-manifest` (tarball coverage + asserts `api-guides/` is
-  excluded from the npm tarball).
+  `api-probe`, `verify-command` (mocked-transport: strict threshold, auth
+  precheck, param precheck, `verify.json`, helper-disabled skip),
+  `verify-stamp` (frontmatter-isolated `verified:` edit, `--force`),
+  `delete-command` (ghost-guide cache fix), `guide-picker` (TUI gate + row
+  mapping), `ship-manifest` (tarball coverage + asserts `api-guides/` is
+  excluded from the npm tarball). Fixtures: `__tests__/fixtures/{axis,mediawiki,oai}/`.
 
 ## api-guides/ — synthetic axis guides (framework fixtures)
 
@@ -224,9 +268,10 @@ transform, static-key-auth, multi-recipe-domains, resumptionToken, tokenBag).
 No `_shared/`, `WAF-NOTES.md`, or `CONTRIBUTING.md` remain here — those moved
 to caritas along with the real recipes.
 
-The inline worked-example recipe in `tools/api-learn.ts` (no-`domain`
-call, the BOE shape) stays in host — it's a self-contained authoring aid,
-separate from the full reference recipes in caritas.
+The inline `api-learn({domain, new: true})` placeholder skeleton (a
+fail-closed starter template — only `domains` real, other fields `<placeholder>`)
+stays in host as a self-contained authoring aid, separate from the full
+reference recipes in caritas.
 
 For the **comprehensive recipe library** (real endpoints, live tests, per-recipe
 `verified:`-date drift disclaimer), see the
@@ -236,11 +281,14 @@ disclaimer; host ships only the synthetic axis fixtures.
 ### Guide schema versioning
 
 `core/api-guide-types.ts` exports `GUIDE_SCHEMA_VERSION` (currently `0`,
-beta). Guides may carry a `schemaVersion` frontmatter field (absent defaults
-to `0`), surfaced on the parsed guide as metadata — **attribution, never
-enforcement**: it never gates, warns, or alters parse behavior (proved by
-`__tests__/schema-version.test.ts`). At the lockstep release it bumps to `1`
-(the frozen-beta label change) with a CHANGELOG line.
+beta). `schemaVersion` is **breaking-change detection**: `api-learn` stamps it
+on save (each guide records its authoring vintage), absent-on-read defaults
+to `0` (the floor, not current), and a stale guide (`schemaVersion <
+current`) gets a **non-blocking `⚠` warning** in the `api-guide` catalog /
+detail / disambiguation and a note on `api-fetch`. **Never a gate** — the
+guide always loads and runs (proved by `__tests__/schema-version.test.ts`).
+At the lockstep release it bumps to `1` (the frozen-beta label change) with
+a CHANGELOG line.
 
 **Bump rule (post-v1):** do not bump unless a guide that used to parse now
 fails to parse. Adding an optional field, a new enum value, or relaxing a

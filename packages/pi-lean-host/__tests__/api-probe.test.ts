@@ -22,6 +22,7 @@ import {
 	probe,
 	formatProbeResult,
 	MAX_VERSION_WALK,
+	resolveProbeStoreDomain,
 } from "../tools/api-probe.js";
 import { apiProbeTool } from "../tools/index.js";
 import { contentText } from "../tools/utils.js";
@@ -31,7 +32,13 @@ import {
 	setSecretsDir,
 	getSecretsDir,
 } from "../core/secrets-store.js";
-import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
+import {
+	setUserGuidesDir,
+	getUserGuidesDir,
+	invalidateCache,
+} from "../core/guide-store.js";
+import { parseApiGuide } from "../core/parse-api-guide.js";
+import { GUIDE_SCHEMA_VERSION } from "../core/api-guide-types.js";
 import {
 	_setToggleStateForTest,
 	_resetToggleStateForTest,
@@ -144,6 +151,22 @@ describe("emitDraft (marker → style guess)", () => {
 		expect(draft).toContain("# unverified");
 	});
 
+	it("detects 1-based `start` marker and emits pageParam: start + base: 1", () => {
+		// CMC/GBIF-style: 1-based row offset, not a 0-based offset or a page index.
+		const shape = summarize({
+			start: 1,
+			limit: 100,
+			data: [{ id: 1 }],
+		});
+		expect(shape.suggestedVia).toBe("paginate");
+		const draft = emitDraft("/cryptocurrency/listings/latest", {}, shape);
+		expect(draft).toContain("style: offset-limit");
+		expect(draft).toContain("pageParam: start");
+		expect(draft).toContain("pageSizeParam: limit");
+		expect(draft).toContain("base: 1");
+		expect(draft).not.toContain("pageParam: offset");
+	});
+
 	it("does not re-declare path tokens in the emitted params", () => {
 		const shape = summarize({ results: [{ id: 1 }] });
 		const draft = emitDraft(
@@ -171,6 +194,9 @@ describe("emitDraft (marker → style guess)", () => {
 		expect(draft).toContain("via: restGet");
 		expect(draft).not.toContain("pagination:");
 		expect(draft).toContain("no pagination markers");
+		// The no-marker note must explain how paginate would advance, so the
+		// author doesn't fall back to restGet just to avoid guessing (issue #3).
+		expect(draft).toContain("base: 1 for 1-based `start` APIs like CMC");
 	});
 });
 
@@ -442,6 +468,27 @@ describe("formatProbeResult docs-first nudge", () => {
 		expect(text).toContain(NUDGE);
 		expect(text).toContain("llms.txt");
 	});
+
+	it("scaffoldNudge: true appends the scaffold: true footer line", () => {
+		const text = formatProbeResult({
+			...base,
+			status: 200,
+			ok: true,
+			shape: summarize({ data: [1, 2, 3] }),
+			scaffoldNudge: true,
+		});
+		expect(text).toContain("pass scaffold: true to emit a full recipe skeleton");
+	});
+
+	it("no scaffoldNudge → no scaffold footer line", () => {
+		const text = formatProbeResult({
+			...base,
+			status: 200,
+			ok: true,
+			shape: summarize({ data: [1, 2, 3] }),
+		});
+		expect(text).not.toContain("pass scaffold: true");
+	});
 });
 
 describe("probe redirect handling (live localhost)", () => {
@@ -500,6 +547,8 @@ describe("probe redirect handling (live localhost)", () => {
 					'secret "api_key" not found in store for domain "api.example.com"',
 				);
 				expect(result.note ?? "").toContain("provisioned domains: example.com");
+				// Prescriptive: a miss tells the author to pass domain: <one>.
+				expect(result.note ?? "").toContain("pass domain:");
 			} finally {
 				server.close();
 				server.closeAllConnections?.();
@@ -509,21 +558,97 @@ describe("probe redirect handling (live localhost)", () => {
 		});
 	});
 
+	// The probe infers the store domain from apiHost; a secret filed under the
+	// registrable domain must be found when the probe hits an api subdomain.
+	describe("resolveProbeStoreDomain (secret-domain fallback)", () => {
+		it("falls back to the provisioned parent domain (pro-api → registrable) when the hostname isn't provisioned", () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-fallback-secrets-"));
+			const prevDir = getSecretsDir();
+			setSecretsDir(tmp);
+			writeSecret("coinmarketcap.com", "api_key", "K");
+			try {
+				expect(resolveProbeStoreDomain("pro-api.coinmarketcap.com")).toBe(
+					"coinmarketcap.com",
+				);
+			} finally {
+				setSecretsDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("exact-match hostname beats the parent fallback", () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-exact-secrets-"));
+			const prevDir = getSecretsDir();
+			setSecretsDir(tmp);
+			writeSecret("api.example.com", "api_key", "EXACT");
+			writeSecret("example.com", "api_key", "PARENT");
+			try {
+				expect(resolveProbeStoreDomain("api.example.com")).toBe("api.example.com");
+			} finally {
+				setSecretsDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("picks the longest matching parent when several are provisioned", () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-longest-secrets-"));
+			const prevDir = getSecretsDir();
+			setSecretsDir(tmp);
+			writeSecret("example.com", "api_key", "A");
+			writeSecret("api.example.com", "api_key", "B");
+			try {
+				expect(resolveProbeStoreDomain("graphql.api.example.com")).toBe(
+					"api.example.com",
+				);
+			} finally {
+				setSecretsDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("no provisioned parent → returns the hostname as-is", () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-noparent-secrets-"));
+			const prevDir = getSecretsDir();
+			setSecretsDir(tmp);
+			try {
+				expect(resolveProbeStoreDomain("api.unknown.test")).toBe(
+					"api.unknown.test",
+				);
+			} finally {
+				setSecretsDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("leading-dot guard: a sibling hostname never matches (malicious-example.com ≠ example.com)", () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-dotguard-secrets-"));
+			const prevDir = getSecretsDir();
+			setSecretsDir(tmp);
+			writeSecret("example.com", "api_key", "K");
+			try {
+				expect(resolveProbeStoreDomain("malicious-example.com")).toBe(
+					"malicious-example.com",
+				);
+			} finally {
+				setSecretsDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+	});
+
 	// A misplaced top-level key inside params errors loudly before
 	// any request; unknown keys inside auth are rejected by the schema.
 	describe("probe reserve-guard", () => {
-		it.each([
-			"domain",
-			"apiHost",
-			"path",
-			"auth",
-		])("throws naming %s when it appears inside params (no request)", async (reserved) => {
-			await expect(
-				probe("https://api.example.com", "/items", { [reserved]: "x" }),
-			).rejects.toThrow(
-				`"${reserved}" is a top-level param, not a query param — move it out of params`,
-			);
-		});
+		it.each(["domain", "apiHost", "path", "auth"])(
+			"throws naming %s when it appears inside params (no request)",
+			async (reserved) => {
+				await expect(
+					probe("https://api.example.com", "/items", { [reserved]: "x" }),
+				).rejects.toThrow(
+					`"${reserved}" is a top-level param, not a query param — move it out of params`,
+				);
+			},
+		);
 
 		it("auth schema rejects an unknown key (additionalProperties: false)", () => {
 			const schema = apiProbeTool.parameters;
@@ -597,6 +722,224 @@ describe("probe redirect handling (live localhost)", () => {
 				}),
 			).toBe(true);
 		});
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// 401/403 error wording + headerPrefixes-without-secretRefs
+// ═══════════════════════════════════════════════════════════════════
+
+/** Tiny stub: a JSON server that always replies with the given status. */
+async function stubProbeServer(
+	status: number,
+): Promise<{ server: http.Server; base: string }> {
+	const server = http.createServer((_req, res) => {
+		res.writeHead(status, { "Content-Type": "application/json" });
+		res.end(JSON.stringify({ data: [{ id: 1 }] }));
+	});
+	await new Promise<void>((r) => server.listen(0, r));
+	const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+	return { server, base };
+}
+
+describe("api-probe 401/403 wording", () => {
+	it("no auth block, 401 → endpoint-requires-auth wording (no stale guide phrase)", async () => {
+		const { server, base } = await stubProbeServer(401);
+		try {
+			const result = await probe(base, "/packs");
+			expect(result.note ?? "").toContain(
+				"endpoint requires auth; configure auth injection",
+			);
+			expect(result.note ?? "").not.toContain("guide is auth:none");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+		}
+	});
+
+	it("auth injected (secret provisioned) but server 401 → injected-but-rejected wording", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-401-secrets-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "K");
+		const { server, base } = await stubProbeServer(401);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			const note = result.note ?? "";
+			expect(note).toContain("auth injected but rejected; verify header name");
+			expect(note).not.toContain("not found in store");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("auth injected, secret missing from store → auth rejected; names the secret", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-401-miss-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		const { server, base } = await stubProbeServer(401);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			const note = result.note ?? "";
+			expect(note).toContain("auth rejected;");
+			expect(note).toContain(
+				'secret "api_key" not found in store for domain "api.example.com"',
+			);
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("auth injected, nothing missing, server 403 → injected-but-rejected wording (403 variant)", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-secrets-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "K");
+		const { server, base } = await stubProbeServer(403);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			expect(result.note ?? "").toContain(
+				"auth injected but rejected; verify header name",
+			);
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("api-probe headerPrefixes without secretRefs", () => {
+	const ROOT_CAUSE = "headerPrefixes ignored: no secretRefs to apply them to";
+
+	it("headerPrefixes-only, server 2xx → warning fires", async () => {
+		const { server, base } = await stubProbeServer(200);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{ auth: { headerPrefixes: { "x-api-key": "Bearer " } } },
+			);
+			expect(result.note ?? "").toContain(ROOT_CAUSE);
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+		}
+	});
+
+	it("headerPrefixes-only, server 401 → both the auth wording and the root cause", async () => {
+		const { server, base } = await stubProbeServer(401);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{ auth: { headerPrefixes: { "x-api-key": "Bearer " } } },
+			);
+			const note = result.note ?? "";
+			expect(note).toContain("endpoint requires auth; configure auth injection");
+			expect(note).toContain(ROOT_CAUSE);
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+		}
+	});
+
+	it("headerPrefixes-only, server 500 → warning surfaces on non-auth errors too", async () => {
+		const { server, base } = await stubProbeServer(500);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{ auth: { headerPrefixes: { "x-api-key": "Bearer " } } },
+			);
+			expect(result.note ?? "").toContain(ROOT_CAUSE);
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+		}
+	});
+
+	it("secretQueryRefs + headerPrefixes, no secretRefs, server 2xx → warning fires (edge case)", async () => {
+		const { server, base } = await stubProbeServer(200);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					auth: {
+						secretQueryRefs: { token: "t" },
+						headerPrefixes: { "x-api-key": "Bearer " },
+					},
+				},
+			);
+			expect(result.note ?? "").toContain(ROOT_CAUSE);
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+		}
+	});
+
+	it("correct shape (secretRefs + headerPrefixes) with secret provisioned → no warning", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-prefix-ok-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "K");
+		const { server, base } = await stubProbeServer(200);
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: {
+						secretRefs: { "x-api-key": "api_key" },
+						headerPrefixes: { "x-api-key": "Bearer " },
+					},
+				},
+			);
+			expect(result.note ?? "").not.toContain("headerPrefixes ignored");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
 	});
 });
 
@@ -715,6 +1058,32 @@ describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
 		expect(secrets.provisioned).toContain("gh_token");
 	});
 
+	it("apiHost without domain falls back to the provisioned parent domain in the report", async () => {
+		// Isolated store: the secret lives under the registrable domain; the
+		// apiHost is the api subdomain. listSecrets must report the parent.
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-list-fallback-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("coinmarketcap.com", "api_key", "CMC-KEY");
+		try {
+			const res = await runList({
+				apiHost: "https://pro-api.coinmarketcap.com",
+				path: "/v1/cryptocurrency/map",
+				listSecrets: true,
+			});
+			const secrets = (res.details as Record<string, unknown>).secrets as {
+				domain: string;
+				provisioned: string[];
+			};
+			expect(secrets.domain).toBe("coinmarketcap.com");
+			expect(secrets.provisioned).toEqual(["api_key"]);
+			expect(contentText(res)).not.toContain("CMC-KEY"); // names only
+		} finally {
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
 	it("names only — never emits a secret value", async () => {
 		const res = await runList({
 			apiHost: "https://api.etherscan.io/v2/api",
@@ -827,5 +1196,192 @@ describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
 		expect(contentText(res)).toContain(
 			"probe suppressed because listSecrets: true",
 		);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Scaffold emission — full skeleton vs op-block + merge note
+// ═══════════════════════════════════════════════════════════════════
+
+const SCAFFOLD_GUIDE = `---
+domains: [archive.org]
+apiHost: https://archive.org/wayback
+responseShape:
+  format: json
+operations:
+  - name: ping
+    via: restGet
+    path: /
+    accept: json
+    params: {}
+---
+`;
+
+// The probe hits a live localhost server; the scaffold decision is driven by
+// guides on a temp dir (0 / 1 / N claiming the routed domain).
+describe("api-probe scaffold", () => {
+	let scaffoldTmpGuides: string;
+	let prevGuidesDir: string;
+	let server: http.Server;
+	let base: string;
+
+	beforeAll(async () => {
+		prevGuidesDir = getUserGuidesDir();
+		scaffoldTmpGuides = mkdtempSync(
+			join(tmpdir(), "host-probe-scaffold-guides-"),
+		);
+		// 1-guide domain: archive.org
+		const one = join(scaffoldTmpGuides, "archive.org");
+		mkdirSync(one, { recursive: true });
+		writeFileSync(join(one, "guide.md"), SCAFFOLD_GUIDE);
+		// N-guide domain: two dirs both claiming multi.test
+		for (const dir of ["multi-a", "multi-b"]) {
+			const d = join(scaffoldTmpGuides, dir);
+			mkdirSync(d, { recursive: true });
+			writeFileSync(
+				join(d, "guide.md"),
+				SCAFFOLD_GUIDE.replace("archive.org", "multi.test"),
+			);
+		}
+		setUserGuidesDir(scaffoldTmpGuides);
+		invalidateCache();
+		server = http.createServer((_req, res) => {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ data: [{ id: 1 }], total_count: 10 }));
+		});
+		await new Promise<void>((r) => server.listen(0, r));
+		base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+	});
+
+	afterAll(() => {
+		server.close();
+		server.closeAllConnections?.();
+		setUserGuidesDir(prevGuidesDir);
+		invalidateCache();
+		rmSync(scaffoldTmpGuides, { recursive: true, force: true });
+	});
+
+	it("bootstrap (0 guides): parseable full skeleton with static-key auth translated from injection params", async () => {
+		const result = await probe(
+			base,
+			"/items",
+			{},
+			{
+				scaffold: true,
+				domain: "api.example.com",
+				auth: {
+					secretRefs: { Authorization: "apiKey" },
+					headerPrefixes: { Authorization: "Bearer " },
+				},
+			},
+		);
+		const draft = result.draft;
+		expect(draft).toContain("---");
+		expect(draft).toContain("kind: api");
+		expect(draft).toContain("domains: [api.example.com]");
+		expect(draft).toContain(`apiHost: ${base}`);
+		expect(draft).toContain("responseShape:");
+		expect(draft).toContain("gatherAllMax: 1000");
+		expect(draft).toContain(`schemaVersion: ${GUIDE_SCHEMA_VERSION}`);
+		expect(draft).toContain("auth:");
+		expect(draft).toContain("kind: static-key");
+		expect(draft).toContain("requires: [apiKey]");
+		expect(draft).toContain("secretRefs:");
+		expect(draft).toContain("Authorization: apiKey");
+		expect(draft).toContain("headerPrefixes:");
+		expect(draft).toContain('Authorization: "Bearer "');
+		// Pagination stays op-level only — never a top-level default.
+		expect(draft).not.toMatch(/^pagination:/m);
+		// The skeleton parses cleanly and carries the detection-ready vintage.
+		const parsed = parseApiGuide(draft, { filename: "scaffold" });
+		expect(parsed.ok).toBe(true);
+		if (parsed.ok) {
+			expect(parsed.guide.auth.kind).toBe("static-key");
+			expect(parsed.guide.auth.requires).toEqual(["apiKey"]);
+			expect(parsed.guide.auth.secretRefs).toEqual({ Authorization: "apiKey" });
+			expect(parsed.guide.schemaVersion).toBe(GUIDE_SCHEMA_VERSION);
+		}
+	});
+
+	it("translates secretQueryRefs into the auth block too", async () => {
+		const result = await probe(
+			base,
+			"/items",
+			{},
+			{
+				scaffold: true,
+				domain: "api.example.com",
+				auth: { secretQueryRefs: { apikey: "api_key" } },
+			},
+		);
+		expect(result.draft).toContain("kind: static-key");
+		expect(result.draft).toContain("requires: [api_key]");
+		expect(result.draft).toContain("secretQueryRefs:");
+		expect(result.draft).toContain("apikey: api_key");
+	});
+
+	it("1 guide: op block only + merge note naming the one dirName", async () => {
+		const result = await probe(
+			base,
+			"/items",
+			{},
+			{
+				scaffold: true,
+				domain: "archive.org",
+			},
+		);
+		expect(result.draft).not.toContain("---");
+		expect(result.draft).toContain("  - name:");
+		expect(result.note ?? "").toContain("merge into `archive.org`");
+	});
+
+	it("N guides: op block only + merge note listing every candidate dirName", async () => {
+		const result = await probe(
+			base,
+			"/items",
+			{},
+			{
+				scaffold: true,
+				domain: "multi.test",
+			},
+		);
+		expect(result.draft).not.toContain("---");
+		expect(result.note ?? "").toContain("merge into one of: multi-a, multi-b");
+	});
+
+	it("scaffold absent: output unchanged (op block only, no frontmatter)", async () => {
+		const plain = await probe(base, "/items", {});
+		const explicitFalse = await probe(base, "/items", {}, { scaffold: false });
+		expect(explicitFalse.draft).toBe(plain.draft);
+		expect(plain.draft).not.toContain("---");
+		expect(plain.draft).not.toMatch(/^pagination:/m);
+	});
+
+	it("scaffold absent + no guide → scaffoldNudge true (footer suggests scaffold: true)", async () => {
+		const result = await probe(base, "/items", {}, { domain: "api.example.com" });
+		expect(result.scaffoldNudge).toBe(true);
+		expect(formatProbeResult(result)).toContain(
+			"pass scaffold: true to emit a full recipe skeleton",
+		);
+	});
+
+	it("scaffold absent + guide exists → no nudge", async () => {
+		const result = await probe(base, "/items", {}, { domain: "archive.org" });
+		expect(result.scaffoldNudge).toBeUndefined();
+	});
+
+	it("scaffold: true + no guide → no nudge (already used the skeleton)", async () => {
+		const result = await probe(
+			base,
+			"/items",
+			{},
+			{ domain: "api.example.com", scaffold: true },
+		);
+		expect(result.scaffoldNudge).toBeUndefined();
+	});
+
+	it("tool description names scaffold: true and its auto-degrade behavior", () => {
+		expect(apiProbeTool.description).toContain("scaffold: true");
+		expect(apiProbeTool.description).toContain("auto-degrades");
 	});
 });

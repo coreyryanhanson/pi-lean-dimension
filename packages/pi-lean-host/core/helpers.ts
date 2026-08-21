@@ -170,6 +170,26 @@ function buildQueryParams(
 		}
 	}
 
+	// At-least-one-of constraint: at least one group member must be supplied.
+	// Members can't be `required` or carry a `default` (parser-enforced), so
+	// this is the only guard the group needs — same fail-closed seam as the
+	// per-param `required` check above. Both api-fetch and /api verify route
+	// through here (resolveOpForExecution → restGet/paginate), so one guard
+	// covers both call sites.
+	if (operation.requiresAnyOf && operation.requiresAnyOf.length > 0) {
+		const satisfied = operation.requiresAnyOf.some(
+			(name) => params[name] !== undefined,
+		);
+		if (!satisfied) {
+			throw new HelperError(
+				"params.requiresAnyOf",
+				`Missing one of: ${operation.requiresAnyOf.join(", ")}`,
+				`at least one of: ${operation.requiresAnyOf.join(", ")}`,
+				"none supplied",
+			);
+		}
+	}
+
 	// `passthrough`: forward caller-supplied params not declared in the
 	// recipe's `params` map onto the query string as-is. For APIs with an
 	// open param surface (Infogami /query.json flat form, CKAN, OAI-PMH)
@@ -219,7 +239,11 @@ export function normalizeDateParam(
 /**
  * Resolve a simple dot-delimited JSON path against an object.
  * Supports `data.items`, `resultados[0].campo`, `$.items` prefix.
+ *
+ * Returns `unknown` by design — the value at an arbitrary JSON path has no
+ * named domain type until the caller knows the path they asked for.
  */
+// pi-lens-ignore: ast-grep:no-unknown-returns
 export function resolveJsonPath(obj: unknown, path: string): unknown {
 	// Normalise: strip leading $ or $., convert bracket notation.
 	const normalised = path
@@ -267,10 +291,14 @@ const xmlParser = new XMLParser({
  * header charset wins). `parseResponse` itself does no decoding — the
  * `charset` field is consumed by the transport, not here.
  *
+ * Returns `unknown` by design — an arbitrary API response body has no named
+ * domain type; callers resolve JSON paths or run transforms against it.
+ *
  * @param body    The response body string (correctly decoded).
  * @param shape   The response shape (format dictates XML vs JSON parsing).
  * @returns       Parsed JSON value or XML-converted object.
  */
+// pi-lens-ignore: ast-grep:no-unknown-returns
 export function parseResponse(body: string, shape: ResponseShape): unknown {
 	if (shape.format === "text") {
 		// Raw passthrough — returned as-is, no trim (matches xml/json branches).

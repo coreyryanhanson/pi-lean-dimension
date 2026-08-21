@@ -19,7 +19,13 @@ import {
 	findGuidesByDomain,
 	getCatalogText,
 } from "../core/guide-store.js";
-import { formatGuideListings, TODAY } from "../core/parse-api-guide.js";
+import {
+	formatGuideListings,
+	selectGuideByShortName,
+	shortNameErrorText,
+	TODAY,
+	staleSchemaLine,
+} from "../core/parse-api-guide.js";
 import { authStatusLine, canonicalStoreDomain } from "../core/auth.js";
 import type { ApiGuide } from "../core/api-guide-types.js";
 
@@ -82,51 +88,32 @@ export const apiGuideTool = defineTool({
 		// No substring fallback — exact match is sufficient for v1 and avoids
 		// the unambiguous-or-error branch the substring path forces.
 		if (guideSelector) {
-			const lc = guideSelector.toLowerCase();
-			const selected = matches.filter(
-				(m) => m.guide.shortName.toLowerCase() === lc,
-			);
-			if (selected.length === 0) {
-				const valid = matches.map((m) => m.guide.shortName).join(", ");
+			const sel = selectGuideByShortName(matches, guideSelector);
+			if (!sel.ok) {
 				return {
 					content: [
 						{
 							type: "text",
-							text:
-								`No guide named '${guideSelector}' for '${domain}'. ` +
-								`Available guides: ${valid}. ` +
+							text: shortNameErrorText(
+								sel,
+								domain,
+								guideSelector,
 								`Call api-guide({domain: "${domain}"}) to see the menu.`,
+							),
 						},
 					],
-					details: {
-						error: "no_guide_by_shortname",
-						domain,
-						guide: guideSelector,
-					},
+					details:
+						sel.reason === "no_match"
+							? { error: "no_guide_by_shortname", domain, guide: guideSelector }
+							: {
+									error: "ambiguous_shortname",
+									domain,
+									guide: guideSelector,
+									directories: sel.directories,
+								},
 				};
 			}
-			if (selected.length > 1) {
-				const dirs = selected.map((s) => s.dirName).join(", ");
-				return {
-					content: [
-						{
-							type: "text",
-							text:
-								`Ambiguous guide '${guideSelector}' for '${domain}' — ` +
-								`${selected.length} guides share shortName '${guideSelector}' ` +
-								`(directories: ${dirs}). Rename one guide's shortName to ` +
-								`disambiguate. Call api-guide({domain: "${domain}"}) to see the menu.`,
-						},
-					],
-					details: {
-						error: "ambiguous_shortname",
-						domain,
-						guide: guideSelector,
-						directories: selected.map((s) => s.dirName),
-					},
-				};
-			}
-			return renderGuideDetail(selected[0]!.guide, domain);
+			return renderGuideDetail(sel.guide, domain);
 		}
 
 		if (matches.length === 1) {
@@ -189,6 +176,8 @@ function renderGuideDetail(
 	lines.push(`  Domains: ${guide.domains?.join(", ") ?? "—"}`);
 	lines.push(`  Host: ${guide.apiHost}`);
 	lines.push(`  Verified: ${guide.verified} · Updated: ${guide.updated}`);
+	const stale = staleSchemaLine(guide);
+	if (stale) lines.push(stale);
 	if (guide.docs) lines.push(`  Docs: ${guide.docs}`);
 	lines.push(`  Auth: ${guide.auth.kind}`);
 	// Auth status footer — shared with api-fetch. Metadata only (names,
@@ -230,6 +219,12 @@ function renderGuideDetail(
 				return parts.join(" ");
 			});
 			lines.push(`    params: ${rendered.join(", ")}`);
+			// At-least-one-of group — a single line naming the interchangeable
+			// params. Members are NOT rendered as `required` (parser bans
+			// required: true on them), so no suppression logic is needed.
+			if (op.requiresAnyOf && op.requiresAnyOf.length > 0) {
+				lines.push(`    requires any of: ${op.requiresAnyOf.join(", ")}`);
+			}
 			// Per-param hints (format, semantics) — these are the model's
 			// primary guidance for shaping values, so they get their own lines.
 			for (const [k, spec] of qParams) {

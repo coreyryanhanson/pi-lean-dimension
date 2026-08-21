@@ -34,6 +34,22 @@ operations:
         default: 2
       format:
         default: json
+  - name: queryPages
+    via: restGet
+    path: /w/api.php
+    accept: json
+    requiresAnyOf: [titles, pageids, revids]
+    params:
+      action:
+        default: query
+      format:
+        default: json
+      titles:
+        description: Page titles to query — at least one of titles, pageids, revids.
+      pageids:
+        description: Page IDs to query — at least one of titles, pageids, revids.
+      revids:
+        description: Revision IDs to query — at least one of titles, pageids, revids.
 ---
 # Wikimedia Action (synthetic axis guide) — tokenBag + transform (paginate)
 
@@ -49,3 +65,9 @@ live endpoint** — exercised only against mocked transport.
   merges the continuation keys (`continue.rccontinue`,
   `continue.continue`) from each page into the next request's query params.
   A throwing per-item transform routes that item to `failedItems` (raw).
+- **`queryPages`** (`restGet`, `requiresAnyOf`) — accepts pages by `titles`
+  **OR** `pageids` **OR** `revids` (MediaWiki `action=query`): three
+  interchangeable single params, the clean v1 shape for `requiresAnyOf`.
+  Soft-enforced by the real API (empty spec → empty batch, not a 400), but
+  as a synthetic fixture the shape fit is what matters — it exercises the
+  field end-to-end (parser → render → verify → `buildQueryParams`).

@@ -404,6 +404,18 @@ body
 			expect(r.error.fix).toContain("Authorization");
 		}
 	});
+
+	it("headerPrefixes value that is a bare {name} placeholder → ParseError (misconception guard)", () => {
+		const r = parseAuthBlock(`  kind: static-key
+  secretRefs:
+    x-api-key: api_key
+  headerPrefixes:
+    x-api-key: "{api_key}"
+  requires:
+    - api_key`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error.field).toBe("auth.headerPrefixes");
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════

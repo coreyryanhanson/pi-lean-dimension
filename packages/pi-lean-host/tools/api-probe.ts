@@ -31,12 +31,9 @@ import {
 	resolveSecretQueryParams,
 	scrubSecretValues,
 } from "../core/auth.js";
-import {
-	listDomains,
-	listNames,
-	provisionedDomainsSuffix,
-} from "../core/secrets-store.js";
+import { listDomains, listNames } from "../core/secrets-store.js";
 import { findGuidesByDomain } from "../core/guide-store.js";
+import { GUIDE_SCHEMA_VERSION } from "../core/api-guide-types.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
 import { appendFooter, contentText } from "./utils.js";
 
@@ -74,6 +71,9 @@ export interface ProbeResult {
 	raw: string;
 	/** Human note (auth-required, 404, version-prefix hit, non-JSON, …). */
 	note?: string;
+	/** True when the caller didn't pass scaffold: true and no guide claims the
+	 *  domain yet — the authoring loop should surface the skeleton option. */
+	scaffoldNudge?: boolean;
 }
 
 export interface ProbeOptions {
@@ -87,6 +87,7 @@ export interface ProbeOptions {
 	 * Values resolve from the secrets store and never enter the transcript.
 	 */
 	auth?: {
+		/** Maps header name → secret name, same direction as the guide schema. */
 		secretRefs?: Record<string, string>;
 		secretQueryRefs?: Record<string, string>;
 		/**
@@ -96,8 +97,15 @@ export interface ProbeOptions {
 		 */
 		headerPrefixes?: Record<string, string>;
 	};
-	/** Domain for secrets-store lookups; defaults to apiHost's hostname. */
+	/** Domain for secrets-store lookups; defaults to apiHost's hostname (or its provisioned parent domain). */
 	domain?: string;
+	/**
+	 * Emit a full recipe skeleton (frontmatter + auth + operations) when no
+	 * guide exists for the domain; auto-degrades to a single op block + merge
+	 * note when one or more guides already claim the domain. Opt-in —
+	 * without it the output is today's op-block-only draft.
+	 */
+	scaffold?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -224,6 +232,9 @@ interface ProbeAuthCtx {
 	secretQueryParamNames: Set<string>;
 	secretValues: string[];
 	missingNames: string[];
+	/** headerPrefixes declared but no secretRefs to apply them to — the
+	 *  prefixes would be silently dropped. Surfaced as a note, not an error. */
+	misconfiguredPrefixes: boolean;
 }
 
 /**
@@ -237,6 +248,16 @@ function resolveProbeAuth(
 	auth: NonNullable<ProbeOptions["auth"]> | undefined,
 	domain: string,
 ): ProbeAuthCtx {
+	// Computed before the hasRefs check so the flag survives both paths: a
+	// headerPrefixes-only block (hasRefs false → early return) and a
+	// secretQueryRefs block with prefixes but no secretRefs (hasRefs true →
+	// normal path, where resolveSecretHeaders would silently drop the
+	// prefixes). Query secrets never take prefixes, so secretQueryRefs is
+	// deliberately excluded from the flag.
+	const misconfiguredPrefixes =
+		!!auth &&
+		Object.keys(auth.headerPrefixes ?? {}).length > 0 &&
+		Object.keys(auth.secretRefs ?? {}).length === 0;
 	const hasRefs =
 		!!auth &&
 		(Object.keys(auth.secretRefs ?? {}).length > 0 ||
@@ -250,6 +271,7 @@ function resolveProbeAuth(
 			secretQueryParamNames: new Set(),
 			secretValues: [],
 			missingNames: [],
+			misconfiguredPrefixes,
 		};
 	}
 	const headerRes = resolveSecretHeaders(
@@ -286,16 +308,43 @@ function resolveProbeAuth(
 			...queryRes.absentRequired,
 			...queryRes.absentOptional,
 		],
+		misconfiguredPrefixes,
 	};
 }
 
-/** First missing secret name as a one-line note (names only, never values). */
+/** Root-cause note for a headerPrefixes-only auth block (no secretRefs to
+ *  apply the prefixes to). `:`/`;` internal separators keep the combined
+ *  error note from stacking three ` — ` joins when it composes with the
+ *  401/403 wording. */
+const MISCONFIGURED_PREFIXES_NOTE =
+	"headerPrefixes ignored: no secretRefs to apply them to; put the secret name in auth.secretRefs";
+
+/** First missing secret name as a one-line note (names only, never values).
+ *  Prescriptive: names the other provisioned domains and tells the author to
+ *  pass `domain:` — the probe's domain is inferred from apiHost, so a miss is
+ *  usually a domain-mismatch, not a missing secret. */
 function missNote(authCtx: ProbeAuthCtx, domain: string): string {
 	if (authCtx.missingNames.length === 0) return "";
-	return (
-		`secret "${authCtx.missingNames[0]}" not found in store for domain "${domain}"` +
-		provisionedDomainsSuffix(domain)
-	);
+	const others = listDomains().filter((d) => d !== domain);
+	const tail =
+		others.length > 0
+			? ` — provisioned domains: ${others.join(", ")}; pass domain: <one> to use its secret`
+			: "";
+	return `secret "${authCtx.missingNames[0]}" not found in store for domain "${domain}"${tail}`;
+}
+
+/** Resolve the secrets-store domain for a probe: the apiHost hostname when it
+ *  is itself provisioned, else the longest provisioned parent domain
+ *  (pro-api.coinmarketcap.com → coinmarketcap.com), else the hostname as-is.
+ *  ponytail: parent-suffix match against the store, not a public-suffix list —
+ *  no dep, and the store is the source of truth for where secrets live. */
+export function resolveProbeStoreDomain(hostname: string): string {
+	const domains = listDomains();
+	if (domains.includes(hostname)) return hostname;
+	const parent = domains
+		.filter((d) => hostname.endsWith(`.${d}`))
+		.sort((a, b) => b.length - a.length)[0];
+	return parent ?? hostname;
 }
 
 /** Hostname of an apiHost URL (falls back to the raw string). */
@@ -326,7 +375,7 @@ export async function probe(
 ): Promise<ProbeResult> {
 	const accept = opts.accept ?? "application/json";
 	const walkVersions = opts.walkVersions ?? true;
-	const domain = opts.domain ?? hostnameOf(apiHost);
+	const domain = opts.domain ?? resolveProbeStoreDomain(hostnameOf(apiHost));
 	const authCtx = resolveProbeAuth(opts.auth, domain);
 
 	// Base case only carries the apiHost version prefix; a walk-hit draft
@@ -339,6 +388,7 @@ export async function probe(
 		authCtx,
 		domain,
 		versionPrefixOf(apiHost),
+		opts,
 	);
 	if (base.status !== 404 || !walkVersions || /^\/v\d+\//.test(path)) {
 		return base;
@@ -353,7 +403,7 @@ export async function probe(
 		return base;
 	}
 	const hit = await walkBackward(
-		{ apiHost, path, params, accept, authCtx, domain },
+		{ apiHost, path, params, accept, authCtx, domain, opts },
 		Number(stated),
 	);
 	return hit ?? base;
@@ -378,6 +428,7 @@ async function walkBackward(
 		accept: string;
 		authCtx: ProbeAuthCtx;
 		domain: string;
+		opts: ProbeOptions;
 	},
 	start: number,
 ): Promise<ProbeResult | null> {
@@ -392,6 +443,7 @@ async function walkBackward(
 			ctx.authCtx,
 			ctx.domain,
 			`/v${k}`,
+			ctx.opts,
 		);
 		if (tried.status !== 404) {
 			// A walk hit may itself have redirected (e.g. /v2 301→ /v3); the
@@ -431,6 +483,7 @@ async function fetchOne(
 	authCtx: ProbeAuthCtx,
 	domain: string,
 	prefix = "",
+	opts: ProbeOptions = {},
 ): Promise<ProbeResult> {
 	// Inject secret query params below the agent-supplied params map, then
 	// redact the surfaced URL so the real key never reaches the transcript.
@@ -460,15 +513,25 @@ async function fetchOne(
 		const is401 = res.status === 401 || res.status === 403;
 		const miss = missNote(authCtx, domain);
 		let note: string;
-		if (authCtx.hasAuthBlock) {
-			// Auth block present → never the stale auth:none text; report the
-			// store miss (or a bare requires-auth hint when nothing was missing).
-			note = `${res.status}${is401 ? " — requires authentication?" : ""}${miss ? ` ${miss}` : ""}`;
-		} else {
-			// No auth block → the existing auth:none wording.
+		if (!authCtx.hasAuthBlock) {
+			// No auth injected — a 401/403 means the endpoint is gated and the
+			// probe sent nothing. Pre-guide authoring tool: no guide in scope,
+			// so no stale "(guide is auth:none)" wording.
 			note = is401
-				? `${res.status} — requires authentication? (guide is auth:none)`
+				? `${res.status} — endpoint requires auth; configure auth injection (auth.secretRefs)`
 				: `${res.status}`;
+		} else if (miss) {
+			// Auth injected but a required secret was missing — the miss names it.
+			note = `${res.status}${is401 ? " — auth rejected;" : ""} ${miss}`;
+		} else {
+			// Auth injected, nothing missing — rejection means the credentials
+			// were wrong (header name / secret value), not the endpoint.
+			note = is401
+				? `${res.status} — auth injected but rejected; verify header name and secret value`
+				: `${res.status}`;
+		}
+		if (authCtx.misconfiguredPrefixes) {
+			note += ` — ${MISCONFIGURED_PREFIXES_NOTE}`;
 		}
 		return {
 			url,
@@ -501,15 +564,31 @@ async function fetchOne(
 
 	const shape = summarize(data);
 	const miss = missNote(authCtx, domain);
+	let draft = emitDraft(path, params, shape, prefix);
+	let note: string | undefined = miss;
+	if (opts.scaffold && draft) {
+		const sc = emitScaffold({ apiHost, domain, draft, auth: opts.auth });
+		draft = sc.draft;
+		if (sc.note) note = [note, sc.note].filter(Boolean).join(" — ");
+	}
+	if (authCtx.misconfiguredPrefixes) {
+		note = [note, MISCONFIGURED_PREFIXES_NOTE].filter(Boolean).join(" — ");
+	}
+	// Targeted scaffold nudge: only when the caller didn't pass
+	// scaffold: true AND no guide claims the domain yet — authors who already
+	// used the skeleton (or who have a guide) see no noise.
+	const scaffoldNudge =
+		opts.scaffold !== true && findGuidesByDomain(domain).length === 0;
 	return {
 		url,
 		finalUrl,
 		status: res.status,
 		ok: true,
 		shape,
-		draft: emitDraft(path, params, shape, prefix),
+		draft,
 		raw,
-		...(miss ? { note: miss } : {}),
+		...(note ? { note } : {}),
+		...(scaffoldNudge ? { scaffoldNudge } : {}),
 	};
 }
 
@@ -571,23 +650,33 @@ export function emitDraft(
 		lines.push(
 			"    # unverified — pagination params are guessed from response keys; confirm the API accepts them",
 		);
-		const style =
-			shape.paginationMarkers.includes("page") ||
-			shape.paginationMarkers.includes("per_page")
-				? "page"
-				: "offset-limit";
-		const pageParam = style === "page" ? "page" : "offset";
-		const pageSizeParam = style === "page" ? "per_page" : "limit";
+		const markers = shape.paginationMarkers;
+		const isPageStyle = markers.includes("page") || markers.includes("per_page");
+		const style = isPageStyle ? "page" : "offset-limit";
+		// `start` marker ⇒ 1-based row offset (CMC, GBIF) — emit base: 1 so the
+		// first page starts at 1, not the 0 default. `offset` ⇒ 0-based, no base.
+		let pageParam: string;
+		if (isPageStyle) pageParam = "page";
+		else if (markers.includes("start")) pageParam = "start";
+		else pageParam = "offset";
+		const pageSizeParam = isPageStyle ? "per_page" : "limit";
+		if (style === "offset-limit") {
+			lines.push(
+				"    # offset-limit advances the page param by pageSize each page (row-offset semantics); base seeds the start (1 for `start` params, 0 for `offset`)",
+			);
+		}
 		lines.push("    pagination:");
 		lines.push(`      style: ${style}`);
 		lines.push(`      itemsPath: ${shape.suggestedItemsPath}`);
 		lines.push(`      pageParam: ${pageParam}`);
 		lines.push(`      pageSizeParam: ${pageSizeParam}`);
 		lines.push("      pageSize: 30");
+		if (pageParam === "start") lines.push("      base: 1");
 	}
 	if (shape.suggestedVia === "restGet" && shape.suggestedItemsPath !== "") {
 		lines.push(
-			"    # array response with no pagination markers — if the API documents paging, prefer paginate; otherwise use restGet.",
+			"    # array response with no pagination markers — if the API documents paging, prefer paginate:",
+			"    #   offset-limit advances the page param by pageSize each page (use base: 1 for 1-based `start` APIs like CMC); page increments the page param by 1.",
 		);
 	}
 	if (queryParamKeys.length > 0) {
@@ -615,6 +704,112 @@ function suggestName(path: string): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Scaffold emission — full skeleton vs op-block + merge note
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Translate the probe's auth-injection params into a `kind: static-key` auth
+ * block (probe auth shape matches the guide schema).
+ * `requires` = the union of secret names referenced by the refs. Returns
+ * undefined when no injection refs are declared (auth: none default).
+ */
+function emitAuthBlock(
+	auth: NonNullable<ProbeOptions["auth"]> | undefined,
+): string | undefined {
+	const refs = auth?.secretRefs ?? {};
+	const queryRefs = auth?.secretQueryRefs ?? {};
+	const prefixes = auth?.headerPrefixes ?? {};
+	const names = [
+		...new Set([...Object.values(refs), ...Object.values(queryRefs)]),
+	];
+	if (names.length === 0) return undefined;
+	const lines = [
+		"auth:",
+		"  kind: static-key",
+		`  requires: [${names.join(", ")}]`,
+	];
+	if (Object.keys(refs).length > 0) {
+		lines.push("  secretRefs:");
+		for (const [header, secret] of Object.entries(refs))
+			lines.push(`    ${header}: ${secret}`);
+	}
+	if (Object.keys(queryRefs).length > 0) {
+		lines.push("  secretQueryRefs:");
+		for (const [param, secret] of Object.entries(queryRefs))
+			lines.push(`    ${param}: ${secret}`);
+	}
+	if (Object.keys(prefixes).length > 0) {
+		lines.push("  headerPrefixes:");
+		for (const [header, prefix] of Object.entries(prefixes))
+			lines.push(`    ${header}: "${prefix}"`);
+	}
+	return lines.join("\n");
+}
+
+/**
+ * Full recipe skeleton (bootstrap): frontmatter + auth + the probe's op
+ * block. `schemaVersion` literal matches what api-learn stamps on save, so a
+ * scaffolded guide is detection-ready the moment it's saved. Pagination stays
+ * op-level only (a single probe justifies one op's pagination, never a
+ * top-level default).
+ */
+function emitScaffoldSkeleton(opts: {
+	apiHost: string;
+	domain: string;
+	draft: string;
+	auth: ProbeOptions["auth"];
+}): string {
+	const lines = [
+		"---",
+		"kind: api",
+		`domains: [${opts.domain}]`,
+		`apiHost: ${opts.apiHost}`,
+		"responseShape:",
+		"  format: json",
+		"gatherAllMax: 1000",
+		`schemaVersion: ${GUIDE_SCHEMA_VERSION}`,
+	];
+	const authBlock = emitAuthBlock(opts.auth);
+	if (authBlock) lines.push("", authBlock);
+	// Op-level hint for the new constraint field — commented so a fresh
+	// scaffold surfaces the mechanism (mirrors placeholderSkeleton).
+	lines.push(
+		"",
+		"# requiresAnyOf: [id, slug, code]  # at least one of these params must be supplied",
+		"operations:",
+		opts.draft,
+		"---",
+		"",
+	);
+	return lines.join("\n");
+}
+
+/**
+ * Scaffold decision, driven by findGuidesByDomain(domain): 0 guides →
+ * full skeleton (bootstrap); 1 guide → op block + merge note naming the one
+ * dirName; N guides → op block + merge note listing every candidate dirName
+ * (the merge-target choice defers to api-learn's selector). Returns the
+ * paste-able draft + an optional human merge note.
+ */
+function emitScaffold(opts: {
+	apiHost: string;
+	domain: string;
+	draft: string;
+	auth: ProbeOptions["auth"];
+}): { draft: string; note?: string } {
+	const matches = findGuidesByDomain(opts.domain);
+	if (matches.length === 0) {
+		return { draft: emitScaffoldSkeleton(opts) };
+	}
+	const dirs = matches.map((m) => m.dirName);
+	const note =
+		matches.length === 1
+			? `scaffold: guide already exists — merge into \`${dirs[0]}\``
+			: `scaffold: ${matches.length} guides already exist — merge into one of: ${dirs.join(", ")}`;
+	return { draft: opts.draft, note };
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Tool definition
 // ═══════════════════════════════════════════════════════════════════
 
@@ -637,7 +832,10 @@ export const apiProbeTool = defineTool({
 		"version — then probe that version explicitly. Do not default the version from " +
 		"memory: a stale version that still returns 200 is not detected as old (the " +
 		"backward walk only fires on 404). The probe recovers an over-claimed version " +
-		"but cannot detect a stale-but-working one.",
+		"but cannot detect a stale-but-working one. " +
+		"Pass scaffold: true to emit a full recipe skeleton (frontmatter + auth + " +
+		"operations) when no guide exists for the domain; it auto-degrades to a single " +
+		"op block + merge note when one or more guides already claim the domain.",
 
 	parameters: Type.Object({
 		apiHost: Type.Optional(
@@ -669,6 +867,14 @@ export const apiProbeTool = defineTool({
 					"On 404, walk the apiHost version backward (vN→v1) to find the highest live version. Default true.",
 			}),
 		),
+		scaffold: Type.Optional(
+			Type.Boolean({
+				description:
+					"Emit a full recipe skeleton (frontmatter + auth + operations) when no guide exists for the domain; " +
+					"auto-degrades to a single op block + merge note when one or more guides already claim the domain. " +
+					"Opt-in — without it the output is today's op-block-only draft.",
+			}),
+		),
 		auth: Type.Optional(
 			Type.Object(
 				{
@@ -678,8 +884,10 @@ export const apiProbeTool = defineTool({
 				},
 				{
 					description:
-						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Injection fields only — values resolve from the secrets store and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
+						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Accepts only secretRefs, secretQueryRefs, and headerPrefixes. Values resolve from the secrets store and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
 					// Tight: unknown keys (e.g. a stray `domain`) are rejected before execute runs.
+					// The description above names the allowed fields explicitly — keep it in
+					// sync when adding/renaming a field here, or the prose lies to agents.
 					additionalProperties: false,
 				},
 			),
@@ -687,7 +895,7 @@ export const apiProbeTool = defineTool({
 		domain: Type.Optional(
 			Type.String({
 				description:
-					"Domain for secrets-store lookups; defaults to apiHost's hostname.",
+					"Domain for secrets-store lookups; defaults to apiHost's hostname (or its provisioned parent domain).",
 			}),
 		),
 		listSecrets: Type.Optional(
@@ -703,18 +911,21 @@ export const apiProbeTool = defineTool({
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-		const { apiHost, path, walkVersions, auth, domain, listSecrets } = params as {
-			apiHost?: string;
-			path?: string;
-			params?: Record<string, unknown>;
-			walkVersions?: boolean;
-			auth?: {
-				secretRefs?: Record<string, string>;
-				secretQueryRefs?: Record<string, string>;
+		const { apiHost, path, walkVersions, auth, domain, listSecrets, scaffold } =
+			params as {
+				apiHost?: string;
+				path?: string;
+				params?: Record<string, unknown>;
+				walkVersions?: boolean;
+				auth?: {
+					secretRefs?: Record<string, string>;
+					secretQueryRefs?: Record<string, string>;
+					headerPrefixes?: Record<string, string>;
+				};
+				domain?: string;
+				listSecrets?: boolean;
+				scaffold?: boolean;
 			};
-			domain?: string;
-			listSecrets?: boolean;
-		};
 		const userParams = (params as Record<string, unknown>)["params"] as
 			| Record<string, unknown>
 			| undefined;
@@ -740,7 +951,9 @@ export const apiProbeTool = defineTool({
 			const unscoped = domain ? undefined : unscopedStoreDomains();
 			const blocks: string[] = [];
 			if (unscoped !== undefined) blocks.push(formatUnscopedDomains(unscoped));
-			const target = domain ?? (apiHost ? hostnameOf(apiHost) : undefined);
+			const target =
+				domain ??
+				(apiHost ? resolveProbeStoreDomain(hostnameOf(apiHost)) : undefined);
 			if (target !== undefined) {
 				const secrets = listDomainSecrets(target);
 				blocks.push(formatSecretsResult(secrets));
@@ -782,6 +995,7 @@ export const apiProbeTool = defineTool({
 				...(walkVersions === undefined ? {} : { walkVersions }),
 				...(auth ? { auth } : {}),
 				...(domain ? { domain } : {}),
+				...(scaffold === undefined ? {} : { scaffold }),
 			});
 			return {
 				content: [{ type: "text", text: formatProbeResult(result) }],
@@ -815,6 +1029,7 @@ export const apiProbeTool = defineTool({
 		const parts: string[] = [theme.fg("toolTitle", theme.bold("api-probe "))];
 		if (args.apiHost) parts.push(theme.fg("accent", `"${args.apiHost}"`));
 		if (args.path) parts.push(theme.fg("dim", `› ${args.path}`));
+		if (args.scaffold) parts.push(theme.fg("dim", "· scaffold"));
 		return new Text(parts.join(" "), 0, 0);
 	},
 
@@ -914,7 +1129,13 @@ export function formatProbeResult(r: ProbeResult): string {
 		lines.push(r.raw);
 	}
 	lines.push("");
-	lines.push(`  ${DOCS_NUDGE.join("\n  ")}`);
+	const footer = [...DOCS_NUDGE];
+	if (r.scaffoldNudge) {
+		footer.push(
+			"No guide for this domain yet — pass scaffold: true to emit a full recipe skeleton.",
+		);
+	}
+	lines.push(`  ${footer.join("\n  ")}`);
 	return lines.join("\n");
 }
 

@@ -1,7 +1,7 @@
 /**
  * parseApiGuide() schema & parser tests.
  *
- * Covers the acceptance criteria:
+ * Covers:
  *  - BOE worked example parses to a valid ApiGuide with defaults filled.
  *  - Each malformed fixture returns a ParseError with dotted field path.
 
@@ -18,6 +18,7 @@ import {
 	projectToGuide,
 	loadApiGuidesFromDir,
 	formatApiGuideCatalog,
+	stampFrontmatterField,
 } from "../core/parse-api-guide.js";
 import {
 	GATHER_ALL_MAX_FALLBACK,
@@ -472,6 +473,72 @@ body
 		expect(err.found).toBe("basic");
 	});
 
+	it("missing auth.kind → ParseError with fix naming none | static-key", () => {
+		const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+auth:
+  secretRefs:
+    Authorization: apiKey
+operations:
+  - name: get
+    via: restGet
+    path: /things
+---
+body
+`;
+		const err = expectErr(raw);
+		expect(err.field).toBe("auth.kind");
+		expect(err.found).toBe("missing");
+		expect(err.fix).toContain("none | static-key");
+		expect(err.fix).toContain("kind: static-key");
+		expect(err.fix).toContain("new: true");
+	});
+
+	it("unknown auth key (name/secret wrong shape) → ParseError with fix pointing at secretRefs/requires", () => {
+		const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+auth:
+  kind: static-key
+  name: X-CMC_PRO_API_KEY
+  secret: api_key
+operations:
+  - name: get
+    via: restGet
+    path: /things
+---
+body
+`;
+		const err = expectErr(raw);
+		expect(err.field).toBe("auth.name");
+		expect(err.found).toBe("unknown key(s): name, secret");
+		expect(err.fix).toContain("secretRefs");
+		expect(err.fix).toContain("requires");
+	});
+
+	it("near-miss auth key (requiers:) → fix says did you mean requires", () => {
+		const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+auth:
+  kind: static-key
+  secretRefs:
+    x-api-key: api_key
+  requiers:
+    - api_key
+operations:
+  - name: get
+    via: restGet
+    path: /things
+---
+body
+`;
+		const err = expectErr(raw);
+		expect(err.field).toBe("auth.requiers");
+		expect(err.fix).toContain('did you mean "requires"?');
+	});
+
 	it("paginate op with no pagination → ParseError", () => {
 		const raw = `---
 domains: [example.com]
@@ -536,6 +603,7 @@ body
 `;
 		const err = expectErr(raw);
 		expect(err.field).toBe("domains");
+		expect(err.fix).toContain("new: true");
 	});
 
 	it("missing operations → ParseError on operations", () => {
@@ -847,9 +915,194 @@ body
 		expect(guide.operations[0]!.transform).toBeUndefined();
 	});
 
+	describe("parseApiGuide — requiresAnyOf", () => {
+		it("parses requiresAnyOf on an operation", () => {
+			const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: getResource
+    via: restGet
+    path: /resources
+    requiresAnyOf: [id, slug, code]
+    params:
+      id:
+        description: Resource id.
+      slug:
+        description: Resource slug.
+      code:
+        description: Resource code.
+---
+body
+`;
+			const guide = expectOk(raw);
+			const op = guide.operations[0]!;
+			expect(op.requiresAnyOf).toEqual(["id", "slug", "code"]);
+		});
+
+		it("omits requiresAnyOf when absent", () => {
+			const guide = expectOk(MINIMAL);
+			expect(guide.operations[0]!.requiresAnyOf).toBeUndefined();
+		});
+
+		it("rejects an empty requiresAnyOf array", () => {
+			const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: getResource
+    via: restGet
+    path: /resources
+    requiresAnyOf: []
+    params:
+      id:
+        description: Resource id.
+---
+body
+`;
+			const err = expectErr(raw);
+			expect(err.field).toBe("operations[0].requiresAnyOf");
+			expect(err.expected).toContain("non-empty list");
+		});
+
+		it("rejects a requiresAnyOf member that is not a declared param", () => {
+			const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: getResource
+    via: restGet
+    path: /resources
+    requiresAnyOf: [id, code]
+    params:
+      id:
+        description: Resource id.
+---
+body
+`;
+			const err = expectErr(raw);
+			expect(err.field).toBe("operations[0].requiresAnyOf.code");
+			expect(err.expected).toContain("declared in this operation's params");
+		});
+
+		it("rejects a requiresAnyOf member that is a path param", () => {
+			const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: getThing
+    via: restGet
+    path: /things/{id}
+    requiresAnyOf: [id, code]
+    params:
+      code:
+        description: Resource code.
+---
+body
+`;
+			const err = expectErr(raw);
+			expect(err.field).toBe("operations[0].requiresAnyOf.id");
+			expect(err.expected).toContain("not a path param");
+		});
+
+		it("rejects a requiresAnyOf member that is required: true", () => {
+			const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: getResource
+    via: restGet
+    path: /resources
+    requiresAnyOf: [id, code]
+    params:
+      id:
+        required: true
+      code:
+        description: Resource code.
+---
+body
+`;
+			const err = expectErr(raw);
+			expect(err.field).toBe("operations[0].requiresAnyOf.id");
+			expect(err.expected).toContain("not also required");
+			expect(err.fix).toContain("Remove required: true");
+		});
+
+		it("rejects a requiresAnyOf member that carries a default (mutually exclusive peers)", () => {
+			const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: getResource
+    via: restGet
+    path: /resources
+    requiresAnyOf: [id, code]
+    params:
+      id:
+        default: 1027
+      code:
+        description: Resource code.
+---
+body
+`;
+			const err = expectErr(raw);
+			expect(err.field).toBe("operations[0].requiresAnyOf.id");
+			expect(err.expected).toContain("not also declare a default");
+			expect(err.fix).toContain("Remove the default from params.id");
+			expect(err.fix).toContain("mutually exclusive peers");
+		});
+	});
+
 	it("no frontmatter → ParseError on frontmatter", () => {
 		const err = expectErr("just prose, no frontmatter");
 		expect(err.field).toBe("frontmatter");
+	});
+
+	// The opener-present cases route to a closing-`---` diagnostic
+	// instead of the misleading "no frontmatter found".
+	it("opening --- with no closing --- → names the missing closer", () => {
+		const err = expectErr(
+			`---\ndomains: [example.com]\napiHost: https://api.example.com`,
+		);
+		expect(err.field).toBe("frontmatter");
+		expect(err.found).toBe("missing closing ---");
+		expect(err.found).not.toContain("no frontmatter");
+		expect(err.fix).toContain("---");
+	});
+
+	it("opening --- with a malformed closer (no trailing newline) → diagnosed", () => {
+		// FRONTMATTER_RE needs a newline after the closing ---; a closer at EOF
+		// without one is present-but-malformed, not missing.
+		const err = expectErr(
+			`---\ndomains: [example.com]\napiHost: https://api.example.com\n---`,
+		);
+		expect(err.field).toBe("frontmatter");
+		expect(err.found).toContain("closing --- present but malformed");
+		expect(err.fix).toContain("newline");
+	});
+
+	it("CRLF opening --- with no closing --- → names the missing closer", () => {
+		const err = expectErr(
+			`---\r\ndomains: [example.com]\r\napiHost: https://api.example.com`,
+		);
+		expect(err.field).toBe("frontmatter");
+		expect(err.found).toBe("missing closing ---");
+	});
+
+	it("CRLF opening --- with a malformed closer → diagnosed", () => {
+		const err = expectErr(
+			`---\r\ndomains: [example.com]\r\napiHost: https://api.example.com\r\n---`,
+		);
+		expect(err.field).toBe("frontmatter");
+		expect(err.found).toContain("closing --- present but malformed");
+	});
+
+	it("no opening --- at all → existing 'no frontmatter found' preserved", () => {
+		// Starts with prose, not ---; a stray --- later in the body is not an
+		// opening delimiter, so the common no-frontmatter diagnostic stays.
+		const err = expectErr("prose\n---\nmore prose");
+		expect(err.field).toBe("frontmatter");
+		expect(err.found).toBe("no frontmatter found");
 	});
 
 	it("invalid YAML → ParseError on frontmatter", () => {
@@ -1431,5 +1684,38 @@ org guide.
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// stampFrontmatterField — save-stamp blank-line separation (G3)
+// ═══════════════════════════════════════════════════════════════════
+
+describe("stampFrontmatterField", () => {
+	it("inserts a blank line before a new key when the preceding line is non-empty", () => {
+		const out = stampFrontmatterField(
+			"---\nfoo: bar\n---\n",
+			"schemaVersion",
+			"0",
+		);
+		expect(out).toBe("---\nfoo: bar\n\nschemaVersion: 0\n---\n");
+	});
+
+	it("does not double-blank when the preceding line is already empty", () => {
+		const out = stampFrontmatterField(
+			"---\nfoo: bar\n\n---\n",
+			"schemaVersion",
+			"0",
+		);
+		expect(out).toBe("---\nfoo: bar\n\nschemaVersion: 0\n---\n");
+	});
+
+	it("replaces an existing key without introducing a blank line (idempotent re-stamp)", () => {
+		const out = stampFrontmatterField(
+			"---\nfoo: bar\nschemaVersion: 0\n---\n",
+			"schemaVersion",
+			"1",
+		);
+		expect(out).toBe("---\nfoo: bar\nschemaVersion: 1\n---\n");
 	});
 });

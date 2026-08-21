@@ -17,8 +17,8 @@
   and the `/api` command. The package declares `pi-lean-portal` as an
   **optional peer dependency** — host-only installs are valid.
 - **`/api` toggle — independent peer of `/web`** — `on|off|learn|status`
-  plus `helpers` and `secrets` subcommands. The two toggles compose
-  freely: each owns its own toolset and status-bar glyph, and
+  plus `helpers`, `secrets`, `verify`, and `delete` subcommands. The two
+  toggles compose freely: each owns its own toolset and status-bar glyph, and
   `/api on` + `/web off` yields a pure **api-only** context with zero
   `browser-*` noise for batch structured-data pulls. Three states
   (`on`, `learn`, `off`) with `api-learn`/`api-probe` gated behind
@@ -27,7 +27,12 @@
   with defaults overridable through the `toolsetDefaults` settings tier.
   Actuating subcommands are refused while a focus mode is active
   (read-only subcommands stay unguarded), mirroring the portal/search
-  focus-mode guard.
+  focus-mode guard. `/api verify <domain> [guide] [--force]` runs every
+  runnable op against the live API and stamps `verified` on success
+  (any runnable-op failure → no stamp; skipped ops named; `--force` is
+  human-typed only); `/api delete <domain> [guide]` removes a guide
+  directory and invalidates the guide-store cache (human-typed recovery
+  gesture, no agent tool surface).
 - **Recipe schema and fixed executor** — `via: restGet|paginate` per
   operation; `responseShape.format: json|xml|text` with an IANA
   `charset` fallback (header charset always wins). Six pagination styles
@@ -35,16 +40,27 @@
   `cursor`, `resumptionToken`, `tokenBag`, with optional
   `totalCountPath` for a server-reported total. `gatherAll` paginates
   to exhaustion under a per-guide / per-op `gatherAllMax` ceiling
-  (default `1000`). v1 is **GET-read only** — no mutation helper.
-- **`api-learn` + `api-probe` authoring loop** — `api-learn` validates
-  a recipe string before touching disk and writes the guide (no draft
-  store; the file on disk *is* the working state, like `web-learn`).
-  `api-probe` fetches a templated path over the real transport,
-  summarizes the JSON shape, and emits a draft YAML operation block —
-  it only suggests, never writes. On 404 it walks the `apiHost` version
-  backward to recover an over-claimed version. Authoring is spec-first,
-  probe-second; the agent never authors guides unprompted outside
-  `/api learn`.
+  (default `1000`). Op-level `requiresAnyOf` declares an at-least-one-of
+  param group (single group per op, v1). `schemaVersion` frontmatter
+  (stamped on save by `api-learn`) drives breaking-change detection: a
+  stale guide warns non-blockingly in `api-guide`/`api-fetch`, never
+  gating the load. v1 is **GET-read only** — no mutation helper.
+- **`api-learn` + `api-probe` authoring loop** — `api-learn` stages the
+  working copy to `/tmp/pi-lean-host/<domain>/guide.md` and saves from a
+  file path (`recipeFile`), so the model never round-trips a giant recipe
+  string. Its entry point splits: a bare call returns a field reference
+  plus a pointer to `{domain, new: true}` (a fail-closed starter template
+  whose only real field is `domains`), and `{domain}` with no `recipeFile`
+  fetches an existing guide's raw recipe into the staged file (surfacing
+  `dirName` to prevent sibling-clobber in multi-recipe domains). `api-probe` fetches a
+  templated path over the real transport, summarizes the JSON shape,
+  and emits a draft YAML operation block — it only suggests, never
+  writes. `api-probe({scaffold: true})` emits a full recipe skeleton
+  (frontmatter + `auth:` translated from the inline auth block + an op
+  block) instead of just the op block, auto-degrading by guide count.
+  On 404 it walks the `apiHost` version backward to recover an
+  over-claimed version. Authoring is spec-first, probe-second; the
+  agent never authors guides unprompted outside `/api learn`.
 - **Static-key auth and per-domain secrets store** — `auth.kind:
   static-key` realizes store-backed `secretRefs` (header injection),
   `secretQueryRefs` (query-param injection), and `requires`/`optional`

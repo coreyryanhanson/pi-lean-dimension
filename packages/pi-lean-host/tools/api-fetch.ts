@@ -17,20 +17,23 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { restGet, paginate, HelperError } from "../core/helpers.js";
-import { findGuidesByDomain } from "../core/guide-store.js";
-import { callHelper, loadTransform } from "../core/local-helpers.js";
 import {
-	resolveSecretHeaders,
-	resolveSecretQueryParams,
-	authStatusLine,
-	canonicalStoreDomain,
-	containsSecret,
-	type SecretResolution,
-	type QuerySecretResolution,
-} from "../core/auth.js";
+	HelperError,
+	type RestGetResult,
+	type PaginateResult,
+} from "../core/helpers.js";
+import { findGuidesByDomain } from "../core/guide-store.js";
+import {
+	resolveOpForExecution,
+	type ResolveOpOptions,
+	type ResolveOpResult,
+} from "../core/resolve-op.js";
+import { canonicalStoreDomain, containsSecret } from "../core/auth.js";
 import { provisionedDomainsSuffix } from "../core/secrets-store.js";
-import { formatGuideListings } from "../core/parse-api-guide.js";
+import {
+	formatGuideListings,
+	staleSchemaLine,
+} from "../core/parse-api-guide.js";
 import { spillResponse, formatSpillNotice } from "../core/response-spill.js";
 import { appendFooter, contentText } from "./utils.js";
 import type { Operation, ApiGuide } from "../core/api-guide-types.js";
@@ -167,224 +170,19 @@ export const apiFetchTool = defineTool({
 
 		const { guide, dirName: helperDirName, op } = opMatches[0]!;
 
-		// 2.5.5 The canonical secret-store key: `guide.domains[0]` (the plain
-		// browsable domain). Independent of the routing `domain` the agent
-		// passed — auth resolution, the fail-closed error, and the footer all
-		// key the store on this canonical value, not on `domain`.
+		// The canonical secret-store key: `guide.domains[0]` (the plain
+		// browsable domain), used for the fail-closed error below.
 		const storeDomain = canonicalStoreDomain(guide);
 
-		// 2.5 Resolve local helper if the operation declares one.
-		// The helper is resolved by the matched guide's directory name
-		// (helperDirName), not by a helper name — one helper per guide lives
-		// at <guidesDir>/<dirName>/helper.ts. dirName may differ from the
-		// routing `domain` in the multi-recipe case.
-		let executeParams = userParams ?? {};
-		if (op.helper === true) {
-			const helperResult = await callHelper(helperDirName, op.name, executeParams);
-			if (!helperResult.ok) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: formatHelperDisabled(
-								helperResult.error,
-								helperDirName,
-								domain,
-								operation,
-							),
-						},
-					],
-					details: {
-						error: "helper_disabled",
-						domain,
-						operation,
-					},
-				};
-			}
-			executeParams = helperResult.params;
-		}
-
-		// 2.6 Resolve the post-response transform if the operation declares one.
-		// Loaded once before dispatch via `loadTransform(dirName)` (the helper
-		// is resolved by the matched guide's directory name, same as pre-call
-		// helpers). The executor hookpoint applies it and owns the try/catch —
-		// a throw never escapes. No disable map: a failed transform is retried
-		// on the next call.
-		const transformFn =
-			op.transform === true ? await loadTransform(helperDirName) : null;
-		if (op.transform === true && transformFn === null) {
-			console.warn(
-				`⚠ Transform declared but no helper.ts found for ${helperDirName}.`,
-			);
-		}
-
-		// 2.7 Authentication (kind: static-key): resolve store-injected secret
-		// headers AND query params up front so a missing required secret
-		// fails closed BEFORE any request is made. Values never leave this
-		// scope — only header/param and secret NAMES ever surface to the agent.
-		let headerRes: SecretResolution | undefined;
-		let queryRes: QuerySecretResolution | undefined;
-		if (guide.auth.kind === "static-key") {
-			headerRes = resolveSecretHeaders(guide.auth, storeDomain);
-			queryRes = resolveSecretQueryParams(guide.auth, storeDomain);
-			const missingRequired = [
-				...(headerRes.absentRequired ?? []),
-				...(queryRes.absentRequired ?? []),
-			];
-			if (missingRequired.length > 0) {
-				const text =
-					`🔑 ${guide.shortName} requires a secret not yet provisioned: ` +
-					`${missingRequired.join(", ")}.\n` +
-					`Run /api secrets ${storeDomain} to provision it, then retry this call.` +
-					provisionedDomainsSuffix(storeDomain);
-				return {
-					content: [{ type: "text", text }],
-					details: {
-						error: "auth_required_not_provisioned",
-						domain,
-						operation,
-						missing: missingRequired,
-					},
-				};
-			}
-		}
-		const headerValues = headerRes
-			? [...Object.values(headerRes.headers), ...headerRes.rawHeaderValues]
-			: [];
-		const queryValues = queryRes ? Object.values(queryRes.queryParams) : [];
-		const authOpts: {
-			authHeaders?: Record<string, string>;
-			secretHeaderNames?: Set<string>;
-			secretValues?: string[];
-			secretQueryParams?: Record<string, string>;
-			secretQueryParamNames?: Set<string>;
-		} =
-			headerRes || queryRes
-				? {
-						...(headerRes
-							? {
-									authHeaders: headerRes.headers,
-									secretHeaderNames: new Set(
-										Object.keys(headerRes.headers).map((h) => h.toLowerCase()),
-									),
-								}
-							: {}),
-						...(queryRes
-							? {
-									secretQueryParams: queryRes.queryParams,
-									secretQueryParamNames: new Set(Object.keys(queryRes.queryParams)),
-								}
-							: {}),
-						secretValues: [...headerValues, ...queryValues],
-					}
-				: {};
-		const authFooter = authStatusLine(guide.auth, storeDomain);
-
-		// 3. Execute via the declared helper.
+		// Shared resolution + dispatch (callHelper + loadTransform + auth
+		// resolution + executor) — see core/resolve-op.ts. api-fetch and
+		// /api verify both route through it so the sequence can't drift.
+		let outcome: ResolveOpResult;
 		try {
-			const helperOpts = {
-				...(_bypassUrlSafety ? { skipSsrfGuard: true } : {}),
-			};
-
-			if (op.via === "restGet") {
-				const result = await restGet(
-					guide.apiHost,
-					op,
-					executeParams,
-					guide,
-					authOpts, // opts — restGet has no SSRF bypass; auth headers injected here
-					transformFn ?? undefined,
-					helperDirName,
-				);
-				let text = formatResult(result.data, guide, op, sessionKey, result.url);
-				if (result.transformWarning !== undefined) {
-					text =
-						`⚠ Transform failed: ${result.transformWarning}. Returning raw response.\n` +
-						text;
-				}
-				if (gatherAll) {
-					text += `\n⚠ gatherAll ignored — ${operation} is not paginated (via: restGet).`;
-				}
-				if (authFooter) text += `\n${authFooter}`;
-				return {
-					content: [{ type: "text", text }],
-					details: {
-						domain,
-						operation,
-						shortName: guide.shortName,
-						via: "restGet",
-						request: { method: "GET", url: result.url, params: result.params },
-						// Output-channel audit: drop response headers that echo a known
-						// secret value (an auth-bearing server must not leak the key).
-						headers: scrubSecretHeaders(result.headers, authOpts.secretValues),
-					},
-				};
-			}
-
-			if (op.via === "paginate") {
-				const paginateOpts: Parameters<typeof paginate>[4] = {
-					...helperOpts,
-					...authOpts,
-				};
-				if (gatherAll !== undefined) paginateOpts.gatherAll = gatherAll;
-				const result = await paginate(
-					guide.apiHost,
-					op,
-					executeParams,
-					guide,
-					paginateOpts,
-					transformFn ?? undefined,
-					helperDirName,
-				);
-				const firstUrl = result.urls[0] ?? "";
-				const serverTotal = result.serverTotal;
-				let text =
-					result.items.length === 0 && !result.failedItems
-						? [
-								`📦 0 item(s) fetched`,
-								formatRequestLine("GET", firstUrl),
-								`  pages fetched: ${result.pages}${result.ceilingHit ? " · ceiling: reached" : ""}`,
-								...formatServerTotalLines(serverTotal, 0),
-							].join("\n")
-						: formatPaginatedResult(
-								result.items,
-								result.totalFetched,
-								result.ceilingHit,
-								sessionKey,
-								firstUrl,
-								result.pages,
-								serverTotal,
-								result.failedItems,
-							);
-				if (authFooter) text += `\n${authFooter}`;
-				return {
-					content: [{ type: "text", text }],
-					details: {
-						domain,
-						operation,
-						shortName: guide.shortName,
-						via: "paginate",
-						request: {
-							method: "GET",
-							url: firstUrl,
-							params: result.params,
-							pages: result.pages,
-							urls: result.urls,
-						},
-						totalFetched: result.totalFetched,
-						...(serverTotal === undefined ? {} : { serverTotal }),
-						ceilingHit: result.ceilingHit,
-					},
-				};
-			}
-
-			// TypeScript guard — all ExecutorVia values handled above.
-			return {
-				content: [
-					{ type: "text", text: `Unhandled executor '${op.via as string}'.` },
-				],
-				details: { error: "unhandled_via", via: op.via },
-			};
+			const execOpts: ResolveOpOptions = { skipSsrfGuard: _bypassUrlSafety };
+			if (userParams) execOpts.userParams = userParams;
+			if (gatherAll !== undefined) execOpts.gatherAll = gatherAll;
+			outcome = await resolveOpForExecution(guide, op, helperDirName, execOpts);
 		} catch (err) {
 			if (err instanceof HelperError) {
 				return {
@@ -413,6 +211,128 @@ export const apiFetchTool = defineTool({
 				details: { error: "unexpected", message: String(err) },
 			};
 		}
+
+		// Non-run outcomes: a session-disabled helper or a fail-closed missing
+		// `requires` secret. Both return before any request is made.
+		if (!outcome.ok) {
+			if (outcome.reason === "helper_disabled") {
+				return {
+					content: [
+						{
+							type: "text",
+							text: formatHelperDisabled(
+								outcome.message,
+								helperDirName,
+								domain,
+								operation,
+							),
+						},
+					],
+					details: {
+						error: "helper_disabled",
+						domain,
+						operation,
+					},
+				};
+			}
+			const text =
+				`🔑 ${guide.shortName} requires a secret not yet provisioned: ` +
+				`${outcome.missing.join(", ")}.\n` +
+				`Run /api secrets ${storeDomain} to provision it, then retry this call.` +
+				provisionedDomainsSuffix(storeDomain);
+			return {
+				content: [{ type: "text", text }],
+				details: {
+					error: "auth_required_not_provisioned",
+					domain,
+					operation,
+					missing: outcome.missing,
+				},
+			};
+		}
+
+		const { via, result, authFooter } = outcome;
+
+		if (via === "restGet") {
+			const r = result as RestGetResult;
+			let text = formatResult(r.data, guide, op, sessionKey, r.url);
+			if (r.transformWarning !== undefined) {
+				text =
+					`⚠ Transform failed: ${r.transformWarning}. Returning raw response.\n` +
+					text;
+			}
+			if (gatherAll) {
+				text += `\n⚠ gatherAll ignored — ${operation} is not paginated (via: restGet).`;
+			}
+			if (authFooter) text += `\n${authFooter}`;
+			const staleNote = staleSchemaLine(guide);
+			if (staleNote) text += `\n${staleNote}`;
+			return {
+				content: [{ type: "text", text }],
+				details: {
+					domain,
+					operation,
+					shortName: guide.shortName,
+					via: "restGet",
+					request: { method: "GET", url: r.url, params: r.params },
+					// Output-channel audit: drop response headers that echo a known
+					// secret value (an auth-bearing server must not leak the key).
+					headers: scrubSecretHeaders(r.headers, outcome.authOpts.secretValues),
+				},
+			};
+		}
+
+		if (via === "paginate") {
+			const r = result as PaginateResult;
+			const firstUrl = r.urls[0] ?? "";
+			const serverTotal = r.serverTotal;
+			let text =
+				r.items.length === 0 && !r.failedItems
+					? [
+							`📦 0 item(s) fetched`,
+							formatRequestLine("GET", firstUrl),
+							`  pages fetched: ${r.pages}${r.ceilingHit ? " · ceiling: reached" : ""}`,
+							...formatServerTotalLines(serverTotal, 0),
+						].join("\n")
+					: formatPaginatedResult(
+							r.items,
+							r.totalFetched,
+							r.ceilingHit,
+							sessionKey,
+							firstUrl,
+							r.pages,
+							serverTotal,
+							r.failedItems,
+						);
+			if (authFooter) text += `\n${authFooter}`;
+			const staleNote = staleSchemaLine(guide);
+			if (staleNote) text += `\n${staleNote}`;
+			return {
+				content: [{ type: "text", text }],
+				details: {
+					domain,
+					operation,
+					shortName: guide.shortName,
+					via: "paginate",
+					request: {
+						method: "GET",
+						url: firstUrl,
+						params: r.params,
+						pages: r.pages,
+						urls: r.urls,
+					},
+					totalFetched: r.totalFetched,
+					...(serverTotal === undefined ? {} : { serverTotal }),
+					ceilingHit: r.ceilingHit,
+				},
+			};
+		}
+
+		// TypeScript guard — all ExecutorVia values handled above.
+		return {
+			content: [{ type: "text", text: `Unhandled executor '${via as string}'.` }],
+			details: { error: "unhandled_via", via },
+		};
 	},
 
 	renderCall(args, theme, _context) {
@@ -599,7 +519,7 @@ function formatAmbiguousOperation(
 		`Call api-guide({domain: "${domain}", guide: "${first.guide.shortName}"}) to read each guide's full recipe,`,
 	);
 	lines.push(
-		`then re-author one guide via api-learn({domain: "${first.dirName}", recipe: …}) with the colliding operation renamed so the names no longer clash.`,
+		`then re-author one guide via api-learn({domain: "${first.dirName}", recipeFile: …}) with the colliding operation renamed so the names no longer clash.`,
 	);
 	lines.push(`Note: api-learn rewrites a whole recipe, not a single operation.`);
 	return lines.join("\n");
@@ -659,7 +579,7 @@ function formatHelperError(
 	if (err.url) lines.push(formatRequestLine("GET", err.url));
 	lines.push("");
 	lines.push(
-		`Call api-guide({domain: "${domain}"}) to review the guide, or api-learn({domain: "${domain}", recipe: …}) to fix it.`,
+		`Call api-guide({domain: "${domain}"}) to review the guide, or api-learn({domain: "${domain}", recipeFile: …}) to fix it.`,
 	);
 	return lines.join("\n");
 }

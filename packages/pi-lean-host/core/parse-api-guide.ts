@@ -15,6 +15,7 @@ import type { Guide } from "./guide-loader.js";
 import { extractPathTokens } from "./path-template.js";
 import {
 	GATHER_ALL_MAX_FALLBACK,
+	GUIDE_SCHEMA_VERSION,
 	KNOWN_AUTH_KINDS,
 	type ApiGuide,
 	type DateParamFormat,
@@ -43,6 +44,42 @@ const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
 
 export const TODAY = () => new Date().toISOString().slice(0, 10);
 
+/**
+ * Line-level frontmatter stamp — replace (or insert) a single `key: value`
+ * line inside the isolated frontmatter block, preserving comments and key
+ * order (no YAML round-trip — a round-trip reformats and strips comments).
+ * Used by api-learn (schemaVersion save-stamp) and /api verify (verified
+ * stamp). Returns the document unchanged when it has no frontmatter block.
+ */
+export function stampFrontmatterField(
+	raw: string,
+	key: string,
+	value: string,
+): string {
+	const match = raw.match(FRONTMATTER_RE);
+	if (!match) return raw;
+	const fm = match[1] ?? "";
+	const content = match[2] ?? "";
+	const nl = /^---(\r?\n)/.exec(raw)?.[1] ?? "\n";
+	const lines = fm.split(nl);
+	const keyRe = new RegExp(`^${key}:\\s*.+$`);
+	const idx = lines.findIndex((l) => keyRe.test(l));
+	const line = `${key}: ${value}`;
+	if (idx === -1) {
+		// Insert-only separation: a new key would land flush against the
+		// preceding line (e.g. under the last op's params block). Push a
+		// blank line first when the preceding line is non-empty. Replace
+		// must NOT do this — every /api verify re-stamp would drift the file.
+		if (lines.length > 0 && lines.at(-1)?.trim() !== "") {
+			lines.push("");
+		}
+		lines.push(line);
+	} else {
+		lines[idx] = line;
+	}
+	return `---${nl}${lines.join(nl)}${nl}---${nl}${content}`;
+}
+
 const VALID_VIA: ReadonlySet<string> = new Set(["restGet", "paginate"]);
 // accept is a free-form string — any media type is valid (`json`/`xml`
 // shorthands are mapped by the helper).
@@ -60,6 +97,23 @@ const VALID_PAGINATION_STYLE: ReadonlySet<string> = new Set([
 	"resumptionToken",
 	"tokenBag",
 ]);
+
+// Strict auth schema (gap 1): the only keys validateAuth reads. Any other key
+// under `auth` is rejected at parse — the parser used to silently drop
+// unknowns, so a wrong-but-plausible shape (e.g. `name`/`secret`) saved a
+// guide the executor then silently couldn't honor.
+const KNOWN_AUTH_KEYS: ReadonlySet<string> = new Set([
+	"kind",
+	"headers",
+	"secretRefs",
+	"secretQueryRefs",
+	"requires",
+	"optional",
+	"headerPrefixes",
+]);
+// Set insertion order — used to render the known-key list in error strings
+// (expected + fallback fix) so they can't drift from the set.
+const KNOWN_AUTH_KEYS_LIST = [...KNOWN_AUTH_KEYS].join(", ");
 
 // ═══════════════════════════════════════════════════════════════════
 // Error helper
@@ -156,10 +210,13 @@ function requireStringArray(
 	key: string,
 	file: string | undefined,
 	fm: string,
+	opts?: { missingFix?: string },
 ): string[] | ParseApiGuideResult {
 	const v = m[key];
 	if (v === undefined) {
-		return fail(file, key, "a list of strings", "missing");
+		return fail(file, key, "a list of strings", "missing", {
+			...(opts?.missingFix ? { fix: opts.missingFix } : {}),
+		});
 	}
 	if (!Array.isArray(v) || v.length === 0) {
 		return fail(file, key, "a non-empty list of strings", describeFound(v), {
@@ -431,6 +488,65 @@ function isParseErr<T>(v: T | ParseApiGuideResult): v is ParseApiGuideResult {
 	);
 }
 
+/** Levenshtein edit distance — spots near-miss auth keys (e.g. `requiers:` →
+ * `requires`) so the unknown-key error can say "did you mean X?" instead of a
+ * bare rejection. */
+function editDistance(a: string, b: string): number {
+	const m = a.length;
+	const n = b.length;
+	if (m === 0) return n;
+	if (n === 0) return m;
+	let prev = Array.from({ length: n + 1 }, (_, j) => j);
+	for (let i = 1; i <= m; i++) {
+		const cur = new Array<number>(n + 1);
+		cur[0] = i;
+		for (let j = 1; j <= n; j++) {
+			cur[j] = Math.min(
+				prev[j]! + 1,
+				cur[j - 1]! + 1,
+				prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
+			);
+		}
+		prev = cur;
+	}
+	return prev[n]!;
+}
+
+/** Nearest known auth key within edit distance ≤ 2, or undefined. */
+function nearestKnownKey(
+	key: string,
+	known: ReadonlySet<string>,
+): string | undefined {
+	let best: string | undefined;
+	let bestDist = Infinity;
+	for (const k of known) {
+		const d = editDistance(key, k);
+		if (d < bestDist) {
+			bestDist = d;
+			best = k;
+		}
+	}
+	return bestDist <= 2 ? best : undefined;
+}
+
+/**
+ * Adaptive fix for an unknown-auth-key rejection: near-miss → "did you mean
+ * X?"; the observed wrong shape (`name`/`secret` under static-key) → point at
+ * the real secretRefs/requires shape; anything else → list the known keys.
+ */
+function authUnknownKeyFix(unknownKeys: string[]): string {
+	for (const key of unknownKeys) {
+		const known = nearestKnownKey(key, KNOWN_AUTH_KEYS);
+		if (known !== undefined) {
+			return `Unknown auth key "${key}" — did you mean "${known}"?`;
+		}
+	}
+	if (unknownKeys.includes("name") || unknownKeys.includes("secret")) {
+		return `The keyed-header shape is auth.secretRefs: { <header>: <secret-name> } with the secret declared in auth.requires (or auth.optional) — replace name/secret with secretRefs + requires.`;
+	}
+	return `Unknown auth key(s): ${unknownKeys.join(", ")} — known keys: ${KNOWN_AUTH_KEYS_LIST}.`;
+}
+
 function validateAuth(
 	raw: unknown,
 	file: string | undefined,
@@ -453,6 +569,9 @@ function validateAuth(
 			"auth.kind",
 			"a string",
 			kindRaw === undefined ? "missing" : describeFound(kindRaw),
+			{
+				fix: "kind is one of: none | static-key — use `kind: none` (public) or `kind: static-key` (keyed header); or call api-learn({domain, new: true}) for a full skeleton",
+			},
 		);
 	}
 	if (!KNOWN_AUTH_KINDS.has(kindRaw)) {
@@ -470,6 +589,25 @@ function validateAuth(
 		return fail(file, "auth.kind", "one of: none | static-key", "oauth2", {
 			fix: "OAuth2 is not yet implemented. Use kind: none (public) or kind: static-key (keyed header) for now.",
 		});
+	}
+	// Strict auth schema — reject unknown keys (gap 1). The parser used to
+	// silently drop unknown keys (a wrong-but-plausible shape like
+	// `name`/`secret` saved a guide the executor then silently couldn't
+	// honor). Reject, don't infer: the fix is adaptive (near-miss → "did you
+	// mean X?", wrong shape → secretRefs/requires).
+	const unknownKeys = Object.keys(a).filter((k) => !KNOWN_AUTH_KEYS.has(k));
+	if (unknownKeys.length > 0) {
+		const first = unknownKeys[0]!;
+		return fail(
+			file,
+			`auth.${first}`,
+			`a known auth key (${KNOWN_AUTH_KEYS_LIST})`,
+			`unknown key(s): ${unknownKeys.join(", ")}`,
+			{
+				snippet: snippetFor(fm, "auth"),
+				fix: authUnknownKeyFix(unknownKeys),
+			},
+		);
 	}
 	// Parse optional headers (per-kind extra headers, e.g. X-Api-Key for DEMO_KEY).
 	let headers: Record<string, string> | undefined;
@@ -565,7 +703,8 @@ function validateAuth(
 			fm,
 			"auth.headerPrefixes",
 			"a YAML mapping of header name → non-empty prefix string",
-			(v) => typeof v === "string" && v.length > 0,
+			(v) =>
+				typeof v === "string" && v.length > 0 && !/^\{[a-zA-Z0-9_]+\}$/.test(v),
 		);
 		if (isParseErr(hp)) return hp;
 		headerPrefixes = hp;
@@ -867,6 +1006,76 @@ function validateOperation(
 		}
 	}
 
+	// requiresAnyOf — at-least-one-of constraint (one group per op, v1).
+	// Parser cross-field checks, same class as the secretQueryRefs collision
+	// guard: empty-array reject (check #0, before member inspection),
+	// member-exists, path-param reject, no `required: true` overlap, no
+	// `default` on a member. A group member that is `required` would defeat
+	// the group at runtime; a `default` would fire alongside a caller-supplied
+	// sibling (the members are mutually exclusive peers).
+	const requiresAnyOfRaw = o["requiresAnyOf"];
+	let requiresAnyOf: string[] | undefined;
+	if (requiresAnyOfRaw !== undefined) {
+		if (!Array.isArray(requiresAnyOfRaw) || requiresAnyOfRaw.length === 0) {
+			return fail(
+				file,
+				fieldPath("requiresAnyOf"),
+				"a non-empty list of param names",
+				describeFound(requiresAnyOfRaw),
+			);
+		}
+		for (const member of requiresAnyOfRaw) {
+			if (typeof member !== "string" || member === "") {
+				return fail(
+					file,
+					fieldPath("requiresAnyOf"),
+					"a non-empty list of param names",
+					`contains ${describeFound(member)}`,
+				);
+			}
+			if (pathParams.includes(member)) {
+				return fail(
+					file,
+					fieldPath(`requiresAnyOf.${member}`),
+					"a query param name (not a path param)",
+					`"${member}" is a path param — path params are always required via {${member}} in path`,
+				);
+			}
+			const spec = params[member];
+			if (spec === undefined) {
+				return fail(
+					file,
+					fieldPath(`requiresAnyOf.${member}`),
+					"a param name declared in this operation's params",
+					`"${member}" is not a declared param`,
+				);
+			}
+			if (spec.required === true) {
+				return fail(
+					file,
+					fieldPath(`requiresAnyOf.${member}`),
+					"a param that is not also required: true",
+					`"${member}" is required: true`,
+					{
+						fix: `Remove required: true from params.${member} — it is governed by the requiresAnyOf group, not per-param required.`,
+					},
+				);
+			}
+			if (spec.default !== undefined) {
+				return fail(
+					file,
+					fieldPath(`requiresAnyOf.${member}`),
+					"a param that does not also declare a default",
+					`"${member}" has a default`,
+					{
+						fix: `Remove the default from params.${member} — requiresAnyOf members are mutually exclusive peers, so a default would fire alongside a caller-supplied sibling.`,
+					},
+				);
+			}
+		}
+		requiresAnyOf = requiresAnyOfRaw as string[];
+	}
+
 	// dateParams — param name → date format normalization
 	const dateParamsRaw = o["dateParams"];
 	let dateParams: Record<string, DateParamFormat> | undefined;
@@ -1006,6 +1215,7 @@ function validateOperation(
 		...(transform === undefined ? {} : { transform }),
 		...(passthrough === undefined ? {} : { passthrough }),
 		...(dateParams === undefined ? {} : { dateParams }),
+		...(requiresAnyOf === undefined ? {} : { requiresAnyOf }),
 		...(parseOverride ? { parse: parseOverride } : {}),
 		...(opPagination ? { pagination: opPagination } : {}),
 		...(opGatherAllMax === undefined ? {} : { gatherAllMax: opGatherAllMax }),
@@ -1026,6 +1236,34 @@ export function parseApiGuide(
 
 	const match = raw.match(FRONTMATTER_RE);
 	if (!match) {
+		// Opening delimiter present → the failure is on the closing side, not
+		// a missing frontmatter block. Detect the opener with /^---\r?\n/ (not
+		// startsWith("---\n")) so a CRLF-prefixed file is routed here too.
+		if (/^---\r?\n/.test(raw)) {
+			// A `\n---` after the opener means a closer exists but FRONTMATTER_RE
+			// still failed — the closer is malformed (e.g. no trailing newline
+			// at EOF). Otherwise there is no closer at all.
+			if (/\n---/.test(raw.replace(/^---\r?\n/, ""))) {
+				return fail(
+					file,
+					"frontmatter",
+					"a closing --- followed by a newline",
+					"closing --- present but malformed (missing trailing newline after it)",
+					{
+						fix: "Ensure the closing --- is on its own line and followed by a newline before any prose.",
+					},
+				);
+			}
+			return fail(
+				file,
+				"frontmatter",
+				"YAML frontmatter delimited by ---",
+				"missing closing ---",
+				{
+					fix: "Close the frontmatter block with a --- line after the YAML.",
+				},
+			);
+		}
 		return fail(
 			file,
 			"frontmatter",
@@ -1088,7 +1326,10 @@ export function parseApiGuide(
 	}
 	const kind = "api";
 
-	const domainsRes = requireStringArray(m, "domains", file, fm);
+	const domainsRes = requireStringArray(m, "domains", file, fm, {
+		missingFix:
+			"Call api-learn({domain: '<domain>', new: true}) — it returns a template with `domains` pre-filled",
+	});
 	if (!Array.isArray(domainsRes)) return domainsRes;
 	const domains = domainsRes;
 
@@ -1101,7 +1342,7 @@ export function parseApiGuide(
 	// ── recipe slice ──────────────────────────────────────────────
 	const apiHostRes = requireHttpUrl(m["apiHost"], "apiHost", file, fm, {
 		protocolFix: "Use https:// as the scheme",
-		invalidFix: "Include the scheme, e.g. https://apidatos.boe.es/v1",
+		invalidFix: "Include the scheme, e.g. https://api.example.com/v1",
 	});
 	if (typeof apiHostRes !== "string") return apiHostRes;
 	const apiHost = apiHostRes;
@@ -1169,22 +1410,22 @@ export function parseApiGuide(
 		description = descriptionRaw;
 	}
 
-	// schemaVersion — metadata-only attribution (design: "schemaVersion is
-	// attribution, not enforcement"). Read from frontmatter, surfaced on the
-	// parsed guide when present, left `undefined` when absent. Never gates,
-	// warns, or alters parse. A malformed (non-integer/negative) value is
-	// tolerated and ignored — it must never reject a guide.
-	let schemaVersion: number | undefined;
+	// schemaVersion — breaking-change detection (design: "schemaVersion is
+	// detection, not enforcement"). Stamped on save by api-learn; absent-on-
+	// read defaults to 0 (the floor), so an unversioned guide flags as
+	// potentially stale after any schema bump rather than silently inheriting
+	// the new current. A valid-integer frontmatter value overrides the floor.
+	// A stale value (< current) warns non-blockingly in the api-guide catalog/
+	// detail and on api-fetch; never gates. A malformed (non-integer/negative)
+	// value falls back to 0 and never rejects a guide.
+	let schemaVersion = 0;
 	const schemaVersionRaw = m["schemaVersion"];
-	if (schemaVersionRaw !== undefined) {
-		if (
-			typeof schemaVersionRaw === "number" &&
-			Number.isInteger(schemaVersionRaw) &&
-			schemaVersionRaw >= 0
-		) {
-			schemaVersion = schemaVersionRaw;
-		}
-		// else: tolerated + ignored — metadata stays silent on malformed input.
+	if (
+		typeof schemaVersionRaw === "number" &&
+		Number.isInteger(schemaVersionRaw) &&
+		schemaVersionRaw >= 0
+	) {
+		schemaVersion = schemaVersionRaw;
 	}
 
 	let gatherAllMax = GATHER_ALL_MAX_FALLBACK;
@@ -1291,7 +1532,7 @@ export function parseApiGuide(
 		...(docs ? { docs } : {}),
 		...(organization ? { organization } : {}),
 		...(description ? { description } : {}),
-		...(schemaVersion === undefined ? {} : { schemaVersion }),
+		schemaVersion,
 		gatherAllMax,
 		auth,
 		responseShape,
@@ -1374,6 +1615,37 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// Schema-version staleness — detection, never a gate
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * Pure staleness predicate: a guide is stale when its schemaVersion predates
+ * the current schema (a bump may have broken it). A forward-stamped guide
+ * (authored against a newer schema than the running host) is NOT stale.
+ */
+export function isStaleSchema(
+	guideSchemaVersion: number,
+	currentSchemaVersion: number,
+): boolean {
+	return guideSchemaVersion < currentSchemaVersion;
+}
+
+/**
+ * Non-blocking stale-schema warning line for a guide, or undefined when the
+ * guide is current. Peer of the `⚠ malformed` catalog line — detection,
+ * never a gate (the guide still loads and runs). `current` defaults to
+ * GUIDE_SCHEMA_VERSION; tests pass a bumped value to force staleness.
+ */
+export function staleSchemaLine(
+	guide: ApiGuide,
+	current: number = GUIDE_SCHEMA_VERSION,
+): string | undefined {
+	const v = guide.schemaVersion ?? 0;
+	if (!isStaleSchema(v, current)) return undefined;
+	return `  ⚠ schemaVersion ${v} < current ${current} — guide may need updating`;
+}
+
+// ════════════════════════════════════════════════════════════════════
 // Disambiguation helpers — shared by the api-guide menu and the
 // api-fetch ambiguous-operation error. One rendering of the per-guide
 // listing so the two surfaces stay visually consistent.
@@ -1402,7 +1674,10 @@ function formatOpSummary(ops: { name: string }[]): string {
  * shortName + op names only (the status-quo shape), so un-backfilled
  * guides render consistently with those that have a one-line summary.
  */
-export function formatGuideListings(entries: { guide: ApiGuide }[]): string {
+export function formatGuideListings(
+	entries: { guide: ApiGuide }[],
+	current: number = GUIDE_SCHEMA_VERSION,
+): string {
 	const lines: string[] = [];
 	for (const { guide } of entries) {
 		lines.push(
@@ -1410,8 +1685,71 @@ export function formatGuideListings(entries: { guide: ApiGuide }[]): string {
 				(guide.description ? ` — ${guide.description}` : ""),
 		);
 		lines.push(`    ${formatOpSummary(guide.operations)}`);
+		const stale = staleSchemaLine(guide, current);
+		if (stale) lines.push(stale);
 	}
 	return lines.join("\n");
+}
+
+/**
+ * Resolve a guide by shortName across a domain's matches (exact,
+ * case-insensitive). Shared by api-guide, api-learn's fetch-recipe, and
+ * /api verify — three call sites, one resolution rule (a drifted copy would
+ * ship a known second bug). Returns a structured outcome; each caller renders
+ * its own message (tool result vs command notify).
+ */
+export function selectGuideByShortName(
+	matches: { guide: ApiGuide; dirName: string }[],
+	selector: string,
+):
+	| { ok: true; guide: ApiGuide; dirName: string }
+	| { ok: false; reason: "no_match"; valid: string[] }
+	| { ok: false; reason: "ambiguous"; directories: string[] } {
+	const lc = selector.toLowerCase();
+	const sel = matches.filter((m) => m.guide.shortName.toLowerCase() === lc);
+	if (sel.length === 0) {
+		return {
+			ok: false,
+			reason: "no_match",
+			valid: matches.map((m) => m.guide.shortName),
+		};
+	}
+	if (sel.length > 1) {
+		return {
+			ok: false,
+			reason: "ambiguous",
+			directories: sel.map((s) => s.dirName),
+		};
+	}
+	return { ok: true, guide: sel[0]!.guide, dirName: sel[0]!.dirName };
+}
+
+/**
+ * Render the no-match / ambiguous error text for a failed
+ * `selectGuideByShortName` result. `callToAction` is the trailing
+ * "how to see the menu" sentence — it differs per surface (tool vs
+ * command), so callers pass their own.
+ */
+export function shortNameErrorText(
+	sel: Extract<ReturnType<typeof selectGuideByShortName>, { ok: false }>,
+	domain: string,
+	selector: string,
+	callToAction: string,
+): string {
+	if (sel.reason === "no_match") {
+		return (
+			`No guide named '${selector}' for '${domain}'. ` +
+			`Available guides: ${sel.valid.join(", ")}. ` +
+			callToAction
+		);
+	}
+	return (
+		`Ambiguous guide '${selector}' for '${domain}' — ` +
+		`${sel.directories.length} guides share shortName '${selector}' ` +
+		`(directories: ${sel.directories.join(", ")}). Rename one guide's shortName to ` +
+		`disambiguate. ` +
+		callToAction
+	);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -1425,7 +1763,10 @@ export function formatGuideListings(entries: { guide: ApiGuide }[]): string {
 // here, where they'd bloat context for orgs with many guides.
 // ════════════════════════════════════════════════════════════════════
 
-export function formatApiGuideCatalog(loaded: LoadedApiGuides): string {
+export function formatApiGuideCatalog(
+	loaded: LoadedApiGuides,
+	current: number = GUIDE_SCHEMA_VERSION,
+): string {
 	const lines: string[] = ["API guides:"];
 
 	// Org-grouped rows preserve first-appearance order; guides without
@@ -1454,7 +1795,14 @@ export function formatApiGuideCatalog(loaded: LoadedApiGuides): string {
 		}
 		const domList = domains.size > 0 ? [...domains].join(", ") : "—";
 		const n = row.guides.length;
-		lines.push(`  🏛️ ${row.org} — ${n} guide${n > 1 ? "s" : ""} (${domList})`);
+		// Collapsed org row: a trailing ⚠ glyph when ANY guide in it is stale
+		// (hint only — the per-guide ⚠ line lives on the menu / detail view).
+		const stale = row.guides.some((g) =>
+			isStaleSchema(g.schemaVersion ?? 0, current),
+		);
+		lines.push(
+			`  🏛️ ${row.org} — ${n} guide${n > 1 ? "s" : ""} (${domList})${stale ? " ⚠" : ""}`,
+		);
 	}
 	for (const { name, guide } of orgless) {
 		const domains =
@@ -1462,6 +1810,8 @@ export function formatApiGuideCatalog(loaded: LoadedApiGuides): string {
 		lines.push(
 			`  ${guide.icon} ${guide.shortName} — ${domains} (verified ${guide.verified}, ${guide.operations.length} ops)`,
 		);
+		const stale = staleSchemaLine(guide, current);
+		if (stale) lines.push(stale);
 	}
 	for (const mal of loaded.malformed) {
 		lines.push(

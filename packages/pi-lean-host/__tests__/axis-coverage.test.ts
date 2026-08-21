@@ -163,6 +163,10 @@ describe("axis-coverage — every guide-driven axis is covered by ≥1 guide", (
 		}
 		expect([...claimCount.values()].some((n) => n >= 2)).toBe(true);
 	});
+
+	it("requires-any-of (an at-least-one-of group on an op)", () => {
+		expect(allOps.some((o) => (o.requiresAnyOf?.length ?? 0) > 0)).toBe(true);
+	});
 });
 
 // Per-guide spot checks — each single-coverage axis maps 1:1 to a guide
@@ -199,6 +203,13 @@ describe("axis-coverage — single-coverage guide ownership", () => {
 				(o) => o.pagination?.style === "tokenBag",
 			),
 		).toBe(true);
+	});
+
+	it("requires-any-of is owned by en.wikipedia.org-action's queryPages op", () => {
+		const op = opOf(GUIDES["en.wikipedia.org-action"]).find(
+			(o) => o.name === "queryPages",
+		);
+		expect(op?.requiresAnyOf).toEqual(["titles", "pageids", "revids"]);
 	});
 
 	it("multi-recipe-domains is owned by the archive.org pair", () => {

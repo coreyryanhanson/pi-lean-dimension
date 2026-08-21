@@ -175,6 +175,15 @@ export interface Operation {
 	 */
 	pathParamDocs?: Record<string, string>;
 	/**
+	 * At-least-one-of constraint: at least one of these param names must be
+	 * supplied. Members may not be `required: true` nor carry a `default`
+	 * (both parser-enforced) — they are mutually exclusive peers, so a
+	 * default would fire alongside a caller-supplied sibling and a
+	 * `required` flag would defeat the group. One group per op (v1); a
+	 * multi-group `requiresAnyOfGroups` upgrade is purely additive.
+	 */
+	requiresAnyOf?: string[];
+	/**
 	 * Whether this operation uses the domain's local helper (coarse, pre-call).
 	 * A `true` value means call `<guidesDir>/<domain>/helper.ts` for this op.
 	 */
