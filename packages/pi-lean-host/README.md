@@ -20,11 +20,11 @@
 > SearXNG search, install
 > [`pi-lean-search`](https://www.npmjs.com/package/pi-lean-search).
 
-> ⚠️ **Early release (0.2.1).** The API tools here work today, but this is a
+> ⚠️ **Early release (0.3.0).** The API tools here work today, but this is a
 > development preview. The recipe schema, tool surfaces, and guide format are
 > still settling as we test more APIs to finalize the shape — **future
 > compatibility is not guaranteed** until the package reaches lockstep with
-> `pi-lean-dimension` 0.5.0. Guides authored against 0.2.x may need revision
+> `pi-lean-dimension` 0.5.0. Guides authored against 0.3.x may need revision
 > as the schema firms up.
 
 ---
