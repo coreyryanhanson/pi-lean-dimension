@@ -55,7 +55,7 @@ export async function handleHelpersSubcommand(
 		lines.push(
 			"",
 			"Call /api helpers <domain> to view a helper's source.",
-			"Call api-learn({domain, recipe}) to author or update a guide (and its helper).",
+			"Call api-learn({domain, recipeFile}) to author or update a guide (and its helper).",
 		);
 
 		ctx.ui.notify(lines.join("\n"), "info");
@@ -78,9 +78,7 @@ export async function handleHelpersSubcommand(
 	if (source === null) {
 		const all = getAllHelpers();
 		const known =
-			all.length > 0
-				? ` Known helpers: ${all.join(", ")}.`
-				: " No helpers found.";
+			all.length > 0 ? ` Known helpers: ${all.join(", ")}.` : " No helpers found.";
 		ctx.ui.notify(
 			`No helper for '${domain}'.${known}\n\n` +
 				`Helpers live alongside guides at api-guides/${domain}/helper.ts.\n` +

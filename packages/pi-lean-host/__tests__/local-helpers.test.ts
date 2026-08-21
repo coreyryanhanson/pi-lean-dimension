@@ -30,7 +30,7 @@ import {
 	apiFetchTool,
 	__test__setBypassUrlSafety,
 } from "../tools/api-fetch.js";
-import { apiLearnTool } from "../tools/api-learn.js";
+import { apiLearnTool, setStagingRoot } from "../tools/api-learn.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Test server — echoes params so we can verify helper transforms
@@ -105,8 +105,17 @@ const FIXTURE_TRANSFORM = `export default function(params, ctx) {
 import { contentText } from "../tools/utils.js";
 
 let tmpGuidesDir: string;
+let tmpStagingRoot: string;
 let ctx: TestCtx;
 let echoUrl: string;
+
+/** Stage a recipe to the draft file and return the recipeFile path. */
+function stagedRecipe(domain: string, recipe: string): string {
+	const path = join(tmpStagingRoot, domain, "guide.md");
+	mkdirSync(join(tmpStagingRoot, domain), { recursive: true });
+	writeFileSync(path, recipe, "utf-8");
+	return path;
+}
 
 /**
  * Write a helper file at <guidesDir>/<domain>/helper.mjs.
@@ -196,6 +205,8 @@ beforeAll(async () => {
 
 	tmpGuidesDir = mkdtempSync(join(tmpdir(), "host-guides-helpers-"));
 	setUserGuidesDir(tmpGuidesDir);
+	tmpStagingRoot = mkdtempSync(join(tmpdir(), "host-staging-helpers-"));
+	setStagingRoot(tmpStagingRoot);
 	invalidateCache();
 	__test__setBypassUrlSafety(true);
 });
@@ -203,6 +214,7 @@ beforeAll(async () => {
 afterAll(async () => {
 	await ctx.stop();
 	rmSync(tmpGuidesDir, { recursive: true, force: true });
+	rmSync(tmpStagingRoot, { recursive: true, force: true });
 	resetDisabledHelpers();
 	__test__setBypassUrlSafety(false);
 });
@@ -347,10 +359,13 @@ describe("api-fetch integration with user helpers", () => {
 		writeFixtureHelper("transform-date", FIXTURE_TRANSFORM);
 		const recipe = recipeWithHelper(echoUrl, "transform-date");
 
-		// Save via api-learn
+		// Save via api-learn (staged file → recipeFile)
 		const learnResult = await apiLearnTool.execute(
 			"test",
-			{ domain: "transform-date", recipe },
+			{
+				domain: "transform-date",
+				recipeFile: stagedRecipe("transform-date", recipe),
+			},
 			undefined,
 			undefined,
 			undefined as any,
@@ -386,7 +401,7 @@ describe("api-fetch integration with user helpers", () => {
 
 		const learnResult = await apiLearnTool.execute(
 			"test",
-			{ domain: "broken", recipe },
+			{ domain: "broken", recipeFile: stagedRecipe("broken", recipe) },
 			undefined,
 			undefined,
 			undefined as any,
@@ -432,7 +447,7 @@ describe("api-fetch integration with user helpers", () => {
 
 		const learnResult = await apiLearnTool.execute(
 			"test",
-			{ domain: "nofetch.test", recipe },
+			{ domain: "nofetch.test", recipeFile: stagedRecipe("nofetch.test", recipe) },
 			undefined,
 			undefined,
 			undefined as any,

@@ -10,7 +10,14 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startTestServer } from "../../pi-lean-portal/__tests__/helpers/test-server.js";
@@ -23,7 +30,7 @@ import {
 	apiFetchTool,
 	__test__setBypassUrlSafety,
 } from "../tools/api-fetch.js";
-import { apiLearnTool } from "../tools/api-learn.js";
+import { apiLearnTool, setStagingRoot } from "../tools/api-learn.js";
 import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
 import { parseApiGuide } from "../core/parse-api-guide.js";
 
@@ -536,12 +543,15 @@ body
 
 let ctx: TestCtx;
 let tmpGuidesDir: string;
+let tmpStagingRoot: string;
 let tmpDir: string;
 
 beforeAll(async () => {
 	ctx = await createApiTestServer();
 	tmpGuidesDir = mkdtempSync(join(tmpdir(), "host-guides-tools-"));
 	setUserGuidesDir(tmpGuidesDir);
+	tmpStagingRoot = mkdtempSync(join(tmpdir(), "host-staging-tools-"));
+	setStagingRoot(tmpStagingRoot);
 	invalidateCache();
 	__test__setBypassUrlSafety(true);
 
@@ -554,6 +564,7 @@ afterAll(async () => {
 	delete process.env.PI_HOST_TEMP_DIR;
 	await ctx.stop();
 	rmSync(tmpGuidesDir, { recursive: true, force: true });
+	rmSync(tmpStagingRoot, { recursive: true, force: true });
 	rmSync(tmpDir, { recursive: true, force: true });
 	__test__setBypassUrlSafety(false);
 });
@@ -597,10 +608,21 @@ function callLearn(
 ) {
 	const p: Record<string, unknown> = {};
 	if (domain !== undefined) p.domain = domain;
-	if (recipe !== undefined) p.recipe = recipe;
+	if (recipe !== undefined) {
+		// Stage the working copy, then save from the file (recipeFile).
+		const staged = join(tmpStagingRoot, domain!, "guide.md");
+		mkdirSync(join(tmpStagingRoot, domain!), { recursive: true });
+		writeFileSync(staged, recipe, "utf-8");
+		p.recipeFile = staged;
+	}
 	if (extra?.new !== undefined) p.new = extra.new;
 	if (extra?.guide !== undefined) p.guide = extra.guide;
 	return apiLearnTool.execute("test", p, undefined, undefined, undefined as any);
+}
+
+/** Staged draft path for a domain (mirrors api-learn's stagingPathFor). */
+function stagedPath(domain: string): string {
+	return join(tmpStagingRoot, domain, "guide.md");
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -736,9 +758,9 @@ describe("api-learn", () => {
 		const text = contentText(
 			await callLearn("example.com", undefined, { new: true }),
 		);
-		const m = text.match(/```yaml\n([\s\S]*?)```/);
-		expect(m).not.toBeNull();
-		const template = m![1]!;
+		// Result surfaces the staged path, not an inline yaml block.
+		expect(text).toContain(stagedPath("example.com"));
+		const template = readFileSync(stagedPath("example.com"), "utf-8");
 		expect(template).toContain("domains: [example.com]");
 		expect(template).toContain("<base url>");
 		expect(template).toContain("<short>");
@@ -852,14 +874,25 @@ operations:
 
 	it("returns a domain template when no recipe and no guide exists", async () => {
 		const text = contentText(await callLearn("somedomain.com"));
-		expect(text).toContain("```yaml");
-		expect(text).toContain("domains: [somedomain.com]");
+		expect(text).toContain(stagedPath("somedomain.com"));
+		const draft = readFileSync(stagedPath("somedomain.com"), "utf-8");
+		expect(draft).toContain("domains: [somedomain.com]");
 	});
 
 	it("rejects a path-traversal domain without writing", async () => {
 		// Guards assertSafeDomain at the api-learn write boundary.
 		setUserGuidesDir(tmpGuidesDir);
-		const result = await callLearn("../../escape", boeRecipe(ctx.serverUrl));
+		const result = await apiLearnTool.execute(
+			"test",
+			{
+				domain: "../../escape",
+				// assertSafeDomain rejects before this path is ever read.
+				recipeFile: join(tmpStagingRoot, "escape", "guide.md"),
+			},
+			undefined,
+			undefined,
+			undefined as any,
+		);
 		const text = contentText(result);
 		expect(text).toContain("Invalid domain");
 		expect(result.details).toMatchObject({
@@ -1076,9 +1109,8 @@ operations:
 		const text = contentText(
 			await callLearn("example.com", undefined, { new: true }),
 		);
-		const m = text.match(/```yaml\n([\s\S]*?)```/);
-		expect(m).not.toBeNull();
-		const example = m![1]!;
+		expect(text).toContain(stagedPath("example.com"));
+		const example = readFileSync(stagedPath("example.com"), "utf-8");
 		expect(example).not.toMatch(/^updated:/m);
 		expect(example).not.toMatch(/^verified:/m);
 		expect(example).toContain("stamped by the tool when omitted");
@@ -1088,9 +1120,8 @@ operations:
 		const text = contentText(
 			await callLearn("example.com", undefined, { new: true }),
 		);
-		const m = text.match(/```yaml\n([\s\S]*?)```/);
-		expect(m).not.toBeNull();
-		const example = m![1]!;
+		expect(text).toContain(stagedPath("example.com"));
+		const example = readFileSync(stagedPath("example.com"), "utf-8");
 		expect(example).toContain("kind: static-key");
 		expect(example).toContain("requires: [<secret-name>]");
 		expect(example).toContain("secretRefs:");

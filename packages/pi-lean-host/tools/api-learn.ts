@@ -6,10 +6,12 @@
  *    with a pointer to `{domain, new: true}` for a domain-specific starter.
  *  - `{domain, new: true}` → fresh template with `domains: [<domain>]`
  *    pre-filled (regardless of existing guides).
- *  - `{domain}` (no recipe) → fetch the current raw recipe of an existing
+ *  - `{domain}` (no recipeFile) → fetch the current raw recipe of an existing
  *    guide (0 guides → template; 1 guide → raw recipe + dirName surfaced;
- *    N guides → disambiguation menu by shortName).
- *  - `{domain, recipe}` → validates via `parseApiGuide()`, writes to
+ *    N guides → disambiguation menu by shortName), staged to
+ *    `/tmp/pi-lean-host/<domain>/guide.md`.
+ *  - `{domain, recipeFile}` → reads the staged draft, validates via
+ *    `parseApiGuide()`, writes to
  *    `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`.
  *
  * No half-write on validation error (validate first, write only on success).
@@ -26,6 +28,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { appendFooter, contentText } from "./utils.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	parseApiGuide,
@@ -45,6 +48,32 @@ import {
 	findGuidesByDomain,
 } from "../core/guide-store.js";
 import { assertSafeDomain } from "../core/path-template.js";
+
+// ═══════════════════════════════════════════════════════════════════
+// Staged working copy (/tmp) — the draft the agent edits between saves
+// ═══════════════════════════════════════════════════════════════════
+
+let _stagingRoot = join(tmpdir(), "pi-lean-host");
+
+/** Test override — mirrors `setUserGuidesDir` so tests keep drafts out of
+ * the real /tmp root. */
+export function setStagingRoot(dir: string): void {
+	_stagingRoot = dir;
+}
+
+/** Deterministic draft path: `<root>/<domain>/guide.md`. */
+function stagingPathFor(domain: string): string {
+	return join(_stagingRoot, domain, "guide.md");
+}
+
+/** Write the working copy (template or fetched raw recipe) to the staging
+ * path. Returns the path. */
+function writeStagedDraft(domain: string, raw: string): string {
+	const path = stagingPathFor(domain);
+	mkdirSync(join(_stagingRoot, domain), { recursive: true });
+	writeFileSync(path, raw, "utf-8");
+	return path;
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // Placeholder skeleton (retired worked example)
@@ -201,7 +230,7 @@ const AUTHORING_MANUAL = [
 	"  date formats, auth caveats, field semantics, endpoint quirks. Surfaced by",
 	"  api-guide as 'Guide notes'.",
 	"",
-	"Call api-learn({domain: '...', recipe: '...'}) to save the guide, then api-fetch({domain, operation: '...'}) to verify.",
+	"Call api-learn({domain: '<domain>', recipeFile: '<staged file path>'}) to save the guide, then api-fetch({domain, operation: '...'}) to verify.",
 ].join("\n");
 
 /** Manual section that governs a failing parser field — the validation-error
@@ -235,35 +264,49 @@ function manualSectionFor(field: string): string | undefined {
 	return undefined;
 }
 
-/** Domain-specific starter template — a placeholder skeleton with `domains:`
- * pre-filled for the requested domain. Other fields are placeholders the
- * agent fills (op block sourced from api-probe({scaffold: true})).
+/** Template path — write the placeholder skeleton to the staging path and
+ * surface the file path (the agent edits the file, not an inline copy).
  * Fail-closed: the as-is template cannot save (placeholder `apiHost`
  * is rejected by requireHttpUrl). */
-function renderTemplate(domain: string): string {
-	return `\`\`\`yaml\n${placeholderSkeleton(domain)}\n\`\`\``;
+function stageTemplate(domain: string): string {
+	const path = writeStagedDraft(domain, placeholderSkeleton(domain));
+	return (
+		`📝 Template for '${domain}' written to ${path}\n` +
+		`  Edit the file (or append ops via bash), then call ` +
+		`api-learn({domain: "${domain}", recipeFile: "${path}"}) to validate and save.`
+	);
 }
 
-/** Fetch-recipe response — the raw recipe wrapped for the agent, with the
- * resolved dirName surfaced so re-save keys on the directory, not the
- * routing domain (sibling-clobber mitigation). */
-function renderFetchedRecipe(
+/** Fetch-recipe response — the saved guide's raw recipe staged to the
+ * staging path, with the file path + resolved dirName surfaced so re-save
+ * keys on the directory, not the routing domain (sibling-clobber
+ * mitigation). The inline YAML block is dropped: the staged file is the
+ * source of truth the agent edits. */
+function stageFetchedRecipe(
 	domain: string,
 	guide: ApiGuide,
 	dirName: string,
-	raw: string,
-): string {
-	const body = raw.endsWith("\n") ? raw : raw + "\n";
-	return (
-		`📖 Current recipe for '${domain}' — guide '${guide.shortName}'\n` +
-		`  Directory: ${dirName}\n` +
-		`  To edit: copy the recipe below, modify it, and call ` +
-		`api-learn({domain: "${dirName}", recipe: "..."}) — pass the directory name ` +
-		`as \`domain\` on re-save so a sibling guide is not clobbered.\n\n` +
-		"```yaml\n" +
-		body +
-		"```"
+): AgentToolResult<unknown> {
+	const raw = readFileSync(
+		join(getUserGuidesDir(), dirName, "guide.md"),
+		"utf-8",
 	);
+	const path = writeStagedDraft(domain, raw);
+	return {
+		content: [
+			{
+				type: "text",
+				text:
+					`📖 Current recipe for '${domain}' — guide '${guide.shortName}'\n` +
+					`  Directory: ${dirName}\n` +
+					`  Staged draft: ${path}\n` +
+					`  To edit: edit the staged file with the edit tool or bash, then call ` +
+					`api-learn({domain: "${dirName}", recipeFile: "${path}"}) — pass the ` +
+					`directory name as \`domain\` on re-save so a sibling guide is not clobbered.`,
+			},
+		],
+		details: { mode: "fetch", domain, dirName, guide: guide.shortName },
+	};
 }
 
 /** Disambiguation menu for the N-guide fetch-recipe case (mirrors
@@ -285,26 +328,6 @@ function renderFetchMenu(
 	};
 }
 
-/** Read a guide's raw recipe from disk and build the fetch-recipe result
- * (dirName surfaced so re-save keys on the directory, not the routing
- * domain). Shared by the 1-guide and N-guide-with-selector branches. */
-function fetchGuideRecipe(
-	domain: string,
-	guide: ApiGuide,
-	dirName: string,
-): AgentToolResult<unknown> {
-	const raw = readFileSync(
-		join(getUserGuidesDir(), dirName, "guide.md"),
-		"utf-8",
-	);
-	return {
-		content: [
-			{ type: "text", text: renderFetchedRecipe(domain, guide, dirName, raw) },
-		],
-		details: { mode: "fetch", domain, dirName, guide: guide.shortName },
-	};
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // Tool definition
 // ═══════════════════════════════════════════════════════════════════
@@ -316,29 +339,29 @@ export const apiLearnTool = defineTool({
 		"Author an API guide for a domain. " +
 		"Call with no params for the authoring manual (field reference + defaults + semantics). " +
 		"Call with {domain, new: true} for a fresh domain-specific template. " +
-		"Call with {domain} and no recipe to fetch an existing guide's current raw recipe. " +
-		"Call with {domain, recipe} to validate and save.",
+		"Call with {domain} and no recipeFile to fetch an existing guide's current raw recipe. " +
+		"Call with {domain, recipeFile} to validate and save.",
 
 	parameters: Type.Object({
 		domain: Type.Optional(
 			Type.String({
 				description:
-					"Domain (e.g. 'example.com'). With `recipe` it's the save directory; " +
-					"with no recipe it's the routing domain for fetch-recipe lookup.",
+					"Domain (e.g. 'example.com'). With `recipeFile` it's the save directory; " +
+					"with no recipeFile it's the routing domain for fetch-recipe lookup.",
 			}),
 		),
-		recipe: Type.Optional(
+		recipeFile: Type.Optional(
 			Type.String({
 				description:
-					"Full recipe string including YAML frontmatter (---\\n...\\n---) and optional prose body. " +
-					"Omit to fetch the current raw recipe of an existing guide (or get a template when none exists).",
+					"Path to the staged draft guide file (written by a prior api-learn fetch/template call to /tmp/pi-lean-host/<domain>/guide.md). " +
+					"Read, validated, and saved. Omit to fetch the current raw recipe of an existing guide (or get a template when none exists).",
 			}),
 		),
 		guide: Type.Optional(
 			Type.String({
 				description:
 					"When a domain claims multiple guides, select one by shortName (shown in the disambiguation menu). " +
-					"Only used with the fetch-recipe path (no recipe).",
+					"Only used with the fetch-recipe path (no recipeFile).",
 			}),
 		),
 		new: Type.Optional(
@@ -353,12 +376,12 @@ export const apiLearnTool = defineTool({
 	async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 		const {
 			domain,
-			recipe,
+			recipeFile,
 			guide: guideSelector,
 			new: isNew,
 		} = params as {
 			domain?: string;
-			recipe?: string;
+			recipeFile?: string;
 			guide?: string;
 			new?: boolean;
 		};
@@ -389,25 +412,25 @@ export const apiLearnTool = defineTool({
 		// ── new: true → fresh template regardless of existing guides ──
 		if (isNew) {
 			return {
-				content: [{ type: "text", text: renderTemplate(domain) }],
+				content: [{ type: "text", text: stageTemplate(domain) }],
 				details: { mode: "template", domain },
 			};
 		}
 
-		// ── No recipe → fetch-recipe ─────────────────────────────
-		// 0 guides → template; 1 guide → raw recipe + dirName surfaced;
-		// N guides → disambiguation menu (guide selector resolves it).
-		if (!recipe || !recipe.trim()) {
+		// ── No recipeFile → fetch-recipe ─────────────────────────
+		// 0 guides → template staged; 1 guide → raw recipe staged + dirName
+		// surfaced; N guides → disambiguation menu (guide selector resolves it).
+		if (!recipeFile || !recipeFile.trim()) {
 			const matches = findGuidesByDomain(domain);
 			if (matches.length === 0) {
 				return {
-					content: [{ type: "text", text: renderTemplate(domain) }],
+					content: [{ type: "text", text: stageTemplate(domain) }],
 					details: { mode: "template", domain },
 				};
 			}
 			if (matches.length === 1) {
 				const { guide, dirName } = matches[0]!;
-				return fetchGuideRecipe(domain, guide, dirName);
+				return stageFetchedRecipe(domain, guide, dirName);
 			}
 			// N guides → disambiguation by shortName (mirrors api-guide).
 			if (!guideSelector) {
@@ -438,7 +461,28 @@ export const apiLearnTool = defineTool({
 								},
 				};
 			}
-			return fetchGuideRecipe(domain, sel.guide, sel.dirName);
+			return stageFetchedRecipe(domain, sel.guide, sel.dirName);
+		}
+
+		// ── Save from a staged file ─────────────────────────────
+		// Read the draft, then run the identical validate → stamp → write
+		// path. A missing/unreadable file is a clear error; guide.md untouched.
+		let recipe: string;
+		try {
+			recipe = readFileSync(recipeFile, "utf-8");
+		} catch {
+			return {
+				content: [
+					{
+						type: "text",
+						text:
+							`⚠ Could not read recipe file '${recipeFile}' — guide was NOT saved.\n` +
+							`  Fetch the current recipe first via api-learn({domain: "${domain}"}) ` +
+							`(or a template with {domain, new: true}), then edit the staged file and save with recipeFile.`,
+					},
+				],
+				details: { error: "recipe_file_unreadable", domain, recipeFile },
+			};
 		}
 
 		const parsed = parseApiGuide(recipe, { filename: domain });
@@ -575,7 +619,7 @@ export const apiLearnTool = defineTool({
 		if (args.domain) {
 			parts.push(theme.fg("accent", `"${args.domain}"`));
 			if (args.new) parts.push(theme.fg("dim", "✨new"));
-			else if (args.recipe) parts.push(theme.fg("dim", "📝"));
+			else if (args.recipeFile) parts.push(theme.fg("dim", "📝"));
 			else parts.push(theme.fg("dim", "📖"));
 		} else {
 			parts.push(theme.fg("dim", "(manual)"));
