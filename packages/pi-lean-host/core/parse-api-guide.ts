@@ -984,6 +984,9 @@ function validateOperation(
 			if (s["default"] !== undefined) {
 				paramSpec.default = s["default"];
 			}
+			if (s["verifyValue"] !== undefined) {
+				paramSpec.verifyValue = s["verifyValue"];
+			}
 			if (s["description"] !== undefined) {
 				if (typeof s["description"] !== "string") {
 					return fail(
@@ -997,6 +1000,75 @@ function validateOperation(
 			}
 			params[key] = paramSpec;
 		}
+	}
+
+	// requiresAnyOf — at-least-one-of constraint (one group per op, v1).
+	// Parser cross-field checks, same class as the secretQueryRefs collision
+	// guard: empty-array reject (check #0, before member inspection),
+	// member-exists, path-param reject, no `required: true` overlap, no
+	// `default` overlap. A group member that is `required` or carries a
+	// `default` would silently satisfy (or defeat) the group at runtime.
+	const requiresAnyOfRaw = o["requiresAnyOf"];
+	let requiresAnyOf: string[] | undefined;
+	if (requiresAnyOfRaw !== undefined) {
+		if (!Array.isArray(requiresAnyOfRaw) || requiresAnyOfRaw.length === 0) {
+			return fail(
+				file,
+				fieldPath("requiresAnyOf"),
+				"a non-empty list of param names",
+				describeFound(requiresAnyOfRaw),
+			);
+		}
+		for (const member of requiresAnyOfRaw) {
+			if (typeof member !== "string" || member === "") {
+				return fail(
+					file,
+					fieldPath("requiresAnyOf"),
+					"a non-empty list of param names",
+					`contains ${describeFound(member)}`,
+				);
+			}
+			if (pathParams.includes(member)) {
+				return fail(
+					file,
+					fieldPath(`requiresAnyOf.${member}`),
+					"a query param name (not a path param)",
+					`"${member}" is a path param — path params are always required via {${member}} in path`,
+				);
+			}
+			const spec = params[member];
+			if (spec === undefined) {
+				return fail(
+					file,
+					fieldPath(`requiresAnyOf.${member}`),
+					"a param name declared in this operation's params",
+					`"${member}" is not a declared param`,
+				);
+			}
+			if (spec.required === true) {
+				return fail(
+					file,
+					fieldPath(`requiresAnyOf.${member}`),
+					"a param that is not also required: true",
+					`"${member}" is required: true`,
+					{
+						fix: `Remove required: true from params.${member} — it is governed by the requiresAnyOf group, not per-param required.`,
+					},
+				);
+			}
+			if (spec.default !== undefined) {
+				return fail(
+					file,
+					fieldPath(`requiresAnyOf.${member}`),
+					"a param without a default",
+					`"${member}" carries a default`,
+					{
+						fix: `Remove the default from params.${member} — a defaulted member always satisfies the group at runtime. Give it a verifyValue instead.`,
+					},
+				);
+			}
+		}
+		requiresAnyOf = requiresAnyOfRaw as string[];
 	}
 
 	// dateParams — param name → date format normalization
@@ -1138,6 +1210,7 @@ function validateOperation(
 		...(transform === undefined ? {} : { transform }),
 		...(passthrough === undefined ? {} : { passthrough }),
 		...(dateParams === undefined ? {} : { dateParams }),
+		...(requiresAnyOf === undefined ? {} : { requiresAnyOf }),
 		...(parseOverride ? { parse: parseOverride } : {}),
 		...(opPagination ? { pagination: opPagination } : {}),
 		...(opGatherAllMax === undefined ? {} : { gatherAllMax: opGatherAllMax }),

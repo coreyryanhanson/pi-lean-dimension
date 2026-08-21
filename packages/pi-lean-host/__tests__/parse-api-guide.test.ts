@@ -892,6 +892,146 @@ body
 		expect(guide.operations[0]!.transform).toBeUndefined();
 	});
 
+	describe("parseApiGuide — requiresAnyOf + verifyValue", () => {
+		it("parses requiresAnyOf and verifyValue on an operation", () => {
+			const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: getResource
+    via: restGet
+    path: /resources
+    requiresAnyOf: [id, slug, code]
+    params:
+      id:
+        description: Resource id.
+        verifyValue: 1
+      slug:
+        description: Resource slug.
+      code:
+        description: Resource code.
+---
+body
+`;
+			const guide = expectOk(raw);
+			const op = guide.operations[0]!;
+			expect(op.requiresAnyOf).toEqual(["id", "slug", "code"]);
+			expect(op.params["id"]?.verifyValue).toBe(1);
+			expect(op.params["slug"]?.verifyValue).toBeUndefined();
+		});
+
+		it("omits requiresAnyOf when absent", () => {
+			const guide = expectOk(MINIMAL);
+			expect(guide.operations[0]!.requiresAnyOf).toBeUndefined();
+		});
+
+		it("rejects an empty requiresAnyOf array", () => {
+			const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: getResource
+    via: restGet
+    path: /resources
+    requiresAnyOf: []
+    params:
+      id:
+        description: Resource id.
+---
+body
+`;
+			const err = expectErr(raw);
+			expect(err.field).toBe("operations[0].requiresAnyOf");
+			expect(err.expected).toContain("non-empty list");
+		});
+
+		it("rejects a requiresAnyOf member that is not a declared param", () => {
+			const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: getResource
+    via: restGet
+    path: /resources
+    requiresAnyOf: [id, code]
+    params:
+      id:
+        description: Resource id.
+---
+body
+`;
+			const err = expectErr(raw);
+			expect(err.field).toBe("operations[0].requiresAnyOf.code");
+			expect(err.expected).toContain("declared in this operation's params");
+		});
+
+		it("rejects a requiresAnyOf member that is a path param", () => {
+			const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: getThing
+    via: restGet
+    path: /things/{id}
+    requiresAnyOf: [id, code]
+    params:
+      code:
+        description: Resource code.
+---
+body
+`;
+			const err = expectErr(raw);
+			expect(err.field).toBe("operations[0].requiresAnyOf.id");
+			expect(err.expected).toContain("not a path param");
+		});
+
+		it("rejects a requiresAnyOf member that is required: true", () => {
+			const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: getResource
+    via: restGet
+    path: /resources
+    requiresAnyOf: [id, code]
+    params:
+      id:
+        required: true
+      code:
+        description: Resource code.
+---
+body
+`;
+			const err = expectErr(raw);
+			expect(err.field).toBe("operations[0].requiresAnyOf.id");
+			expect(err.expected).toContain("not also required");
+			expect(err.fix).toContain("Remove required: true");
+		});
+
+		it("rejects a requiresAnyOf member that carries a default", () => {
+			const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: getResource
+    via: restGet
+    path: /resources
+    requiresAnyOf: [id, code]
+    params:
+      id:
+        default: 1
+      code:
+        description: Resource code.
+---
+body
+`;
+			const err = expectErr(raw);
+			expect(err.field).toBe("operations[0].requiresAnyOf.id");
+			expect(err.expected).toContain("without a default");
+			expect(err.fix).toContain("verifyValue");
+		});
+	});
+
 	it("no frontmatter → ParseError on frontmatter", () => {
 		const err = expectErr("just prose, no frontmatter");
 		expect(err.field).toBe("frontmatter");

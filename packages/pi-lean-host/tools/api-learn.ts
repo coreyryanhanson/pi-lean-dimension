@@ -104,6 +104,11 @@ responseShape:
 #     via: restGet
 #     path: /<path>
 #     accept: json
+#     # requiresAnyOf: [id, slug, code]  # at least one of these params must be supplied
+#     params:
+#       id:
+#         description: <what id selects>
+#         # verifyValue: demo  # /api verify uses this when no verify.json value exists
 ---
 
 # Optional agent-instruction prose goes AFTER the closing --- and is surfaced
@@ -173,7 +178,9 @@ const AUTHORING_MANUAL = [
 	`  \`transform\`   — true → run the helper.ts \`transform\` export on the parsed response`,
 	`  \`params.<token>.description\` — docs-only description for a {token} path param (format, e.g. 'yyyy-mm-dd'); never sent as a query param, shown in api-guide`,
 	`  \`params.<name>.required\` — true → query param must be supplied (verify skips the op if missing; api-fetch errors before the request)`,
-	`  \`params.<name>.default\`  — value (any YAML scalar: string, number, boolean) used when the caller omits the param (verify runs the op with it; a \`required\`+\`default\` op is always verifiable without a verify.json sidecar)`,
+	`  \`params.<name>.default\`  — value (any YAML scalar: string, number, boolean) used when the caller omits the param (verify runs the op with it; a \`required\`+\`default\` (or \`verifyValue\`) op is always verifiable without a verify.json sidecar)`,
+	`  \`params.<name>.verifyValue\` — verify-only value: /api verify uses it when no verify.json value exists for this param (precedence: verify.json > verifyValue > missing). Never sent at runtime — api-fetch ignores it, so a verify example can't poison a real request`,
+	`  \`requiresAnyOf\` — [param, ...] — at least one of these params must be supplied (one group per op). Members may not be \`required: true\` or carry a \`default\` — give them a \`verifyValue\` instead. Use \`required: true\` for a single-param constraint; \`requiresAnyOf\` is for two or more interchangeable params`,
 	`  \`passthrough\` — true → forward undeclared caller params onto the query string`,
 	`  \`parse\`       — op-level responseShape override (format/charset) for this operation`,
 	"",
@@ -206,7 +213,7 @@ const MANUAL_SECTION_RULES: ReadonlyArray<[RegExp, string]> = [
 	[/^operations(\[\d+\])?\.params(\.|$)/, "Optional fields (operation-level)"],
 	[/^operations(\[\d+\])?\.(via|name|path)$/, "Required fields"],
 	[
-		/^operations(\[\d+\])?\.(dateParams|helper|transform|passthrough|parse)(\.|$)/,
+		/^operations(\[\d+\])?\.(dateParams|helper|transform|passthrough|parse|requiresAnyOf)(\.|$)/,
 		"Optional fields (operation-level)",
 	],
 	[/^operations(\[\d+\])?\.pagination(\.|$)/, "Executor semantics"],

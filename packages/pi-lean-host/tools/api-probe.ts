@@ -702,8 +702,17 @@ function emitScaffoldSkeleton(opts: {
 	];
 	const authBlock = emitAuthBlock(opts.auth);
 	if (authBlock) lines.push("", authBlock);
-	// Trailing "" gives the closing `---` its required trailing newline.
-	lines.push("", "operations:", opts.draft, "---", "");
+	// Op-level hints for the new constraint fields — commented so a fresh
+	// scaffold surfaces both mechanisms (mirrors placeholderSkeleton).
+	lines.push(
+		"",
+		"# requiresAnyOf: [id, slug, code]  # at least one of these params must be supplied",
+		"# params.<name>.verifyValue: demo  # /api verify uses this; runtime never sends it",
+		"operations:",
+		opts.draft,
+		"---",
+		"",
+	);
 	return lines.join("\n");
 }
 

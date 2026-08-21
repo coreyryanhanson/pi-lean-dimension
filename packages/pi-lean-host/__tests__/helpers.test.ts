@@ -681,6 +681,56 @@ describe("restGet", () => {
 		);
 	});
 
+	// ── requiresAnyOf — at-least-one-of group guard ───────────────
+	describe("restGet — requiresAnyOf group guard", () => {
+		it("throws HelperError when no group member is supplied", async () => {
+			const guide = makeGuide({ apiHost: ctx.serverUrl });
+			const op = makeOp({
+				path: "/api/items",
+				params: {
+					id: { description: "Resource id." },
+					slug: { description: "Resource slug." },
+					code: { description: "Resource code." },
+				},
+				requiresAnyOf: ["id", "slug", "code"],
+			});
+
+			await expect(restGet(ctx.serverUrl, op, {}, guide)).rejects.toThrow(
+				HelperError,
+			);
+		});
+
+		it("passes when at least one group member is supplied", async () => {
+			const guide = makeGuide({ apiHost: ctx.serverUrl });
+			const op = makeOp({
+				path: "/api/items",
+				params: {
+					id: { description: "Resource id." },
+					slug: { description: "Resource slug." },
+				},
+				requiresAnyOf: ["id", "slug"],
+			});
+
+			const result = await restGet(ctx.serverUrl, op, { id: 42 }, guide);
+			expect(result.data).toBeTypeOf("object");
+			expect(result.url).toContain("id=42");
+		});
+
+		it("verifyValue is ignored at runtime (never sent on a real call)", async () => {
+			const guide = makeGuide({ apiHost: ctx.serverUrl });
+			const op = makeOp({
+				path: "/api/items-query",
+				params: {
+					q: { verifyValue: "demo" },
+				},
+			});
+
+			const result = await restGet(ctx.serverUrl, op, {}, guide);
+			expect(result.params["q"]).toBeUndefined();
+			expect(result.url).not.toContain("demo");
+		});
+	});
+
 	// Nested object/array query params must serialize as JSON on the wire,
 	// not `[object Object]` (BOE's ES query_string DSL, filter objects, etc.).
 	it("serializes a nested object query param as JSON, not [object Object]", async () => {

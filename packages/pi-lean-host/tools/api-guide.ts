@@ -232,6 +232,12 @@ function renderGuideDetail(
 				return parts.join(" ");
 			});
 			lines.push(`    params: ${rendered.join(", ")}`);
+			// At-least-one-of group — a single line naming the interchangeable
+			// params. Members are NOT rendered as `required` (parser bans
+			// required: true on them), so no suppression logic is needed.
+			if (op.requiresAnyOf && op.requiresAnyOf.length > 0) {
+				lines.push(`    requires any of: ${op.requiresAnyOf.join(", ")}`);
+			}
 			// Per-param hints (format, semantics) — these are the model's
 			// primary guidance for shaping values, so they get their own lines.
 			for (const [k, spec] of qParams) {

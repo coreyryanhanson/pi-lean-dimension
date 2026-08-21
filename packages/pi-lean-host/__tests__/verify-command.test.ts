@@ -106,6 +106,42 @@ const OP_TRANSFORM: OpDef = {
 	path: "/transform",
 	extra: "    transform: true",
 };
+const OP_REQUIRED_VERIFY: OpDef = {
+	name: "search",
+	path: "/search",
+	extra:
+		"    params:\n" +
+		"      q:\n" +
+		"        required: true\n" +
+		"        verifyValue: demo",
+};
+const OP_GROUP: OpDef = {
+	name: "group",
+	path: "/group",
+	extra:
+		"    requiresAnyOf: [id, slug, code]\n" +
+		"    params:\n" +
+		"      id:\n" +
+		"        description: Resource id.\n" +
+		"      slug:\n" +
+		"        description: Resource slug.\n" +
+		"      code:\n" +
+		"        description: Resource code.",
+};
+const OP_GROUP_VERIFY: OpDef = {
+	name: "group",
+	path: "/group",
+	extra:
+		"    requiresAnyOf: [id, slug, code]\n" +
+		"    params:\n" +
+		"      id:\n" +
+		"        description: Resource id.\n" +
+		"        verifyValue: 1\n" +
+		"      slug:\n" +
+		"        description: Resource slug.\n" +
+		"      code:\n" +
+		"        description: Resource code.",
+};
 
 /** A valid recipe for the verify.test domain. */
 function recipe(opBlocks: string, authBlock?: string): string {
@@ -400,6 +436,59 @@ describe("/api verify — param precheck + verify.json", () => {
 		expect(text).toContain("✓ query — /query (restGet)");
 		expect(text).toContain("✅ All runnable ops passed");
 		expect(requestedUrls().some((u) => u.includes("foo=bar"))).toBe(true);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// verifyValue + requiresAnyOf
+// ═══════════════════════════════════════════════════════════════════
+
+describe("/api verify — verifyValue + requiresAnyOf", () => {
+	it("runs a required-no-default op when verifyValue supplies the param", async () => {
+		setupGuide(recipe(opBlock(OP_REQUIRED_VERIFY)));
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("✓ search — /search (restGet)");
+		expect(text).toContain("✅ All runnable ops passed");
+		expect(requestedUrls().some((u) => u.includes("q=demo"))).toBe(true);
+	});
+
+	it("runs a requiresAnyOf group when a member carries verifyValue", async () => {
+		setupGuide(recipe(opBlock(OP_GROUP_VERIFY)));
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("✓ group — /group (restGet)");
+		expect(text).toContain("✅ All runnable ops passed");
+		expect(requestedUrls().some((u) => u.includes("id=1"))).toBe(true);
+	});
+
+	it("skips a requiresAnyOf op when no member is supplied, naming the group", async () => {
+		setupGuide(recipe(opBlock(OP_GROUP)));
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain(
+			"⏭ group — skipped: requires agent-supplied params (one of: id, slug, code)",
+		);
+		expect(text).toContain("⚠ NOT stamped — all ops skipped");
+	});
+
+	it("verify.json wins over verifyValue", async () => {
+		setupGuide(recipe(opBlock(OP_REQUIRED_VERIFY)), {
+			verifyJson: JSON.stringify({ search: { q: "other" } }),
+		});
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("✅ All runnable ops passed");
+		expect(requestedUrls().some((u) => u.includes("q=other"))).toBe(true);
+		expect(requestedUrls().some((u) => u.includes("q=demo"))).toBe(false);
 	});
 });
 
