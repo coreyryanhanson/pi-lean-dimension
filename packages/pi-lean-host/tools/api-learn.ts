@@ -78,7 +78,7 @@ description: <one-line summary>  # optional — one-line summary; aids disambigu
 icon: <emoji>
 shortName: <short>
 # updated / verified are stamped by the tool when omitted (defaults to today)
-apiHost: <base url>          # REQUIRED — base URL including version prefix
+apiHost: <base url>          # REQUIRED — base URL. Version in apiHost XOR in each path — never both (/v3/v3/items → 404)
 # docs: <api docs url>       # optional — API documentation URL
 gatherAllMax: 1000           # omitted → 1000
 
@@ -153,7 +153,7 @@ const AUTHORING_MANUAL = [
 	"",
 	"## Required fields",
 	`  \`domains\`       — list of domain names this guide applies to`,
-	`  \`apiHost\`       — base URL including version prefix`,
+	`  \`apiHost\`       — base URL. Version in apiHost XOR in each path — never both (see Key defaults)`,
 	`  \`operations\`    — a LIST of operation mappings — at least one entry`,
 	`  \`operations[].name\`   — unique operation name`,
 	`  \`operations[].via\`    — "restGet" or "paginate"`,

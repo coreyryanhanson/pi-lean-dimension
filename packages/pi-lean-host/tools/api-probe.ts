@@ -650,23 +650,33 @@ export function emitDraft(
 		lines.push(
 			"    # unverified — pagination params are guessed from response keys; confirm the API accepts them",
 		);
-		const style =
-			shape.paginationMarkers.includes("page") ||
-			shape.paginationMarkers.includes("per_page")
-				? "page"
-				: "offset-limit";
-		const pageParam = style === "page" ? "page" : "offset";
-		const pageSizeParam = style === "page" ? "per_page" : "limit";
+		const markers = shape.paginationMarkers;
+		const isPageStyle = markers.includes("page") || markers.includes("per_page");
+		const style = isPageStyle ? "page" : "offset-limit";
+		// `start` marker ⇒ 1-based row offset (CMC, GBIF) — emit base: 1 so the
+		// first page starts at 1, not the 0 default. `offset` ⇒ 0-based, no base.
+		let pageParam: string;
+		if (isPageStyle) pageParam = "page";
+		else if (markers.includes("start")) pageParam = "start";
+		else pageParam = "offset";
+		const pageSizeParam = isPageStyle ? "per_page" : "limit";
+		if (style === "offset-limit") {
+			lines.push(
+				"    # offset-limit advances the page param by pageSize each page (row-offset semantics); base seeds the start (1 for `start` params, 0 for `offset`)",
+			);
+		}
 		lines.push("    pagination:");
 		lines.push(`      style: ${style}`);
 		lines.push(`      itemsPath: ${shape.suggestedItemsPath}`);
 		lines.push(`      pageParam: ${pageParam}`);
 		lines.push(`      pageSizeParam: ${pageSizeParam}`);
 		lines.push("      pageSize: 30");
+		if (pageParam === "start") lines.push("      base: 1");
 	}
 	if (shape.suggestedVia === "restGet" && shape.suggestedItemsPath !== "") {
 		lines.push(
-			"    # array response with no pagination markers — if the API documents paging, prefer paginate; otherwise use restGet.",
+			"    # array response with no pagination markers — if the API documents paging, prefer paginate:",
+			"    #   offset-limit advances the page param by pageSize each page (use base: 1 for 1-based `start` APIs like CMC); page increments the page param by 1.",
 		);
 	}
 	if (queryParamKeys.length > 0) {

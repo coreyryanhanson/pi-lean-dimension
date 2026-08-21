@@ -151,6 +151,22 @@ describe("emitDraft (marker → style guess)", () => {
 		expect(draft).toContain("# unverified");
 	});
 
+	it("detects 1-based `start` marker and emits pageParam: start + base: 1", () => {
+		// CMC/GBIF-style: 1-based row offset, not a 0-based offset or a page index.
+		const shape = summarize({
+			start: 1,
+			limit: 100,
+			data: [{ id: 1 }],
+		});
+		expect(shape.suggestedVia).toBe("paginate");
+		const draft = emitDraft("/cryptocurrency/listings/latest", {}, shape);
+		expect(draft).toContain("style: offset-limit");
+		expect(draft).toContain("pageParam: start");
+		expect(draft).toContain("pageSizeParam: limit");
+		expect(draft).toContain("base: 1");
+		expect(draft).not.toContain("pageParam: offset");
+	});
+
 	it("does not re-declare path tokens in the emitted params", () => {
 		const shape = summarize({ results: [{ id: 1 }] });
 		const draft = emitDraft(
@@ -178,6 +194,9 @@ describe("emitDraft (marker → style guess)", () => {
 		expect(draft).toContain("via: restGet");
 		expect(draft).not.toContain("pagination:");
 		expect(draft).toContain("no pagination markers");
+		// The no-marker note must explain how paginate would advance, so the
+		// author doesn't fall back to restGet just to avoid guessing (issue #3).
+		expect(draft).toContain("base: 1 for 1-based `start` APIs like CMC");
 	});
 });
 
