@@ -1,11 +1,11 @@
 /**
- * api-learn fetch-recipe (D9) + entry-point split (D9) + disambiguation
- * (D12) structural tests.
+ * api-learn fetch-recipe + entry-point split + disambiguation
+ * structural tests.
  *
- * Covers the S2 acceptance table:
+ * Covers:
  *  - 0 guides → domain-specific template (domains pre-filled).
  *  - 1 guide → raw recipe + dirName surfaced.
- *  - N guides → D12 menu; guide selector resolves to the selected raw recipe.
+ *  - N guides → menu; guide selector resolves to the selected raw recipe.
  *  - `new: true` → fresh template regardless of existing guides (no writes).
  *  - Entry-point split: bare = manual + pointer (no recipe body); `{domain,
  *    new: true}` = template only.
@@ -68,7 +68,7 @@ function callLearn(
 	return apiLearnTool.execute("test", p, undefined, undefined, undefined as any);
 }
 
-describe("api-learn fetch-recipe (D9)", () => {
+describe("api-learn fetch-recipe", () => {
 	it("0 guides → placeholder template with domains pre-filled (fails closed)", async () => {
 		const text = contentText(await callLearn("fresh.example"));
 		expect(text).toContain("```yaml");
@@ -163,7 +163,7 @@ describe("api-learn fetch-recipe (D9)", () => {
 	});
 });
 
-describe("api-learn entry-point split (D9)", () => {
+describe("api-learn entry-point split", () => {
 	it("bare → manual + pointer, no recipe body", async () => {
 		const text = contentText(await callLearn());
 		expect(text).toContain("authoring manual");
@@ -183,7 +183,7 @@ describe("api-learn entry-point split (D9)", () => {
 	});
 });
 
-describe("api-learn save path unchanged (D9 regression)", () => {
+describe("api-learn save path unchanged", () => {
 	it("{domain, recipe} validates-then-writes", async () => {
 		const text = contentText(
 			await callLearn("save.example", recipe("save.example", "Save", "getSave")),

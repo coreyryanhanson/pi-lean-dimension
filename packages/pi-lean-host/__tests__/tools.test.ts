@@ -1,7 +1,7 @@
 /**
  * Agent-facing tools tests.
  *
- * Covers the acceptance criteria:
+ * Covers:
  *  - Full write→verify→fix loop against local test server.
  *  - api-guide({}) catalog and api-guide({domain}) detail shapes.
  *  - api-learn validate-before-write (no half-write on invalid recipe).
@@ -1069,9 +1069,9 @@ operations:
 		expect(text).not.toContain("Multi-recipe");
 	});
 
-	// D6 — the template is the docs-side discoverability: no hardcoded
-	// updated/verified dates (the tool stamps them when omitted — the
-	// load-bearing D2 close) and a static-key auth block to crib from.
+	// The template is the docs-side discoverability: no hardcoded
+	// updated/verified dates (the tool stamps them when omitted) and a
+	// static-key auth block to crib from.
 	it("template has no hardcoded updated/verified dates", async () => {
 		const text = contentText(
 			await callLearn("example.com", undefined, { new: true }),
@@ -1097,7 +1097,7 @@ operations:
 		expect(example).toContain("headerPrefixes:");
 	});
 
-	// D-bootstrap (write path) — api-learn stamps schemaVersion on save.
+	// Write path — api-learn stamps schemaVersion on save.
 	it("stamps schemaVersion on save when the recipe omits it", async () => {
 		setUserGuidesDir(tmpGuidesDir);
 		invalidateCache();

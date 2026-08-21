@@ -1,7 +1,7 @@
 /**
  * parseApiGuide() schema & parser tests.
  *
- * Covers the acceptance criteria:
+ * Covers:
  *  - BOE worked example parses to a valid ApiGuide with defaults filled.
  *  - Each malformed fixture returns a ParseError with dotted field path.
 
@@ -1034,7 +1034,7 @@ body
 		expect(err.field).toBe("frontmatter");
 	});
 
-	// D7 — the opener-present cases route to a closing-`---` diagnostic
+	// The opener-present cases route to a closing-`---` diagnostic
 	// instead of the misleading "no frontmatter found".
 	it("opening --- with no closing --- → names the missing closer", () => {
 		const err = expectErr(

@@ -141,7 +141,7 @@ export async function handleDeleteSubcommand(
 		return;
 	}
 
-	// N guides, no selector → interactive pick (TUI) or the D12 menu
+	// N guides, no selector → interactive pick (TUI) or the menu
 	// fallback (headless/RPC/print or cancelled), nothing removed.
 	const picked = await pickGuide(ctx, matches);
 	if (!picked) {

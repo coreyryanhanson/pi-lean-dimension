@@ -1,7 +1,7 @@
 /**
  * /api verify command tests — mocked transport (no network).
  *
- * Covers the D4 acceptance bar:
+ * Covers:
  *  - strict threshold: all-pass → stamp + cache invalidation; partial-fail /
  *    all-fail → no stamp; all-skipped → no stamp + warning.
  *  - auth precheck fail-fast (no HTTP when a requires secret is missing).
@@ -155,7 +155,7 @@ const FIXTURE_TRANSFORM_THROWS = `export function transform() {
 
 // ═══════════════════════════════════════════════════════════════════
 // Setup
-// ════════════════════════���══════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 
 let tmpGuidesDir: string;
 let tmpSecretsDir: string;
@@ -238,7 +238,7 @@ function requestedUrls(): string[] {
 
 // ═══════════════════════════════════════════════════════════════════
 // Threshold + stamp
-// ═══���═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 
 describe("/api verify — threshold + stamp", () => {
 	it("stamps verified: today on all-pass and invalidates the cache", async () => {

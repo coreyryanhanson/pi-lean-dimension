@@ -626,8 +626,7 @@ describe("probe redirect handling (live localhost)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// Final fix wave — 401/403 wording + headerPrefixes-without-secretRefs
-// (see docs/design/authoring-flow-history.md, wave 5)
+// 401/403 error wording + headerPrefixes-without-secretRefs
 // ═══════════════════════════════════════════════════════════════════
 
 /** Tiny stub: a JSON server that always replies with the given status. */
@@ -1075,7 +1074,7 @@ describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// S1 — probe scaffold (D6 probe-scaffold + D11 auto-degrade)
+// Scaffold emission — full skeleton vs op-block + merge note
 // ═══════════════════════════════════════════════════════════════════
 
 const SCAFFOLD_GUIDE = `---
@@ -1094,7 +1093,7 @@ operations:
 
 // The probe hits a live localhost server; the scaffold decision is driven by
 // guides on a temp dir (0 / 1 / N claiming the routed domain).
-describe("api-probe scaffold (D6/D11)", () => {
+describe("api-probe scaffold", () => {
 	let scaffoldTmpGuides: string;
 	let prevGuidesDir: string;
 	let server: http.Server;
@@ -1165,7 +1164,7 @@ describe("api-probe scaffold (D6/D11)", () => {
 		expect(draft).toContain("Authorization: apiKey");
 		expect(draft).toContain("headerPrefixes:");
 		expect(draft).toContain('Authorization: "Bearer "');
-		// Pagination stays op-level only — no top-level pagination (issue #5).
+		// Pagination stays op-level only — never a top-level default.
 		expect(draft).not.toMatch(/^pagination:/m);
 		// The skeleton parses cleanly and carries the detection-ready vintage.
 		const parsed = parseApiGuide(draft, { filename: "scaffold" });

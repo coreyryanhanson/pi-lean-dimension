@@ -686,12 +686,10 @@ the recipe frontmatter**, not in settings. Credentials are **not** stored in
 
 ## Co-Installing with `pi-lean-portal`
 
-> **Planned for a future release.** Portal integration is
-> being developed on the `pi-lean-host-integration` branch (0.5.0-track
-> code, continuously rebased onto this package branch). The projection and
-> navigate-footer surfacing described below are what that track delivers.
-> Host-side projection code is present but inert until portal ships the
-> receiving global (`__piLeanPortalRegisterGuideProvider`).
+> **Planned for a future release.** Portal integration is not yet shipped:
+> the projection and navigate-footer surfacing described below are what that
+> release delivers. Host-side projection code is present but inert until
+> portal ships the receiving global (`__piLeanPortalRegisterGuideProvider`).
 
 Portal is fully optional. When co-installed, host registers a **projection**
 of its user-authored `ApiGuide`s with portal's guide-source registry at load

@@ -106,7 +106,7 @@ export interface ProbeOptions {
 	/**
 	 * Emit a full recipe skeleton (frontmatter + auth + operations) when no
 	 * guide exists for the domain; auto-degrades to a single op block + merge
-	 * note when one or more guides already claim the domain (D11). Opt-in —
+	 * note when one or more guides already claim the domain. Opt-in —
 	 * without it the output is today's op-block-only draft.
 	 */
 	scaffold?: boolean;
@@ -559,7 +559,7 @@ async function fetchOne(
 	if (authCtx.misconfiguredPrefixes) {
 		note = [note, MISCONFIGURED_PREFIXES_NOTE].filter(Boolean).join(" — ");
 	}
-	// Targeted scaffold nudge (issue #6): only when the caller didn't pass
+	// Targeted scaffold nudge: only when the caller didn't pass
 	// scaffold: true AND no guide claims the domain yet — authors who already
 	// used the skeleton (or who have a guide) see no noise.
 	const scaffoldNudge =
@@ -679,12 +679,12 @@ function suggestName(path: string): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Scaffold emission (D6 probe-scaffold + D11 auto-degrade)
+// Scaffold emission — full skeleton vs op-block + merge note
 // ═══════════════════════════════════════════════════════════════════
 
 /**
  * Translate the probe's auth-injection params into a `kind: static-key` auth
- * block (issue #4 close: probe auth shape now matches the guide schema).
+ * block (probe auth shape matches the guide schema).
  * `requires` = the union of secret names referenced by the refs. Returns
  * undefined when no injection refs are declared (auth: none default).
  */
@@ -726,7 +726,7 @@ function emitAuthBlock(
  * block. `schemaVersion` literal matches what api-learn stamps on save, so a
  * scaffolded guide is detection-ready the moment it's saved. Pagination stays
  * op-level only (a single probe justifies one op's pagination, never a
- * top-level default — issue #5 guardrail).
+ * top-level default).
  */
 function emitScaffoldSkeleton(opts: {
 	apiHost: string;
@@ -760,7 +760,7 @@ function emitScaffoldSkeleton(opts: {
 }
 
 /**
- * D11 scaffold decision, driven by findGuidesByDomain(domain): 0 guides →
+ * Scaffold decision, driven by findGuidesByDomain(domain): 0 guides →
  * full skeleton (bootstrap); 1 guide → op block + merge note naming the one
  * dirName; N guides → op block + merge note listing every candidate dirName
  * (the merge-target choice defers to api-learn's selector). Returns the

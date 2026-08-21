@@ -110,7 +110,7 @@ export async function handleVerifySubcommand(
 		return;
 	}
 
-	// Resolve the guide by domain (D12 disambiguation for N-guide domains).
+	// Resolve the guide by domain (disambiguation for N-guide domains).
 	const matches = findGuidesByDomain(domain);
 	if (matches.length === 0) {
 		ctx.ui.notify(
@@ -147,7 +147,7 @@ export async function handleVerifySubcommand(
 		}
 		selected = sel;
 	} else {
-		// N guides, no selector → interactive pick (TUI) or the D12 menu
+		// N guides, no selector → interactive pick (TUI) or the menu
 		// fallback (headless/RPC/print or cancelled), nothing run yet.
 		const picked = await pickGuide(ctx, matches);
 		if (!picked) {

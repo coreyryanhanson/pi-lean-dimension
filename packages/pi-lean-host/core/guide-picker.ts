@@ -11,8 +11,8 @@
  * Terminal-only: `ctx.mode === "tui"` (custom components don't exist in
  * RPC/print). In headless/RPC/print `pickGuide` returns undefined and the
  * caller keeps today's text menu + retype fallback. A stale guide
- * (`schemaVersion < current`) gets a `⚠` on its label so the S0 detection
- * surface survives the interactive path.
+ * (`schemaVersion < current`) gets a `⚠` on its label so stale-guide
+ * detection survives the interactive path.
  */
 
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";

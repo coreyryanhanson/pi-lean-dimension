@@ -265,7 +265,7 @@ function renderFetchedRecipe(
 	);
 }
 
-/** D12 disambiguation menu for the N-guide fetch-recipe case (mirrors
+/** Disambiguation menu for the N-guide fetch-recipe case (mirrors
  * api-guide's menu). */
 function renderFetchMenu(
 	domain: string,
@@ -393,9 +393,9 @@ export const apiLearnTool = defineTool({
 			};
 		}
 
-		// ── No recipe → fetch-recipe (D9) ────────────────────────
+		// ── No recipe → fetch-recipe ─────────────────────────────
 		// 0 guides → template; 1 guide → raw recipe + dirName surfaced;
-		// N guides → D12 disambiguation menu (guide selector resolves it).
+		// N guides → disambiguation menu (guide selector resolves it).
 		if (!recipe || !recipe.trim()) {
 			const matches = findGuidesByDomain(domain);
 			if (matches.length === 0) {

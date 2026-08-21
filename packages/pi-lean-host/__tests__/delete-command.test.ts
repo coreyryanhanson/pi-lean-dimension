@@ -1,13 +1,13 @@
 /**
  * /api delete command tests — temp api-guides dir fixture (no network).
  *
- * Covers the D10 acceptance bar:
+ * Covers:
  *  - whole-domain delete → interactive confirm, directory gone + cache
  *    invalidated (next catalog lookup empty — the ghost-guide fix).
  *  - single-guide delete (guide selector) → no confirm, that directory gone,
  *    siblings intact, cache invalidated.
  *  - non-existent → not-found message, nothing removed.
- *  - N-guide no-selector → D12 disambiguation menu, nothing removed.
+ *  - N-guide no-selector → disambiguation menu, nothing removed.
  *  - malformed-guide literal-dir fallback (findGuidesByDomain can't address
  *    an unparseable guide) → whole-domain delete of the literal dirName.
  *  - cancelled confirm → nothing removed; path-traversal guard.
@@ -119,7 +119,7 @@ describe("/api delete — whole-domain (confirm)", () => {
 	});
 });
 
-// ═��═════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 // Single-guide delete (guide selector, no confirm)
 // ═══════════════════════════════════════════════════════════════════
 
