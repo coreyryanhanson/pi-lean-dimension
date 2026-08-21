@@ -915,8 +915,8 @@ body
 		expect(guide.operations[0]!.transform).toBeUndefined();
 	});
 
-	describe("parseApiGuide — requiresAnyOf + verifyValue", () => {
-		it("parses requiresAnyOf and verifyValue on an operation", () => {
+	describe("parseApiGuide — requiresAnyOf", () => {
+		it("parses requiresAnyOf on an operation", () => {
 			const raw = `---
 domains: [example.com]
 apiHost: https://api.example.com
@@ -928,7 +928,6 @@ operations:
     params:
       id:
         description: Resource id.
-        verifyValue: 1
       slug:
         description: Resource slug.
       code:
@@ -939,8 +938,6 @@ body
 			const guide = expectOk(raw);
 			const op = guide.operations[0]!;
 			expect(op.requiresAnyOf).toEqual(["id", "slug", "code"]);
-			expect(op.params["id"]?.verifyValue).toBe(1);
-			expect(op.params["slug"]?.verifyValue).toBeUndefined();
 		});
 
 		it("omits requiresAnyOf when absent", () => {
@@ -1029,29 +1026,6 @@ body
 			expect(err.field).toBe("operations[0].requiresAnyOf.id");
 			expect(err.expected).toContain("not also required");
 			expect(err.fix).toContain("Remove required: true");
-		});
-
-		it("rejects a requiresAnyOf member that carries a default", () => {
-			const raw = `---
-domains: [example.com]
-apiHost: https://api.example.com
-operations:
-  - name: getResource
-    via: restGet
-    path: /resources
-    requiresAnyOf: [id, code]
-    params:
-      id:
-        default: 1
-      code:
-        description: Resource code.
----
-body
-`;
-			const err = expectErr(raw);
-			expect(err.field).toBe("operations[0].requiresAnyOf.id");
-			expect(err.expected).toContain("without a default");
-			expect(err.fix).toContain("verifyValue");
 		});
 	});
 

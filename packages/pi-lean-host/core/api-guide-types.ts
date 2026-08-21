@@ -150,13 +150,6 @@ export type AcceptType = string;
 export interface QueryParamSpec {
 	required?: boolean;
 	default?: unknown;
-	/**
-	 * Verify-only value — consumed by /api verify as the fallback when no
-	 * verify.json value exists for this param (precedence: verify.json >
-	 * verifyValue > missing). Never sent at runtime — buildQueryParams
-	 * ignores it, so a verify example can't poison a real request.
-	 */
-	verifyValue?: unknown;
 	/** Human-readable hint surfaced to the model via api-guide (format, semantics). */
 	description?: string;
 }
@@ -183,9 +176,11 @@ export interface Operation {
 	pathParamDocs?: Record<string, string>;
 	/**
 	 * At-least-one-of constraint: at least one of these param names must be
-	 * supplied. Members may not be `required: true` or carry a `default`
-	 * (parser-enforced) — they take `verifyValue` instead. One group per op
-	 * (v1); a multi-group `requiresAnyOfGroups` upgrade is purely additive.
+	 * supplied. Members may not be `required: true` (parser-enforced); a
+	 * member may carry a `default` (applied when the group is otherwise
+	 * satisfied), but a default does not itself satisfy the group — one
+	 * member must still be supplied. One group per op (v1); a multi-group
+	 * `requiresAnyOfGroups` upgrade is purely additive.
 	 */
 	requiresAnyOf?: string[];
 	/**

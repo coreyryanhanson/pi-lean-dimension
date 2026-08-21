@@ -46,7 +46,6 @@ operations:
         default: json
       titles:
         description: Page titles to query — at least one of titles, pageids, revids.
-        verifyValue: "Albert Einstein"
       pageids:
         description: Page IDs to query — at least one of titles, pageids, revids.
       revids:
@@ -71,6 +70,4 @@ live endpoint** — exercised only against mocked transport.
   interchangeable single params, the clean v1 shape for `requiresAnyOf`.
   Soft-enforced by the real API (empty spec → empty batch, not a 400), but
   as a synthetic fixture the shape fit is what matters — it exercises the
-  field end-to-end (parser → render → verify → `buildQueryParams`). `titles`
-  carries a `verifyValue` so `/api verify` can run the op without a
-  `verify.json` sidecar.
+  field end-to-end (parser → render → verify → `buildQueryParams`).

@@ -71,8 +71,7 @@ function helpText(): string {
 		"  /api verify --help              this help",
 		"",
 		"  Ops with unsatisfiable params (a path {token} or required query param with no default)",
-		"  are skipped, not failed. Set verifyValue on the param in guide.md, or supply them",
-		"  via a co-located verify.json:",
+		"  are skipped, not failed. Supply them via a co-located verify.json:",
 		`    ~/.pi/agent/pi-lean-host/api-guides/<domain>/verify.json`,
 		`    { "<opName>": { "<param>": "<value>" } }`,
 		"",
@@ -220,13 +219,7 @@ export async function handleVerifySubcommand(
 	let skipped = 0;
 
 	for (const op of ops) {
-		// Merge each param's verifyValue into the supplied map as the fallback
-		// when no verify.json value exists (precedence: verify.json >
-		// verifyValue > missing). Runs before BOTH the unsatisfiableParams
-		// check and resolveOpForExecution, so a group member (or any
-		// required-no-default param) carrying a verifyValue is satisfiable
-		// and runnable without a sidecar.
-		const supplied = mergeVerifyValues(op, verifyJson[op.name] ?? {});
+		const supplied = verifyJson[op.name] ?? {};
 		const missing = unsatisfiableParams(op, supplied);
 		if (missing.length > 0) {
 			skipped++;
@@ -298,7 +291,7 @@ export async function handleVerifySubcommand(
 				summary,
 				...report,
 				"",
-				`⚠ NOT stamped — all ops skipped. Set verifyValue on the params in guide.md, or supply via verify.json (${dirName}/verify.json), or verify manually via api-fetch.`,
+				`⚠ NOT stamped — all ops skipped. Supply params via verify.json (${dirName}/verify.json), or verify manually via api-fetch.`,
 			].join("\n"),
 			"warning",
 		);
@@ -323,25 +316,6 @@ export async function handleVerifySubcommand(
 // ═══════════════════════════════════════════════════════════════════
 
 /**
- * Merge each param's `verifyValue` into the supplied map as the fallback
- * when no verify.json value exists (precedence: verify.json > verifyValue >
- * missing). verify.json wins by being present in `supplied` first; what's
- * still missing stays missing.
- */
-function mergeVerifyValues(
-	op: Operation,
-	supplied: Record<string, unknown>,
-): Record<string, unknown> {
-	const merged: Record<string, unknown> = { ...supplied };
-	for (const [key, spec] of Object.entries(op.params)) {
-		if (merged[key] === undefined && spec.verifyValue !== undefined) {
-			merged[key] = spec.verifyValue;
-		}
-	}
-	return merged;
-}
-
-/**
  * The params an op still needs to run: path `{token}`s (never defaultable —
  * they're filled from the params map), `required: true` query params with no
  * default, and an unsatisfied `requiresAnyOf` group. Anything the executor
@@ -349,9 +323,8 @@ function mergeVerifyValues(
  *
  * A `requiresAnyOf` group contributes ONE group-level reason when no member
  * is supplied; group members are governed by the group, not per-param
- * required (the parser bans `required`/`default` on them), so they're
- * skipped in the per-param loop. `verifyValue` makes a required-no-default
- * param satisfiable, so it's considered alongside `supplied`.
+ * required (the parser bans `required: true` on them), so they're skipped
+ * in the per-param loop.
  */
 function unsatisfiableParams(
 	op: Operation,

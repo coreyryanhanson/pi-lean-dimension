@@ -746,12 +746,11 @@ function emitScaffoldSkeleton(opts: {
 	];
 	const authBlock = emitAuthBlock(opts.auth);
 	if (authBlock) lines.push("", authBlock);
-	// Op-level hints for the new constraint fields — commented so a fresh
-	// scaffold surfaces both mechanisms (mirrors placeholderSkeleton).
+	// Op-level hint for the new constraint field — commented so a fresh
+	// scaffold surfaces the mechanism (mirrors placeholderSkeleton).
 	lines.push(
 		"",
 		"# requiresAnyOf: [id, slug, code]  # at least one of these params must be supplied",
-		"# params.<name>.verifyValue: demo  # /api verify uses this; runtime never sends it",
 		"operations:",
 		opts.draft,
 		"---",

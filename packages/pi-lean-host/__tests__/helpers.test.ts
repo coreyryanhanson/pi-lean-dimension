@@ -715,20 +715,6 @@ describe("restGet", () => {
 			expect(result.data).toBeTypeOf("object");
 			expect(result.url).toContain("id=42");
 		});
-
-		it("verifyValue is ignored at runtime (never sent on a real call)", async () => {
-			const guide = makeGuide({ apiHost: ctx.serverUrl });
-			const op = makeOp({
-				path: "/api/items-query",
-				params: {
-					q: { verifyValue: "demo" },
-				},
-			});
-
-			const result = await restGet(ctx.serverUrl, op, {}, guide);
-			expect(result.params["q"]).toBeUndefined();
-			expect(result.url).not.toContain("demo");
-		});
 	});
 
 	// Nested object/array query params must serialize as JSON on the wire,
