@@ -256,10 +256,13 @@ api-learn domain="arxiv.org" recipeFile="/tmp/pi-lean-host/arxiv.org/guide.md"  
   needs at the moment of authoring.
 - `{domain, recipeFile}` → reads the staged draft, validates it **before**
   touching disk, then writes to
-  `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`, overwriting any
-  existing guide for that domain. On a structural error it names the field,
-  the expected shape, and what was found — the file on disk is left untouched
-  (no half-written guide). Requires `/api learn`.
+  `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`. A fail-closed
+  guard refuses to overwrite an existing `guide.md` whose `shortName`
+  differs from the incoming guide (prevents clobbering a sibling in a
+  multi-recipe domain); a same-`shortName` save is a legitimate update.
+  On a structural error it names the field, the expected shape, and what
+  was found — the file on disk is left untouched (no half-written guide).
+  Requires `/api learn`.
 
 The working copy is staged at `/tmp/pi-lean-host/<domain>/guide.md` (`/tmp`
 self-cleans, so drafts don't accumulate) — fetch/template calls write the
