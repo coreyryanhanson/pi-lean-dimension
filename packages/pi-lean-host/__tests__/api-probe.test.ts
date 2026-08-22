@@ -729,13 +729,15 @@ describe("probe redirect handling (live localhost)", () => {
 // 401/403 error wording + headerPrefixes-without-secretRefs
 // ═══════════════════════════════════════════════════════════════════
 
-/** Tiny stub: a JSON server that always replies with the given status. */
+/** Tiny stub: a JSON server that always replies with the given status and
+ *  body (defaults to a plain 200-ish JSON object). */
 async function stubProbeServer(
 	status: number,
+	body: unknown = { data: [{ id: 1 }] },
 ): Promise<{ server: http.Server; base: string }> {
 	const server = http.createServer((_req, res) => {
 		res.writeHead(status, { "Content-Type": "application/json" });
-		res.end(JSON.stringify({ data: [{ id: 1 }] }));
+		res.end(JSON.stringify(body));
 	});
 	await new Promise<void>((r) => server.listen(0, r));
 	const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -831,6 +833,102 @@ describe("api-probe 401/403 wording", () => {
 			expect(result.note ?? "").toContain(
 				"auth injected but rejected; verify header name",
 			);
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("auth injected, 403 with CMC error_code 1006 → plan-limit wording, not verify-header", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-plan-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "K");
+		const { server, base } = await stubProbeServer(403, {
+			status: {
+				timestamp: "2026-01-01T00:00:00.000Z",
+				error_code: 1006,
+				error_message:
+					"Your API Key subscription plan doesn't support this endpoint",
+			},
+		});
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			const note = result.note ?? "";
+			expect(note).toContain(
+				"key accepted — endpoint not on your subscription plan",
+			);
+			expect(note).not.toContain("verify header name");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("auth injected, 403 with plan-text message → plan-limit wording (general fallback)", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-plantext-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "K");
+		const { server, base } = await stubProbeServer(403, {
+			error: "Your plan does not include access to this endpoint",
+		});
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			const note = result.note ?? "";
+			expect(note).toContain(
+				"key accepted — endpoint not on your subscription plan",
+			);
+			expect(note).not.toContain("verify header name");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("auth injected, 401 with plan text → stays verify-header (plan check is 403-only)", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-401-plan-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "K");
+		const { server, base } = await stubProbeServer(401, {
+			error: "Your plan does not include access to this endpoint",
+		});
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			const note = result.note ?? "";
+			expect(note).toContain("auth injected but rejected; verify header name");
+			expect(note).not.toContain("key accepted");
 		} finally {
 			server.close();
 			server.closeAllConnections?.();

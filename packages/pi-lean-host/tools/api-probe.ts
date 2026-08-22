@@ -319,6 +319,51 @@ function resolveProbeAuth(
 const MISCONFIGURED_PREFIXES_NOTE =
 	"headerPrefixes ignored: no secretRefs to apply them to; put the secret name in auth.secretRefs";
 
+/** Plan/subscription-limit signals in a 4xx JSON body — the key is valid but
+ *  the endpoint isn't on the caller's plan tier. CMC signals via
+ *  `status.error_code: 1006`; other APIs via message text. Best-effort
+ *  heuristic, advisory only — when nothing matches, the caller keeps the
+ *  generic auth-rejection wording. */
+const PLAN_LIMIT_TEXT_RE =
+	/subscription|not (on|included in|covered by|supported by) (your |the )?(plan|subscription|tier)|plan (doesn't|does not) (support|include|cover)|not entitled|endpoint not/;
+
+/** Returns a human note when the body reads as a plan-limit rejection, or
+ *  undefined when it doesn't (non-JSON, wrong shape, or no plan signal).
+ *  Never throws — best-effort parse of an already-scrubbed body. */
+const PLAN_LIMIT_NOTE =
+	"key accepted — endpoint not on your subscription plan (no auth fix needed)";
+
+function planLimitNote(body: string): string | undefined {
+	let data: unknown;
+	try {
+		data = JSON.parse(body);
+	} catch {
+		return undefined;
+	}
+	if (!isObj(data)) return undefined;
+	const d = data as Record<string, unknown>;
+	const status = isObj(d["status"])
+		? (d["status"] as Record<string, unknown>)
+		: undefined;
+	// CMC's documented plan-limit code: status.error_code 1006.
+	if (status && status["error_code"] === 1006) {
+		return PLAN_LIMIT_NOTE;
+	}
+	// General fallback: message text that reads as a plan/subscription limit.
+	const candidates: unknown[] = [
+		d["message"],
+		d["error"],
+		d["error_message"],
+		status?.["error_message"],
+	];
+	if (
+		candidates.some((c) => typeof c === "string" && PLAN_LIMIT_TEXT_RE.test(c))
+	) {
+		return PLAN_LIMIT_NOTE;
+	}
+	return undefined;
+}
+
 /** First missing secret name as a one-line note (names only, never values).
  *  Prescriptive: names the other provisioned domains and tells the author to
  *  pass `domain:` — the probe's domain is inferred from apiHost, so a miss is
@@ -524,11 +569,17 @@ async function fetchOne(
 			// Auth injected but a required secret was missing — the miss names it.
 			note = `${res.status}${is401 ? " — auth rejected;" : ""} ${miss}`;
 		} else {
-			// Auth injected, nothing missing — rejection means the credentials
-			// were wrong (header name / secret value), not the endpoint.
-			note = is401
-				? `${res.status} — auth injected but rejected; verify header name and secret value`
-				: `${res.status}`;
+			// Auth injected, nothing missing. A 403 with a plan-limit body means
+			// the key is valid but the endpoint isn't on the caller's plan — the
+			// "verify header" wording would be a false signal (the evaluator's
+			// CMC 1006 case). Only 403: a 401 still means the credentials were
+			// rejected, not the plan.
+			const plan = res.status === 403 ? planLimitNote(res.body) : undefined;
+			note = plan
+				? `${res.status} — ${plan}`
+				: is401
+					? `${res.status} — auth injected but rejected; verify header name and secret value`
+					: `${res.status}`;
 		}
 		if (authCtx.misconfiguredPrefixes) {
 			note += ` — ${MISCONFIGURED_PREFIXES_NOTE}`;
