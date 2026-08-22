@@ -1100,7 +1100,7 @@ operations:
     accept: json
 ---
 `;
-		const r2 = r1.replace("shortName: Solo", "shortName: Solo2");
+		const r2 = r1.replace("name: get\n", "name: getMore\n");
 		await callLearn("solo.example", r1);
 		invalidateCache();
 		const text = contentText(await callLearn("solo.example", r2));

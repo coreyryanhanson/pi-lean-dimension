@@ -25,7 +25,7 @@ import {
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { appendFooter, contentText } from "./utils.js";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -519,11 +519,48 @@ export const apiLearnTool = defineTool({
 			);
 		}
 
-		// ── Write guide ──────────────────────────────────────────
+		// ── Fail-closed overwrite guard ─────────────────────────
+		// A guide.md already in the target directory is that directory's
+		// identity anchor. If its shortName differs from the incoming
+		// guide's, this save would silently replace a sibling guide (the
+		// multi-recipe clobber bug). Refuse and teach the directory
+		// convention instead. Same shortName = legitimate update, proceeds.
 		const guidesDir = getUserGuidesDir();
 		const domainDir = join(guidesDir, domain);
-		mkdirSync(domainDir, { recursive: true });
 		const filepath = join(domainDir, "guide.md");
+		if (existsSync(filepath)) {
+			const existing = parseApiGuide(readFileSync(filepath, "utf-8"), {
+				filename: domain,
+			});
+			const existingShort = existing.ok ? existing.guide.shortName : undefined;
+			if (existingShort !== parsed.guide.shortName) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`⚠ Refusing to overwrite — guide was NOT saved.\n` +
+								`  Directory '${domain}' already holds guide '${existingShort ?? "?"}' (guide.md); ` +
+								`the incoming guide is '${parsed.guide.shortName}'.` +
+								(existing.ok
+									? `\n  To save a SECOND guide for the same routing domain, use a distinct directory:\n` +
+										`    api-learn({domain: "${domain}-${parsed.guide.shortName}", recipeFile: "${recipeFile}"})\n` +
+										`  Keep \`domains: [${parsed.guide.domains?.join(", ")}]\` in the recipe for routing.`
+									: `\n  The existing guide.md is malformed (won't parse). If you intend to replace it, ask the user to run /api delete ${domain} first.`),
+						},
+					],
+					details: {
+						error: "overwrite_refused",
+						domain,
+						existing: existingShort ?? null,
+						incoming: parsed.guide.shortName,
+					},
+				};
+			}
+		}
+		mkdirSync(domainDir, { recursive: true });
+
+		// ── Write guide ──────────────────────────────────────────
 
 		// Stamp schemaVersion on save — each guide records the schema vintage
 		// it was authored against (the per-guide vintage that stale detection

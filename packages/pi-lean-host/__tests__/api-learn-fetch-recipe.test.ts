@@ -243,6 +243,52 @@ describe("api-learn save path (recipeFile)", () => {
 		expect(saved).toMatch(/^schemaVersion: 0$/m);
 	});
 
+	it("fail-closed: different-shortName guide to an existing directory is refused (no clobber)", async () => {
+		await saveRecipe(
+			"clobber.example",
+			recipe("clobber.example", "First", "getFirst"),
+		);
+		const res = await saveRecipe(
+			"clobber.example",
+			recipe("clobber.example", "Second", "getSecond"),
+		);
+		const text = contentText(res);
+		expect(text).toContain("Refusing to overwrite");
+		expect(text).toContain("NOT saved");
+		// Prescriptive guidance: distinct directory + keep domains for routing.
+		expect(text).toContain("clobber.example-Second");
+		expect(text).toContain("domains: [clobber.example]");
+		expect(res.details).toMatchObject({
+			error: "overwrite_refused",
+			existing: "First",
+			incoming: "Second",
+		});
+		// First guide untouched on disk.
+		const saved = readFileSync(
+			join(tmpGuidesDir, "clobber.example", "guide.md"),
+			"utf-8",
+		);
+		expect(saved).toContain("getFirst");
+		expect(saved).not.toContain("getSecond");
+	});
+
+	it("same shortName to an existing directory → update proceeds", async () => {
+		await saveRecipe(
+			"update.example",
+			recipe("update.example", "Same", "getOld"),
+		);
+		const res = await saveRecipe(
+			"update.example",
+			recipe("update.example", "Same", "getNew"),
+		);
+		expect(contentText(res)).toContain("Guide saved");
+		const saved = readFileSync(
+			join(tmpGuidesDir, "update.example", "guide.md"),
+			"utf-8",
+		);
+		expect(saved).toContain("getNew");
+	});
+
 	it("missing recipeFile → clear error, guide.md untouched", async () => {
 		const res = await callLearn(
 			"ghost.example",
