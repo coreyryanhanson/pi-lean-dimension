@@ -1117,6 +1117,69 @@ body
 		expect(err.expected).toContain("valid YAML");
 	});
 
+	it("multiple backtick-leading plain scalars → all offending lines in one pass", () => {
+		const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com/v1
+operations:
+  - name: getThing
+    via: restGet
+    path: /things
+    params:
+      id:
+        description: \`the id\`
+      sort:
+        description: \`sort order\`
+---
+body
+`;
+		const err = expectErr(raw);
+		expect(err.field).toBe("frontmatter");
+		expect(err.expected).toContain("valid YAML");
+		// Both offenders reported in the same error — not one per run.
+		// Line numbers are relative to the frontmatter block (the opening
+		// `---` is not part of `fm`), matching yamlParse's own reporting.
+		expect(err.found).toContain("line 9, column 22: `");
+		expect(err.found).toContain("line 11, column 22: `");
+		expect(err.fix).toContain("Quote the value");
+	});
+
+	it("backtick mid-value (not at start) → parses fine, no pre-scan hit", () => {
+		const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com/v1
+operations:
+  - name: getThing
+    via: restGet
+    path: /things
+    params:
+      id:
+        description: the \`id\` field
+---
+body
+`;
+		const res = parseApiGuide(raw, { filename: "example.com" });
+		expect(res.ok).toBe(true);
+	});
+
+	it("quoted backtick value → not flagged (valid YAML)", () => {
+		const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com/v1
+operations:
+  - name: getThing
+    via: restGet
+    path: /things
+    params:
+      id:
+        description: "the \`id\` field"
+---
+body
+`;
+		const res = parseApiGuide(raw, { filename: "example.com" });
+		expect(res.ok).toBe(true);
+	});
+
 	it("apiHost without scheme → ParseError", () => {
 		const raw = `---
 domains: [example.com]
