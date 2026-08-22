@@ -334,6 +334,7 @@ function serverMessage(raw: string): string | undefined {
 		d["message"],
 		d["error"],
 		d["error_message"],
+		d["detail"],
 		status?.["error_message"],
 	];
 	const msg = candidates.find(

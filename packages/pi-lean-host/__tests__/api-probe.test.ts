@@ -882,6 +882,35 @@ describe("api-probe 401/403 wording", () => {
 		}
 	});
 
+	it("auth injected, 403 with detail field (Django/FastAPI) → server's words surfaced", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-detail-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "sk-abc123");
+		const { server, base } = await stubProbeServer(403, {
+			detail: "You do not have permission to perform this action.",
+		});
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			const note = result.note ?? "";
+			expect(note).toContain("You do not have permission to perform this action.");
+			expect(note).not.toContain("verify header name");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
 	it("auth injected, 403 echoing the secret → scrubbed to *** in the note", async () => {
 		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-scrub-"));
 		const prevDir = getSecretsDir();
