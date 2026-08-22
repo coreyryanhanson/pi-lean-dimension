@@ -319,24 +319,20 @@ function resolveProbeAuth(
 const MISCONFIGURED_PREFIXES_NOTE =
 	"headerPrefixes ignored: no secretRefs to apply them to; put the secret name in auth.secretRefs";
 
-/** Plan/subscription-limit signals in a 4xx JSON body — the key is valid but
- *  the endpoint isn't on the caller's plan tier. CMC signals via
- *  `status.error_code: 1006`; other APIs via message text. Best-effort
- *  heuristic, advisory only — when nothing matches, the caller keeps the
- *  generic auth-rejection wording. */
-const PLAN_LIMIT_TEXT_RE =
-	/subscription|not (on|included in|covered by|supported by) (your |the )?(plan|subscription|tier)|plan (doesn't|does not) (support|include|cover)|not entitled|endpoint not/;
-
-/** Returns a human note when the body reads as a plan-limit rejection, or
- *  undefined when it doesn't (non-JSON, wrong shape, or no plan signal).
- *  Never throws — best-effort parse of an already-scrubbed body. */
-const PLAN_LIMIT_NOTE =
-	"key accepted — endpoint not on your subscription plan (no auth fix needed)";
-
-function planLimitNote(body: string): string | undefined {
+/** Extracts the server's own human-readable reason from a 403 body — the
+ *  note says what the API actually means instead of a synthesized
+ *  classification. A 403 is "authenticated but forbidden", not a
+ *  header/secret problem, so surfacing the server's words beats both the
+ *  bare status and a "verify header" false signal. Returns undefined when
+ *  the body isn't JSON or carries no message field; the caller falls back
+ *  to the bare status.
+ *  ponytail: secret-scrub invariant — this MUST parse the scrubbed `raw`
+ *  slice, never the raw `res.body`, or a key echoed in the body would leak
+ *  into agent context. */
+function serverMessage(raw: string): string | undefined {
 	let data: unknown;
 	try {
-		data = JSON.parse(body);
+		data = JSON.parse(raw);
 	} catch {
 		return undefined;
 	}
@@ -345,23 +341,16 @@ function planLimitNote(body: string): string | undefined {
 	const status = isObj(d["status"])
 		? (d["status"] as Record<string, unknown>)
 		: undefined;
-	// CMC's documented plan-limit code: status.error_code 1006.
-	if (status && status["error_code"] === 1006) {
-		return PLAN_LIMIT_NOTE;
-	}
-	// General fallback: message text that reads as a plan/subscription limit.
 	const candidates: unknown[] = [
 		d["message"],
 		d["error"],
 		d["error_message"],
 		status?.["error_message"],
 	];
-	if (
-		candidates.some((c) => typeof c === "string" && PLAN_LIMIT_TEXT_RE.test(c))
-	) {
-		return PLAN_LIMIT_NOTE;
-	}
-	return undefined;
+	const msg = candidates.find(
+		(c) => typeof c === "string" && c.trim().length > 0,
+	);
+	return typeof msg === "string" ? msg.trim().slice(0, 200) : undefined;
 }
 
 /** First missing secret name as a one-line note (names only, never values).
@@ -555,28 +544,31 @@ async function fetchOne(
 	);
 
 	if (res.status >= 400) {
-		const is401 = res.status === 401 || res.status === 403;
+		// 401 or 403 — both mean the request was rejected on auth grounds
+		// (gated endpoint, or bad/missing credentials), distinct from other
+		// 4xx/5xx statuses. The name is deliberate: it covers 403 too.
+		const isAuthError = res.status === 401 || res.status === 403;
 		const miss = missNote(authCtx, domain);
 		let note: string;
 		if (!authCtx.hasAuthBlock) {
 			// No auth injected — a 401/403 means the endpoint is gated and the
 			// probe sent nothing. Pre-guide authoring tool: no guide in scope,
 			// so no stale "(guide is auth:none)" wording.
-			note = is401
+			note = isAuthError
 				? `${res.status} — endpoint requires auth; configure auth injection (auth.secretRefs)`
 				: `${res.status}`;
 		} else if (miss) {
 			// Auth injected but a required secret was missing — the miss names it.
-			note = `${res.status}${is401 ? " — auth rejected;" : ""} ${miss}`;
+			note = `${res.status}${isAuthError ? " — auth rejected;" : ""} ${miss}`;
 		} else {
-			// Auth injected, nothing missing. A 403 with a plan-limit body means
-			// the key is valid but the endpoint isn't on the caller's plan — the
-			// "verify header" wording would be a false signal. Only 403: a 401
-			// still means the credentials were rejected, not the plan.
-			const plan = res.status === 403 ? planLimitNote(res.body) : undefined;
-			note = plan
-				? `${res.status} — ${plan}`
-				: is401
+			// Auth injected, nothing missing. A 403 means authenticated but
+			// forbidden — "verify header name" is a 401 signal, not a 403 one.
+			// Surface the server's own reason (from the scrubbed `raw`, never
+			// `res.body`) when we can parse it; fall back to the bare status.
+			const msg = res.status === 403 ? serverMessage(raw) : undefined;
+			note = msg
+				? `${res.status} — ${msg} (auth configured correctly; not a header/secret problem)`
+				: res.status === 401
 					? `${res.status} — auth injected but rejected; verify header name and secret value`
 					: `${res.status}`;
 		}

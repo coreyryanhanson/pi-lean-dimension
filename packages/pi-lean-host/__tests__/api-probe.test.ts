@@ -814,7 +814,7 @@ describe("api-probe 401/403 wording", () => {
 		}
 	});
 
-	it("auth injected, nothing missing, server 403 → injected-but-rejected wording (403 variant)", async () => {
+	it("auth injected, nothing missing, server 403 with no message → bare status, not verify-header", async () => {
 		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-secrets-"));
 		const prevDir = getSecretsDir();
 		setSecretsDir(tmp);
@@ -830,9 +830,10 @@ describe("api-probe 401/403 wording", () => {
 					auth: { secretRefs: { "x-api-key": "api_key" } },
 				},
 			);
-			expect(result.note ?? "").toContain(
-				"auth injected but rejected; verify header name",
-			);
+			// A 403 is "authenticated but forbidden" — "verify header" is a
+			// 401 signal. No parseable message → bare status, no false signal.
+			expect(result.note ?? "").toBe("403");
+			expect(result.note ?? "").not.toContain("verify header name");
 		} finally {
 			server.close();
 			server.closeAllConnections?.();
@@ -841,11 +842,11 @@ describe("api-probe 401/403 wording", () => {
 		}
 	});
 
-	it("auth injected, 403 with CMC error_code 1006 → plan-limit wording, not verify-header", async () => {
-		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-plan-"));
+	it("auth injected, 403 → server's own message surfaced, not verify-header", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-msg-"));
 		const prevDir = getSecretsDir();
 		setSecretsDir(tmp);
-		writeSecret("api.example.com", "api_key", "K");
+		writeSecret("api.example.com", "api_key", "sk-abc123");
 		const { server, base } = await stubProbeServer(403, {
 			status: {
 				timestamp: "2026-01-01T00:00:00.000Z",
@@ -865,9 +866,11 @@ describe("api-probe 401/403 wording", () => {
 				},
 			);
 			const note = result.note ?? "";
+			// The server's own words, not a synthesized classification.
 			expect(note).toContain(
-				"key accepted — endpoint not on your subscription plan",
+				"Your API Key subscription plan doesn't support this endpoint",
 			);
+			expect(note).toContain("auth configured correctly");
 			expect(note).not.toContain("verify header name");
 		} finally {
 			server.close();
@@ -877,11 +880,11 @@ describe("api-probe 401/403 wording", () => {
 		}
 	});
 
-	it("auth injected, 403 with plan-text message → plan-limit wording (general fallback)", async () => {
+	it("auth injected, 403 with message field → server's words surfaced", async () => {
 		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-plantext-"));
 		const prevDir = getSecretsDir();
 		setSecretsDir(tmp);
-		writeSecret("api.example.com", "api_key", "K");
+		writeSecret("api.example.com", "api_key", "sk-abc123");
 		const { server, base } = await stubProbeServer(403, {
 			error: "Your plan does not include access to this endpoint",
 		});
@@ -896,9 +899,7 @@ describe("api-probe 401/403 wording", () => {
 				},
 			);
 			const note = result.note ?? "";
-			expect(note).toContain(
-				"key accepted — endpoint not on your subscription plan",
-			);
+			expect(note).toContain("Your plan does not include access to this endpoint");
 			expect(note).not.toContain("verify header name");
 		} finally {
 			server.close();
@@ -908,7 +909,36 @@ describe("api-probe 401/403 wording", () => {
 		}
 	});
 
-	it("auth injected, 401 with plan text → stays verify-header (plan check is 403-only)", async () => {
+	it("auth injected, 403 echoing the secret → scrubbed to *** in the note", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-scrub-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "sk-abc123");
+		const { server, base } = await stubProbeServer(403, {
+			error: "Invalid key: sk-abc123",
+		});
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			const note = result.note ?? "";
+			expect(note).toContain("Invalid key: ***");
+			expect(note).not.toContain("sk-abc123");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("auth injected, 401 → stays verify-header (message surfacing is 403-only)", async () => {
 		const tmp = mkdtempSync(join(tmpdir(), "host-probe-401-plan-"));
 		const prevDir = getSecretsDir();
 		setSecretsDir(tmp);
