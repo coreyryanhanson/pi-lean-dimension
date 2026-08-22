@@ -89,12 +89,11 @@ function saveRecipe(domain: string, recipe: string) {
 }
 
 function callLearn(
-	domain?: string,
+	domain: string,
 	recipeFile?: string,
 	extra?: { new?: boolean; guide?: string },
 ) {
-	const p: Record<string, unknown> = {};
-	if (domain !== undefined) p.domain = domain;
+	const p: Record<string, unknown> = { domain };
 	if (recipeFile !== undefined) p.recipeFile = recipeFile;
 	if (extra?.new !== undefined) p.new = extra.new;
 	if (extra?.guide !== undefined) p.guide = extra.guide;
@@ -115,10 +114,12 @@ describe("api-learn fetch-recipe", () => {
 		expect(text).toContain("written to");
 		expect(text).toContain(stagedPath("fresh.example"));
 		expect(text).not.toContain("```yaml");
+		// The authoring manual travels with the staged template.
+		expect(text).toContain("authoring manual");
 		// Draft written to the deterministic path.
 		const draft = readFileSync(stagedPath("fresh.example"), "utf-8");
 		expect(draft).toContain("domains: [fresh.example]");
-		// Placeholders, not another API's real values (gap 1).
+		// Placeholders, not another API's real values.
 		expect(draft).toContain("<base url>");
 		expect(draft).toContain("<short>");
 		expect(draft).toContain("<emoji>");
@@ -134,6 +135,8 @@ describe("api-learn fetch-recipe", () => {
 		expect(text).toContain("Directory: solo.example");
 		expect(text).toContain(stagedPath("solo.example"));
 		expect(text).toContain("edit the staged file");
+		// The authoring manual travels with the staged raw recipe.
+		expect(text).toContain("authoring manual");
 		// Draft contents equal the saved raw recipe (incl. schemaVersion stamp).
 		const raw = readFileSync(
 			join(tmpGuidesDir, "solo.example", "guide.md"),
@@ -211,21 +214,15 @@ describe("api-learn fetch-recipe", () => {
 });
 
 describe("api-learn entry-point split", () => {
-	it("bare → manual + pointer, no recipe body", async () => {
-		const text = contentText(await callLearn());
-		expect(text).toContain("authoring manual");
-		expect(text).toContain("new: true");
-		expect(text).not.toContain("```yaml");
-		expect(text).not.toContain("searchDiary");
-	});
-
-	it("{domain, new: true} → template staged, no instruction block", async () => {
+	it("{domain, new: true} → template staged, manual travels with the pull", async () => {
 		const text = contentText(
 			await callLearn("split.example", undefined, { new: true }),
 		);
 		expect(text).toContain(stagedPath("split.example"));
-		expect(text).not.toContain("Required fields");
-		expect(text).not.toContain("Executor semantics");
+		// The authoring manual is prepended to the template result.
+		expect(text).toContain("authoring manual");
+		expect(text).toContain("Required fields");
+		expect(text).toContain("Executor semantics");
 		// Template content lives in the staged file, not the result text.
 		const draft = readFileSync(stagedPath("split.example"), "utf-8");
 		expect(draft).toContain("domains: [split.example]");
@@ -244,6 +241,52 @@ describe("api-learn save path (recipeFile)", () => {
 		);
 		expect(saved).toContain("getSave");
 		expect(saved).toMatch(/^schemaVersion: 0$/m);
+	});
+
+	it("fail-closed: different-shortName guide to an existing directory is refused (no clobber)", async () => {
+		await saveRecipe(
+			"clobber.example",
+			recipe("clobber.example", "First", "getFirst"),
+		);
+		const res = await saveRecipe(
+			"clobber.example",
+			recipe("clobber.example", "Second", "getSecond"),
+		);
+		const text = contentText(res);
+		expect(text).toContain("Refusing to overwrite");
+		expect(text).toContain("NOT saved");
+		// Prescriptive guidance: distinct directory + keep domains for routing.
+		expect(text).toContain("clobber.example-Second");
+		expect(text).toContain("domains: [clobber.example]");
+		expect(res.details).toMatchObject({
+			error: "overwrite_refused",
+			existing: "First",
+			incoming: "Second",
+		});
+		// First guide untouched on disk.
+		const saved = readFileSync(
+			join(tmpGuidesDir, "clobber.example", "guide.md"),
+			"utf-8",
+		);
+		expect(saved).toContain("getFirst");
+		expect(saved).not.toContain("getSecond");
+	});
+
+	it("same shortName to an existing directory → update proceeds", async () => {
+		await saveRecipe(
+			"update.example",
+			recipe("update.example", "Same", "getOld"),
+		);
+		const res = await saveRecipe(
+			"update.example",
+			recipe("update.example", "Same", "getNew"),
+		);
+		expect(contentText(res)).toContain("Guide saved");
+		const saved = readFileSync(
+			join(tmpGuidesDir, "update.example", "guide.md"),
+			"utf-8",
+		);
+		expect(saved).toContain("getNew");
 	});
 
 	it("missing recipeFile → clear error, guide.md untouched", async () => {

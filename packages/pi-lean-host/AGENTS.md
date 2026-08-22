@@ -135,57 +135,60 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   in `paginate` only. Agent-supplied `restGet` URLs are **not** guarded (the
   agent has bash).
 - **Static-key auth** (`core/auth.ts` + schema): `auth.kind: static-key`
-  realizes `secretRefs` (`Record<headerName, secretName>`),
-  `headerPrefixes` (`Record<headerName, prefix>` — store holds the raw
-  credential; the guide declares the scheme prefix e.g. `Authorization: "Bearer "`,
-  applied at resolution time; every key must be a `secretRefs` header, parser-enforced),
-  `secretQueryRefs` (`Record<paramName, secretName>`, A2),
-  `requires: string[]`, `optional: string[]` (parser-enforced: ref values and
-  `requires ∪ optional` must coincide — every ref targets a declared secret
-  and every declared secret is referenced by a ref, a name in both is an
-  error, a `secretQueryRefs` param name colliding with any op's `params` map
-  is an error, `oauth2` rejected at parse). `api-fetch` resolves store secrets via
-  `resolveSecretHeaders()` / `resolveSecretQueryParams()` and injects them in
-  code — the value never enters agent context; a missing `requires` secret
-  **fails closed before the request**; `optional` absent proceeds
-  unauthenticated. The store key is `canonicalStoreDomain(guide) =
-  guide.domains[0]` (`core/auth.ts`), applied at the `api-fetch` call site —
-  decoupled from the routing `domain` the agent supplies, so `/api secrets
-  github.com` feeds a guide regardless of whether the agent routed it as
-  `github.com` or an api-subdomain alias. `api-probe` (no `guide` object)
-  defaults its store domain to `hostnameOf(apiHost)`, falling back to the
-  longest provisioned parent domain (`pro-api.coinmarketcap.com` →
-  `coinmarketcap.com`) before declaring a secret missing, overridable via an
-  agent-visible `domain` param; a store-miss note is prescriptive (names the
-  provisioned domains + "pass domain: <one>"). `hasAuth` (any non-accept header ∨ injected query secret)
-  forces the guarded-redirect path in the transport, so an auth-bearing call
-  is always SSRF-checked hop-by-hop and store-injected headers +
-  `Authorization` are stripped on **cross-domain** redirect hops (literal
-  `auth.headers` survive).
-  **Output-channel audit**: known secret values are scrubbed from 401 error
-  bodies (`checkResponseStatus`) and from `details.headers` on auth-bearing
-  `restGet`; query-param secrets are injected **below** the agent params map
-  (never into it) and redacted to `?param=***` on every surfaced URL
-  (`result.url`, `PaginateResult.urls` incl. server-supplied `nextUrl`, and
-  the URL stored on `HelperError.url`). Shared `authStatusLine()` footer
-  renders five metadata-only states on both `api-guide` and `api-fetch`
-  (no-auth / ok / nudge-provision / ok-optional / optional-not-provisioned).
-  `api-probe` accepts an inline `auth` block (injection fields only) for
-  probing auth-gated endpoints — store-miss fetches unauthenticated with a
-  note (never fail-closed) — plus a learn-gated `listSecrets: true` mode that
-  lists provisioned secret names (names only) to close the authoring
-  bootstrap gap. A bare `listSecrets` call (no `domain`, no `apiHost`) lists
-  **provisioned-but-guideless** (unscoped) store domains first — the orphan
-  view for authoring bootstrap + post-flip migration cleanup — then the
-  per-domain view.
-  **Auth deferred (design-doc decisions preserved):** `oauth2` stays a
-  declared-but-unrealized seam (rejected at parse); general mutations / write
-  gate stay out (transport is GET-only); cookie-login (jar + `api-login`) is
-  deferred in full; an OS-keychain at-rest backend (`@napi-rs/keyring`) is an
-  additive store-backend upgrade, daemon-gated on headless so the `0600` file
-  stays the honest default. No `scopes` schema — read-only is enforced
-  structurally (only GET `restGet`/`paginate`), scoping is behavioral
-  (provision read-only keys).
+  realizes `secretRefs` (`Record<headerName, secretName>`), `headerPrefixes`
+  (`Record<headerName, prefix>` — store holds the raw credential; the guide
+  declares the scheme prefix e.g. `Authorization: "Bearer "`, applied at
+  resolution time; every key must be a `secretRefs` header, parser-enforced),
+  `secretQueryRefs` (`Record<paramName, secretName>`), `requires: string[]`,
+  `optional: string[]`.
+  - **Parser-enforced invariants**: ref values and `requires ∪ optional`
+    must coincide (every ref targets a declared secret and vice versa); a
+    name in both is an error; a `secretQueryRefs` param colliding with any
+    op's `params` map is an error; `oauth2` is rejected at parse.
+  - **Injection**: `api-fetch` resolves store secrets via
+    `resolveSecretHeaders()` / `resolveSecretQueryParams()` and injects them
+    in code — the value never enters agent context. A missing `requires`
+    secret **fails closed before the request**; `optional` absent proceeds
+    unauthenticated.
+  - **Store key is decoupled from routing domain**: `canonicalStoreDomain(guide)
+    = guide.domains[0]` (`core/auth.ts`), applied at the `api-fetch` call
+    site — so `/api secrets github.com` feeds a guide whether the agent
+    routed it as `github.com` or an api-subdomain alias.
+  - **`api-probe` store resolution** (no `guide` object): defaults to
+    `hostnameOf(apiHost)`, falling back to the longest provisioned parent
+    domain (`pro-api.coinmarketcap.com` → `coinmarketcap.com`) before
+    declaring a secret missing; overridable via an agent-visible `domain`
+    param. Store-miss fetches unauthenticated with a prescriptive note
+    (names provisioned domains + "pass domain: <one>") — never fail-closed.
+  - **Auth forces the SSRF-checked redirect path**: `hasAuth` (any non-accept
+    header ∨ injected query secret) sends the call through the transport's
+    guarded-redirect path, so auth-bearing calls are SSRF-checked hop-by-hop
+    and store-injected headers + `Authorization` are stripped on
+    **cross-domain** redirect hops (literal `auth.headers` survive).
+  - **Output-channel audit** (don't regress): known secret values are
+    scrubbed from 401 error bodies (`checkResponseStatus`) and from
+    `details.headers` on auth-bearing `restGet`; query-param secrets are
+    injected **below** the agent params map (never into it) and redacted to
+    `?param=***` on every surfaced URL (`result.url`, `PaginateResult.urls`
+    incl. server-supplied `nextUrl`, and the URL stored on `HelperError.url`).
+    Shared `authStatusLine()` footer renders five metadata-only states on
+    both `api-guide` and `api-fetch` (no-auth / ok / nudge-provision /
+    ok-optional / optional-not-provisioned).
+  - **`api-probe` extras**: inline `auth` block (injection fields only) for
+    probing auth-gated endpoints; learn-gated `listSecrets: true` lists
+    provisioned secret names (names only) to close the authoring bootstrap
+    gap. A bare `listSecrets` call (no `domain`, no `apiHost`) lists
+    **provisioned-but-guideless** (unscoped) store domains first — the orphan
+    view for authoring bootstrap + post-flip migration cleanup — then the
+    per-domain view.
+  - **Deferred by design** (don't add): `oauth2` stays a
+    declared-but-unrealized seam (rejected at parse); general mutations /
+    write gate stay out (transport is GET-only); cookie-login (jar +
+    `api-login`) is deferred in full; an OS-keychain at-rest backend
+    (`@napi-rs/keyring`) is an additive store-backend upgrade, daemon-gated
+    on headless so the `0600` file stays the honest default. No `scopes`
+    schema — read-only is enforced structurally (only GET
+    `restGet`/`paginate`), scoping is behavioral (provision read-only keys).
 - **Response spill** (`core/response-spill.ts`): when `api-fetch` truncates,
   the full JSON is spilled to disk (max 8 files/session, oldest evicted;
   `cleanupAllSpill()` on `session_shutdown`).

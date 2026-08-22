@@ -2,8 +2,6 @@
  * api-learn tool definition.
  *
  * Authoring entry points:
- *  - No params → authoring manual (field reference + defaults + semantics)
- *    with a pointer to `{domain, new: true}` for a domain-specific starter.
  *  - `{domain, new: true}` → fresh template with `domains: [<domain>]`
  *    pre-filled (regardless of existing guides).
  *  - `{domain}` (no recipeFile) → fetch the current raw recipe of an existing
@@ -27,7 +25,7 @@ import {
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { appendFooter, contentText } from "./utils.js";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -95,7 +93,7 @@ const STATIC_KEY_BLOCK = `  # Keyed API? Use kind: static-key — values live in
 
 /** Placeholder starter template — only `domains:` is real (the requested
  * domain). Every other field is a placeholder the agent fills (op blocks
- * sourced from api-probe({scaffold: true})). Fails closed: an unsaved,
+ * sourced from api-probe({apiHost, path})). Fails closed: an unsaved,
  * as-is template is rejected by the parser because `apiHost: <base url>`
  * is not a valid URL — no wrong-API guide can be saved silently. */
 function placeholderSkeleton(domain: string): string {
@@ -127,8 +125,7 @@ responseShape:
   charset: utf-8
 
 # Add one operation per endpoint here — source the block from
-# api-probe({apiHost, path, scaffold: true}) (it drafts real ops with real
-# values):
+# api-probe({apiHost, path}) (it drafts real ops with real values):
 # operations:
 #   - name: <op>
 #     via: restGet
@@ -169,15 +166,15 @@ function authSummary(auth: AuthConfig): string {
 // Authoring manual + templates
 // ═══════════════════════════════════════════════════════════════════
 
-/** Bare `api-learn()` output — the field reference + defaults + semantics
- * manual. No recipe body (superseded by `{domain, new: true}`); points at
- * the template entry point. */
+/** The field reference + defaults + semantics manual. Travels with the
+ * pull-to-/tmp action — prepended to every staged draft (template or
+ * fetched recipe) so the author sees it at the moment of authoring. */
 const AUTHORING_MANUAL = [
 	"# API guide authoring manual",
 	"",
 	"💡 Start a new guide: call api-learn({domain: '<domain>', new: true}) — it returns a ",
 	"   template with `domains` pre-filled. Discover the API's shape first with ",
-	"   api-probe({apiHost, path, scaffold: true}) — it drafts a YAML operation block ",
+	"   api-probe({apiHost, path}) — it drafts a YAML operation block ",
 	"   to paste into the template.",
 	"",
 	"## Required fields",
@@ -233,37 +230,6 @@ const AUTHORING_MANUAL = [
 	"Call api-learn({domain: '<domain>', recipeFile: '<staged file path>'}) to save the guide, then api-fetch({domain, operation: '...'}) to verify.",
 ].join("\n");
 
-/** Manual section that governs a failing parser field — the validation-error
- * closing line routes the author to the manual (gap 2). Ordered rules, first
- * match wins; undefined → generic manual pointer. Names must match the
- * `##` headings in AUTHORING_MANUAL above. */
-const MANUAL_SECTION_RULES: ReadonlyArray<[RegExp, string]> = [
-	[/^auth(\.|$)/, "Auth"],
-	[/^operations(\[\d+\])?\.params(\.|$)/, "Optional fields (operation-level)"],
-	[/^operations(\[\d+\])?\.(via|name|path)$/, "Required fields"],
-	[
-		/^operations(\[\d+\])?\.(dateParams|helper|transform|passthrough|parse|requiresAnyOf)(\.|$)/,
-		"Optional fields (operation-level)",
-	],
-	[/^operations(\[\d+\])?\.pagination(\.|$)/, "Executor semantics"],
-	[/^pagination(\.|$)/, "Executor semantics"],
-	[/^operations(\[\d+\])?\.(accept|gatherAllMax)(\.|$)/, "Key defaults"],
-	[/^responseShape(\.|$)/, "Key defaults"],
-	[
-		/^(organization|description)$/,
-		"Optional fields (multi-recipe disambiguation)",
-	],
-	[/^(domains|apiHost|kind|operations)$/, "Required fields"],
-	[/^(verified|docs|gatherAllMax)$/, "Key defaults"],
-];
-
-function manualSectionFor(field: string): string | undefined {
-	for (const [re, section] of MANUAL_SECTION_RULES) {
-		if (re.test(field)) return section;
-	}
-	return undefined;
-}
-
 /** Template path — write the placeholder skeleton to the staging path and
  * surface the file path (the agent edits the file, not an inline copy).
  * Fail-closed: the as-is template cannot save (placeholder `apiHost`
@@ -271,9 +237,12 @@ function manualSectionFor(field: string): string | undefined {
 function stageTemplate(domain: string): string {
 	const path = writeStagedDraft(domain, placeholderSkeleton(domain));
 	return (
+		AUTHORING_MANUAL +
+		"\n\n" +
 		`📝 Template for '${domain}' written to ${path}\n` +
 		`  Edit the file (or append ops via bash), then call ` +
-		`api-learn({domain: "${domain}", recipeFile: "${path}"}) to validate and save.`
+		`api-learn({domain: "${domain}", recipeFile: "${path}"}) to validate and save.\n` +
+		`  Re-fetching or re-templating this domain replaces the staged draft — save first to keep edits.`
 	);
 }
 
@@ -297,12 +266,15 @@ function stageFetchedRecipe(
 			{
 				type: "text",
 				text:
+					AUTHORING_MANUAL +
+					"\n\n" +
 					`📖 Current recipe for '${domain}' — guide '${guide.shortName}'\n` +
 					`  Directory: ${dirName}\n` +
 					`  Staged draft: ${path}\n` +
 					`  To edit: edit the staged file with the edit tool or bash, then call ` +
 					`api-learn({domain: "${dirName}", recipeFile: "${path}"}) — pass the ` +
-					`directory name as \`domain\` on re-save so a sibling guide is not clobbered.`,
+					`directory name as \`domain\` on re-save so a sibling guide is not clobbered.\n` +
+					`  Re-fetching or re-templating this domain replaces the staged draft — save first to keep edits.`,
 			},
 		],
 		details: { mode: "fetch", domain, dirName, guide: guide.shortName },
@@ -337,19 +309,16 @@ export const apiLearnTool = defineTool({
 	label: "API Learn",
 	description:
 		"Author an API guide for a domain. " +
-		"Call with no params for the authoring manual (field reference + defaults + semantics). " +
 		"Call with {domain, new: true} for a fresh domain-specific template. " +
 		"Call with {domain} and no recipeFile to fetch an existing guide's current raw recipe. " +
 		"Call with {domain, recipeFile} to validate and save.",
 
 	parameters: Type.Object({
-		domain: Type.Optional(
-			Type.String({
-				description:
-					"Domain (e.g. 'example.com'). With `recipeFile` it's the save directory; " +
-					"with no recipeFile it's the routing domain for fetch-recipe lookup.",
-			}),
-		),
+		domain: Type.String({
+			description:
+				"Domain (e.g. 'example.com'). With `recipeFile` it's the save directory; " +
+				"with no recipeFile it's the routing domain for fetch-recipe lookup.",
+		}),
 		recipeFile: Type.Optional(
 			Type.String({
 				description:
@@ -380,19 +349,11 @@ export const apiLearnTool = defineTool({
 			guide: guideSelector,
 			new: isNew,
 		} = params as {
-			domain?: string;
+			domain: string;
 			recipeFile?: string;
 			guide?: string;
 			new?: boolean;
 		};
-
-		// ── No domain → authoring manual ─────────────────────────
-		if (!domain) {
-			return {
-				content: [{ type: "text", text: AUTHORING_MANUAL }],
-				details: { mode: "manual" },
-			};
-		}
 
 		// ── Validate domain (path-traversal guard) ─────────────
 		try {
@@ -495,13 +456,6 @@ export const apiLearnTool = defineTool({
 				`  Found: ${err.found}`,
 			];
 			if (err.fix) lines.push(`  Fix: ${err.fix}`);
-			const section = manualSectionFor(err.field);
-			lines.push("");
-			lines.push(
-				section
-					? `See the \`${section}\` section of the authoring manual — call api-learn() with no params.`
-					: `Call api-learn() with no params for the authoring manual.`,
-			);
 			lines.push("Fix the recipe and call api-learn again.");
 			return {
 				content: [{ type: "text", text: lines.join("\n") }],
@@ -564,11 +518,48 @@ export const apiLearnTool = defineTool({
 			);
 		}
 
-		// ── Write guide ──────────────────────────────────────────
+		// ── Fail-closed overwrite guard ─────────────────────────
+		// A guide.md already in the target directory is that directory's
+		// identity anchor. If its shortName differs from the incoming
+		// guide's, this save would silently replace a sibling guide (the
+		// multi-recipe clobber bug). Refuse and teach the directory
+		// convention instead. Same shortName = legitimate update, proceeds.
 		const guidesDir = getUserGuidesDir();
 		const domainDir = join(guidesDir, domain);
-		mkdirSync(domainDir, { recursive: true });
 		const filepath = join(domainDir, "guide.md");
+		if (existsSync(filepath)) {
+			const existing = parseApiGuide(readFileSync(filepath, "utf-8"), {
+				filename: domain,
+			});
+			const existingShort = existing.ok ? existing.guide.shortName : undefined;
+			if (existingShort !== parsed.guide.shortName) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`⚠ Refusing to overwrite — guide was NOT saved.\n` +
+								`  Directory '${domain}' already holds guide '${existingShort ?? "?"}' (guide.md); ` +
+								`the incoming guide is '${parsed.guide.shortName}'.` +
+								(existing.ok
+									? `\n  To save a SECOND guide for the same routing domain, use a distinct directory:\n` +
+										`    api-learn({domain: "${domain}-${parsed.guide.shortName}", recipeFile: "${recipeFile}"})\n` +
+										`  Keep \`domains: [${parsed.guide.domains?.join(", ")}]\` in the recipe for routing.`
+									: `\n  The existing guide.md is malformed (won't parse). If you intend to replace it, ask the user to run /api delete ${domain} first.`),
+						},
+					],
+					details: {
+						error: "overwrite_refused",
+						domain,
+						existing: existingShort ?? null,
+						incoming: parsed.guide.shortName,
+					},
+				};
+			}
+		}
+		mkdirSync(domainDir, { recursive: true });
+
+		// ── Write guide ──────────────────────────────────────────
 
 		// Stamp schemaVersion on save — each guide records the schema vintage
 		// it was authored against (the per-guide vintage that stale detection
@@ -601,7 +592,7 @@ export const apiLearnTool = defineTool({
 						`\n` +
 						warningBlock +
 						`Call api-fetch({domain: "${domain}", operation: "${parsed.guide.operations[0]!.name}"}) to verify.` +
-						`\n⚠ Direct edits to guide.md are ignored until the next api-learn save (per-session cache). Re-run api-learn to apply changes.`,
+						`\n⚠ Edit the staged /tmp file, not the saved guide.md — direct edits to guide.md are overwritten on save and invisible to api-fetch until then.`,
 				},
 			],
 			details: {
@@ -616,14 +607,10 @@ export const apiLearnTool = defineTool({
 
 	renderCall(args, theme, _context) {
 		const parts: string[] = [theme.fg("toolTitle", theme.bold("api-learn "))];
-		if (args.domain) {
-			parts.push(theme.fg("accent", `"${args.domain}"`));
-			if (args.new) parts.push(theme.fg("dim", "✨new"));
-			else if (args.recipeFile) parts.push(theme.fg("dim", "📝"));
-			else parts.push(theme.fg("dim", "📖"));
-		} else {
-			parts.push(theme.fg("dim", "(manual)"));
-		}
+		parts.push(theme.fg("accent", `"${args.domain}"`));
+		if (args.new) parts.push(theme.fg("dim", "✨new"));
+		else if (args.recipeFile) parts.push(theme.fg("dim", "📝"));
+		else parts.push(theme.fg("dim", "📖"));
 		return new Text(parts.join(" "), 0, 0);
 	},
 
@@ -649,11 +636,9 @@ export const apiLearnTool = defineTool({
 		} else if (mode === "menu" && domain) {
 			text = theme.fg("dim", theme.bold("📖 menu"));
 			text += ` — ${disambig ?? "?"} guides for ${domain}`;
-		} else if (domain && opCount !== undefined) {
+		} else {
 			text = theme.fg("accent", theme.bold(`📝 Saved guide for ${domain}`));
 			text += ` — ${opCount} ops`;
-		} else {
-			text = theme.fg("dim", "📝 Authoring manual");
 		}
 
 		return new Text(appendFooter(text, expanded, result, theme, 600), 0, 0);

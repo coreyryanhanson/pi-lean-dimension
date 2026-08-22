@@ -20,7 +20,7 @@
 > SearXNG search, install
 > [`pi-lean-search`](https://www.npmjs.com/package/pi-lean-search).
 
-> ⚠️ **Early release (0.3.0).** The API tools here work today, but this is a
+> ⚠️ **Early release (0.3.1).** The API tools here work today, but this is a
 > development preview. The recipe schema, tool surfaces, and guide format are
 > still settling as we test more APIs to finalize the shape — **future
 > compatibility is not guaranteed** until the package reaches lockstep with
@@ -238,14 +238,11 @@ one) — turning a failed execute into a discovery moment in one round-trip.
 ### 3. `api-learn` — Author / Update a Guide (local write)
 
 ```text
-api-learn                                       → field reference + pointer to the starter template
 api-learn domain="arxiv.org" new=true           → stages a fresh placeholder template to /tmp/pi-lean-host/arxiv.org/guide.md
 api-learn domain="arxiv.org"                    → fetches an existing guide's raw recipe into the staged file
 api-learn domain="arxiv.org" recipeFile="/tmp/pi-lean-host/arxiv.org/guide.md"  → validates + writes the guide to disk
 ```
 
-- No parameters → a concise field reference plus a pointer to
-  `{domain, new: true}` for a domain-specific starter template.
 - `{domain, new: true}` → a fresh starter template with `domains: [<domain>]`
   **staged to `/tmp/pi-lean-host/<domain>/guide.md`**. Only `domains` is real;
   the other fields are `<placeholder>` values that **fail closed**, so a
@@ -254,12 +251,18 @@ api-learn domain="arxiv.org" recipeFile="/tmp/pi-lean-host/arxiv.org/guide.md"  
   guide into the staged file (surfaces `dirName` to prevent sibling-clobber
   in multi-recipe domains); a disambiguation menu if several guides claim the
   domain.
+- Every staged pull (template or fetched recipe) is prepended with the
+  authoring manual — the field reference + defaults + semantics the author
+  needs at the moment of authoring.
 - `{domain, recipeFile}` → reads the staged draft, validates it **before**
   touching disk, then writes to
-  `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`, overwriting any
-  existing guide for that domain. On a structural error it names the field,
-  the expected shape, and what was found — the file on disk is left untouched
-  (no half-written guide). Requires `/api learn`.
+  `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`. A fail-closed
+  guard refuses to overwrite an existing `guide.md` whose `shortName`
+  differs from the incoming guide (prevents clobbering a sibling in a
+  multi-recipe domain); a same-`shortName` save is a legitimate update.
+  On a structural error it names the field, the expected shape, and what
+  was found — the file on disk is left untouched (no half-written guide).
+  Requires `/api learn`.
 
 The working copy is staged at `/tmp/pi-lean-host/<domain>/guide.md` (`/tmp`
 self-cleans, so drafts don't accumulate) — fetch/template calls write the
@@ -282,13 +285,6 @@ an over-claimed version; a draft carries the version prefix that was actually
 fetched (disable with `walkVersions=false`). A stale version that still
 returns 200 is not detected as old — read the provider's docs to supply the
 newest version up front.
-
-Pass `scaffold: true` to emit a **full recipe skeleton** (frontmatter +
-`auth:` translated from the inline auth block + a draft op block) instead of
-just the op block — opt-in, and auto-degrades by guide count (0 guides →
-skeleton, 1/N → op block + a merge note). The scaffolded `schemaVersion`
-matches what `api-learn` stamps on save, so the guide is detection-ready the
-moment it's saved.
 
 `api-probe` only **suggests** — it never writes the guide. The operation must
 still be traceable to your plan source (the API docs or a working curl
@@ -313,8 +309,8 @@ in the frontmatter.
 
 The fastest way to a first guide is to let the tools draft it:
 `api-learn({domain, new: true})` returns a fail-closed starter template,
-and `api-probe({scaffold: true})` emits a full skeleton from a live
-endpoint — fill the placeholders, then save with `api-learn`. For
+`api-probe` drafts real op blocks from a live endpoint — fill the
+placeholders, then save with `api-learn`. For
 **complete worked recipes** (real endpoints, `verified:` provenance,
 auth-in-place, helper examples), see the [Caritas](#bundled-reference-recipes)
 recipe library and copy a domain folder that matches your target.

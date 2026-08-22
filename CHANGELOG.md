@@ -48,19 +48,27 @@
 - **`api-learn` + `api-probe` authoring loop** — `api-learn` stages the
   working copy to `/tmp/pi-lean-host/<domain>/guide.md` and saves from a
   file path (`recipeFile`), so the model never round-trips a giant recipe
-  string. Its entry point splits: a bare call returns a field reference
-  plus a pointer to `{domain, new: true}` (a fail-closed starter template
-  whose only real field is `domains`), and `{domain}` with no `recipeFile`
+  string. `domain` is required: `{domain, new: true}` stages a fail-closed
+  starter template (only `domains` is real; the rest are `<placeholder>`
+  values that reject until filled), and `{domain}` with no `recipeFile`
   fetches an existing guide's raw recipe into the staged file (surfacing
-  `dirName` to prevent sibling-clobber in multi-recipe domains). `api-probe` fetches a
-  templated path over the real transport, summarizes the JSON shape,
-  and emits a draft YAML operation block — it only suggests, never
-  writes. `api-probe({scaffold: true})` emits a full recipe skeleton
-  (frontmatter + `auth:` translated from the inline auth block + an op
-  block) instead of just the op block, auto-degrading by guide count.
-  On 404 it walks the `apiHost` version backward to recover an
-  over-claimed version. Authoring is spec-first, probe-second; the
-  agent never authors guides unprompted outside `/api learn`.
+  `dirName` to prevent sibling-clobber in multi-recipe domains). The
+  authoring manual (field reference + defaults + semantics) is prepended
+  to every staged pull so the author sees it at the moment of authoring.
+  On save, a fail-closed overwrite guard refuses to replace an existing
+  `guide.md` whose `shortName` differs from the incoming guide (prevents
+  clobbering a sibling in a multi-recipe domain); a same-`shortName` save
+  is a legitimate update. `api-probe` fetches a templated path over the
+  real transport, summarizes the JSON shape, and emits a draft YAML
+  operation block — it only suggests, never writes. On 404 it walks the
+  `apiHost` version backward to recover an over-claimed version; on 403
+  with auth injected it surfaces the server's own (scrubbed) reason
+  rather than a false "verify header" signal. A reserved-YAML-char
+  pre-scan lists every plain-scalar value starting with a backtick, `%`,
+  `@`, or comma at once, so a multi-offender frontmatter costs one
+  save/validate cycle instead of one per line. Authoring is spec-first,
+  probe-second; the agent never authors guides unprompted outside
+  `/api learn`.
 - **Static-key auth and per-domain secrets store** — `auth.kind:
   static-key` realizes store-backed `secretRefs` (header injection),
   `secretQueryRefs` (query-param injection), and `requires`/`optional`

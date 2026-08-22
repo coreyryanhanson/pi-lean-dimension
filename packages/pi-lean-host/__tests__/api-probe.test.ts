@@ -32,13 +32,7 @@ import {
 	setSecretsDir,
 	getSecretsDir,
 } from "../core/secrets-store.js";
-import {
-	setUserGuidesDir,
-	getUserGuidesDir,
-	invalidateCache,
-} from "../core/guide-store.js";
-import { parseApiGuide } from "../core/parse-api-guide.js";
-import { GUIDE_SCHEMA_VERSION } from "../core/api-guide-types.js";
+import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
 import {
 	_setToggleStateForTest,
 	_resetToggleStateForTest,
@@ -468,27 +462,6 @@ describe("formatProbeResult docs-first nudge", () => {
 		expect(text).toContain(NUDGE);
 		expect(text).toContain("llms.txt");
 	});
-
-	it("scaffoldNudge: true appends the scaffold: true footer line", () => {
-		const text = formatProbeResult({
-			...base,
-			status: 200,
-			ok: true,
-			shape: summarize({ data: [1, 2, 3] }),
-			scaffoldNudge: true,
-		});
-		expect(text).toContain("pass scaffold: true to emit a full recipe skeleton");
-	});
-
-	it("no scaffoldNudge → no scaffold footer line", () => {
-		const text = formatProbeResult({
-			...base,
-			status: 200,
-			ok: true,
-			shape: summarize({ data: [1, 2, 3] }),
-		});
-		expect(text).not.toContain("pass scaffold: true");
-	});
 });
 
 describe("probe redirect handling (live localhost)", () => {
@@ -729,13 +702,15 @@ describe("probe redirect handling (live localhost)", () => {
 // 401/403 error wording + headerPrefixes-without-secretRefs
 // ═══════════════════════════════════════════════════════════════════
 
-/** Tiny stub: a JSON server that always replies with the given status. */
+/** Tiny stub: a JSON server that always replies with the given status and
+ *  body (defaults to a plain 200-ish JSON object). */
 async function stubProbeServer(
 	status: number,
+	body: unknown = { data: [{ id: 1 }] },
 ): Promise<{ server: http.Server; base: string }> {
 	const server = http.createServer((_req, res) => {
 		res.writeHead(status, { "Content-Type": "application/json" });
-		res.end(JSON.stringify({ data: [{ id: 1 }] }));
+		res.end(JSON.stringify(body));
 	});
 	await new Promise<void>((r) => server.listen(0, r));
 	const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -812,7 +787,7 @@ describe("api-probe 401/403 wording", () => {
 		}
 	});
 
-	it("auth injected, nothing missing, server 403 → injected-but-rejected wording (403 variant)", async () => {
+	it("auth injected, nothing missing, server 403 with no message → bare status, not verify-header", async () => {
 		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-secrets-"));
 		const prevDir = getSecretsDir();
 		setSecretsDir(tmp);
@@ -828,9 +803,164 @@ describe("api-probe 401/403 wording", () => {
 					auth: { secretRefs: { "x-api-key": "api_key" } },
 				},
 			);
-			expect(result.note ?? "").toContain(
-				"auth injected but rejected; verify header name",
+			// A 403 is "authenticated but forbidden" — "verify header" is a
+			// 401 signal. No parseable message → bare status, no false signal.
+			expect(result.note ?? "").toBe("403");
+			expect(result.note ?? "").not.toContain("verify header name");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("auth injected, 403 → server's own message surfaced, not verify-header", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-msg-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "sk-abc123");
+		const { server, base } = await stubProbeServer(403, {
+			status: {
+				timestamp: "2026-01-01T00:00:00.000Z",
+				error_code: 1006,
+				error_message:
+					"Your API Key subscription plan doesn't support this endpoint",
+			},
+		});
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
 			);
+			const note = result.note ?? "";
+			// The server's own words, not a synthesized classification.
+			expect(note).toContain(
+				"Your API Key subscription plan doesn't support this endpoint",
+			);
+			expect(note).toContain("auth configured correctly");
+			expect(note).not.toContain("verify header name");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("auth injected, 403 with message field → server's words surfaced", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-plantext-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "sk-abc123");
+		const { server, base } = await stubProbeServer(403, {
+			error: "Your plan does not include access to this endpoint",
+		});
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			const note = result.note ?? "";
+			expect(note).toContain("Your plan does not include access to this endpoint");
+			expect(note).not.toContain("verify header name");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("auth injected, 403 with detail field (Django/FastAPI) → server's words surfaced", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-detail-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "sk-abc123");
+		const { server, base } = await stubProbeServer(403, {
+			detail: "You do not have permission to perform this action.",
+		});
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			const note = result.note ?? "";
+			expect(note).toContain("You do not have permission to perform this action.");
+			expect(note).not.toContain("verify header name");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("auth injected, 403 echoing the secret → scrubbed to *** in the note", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-scrub-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "sk-abc123");
+		const { server, base } = await stubProbeServer(403, {
+			error: "Invalid key: sk-abc123",
+		});
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			const note = result.note ?? "";
+			expect(note).toContain("Invalid key: ***");
+			expect(note).not.toContain("sk-abc123");
+		} finally {
+			server.close();
+			server.closeAllConnections?.();
+			setSecretsDir(prevDir);
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	it("auth injected, 401 → stays verify-header (message surfacing is 403-only)", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "host-probe-401-plan-"));
+		const prevDir = getSecretsDir();
+		setSecretsDir(tmp);
+		writeSecret("api.example.com", "api_key", "K");
+		const { server, base } = await stubProbeServer(401, {
+			error: "Your plan does not include access to this endpoint",
+		});
+		try {
+			const result = await probe(
+				base,
+				"/packs",
+				{},
+				{
+					domain: "api.example.com",
+					auth: { secretRefs: { "x-api-key": "api_key" } },
+				},
+			);
+			const note = result.note ?? "";
+			expect(note).toContain("auth injected but rejected; verify header name");
+			expect(note).not.toContain("key accepted");
 		} finally {
 			server.close();
 			server.closeAllConnections?.();
@@ -1196,192 +1326,5 @@ describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
 		expect(contentText(res)).toContain(
 			"probe suppressed because listSecrets: true",
 		);
-	});
-});
-
-// ═══════════════════════════════════════════════════════════════════
-// Scaffold emission — full skeleton vs op-block + merge note
-// ═══════════════════════════════════════════════════════════════════
-
-const SCAFFOLD_GUIDE = `---
-domains: [archive.org]
-apiHost: https://archive.org/wayback
-responseShape:
-  format: json
-operations:
-  - name: ping
-    via: restGet
-    path: /
-    accept: json
-    params: {}
----
-`;
-
-// The probe hits a live localhost server; the scaffold decision is driven by
-// guides on a temp dir (0 / 1 / N claiming the routed domain).
-describe("api-probe scaffold", () => {
-	let scaffoldTmpGuides: string;
-	let prevGuidesDir: string;
-	let server: http.Server;
-	let base: string;
-
-	beforeAll(async () => {
-		prevGuidesDir = getUserGuidesDir();
-		scaffoldTmpGuides = mkdtempSync(
-			join(tmpdir(), "host-probe-scaffold-guides-"),
-		);
-		// 1-guide domain: archive.org
-		const one = join(scaffoldTmpGuides, "archive.org");
-		mkdirSync(one, { recursive: true });
-		writeFileSync(join(one, "guide.md"), SCAFFOLD_GUIDE);
-		// N-guide domain: two dirs both claiming multi.test
-		for (const dir of ["multi-a", "multi-b"]) {
-			const d = join(scaffoldTmpGuides, dir);
-			mkdirSync(d, { recursive: true });
-			writeFileSync(
-				join(d, "guide.md"),
-				SCAFFOLD_GUIDE.replace("archive.org", "multi.test"),
-			);
-		}
-		setUserGuidesDir(scaffoldTmpGuides);
-		invalidateCache();
-		server = http.createServer((_req, res) => {
-			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ data: [{ id: 1 }], total_count: 10 }));
-		});
-		await new Promise<void>((r) => server.listen(0, r));
-		base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-	});
-
-	afterAll(() => {
-		server.close();
-		server.closeAllConnections?.();
-		setUserGuidesDir(prevGuidesDir);
-		invalidateCache();
-		rmSync(scaffoldTmpGuides, { recursive: true, force: true });
-	});
-
-	it("bootstrap (0 guides): parseable full skeleton with static-key auth translated from injection params", async () => {
-		const result = await probe(
-			base,
-			"/items",
-			{},
-			{
-				scaffold: true,
-				domain: "api.example.com",
-				auth: {
-					secretRefs: { Authorization: "apiKey" },
-					headerPrefixes: { Authorization: "Bearer " },
-				},
-			},
-		);
-		const draft = result.draft;
-		expect(draft).toContain("---");
-		expect(draft).toContain("kind: api");
-		expect(draft).toContain("domains: [api.example.com]");
-		expect(draft).toContain(`apiHost: ${base}`);
-		expect(draft).toContain("responseShape:");
-		expect(draft).toContain("gatherAllMax: 1000");
-		expect(draft).toContain(`schemaVersion: ${GUIDE_SCHEMA_VERSION}`);
-		expect(draft).toContain("auth:");
-		expect(draft).toContain("kind: static-key");
-		expect(draft).toContain("requires: [apiKey]");
-		expect(draft).toContain("secretRefs:");
-		expect(draft).toContain("Authorization: apiKey");
-		expect(draft).toContain("headerPrefixes:");
-		expect(draft).toContain('Authorization: "Bearer "');
-		// Pagination stays op-level only — never a top-level default.
-		expect(draft).not.toMatch(/^pagination:/m);
-		// The skeleton parses cleanly and carries the detection-ready vintage.
-		const parsed = parseApiGuide(draft, { filename: "scaffold" });
-		expect(parsed.ok).toBe(true);
-		if (parsed.ok) {
-			expect(parsed.guide.auth.kind).toBe("static-key");
-			expect(parsed.guide.auth.requires).toEqual(["apiKey"]);
-			expect(parsed.guide.auth.secretRefs).toEqual({ Authorization: "apiKey" });
-			expect(parsed.guide.schemaVersion).toBe(GUIDE_SCHEMA_VERSION);
-		}
-	});
-
-	it("translates secretQueryRefs into the auth block too", async () => {
-		const result = await probe(
-			base,
-			"/items",
-			{},
-			{
-				scaffold: true,
-				domain: "api.example.com",
-				auth: { secretQueryRefs: { apikey: "api_key" } },
-			},
-		);
-		expect(result.draft).toContain("kind: static-key");
-		expect(result.draft).toContain("requires: [api_key]");
-		expect(result.draft).toContain("secretQueryRefs:");
-		expect(result.draft).toContain("apikey: api_key");
-	});
-
-	it("1 guide: op block only + merge note naming the one dirName", async () => {
-		const result = await probe(
-			base,
-			"/items",
-			{},
-			{
-				scaffold: true,
-				domain: "archive.org",
-			},
-		);
-		expect(result.draft).not.toContain("---");
-		expect(result.draft).toContain("  - name:");
-		expect(result.note ?? "").toContain("merge into `archive.org`");
-	});
-
-	it("N guides: op block only + merge note listing every candidate dirName", async () => {
-		const result = await probe(
-			base,
-			"/items",
-			{},
-			{
-				scaffold: true,
-				domain: "multi.test",
-			},
-		);
-		expect(result.draft).not.toContain("---");
-		expect(result.note ?? "").toContain("merge into one of: multi-a, multi-b");
-	});
-
-	it("scaffold absent: output unchanged (op block only, no frontmatter)", async () => {
-		const plain = await probe(base, "/items", {});
-		const explicitFalse = await probe(base, "/items", {}, { scaffold: false });
-		expect(explicitFalse.draft).toBe(plain.draft);
-		expect(plain.draft).not.toContain("---");
-		expect(plain.draft).not.toMatch(/^pagination:/m);
-	});
-
-	it("scaffold absent + no guide → scaffoldNudge true (footer suggests scaffold: true)", async () => {
-		const result = await probe(base, "/items", {}, { domain: "api.example.com" });
-		expect(result.scaffoldNudge).toBe(true);
-		expect(formatProbeResult(result)).toContain(
-			"pass scaffold: true to emit a full recipe skeleton",
-		);
-	});
-
-	it("scaffold absent + guide exists → no nudge", async () => {
-		const result = await probe(base, "/items", {}, { domain: "archive.org" });
-		expect(result.scaffoldNudge).toBeUndefined();
-	});
-
-	it("scaffold: true + no guide → no nudge (already used the skeleton)", async () => {
-		const result = await probe(
-			base,
-			"/items",
-			{},
-			{ domain: "api.example.com", scaffold: true },
-		);
-		expect(result.scaffoldNudge).toBeUndefined();
-	});
-
-	it("tool description names scaffold: true and its auto-degrade behavior", () => {
-		expect(apiProbeTool.description).toContain("scaffold: true");
-		expect(apiProbeTool.description).toContain("auto-degrades");
 	});
 });

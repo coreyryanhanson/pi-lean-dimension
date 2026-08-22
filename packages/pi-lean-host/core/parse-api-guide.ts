@@ -98,7 +98,7 @@ const VALID_PAGINATION_STYLE: ReadonlySet<string> = new Set([
 	"tokenBag",
 ]);
 
-// Strict auth schema (gap 1): the only keys validateAuth reads. Any other key
+// Strict auth schema: the only keys validateAuth reads. Any other key
 // under `auth` is rejected at parse — the parser used to silently drop
 // unknowns, so a wrong-but-plausible shape (e.g. `name`/`secret`) saved a
 // guide the executor then silently couldn't honor.
@@ -163,6 +163,58 @@ function snippetFor(frontmatter: string, key: string): string | undefined {
 		}
 	}
 	return out.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Reserved-char plain-scalar pre-scan
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Chars that make a plain scalar invalid as a value — yaml's
+ * "Plain value cannot start with reserved character" error class. Backtick is
+ * the observed footgun (markdown-style `` `field` `` refs pasted into
+ * descriptions); `%`/`@`/`,` are the same error class and never legitimate at
+ * the start of a value. `|`/`>` (block scalars), `[`/`{` (flow), quotes, and
+ * `#` (comments) are all legitimate starts and deliberately NOT flagged.
+ */
+const RESERVED_PLAIN_START = new Set(["`", "%", "@", ","]);
+
+interface ReservedPlainHit {
+	line: number;
+	col: number;
+	char: string;
+}
+
+/**
+ * Best-effort one-pass scan for `key: <value>` lines whose plain-scalar value
+ * starts with a reserved YAML character. yamlParse throws on the FIRST such
+ * value and stops, so a multi-backtick frontmatter needs one save/validate
+ * cycle per offender — this lists them all at once. Line/column are reported
+ * relative to the frontmatter block (matching yamlParse) and count from the
+ * raw line, indentation included. Advisory: only fires on the reserved-char
+ * class, which the parser would reject anyway.
+ */
+function scanReservedPlainStarts(fm: string): ReservedPlainHit[] {
+	const hits: ReservedPlainHit[] = [];
+	const lines = fm.split("\n");
+	for (let i = 0; i < lines.length; i++) {
+		const raw = lines[i] ?? "";
+		const line = raw.trimStart();
+		// Skip blank, comment, and list-item lines (op headers like
+		// `- name: …` — the backtick footgun lives in `description:`-style
+		// value lines, which are never `- `-prefixed).
+		if (line === "" || line.startsWith("#") || line.startsWith("- ")) continue;
+		const m = /^[^:#]+: /.exec(line);
+		if (!m) continue;
+		const ch = line[m[0].length];
+		if (ch === undefined || !RESERVED_PLAIN_START.has(ch)) continue;
+		hits.push({
+			line: i + 1,
+			col: raw.length - line.length + m[0].length + 1,
+			char: ch,
+		});
+	}
+	return hits;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -590,7 +642,7 @@ function validateAuth(
 			fix: "OAuth2 is not yet implemented. Use kind: none (public) or kind: static-key (keyed header) for now.",
 		});
 	}
-	// Strict auth schema — reject unknown keys (gap 1). The parser used to
+	// Strict auth schema — reject unknown keys. The parser used to
 	// silently drop unknown keys (a wrong-but-plausible shape like
 	// `name`/`secret` saved a guide the executor then silently couldn't
 	// honor). Reject, don't infer: the fix is adaptive (near-miss → "did you
@@ -1285,6 +1337,29 @@ export function parseApiGuide(
 		);
 	}
 
+	// One-pass reserved-char pre-scan: yamlParse throws on the FIRST
+	// backtick-leading plain scalar and stops, so a multi-offender
+	// frontmatter costs one save/validate cycle per line. Scan first and
+	// list them all at once. Advisory only — it fires solely on the
+	// "Plain value cannot start with reserved character" class, which
+	// yamlParse would reject anyway — the parser stays the source of truth.
+	const reservedHits = scanReservedPlainStarts(fm);
+	if (reservedHits.length > 0) {
+		const where = reservedHits
+			.map((h) => `line ${h.line}, column ${h.col}: ${h.char}`)
+			.join(" ; ");
+		return fail(
+			file,
+			"frontmatter",
+			"valid YAML",
+			`plain scalar value(s) start with a reserved YAML character — ${where}`,
+			{
+				snippet: fm,
+				fix: 'Quote the value (description: "`the id`") or remove the leading backtick — a plain scalar cannot start with a reserved YAML character.',
+			},
+		);
+	}
+
 	let meta: unknown;
 	try {
 		meta = yamlParse(fm);
@@ -1819,7 +1894,9 @@ export function formatApiGuideCatalog(
 		);
 	}
 	if (Object.keys(loaded.guides).length === 0 && loaded.malformed.length === 0) {
-		lines.push("  (no guides — call api-learn({domain, recipe}) to author one)");
+		lines.push(
+			"  (no guides — call api-learn({domain, recipeFile}) to author one)",
+		);
 	}
 	lines.push("");
 	lines.push(

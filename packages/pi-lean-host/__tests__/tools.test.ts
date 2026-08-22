@@ -6,7 +6,7 @@
  *  - api-guide({}) catalog and api-guide({domain}) detail shapes.
  *  - api-learn validate-before-write (no half-write on invalid recipe).
  *  - api-fetch execute-fail message points at remediation paths.
- *  - api-learn with no domain returns the authoring manual.
+ *  - api-learn prepends the authoring manual to template/fetch-recipe pulls.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -602,16 +602,15 @@ function callFetch(
 }
 
 function callLearn(
-	domain?: string,
+	domain: string,
 	recipe?: string,
 	extra?: { new?: boolean; guide?: string },
 ) {
-	const p: Record<string, unknown> = {};
-	if (domain !== undefined) p.domain = domain;
+	const p: Record<string, unknown> = { domain };
 	if (recipe !== undefined) {
 		// Stage the working copy, then save from the file (recipeFile).
-		const staged = join(tmpStagingRoot, domain!, "guide.md");
-		mkdirSync(join(tmpStagingRoot, domain!), { recursive: true });
+		const staged = join(tmpStagingRoot, domain, "guide.md");
+		mkdirSync(join(tmpStagingRoot, domain), { recursive: true });
 		writeFileSync(staged, recipe, "utf-8");
 		p.recipeFile = staged;
 	}
@@ -729,31 +728,41 @@ describe("api-guide", () => {
 // ═══════════════════════════════════════════════════════════════════
 
 describe("api-learn", () => {
-	it("returns the authoring manual when no domain is given", async () => {
-		const text = contentText(await callLearn());
-		expect(text).toContain("authoring manual");
-		// Field reference + defaults + semantics stay.
-		expect(text).toContain("Required fields");
-		expect(text).toContain("a LIST of operation mappings");
-		expect(text).toContain("Key defaults");
-		expect(text).toContain("Executor semantics");
-		expect(text).toContain("joinUrl` strips a leading `/");
-		expect(text).toContain("pagination.base` seeds the page param");
-		expect(text).toContain("page-size param is a real knob");
-		expect(text).toContain("requires` = fail-closed if unprovisioned");
-		// Guide-prose (agent-instructions) ability is taught, not lost.
-		expect(text).toContain("Guide prose");
-		expect(text).toContain("Guide notes");
-		// Points at the template entry point; no recipe body.
-		expect(text).toContain("new: true");
-		expect(text).not.toContain("searchDiary");
-		expect(text).not.toContain("```yaml");
+	it("prepends the authoring manual to template and fetch-recipe pulls", async () => {
+		// Template path ({domain, new: true}) — the manual travels with the
+		// staged draft.
+		const templateText = contentText(
+			await callLearn("example.com", undefined, { new: true }),
+		);
+		// Fetch-existing path ({domain}, no recipeFile) — the manual travels
+		// with the staged raw recipe.
+		await callLearn("boe.es", boeRecipe(ctx.serverUrl));
+		invalidateCache();
+		const fetchText = contentText(await callLearn("boe.es"));
+		for (const text of [templateText, fetchText]) {
+			expect(text).toContain("authoring manual");
+			// Field reference + defaults + semantics stay.
+			expect(text).toContain("Required fields");
+			expect(text).toContain("a LIST of operation mappings");
+			expect(text).toContain("Key defaults");
+			expect(text).toContain("Executor semantics");
+			expect(text).toContain("joinUrl` strips a leading `/");
+			expect(text).toContain("pagination.base` seeds the page param");
+			expect(text).toContain("page-size param is a real knob");
+			expect(text).toContain("requires` = fail-closed if unprovisioned");
+			// Guide-prose (agent-instructions) ability is taught, not lost.
+			expect(text).toContain("Guide prose");
+			expect(text).toContain("Guide notes");
+			// Points at the template entry point; no recipe body.
+			expect(text).toContain("new: true");
+			expect(text).not.toContain("searchDiary");
+			expect(text).not.toContain("```yaml");
+		}
 	});
 
-	// Gap 1: the template is a placeholder skeleton, not a worked example. It
+	// The template is a placeholder skeleton, not a worked example. It
 	// must fail closed (placeholder apiHost rejected) and carry no foreign API
-	// literals. The dateParams/path-token-doc demonstration moved to the
-	// probe-scaffold path (api-probe({scaffold: true}) emits real ops).
+	// literals.
 	it("template is a placeholder skeleton that fails closed", async () => {
 		const text = contentText(
 			await callLearn("example.com", undefined, { new: true }),
@@ -789,7 +798,7 @@ describe("api-learn", () => {
 	});
 
 	// Companion — save summary echoes the resolved auth mapping (names only,
-	// never values): wrong-shape is loud (gap 1), right-shape-but-wrong-name
+	// never values): wrong-shape is loud, right-shape-but-wrong-name
 	// is eyeballable at save.
 	it("save summary names the auth header→secret mapping, never values", async () => {
 		setUserGuidesDir(tmpGuidesDir);
@@ -814,14 +823,13 @@ describe("api-learn", () => {
 		expect(() => readFileSync(filepath, "utf-8")).toThrow();
 	});
 
-	// Gap 2: a validation failure names the manual section governing the
-	// failing field, so a first-time author who wrote from memory is routed
-	// to the manual instead of re-guessing. auth.* → Auth, operations[*].via
-	// → Required fields, unmapped fields → generic manual pointer.
-	it("routes validation failures to the governing manual section (gap 2)", async () => {
+	// A validation failure names the failing field with expected/found and
+	// never writes. The manual-pointer tail is gone — the author already saw
+	// the manual on the pull that staged the draft.
+	it("reports validation failures with field/expected/found and does not save", async () => {
 		setUserGuidesDir(tmpGuidesDir);
 
-		// Gap 1's wrong-auth shape → Auth section.
+		// Wrong-auth shape: name/secret fields instead of secretRefs/headerPrefixes.
 		const authText = contentText(
 			await callLearn(
 				"authbad.example",
@@ -841,9 +849,9 @@ operations:
 			),
 		);
 		expect(authText).toContain("auth.name");
-		expect(authText).toContain("`Auth` section of the authoring manual");
+		expect(authText).toContain("NOT saved");
 
-		// Bad via → Required fields.
+		// Bad via.
 		const viaText = contentText(
 			await callLearn(
 				"viabad.example",
@@ -859,22 +867,19 @@ operations:
 			),
 		);
 		expect(viaText).toContain("operations[0].via");
-		expect(viaText).toContain(
-			"`Required fields` section of the authoring manual",
-		);
+		expect(viaText).toContain("NOT saved");
 
-		// Unmapped field (frontmatter) → generic manual pointer.
+		// Unmapped field (frontmatter).
 		const fmText = contentText(await callLearn("fmbad.example", "just prose"));
 		expect(fmText).toContain("frontmatter");
-		expect(fmText).toContain(
-			"Call api-learn() with no params for the authoring manual",
-		);
-		expect(fmText).not.toContain("` section of the authoring manual");
+		expect(fmText).toContain("NOT saved");
 	});
 
 	it("returns a domain template when no recipe and no guide exists", async () => {
 		const text = contentText(await callLearn("somedomain.com"));
 		expect(text).toContain(stagedPath("somedomain.com"));
+		// The authoring manual travels with the staged template.
+		expect(text).toContain("authoring manual");
 		const draft = readFileSync(stagedPath("somedomain.com"), "utf-8");
 		expect(draft).toContain("domains: [somedomain.com]");
 	});
@@ -1094,7 +1099,7 @@ operations:
     accept: json
 ---
 `;
-		const r2 = r1.replace("shortName: Solo", "shortName: Solo2");
+		const r2 = r1.replace("name: get\n", "name: getMore\n");
 		await callLearn("solo.example", r1);
 		invalidateCache();
 		const text = contentText(await callLearn("solo.example", r2));

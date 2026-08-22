@@ -1,6 +1,6 @@
 {
 	"name": "pi-lean-host",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"description": "REST API client for Pi. A YAML file per API covers endpoints and pagination; the agent calls through a fixed executor so an API encoded once is reusable forever, not re-derived each session. It can probe a live endpoint and write the YAML for you, and a TypeScript file alongside can add custom auth or reshape the request and response freely.",
 	"keywords": [
 		"pi-package",
