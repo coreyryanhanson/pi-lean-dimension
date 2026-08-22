@@ -283,13 +283,6 @@ fetched (disable with `walkVersions=false`). A stale version that still
 returns 200 is not detected as old — read the provider's docs to supply the
 newest version up front.
 
-Pass `scaffold: true` to emit a **full recipe skeleton** (frontmatter +
-`auth:` translated from the inline auth block + a draft op block) instead of
-just the op block — opt-in, and auto-degrades by guide count (0 guides →
-skeleton, 1/N → op block + a merge note). The scaffolded `schemaVersion`
-matches what `api-learn` stamps on save, so the guide is detection-ready the
-moment it's saved.
-
 `api-probe` only **suggests** — it never writes the guide. The operation must
 still be traceable to your plan source (the API docs or a working curl
 example); this tool surfaces evidence, not authority. Requires `/api learn`.
@@ -313,8 +306,8 @@ in the frontmatter.
 
 The fastest way to a first guide is to let the tools draft it:
 `api-learn({domain, new: true})` returns a fail-closed starter template,
-and `api-probe({scaffold: true})` emits a full skeleton from a live
-endpoint — fill the placeholders, then save with `api-learn`. For
+`api-probe` drafts real op blocks from a live endpoint — fill the
+placeholders, then save with `api-learn`. For
 **complete worked recipes** (real endpoints, `verified:` provenance,
 auth-in-place, helper examples), see the [Caritas](#bundled-reference-recipes)
 recipe library and copy a domain folder that matches your target.

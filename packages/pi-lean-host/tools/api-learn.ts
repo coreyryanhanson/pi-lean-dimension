@@ -93,7 +93,7 @@ const STATIC_KEY_BLOCK = `  # Keyed API? Use kind: static-key — values live in
 
 /** Placeholder starter template — only `domains:` is real (the requested
  * domain). Every other field is a placeholder the agent fills (op blocks
- * sourced from api-probe({scaffold: true})). Fails closed: an unsaved,
+ * sourced from api-probe({apiHost, path})). Fails closed: an unsaved,
  * as-is template is rejected by the parser because `apiHost: <base url>`
  * is not a valid URL — no wrong-API guide can be saved silently. */
 function placeholderSkeleton(domain: string): string {
@@ -125,8 +125,7 @@ responseShape:
   charset: utf-8
 
 # Add one operation per endpoint here — source the block from
-# api-probe({apiHost, path, scaffold: true}) (it drafts real ops with real
-# values):
+# api-probe({apiHost, path}) (it drafts real ops with real values):
 # operations:
 #   - name: <op>
 #     via: restGet
@@ -175,7 +174,7 @@ const AUTHORING_MANUAL = [
 	"",
 	"💡 Start a new guide: call api-learn({domain: '<domain>', new: true}) — it returns a ",
 	"   template with `domains` pre-filled. Discover the API's shape first with ",
-	"   api-probe({apiHost, path, scaffold: true}) — it drafts a YAML operation block ",
+	"   api-probe({apiHost, path}) — it drafts a YAML operation block ",
 	"   to paste into the template.",
 	"",
 	"## Required fields",

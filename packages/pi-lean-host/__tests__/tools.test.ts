@@ -762,8 +762,7 @@ describe("api-learn", () => {
 
 	// The template is a placeholder skeleton, not a worked example. It
 	// must fail closed (placeholder apiHost rejected) and carry no foreign API
-	// literals. The dateParams/path-token-doc demonstration moved to the
-	// probe-scaffold path (api-probe({scaffold: true}) emits real ops).
+	// literals.
 	it("template is a placeholder skeleton that fails closed", async () => {
 		const text = contentText(
 			await callLearn("example.com", undefined, { new: true }),

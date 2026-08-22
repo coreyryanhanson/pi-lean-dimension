@@ -33,7 +33,6 @@ import {
 } from "../core/auth.js";
 import { listDomains, listNames } from "../core/secrets-store.js";
 import { findGuidesByDomain } from "../core/guide-store.js";
-import { GUIDE_SCHEMA_VERSION } from "../core/api-guide-types.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
 import { appendFooter, contentText } from "./utils.js";
 
@@ -71,9 +70,6 @@ export interface ProbeResult {
 	raw: string;
 	/** Human note (auth-required, 404, version-prefix hit, non-JSON, …). */
 	note?: string;
-	/** True when the caller didn't pass scaffold: true and no guide claims the
-	 *  domain yet — the authoring loop should surface the skeleton option. */
-	scaffoldNudge?: boolean;
 }
 
 export interface ProbeOptions {
@@ -99,13 +95,6 @@ export interface ProbeOptions {
 	};
 	/** Domain for secrets-store lookups; defaults to apiHost's hostname (or its provisioned parent domain). */
 	domain?: string;
-	/**
-	 * Emit a full recipe skeleton (frontmatter + auth + operations) when no
-	 * guide exists for the domain; auto-degrades to a single op block + merge
-	 * note when one or more guides already claim the domain. Opt-in —
-	 * without it the output is today's op-block-only draft.
-	 */
-	scaffold?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -422,7 +411,6 @@ export async function probe(
 		authCtx,
 		domain,
 		versionPrefixOf(apiHost),
-		opts,
 	);
 	if (base.status !== 404 || !walkVersions || /^\/v\d+\//.test(path)) {
 		return base;
@@ -437,7 +425,7 @@ export async function probe(
 		return base;
 	}
 	const hit = await walkBackward(
-		{ apiHost, path, params, accept, authCtx, domain, opts },
+		{ apiHost, path, params, accept, authCtx, domain },
 		Number(stated),
 	);
 	return hit ?? base;
@@ -462,7 +450,6 @@ async function walkBackward(
 		accept: string;
 		authCtx: ProbeAuthCtx;
 		domain: string;
-		opts: ProbeOptions;
 	},
 	start: number,
 ): Promise<ProbeResult | null> {
@@ -477,7 +464,6 @@ async function walkBackward(
 			ctx.authCtx,
 			ctx.domain,
 			`/v${k}`,
-			ctx.opts,
 		);
 		if (tried.status !== 404) {
 			// A walk hit may itself have redirected (e.g. /v2 301→ /v3); the
@@ -517,7 +503,6 @@ async function fetchOne(
 	authCtx: ProbeAuthCtx,
 	domain: string,
 	prefix = "",
-	opts: ProbeOptions = {},
 ): Promise<ProbeResult> {
 	// Inject secret query params below the agent-supplied params map, then
 	// redact the surfaced URL so the real key never reaches the transcript.
@@ -606,21 +591,11 @@ async function fetchOne(
 
 	const shape = summarize(data);
 	const miss = missNote(authCtx, domain);
-	let draft = emitDraft(path, params, shape, prefix);
+	const draft = emitDraft(path, params, shape, prefix);
 	let note: string | undefined = miss;
-	if (opts.scaffold && draft) {
-		const sc = emitScaffold({ apiHost, domain, draft, auth: opts.auth });
-		draft = sc.draft;
-		if (sc.note) note = [note, sc.note].filter(Boolean).join(" — ");
-	}
 	if (authCtx.misconfiguredPrefixes) {
 		note = [note, MISCONFIGURED_PREFIXES_NOTE].filter(Boolean).join(" — ");
 	}
-	// Targeted scaffold nudge: only when the caller didn't pass
-	// scaffold: true AND no guide claims the domain yet — authors who already
-	// used the skeleton (or who have a guide) see no noise.
-	const scaffoldNudge =
-		opts.scaffold !== true && findGuidesByDomain(domain).length === 0;
 	return {
 		url,
 		finalUrl,
@@ -630,7 +605,6 @@ async function fetchOne(
 		draft,
 		raw,
 		...(note ? { note } : {}),
-		...(scaffoldNudge ? { scaffoldNudge } : {}),
 	};
 }
 
@@ -745,113 +719,6 @@ function suggestName(path: string): string {
 		.replace(/[^a-zA-Z0-9]/g, "");
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// Scaffold emission — full skeleton vs op-block + merge note
-// ═══════════════════════════════════════════════════════════════════
-
-/**
- * Translate the probe's auth-injection params into a `kind: static-key` auth
- * block (probe auth shape matches the guide schema).
- * `requires` = the union of secret names referenced by the refs. Returns
- * undefined when no injection refs are declared (auth: none default).
- */
-function emitAuthBlock(
-	auth: NonNullable<ProbeOptions["auth"]> | undefined,
-): string | undefined {
-	const refs = auth?.secretRefs ?? {};
-	const queryRefs = auth?.secretQueryRefs ?? {};
-	const prefixes = auth?.headerPrefixes ?? {};
-	const names = [
-		...new Set([...Object.values(refs), ...Object.values(queryRefs)]),
-	];
-	if (names.length === 0) return undefined;
-	const lines = [
-		"auth:",
-		"  kind: static-key",
-		`  requires: [${names.join(", ")}]`,
-	];
-	if (Object.keys(refs).length > 0) {
-		lines.push("  secretRefs:");
-		for (const [header, secret] of Object.entries(refs))
-			lines.push(`    ${header}: ${secret}`);
-	}
-	if (Object.keys(queryRefs).length > 0) {
-		lines.push("  secretQueryRefs:");
-		for (const [param, secret] of Object.entries(queryRefs))
-			lines.push(`    ${param}: ${secret}`);
-	}
-	if (Object.keys(prefixes).length > 0) {
-		lines.push("  headerPrefixes:");
-		for (const [header, prefix] of Object.entries(prefixes))
-			lines.push(`    ${header}: "${prefix}"`);
-	}
-	return lines.join("\n");
-}
-
-/**
- * Full recipe skeleton (bootstrap): frontmatter + auth + the probe's op
- * block. `schemaVersion` literal matches what api-learn stamps on save, so a
- * scaffolded guide is detection-ready the moment it's saved. Pagination stays
- * op-level only (a single probe justifies one op's pagination, never a
- * top-level default).
- */
-function emitScaffoldSkeleton(opts: {
-	apiHost: string;
-	domain: string;
-	draft: string;
-	auth: ProbeOptions["auth"];
-}): string {
-	const lines = [
-		"---",
-		"kind: api",
-		`domains: [${opts.domain}]`,
-		`apiHost: ${opts.apiHost}`,
-		"responseShape:",
-		"  format: json",
-		"gatherAllMax: 1000",
-		`schemaVersion: ${GUIDE_SCHEMA_VERSION}`,
-	];
-	const authBlock = emitAuthBlock(opts.auth);
-	if (authBlock) lines.push("", authBlock);
-	// Op-level hint for the new constraint field — commented so a fresh
-	// scaffold surfaces the mechanism (mirrors placeholderSkeleton).
-	lines.push(
-		"",
-		"# requiresAnyOf: [id, slug, code]  # at least one of these params must be supplied",
-		"operations:",
-		opts.draft,
-		"---",
-		"",
-	);
-	return lines.join("\n");
-}
-
-/**
- * Scaffold decision, driven by findGuidesByDomain(domain): 0 guides →
- * full skeleton (bootstrap); 1 guide → op block + merge note naming the one
- * dirName; N guides → op block + merge note listing every candidate dirName
- * (the merge-target choice defers to api-learn's selector). Returns the
- * paste-able draft + an optional human merge note.
- */
-function emitScaffold(opts: {
-	apiHost: string;
-	domain: string;
-	draft: string;
-	auth: ProbeOptions["auth"];
-}): { draft: string; note?: string } {
-	const matches = findGuidesByDomain(opts.domain);
-	if (matches.length === 0) {
-		return { draft: emitScaffoldSkeleton(opts) };
-	}
-	const dirs = matches.map((m) => m.dirName);
-	const note =
-		matches.length === 1
-			? `scaffold: guide already exists — merge into \`${dirs[0]}\``
-			: `scaffold: ${matches.length} guides already exist — merge into one of: ${dirs.join(", ")}`;
-	return { draft: opts.draft, note };
-}
-
-// ═══════════════════════════════════════════════════════════════════
 // Tool definition
 // ═══════════════════════════════════════════════════════════════════
 
@@ -874,10 +741,7 @@ export const apiProbeTool = defineTool({
 		"version — then probe that version explicitly. Do not default the version from " +
 		"memory: a stale version that still returns 200 is not detected as old (the " +
 		"backward walk only fires on 404). The probe recovers an over-claimed version " +
-		"but cannot detect a stale-but-working one. " +
-		"Pass scaffold: true to emit a full recipe skeleton (frontmatter + auth + " +
-		"operations) when no guide exists for the domain; it auto-degrades to a single " +
-		"op block + merge note when one or more guides already claim the domain.",
+		"but cannot detect a stale-but-working one. ",
 
 	parameters: Type.Object({
 		apiHost: Type.Optional(
@@ -907,14 +771,6 @@ export const apiProbeTool = defineTool({
 			Type.Boolean({
 				description:
 					"On 404, walk the apiHost version backward (vN→v1) to find the highest live version. Default true.",
-			}),
-		),
-		scaffold: Type.Optional(
-			Type.Boolean({
-				description:
-					"Emit a full recipe skeleton (frontmatter + auth + operations) when no guide exists for the domain; " +
-					"auto-degrades to a single op block + merge note when one or more guides already claim the domain. " +
-					"Opt-in — without it the output is today's op-block-only draft.",
 			}),
 		),
 		auth: Type.Optional(
@@ -953,21 +809,19 @@ export const apiProbeTool = defineTool({
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-		const { apiHost, path, walkVersions, auth, domain, listSecrets, scaffold } =
-			params as {
-				apiHost?: string;
-				path?: string;
-				params?: Record<string, unknown>;
-				walkVersions?: boolean;
-				auth?: {
-					secretRefs?: Record<string, string>;
-					secretQueryRefs?: Record<string, string>;
-					headerPrefixes?: Record<string, string>;
-				};
-				domain?: string;
-				listSecrets?: boolean;
-				scaffold?: boolean;
+		const { apiHost, path, walkVersions, auth, domain, listSecrets } = params as {
+			apiHost?: string;
+			path?: string;
+			params?: Record<string, unknown>;
+			walkVersions?: boolean;
+			auth?: {
+				secretRefs?: Record<string, string>;
+				secretQueryRefs?: Record<string, string>;
+				headerPrefixes?: Record<string, string>;
 			};
+			domain?: string;
+			listSecrets?: boolean;
+		};
 		const userParams = (params as Record<string, unknown>)["params"] as
 			| Record<string, unknown>
 			| undefined;
@@ -1037,7 +891,6 @@ export const apiProbeTool = defineTool({
 				...(walkVersions === undefined ? {} : { walkVersions }),
 				...(auth ? { auth } : {}),
 				...(domain ? { domain } : {}),
-				...(scaffold === undefined ? {} : { scaffold }),
 			});
 			return {
 				content: [{ type: "text", text: formatProbeResult(result) }],
@@ -1071,7 +924,6 @@ export const apiProbeTool = defineTool({
 		const parts: string[] = [theme.fg("toolTitle", theme.bold("api-probe "))];
 		if (args.apiHost) parts.push(theme.fg("accent", `"${args.apiHost}"`));
 		if (args.path) parts.push(theme.fg("dim", `› ${args.path}`));
-		if (args.scaffold) parts.push(theme.fg("dim", "· scaffold"));
 		return new Text(parts.join(" "), 0, 0);
 	},
 
@@ -1171,13 +1023,7 @@ export function formatProbeResult(r: ProbeResult): string {
 		lines.push(r.raw);
 	}
 	lines.push("");
-	const footer = [...DOCS_NUDGE];
-	if (r.scaffoldNudge) {
-		footer.push(
-			"No guide for this domain yet — pass scaffold: true to emit a full recipe skeleton.",
-		);
-	}
-	lines.push(`  ${footer.join("\n  ")}`);
+	lines.push(`  ${DOCS_NUDGE.join("\n  ")}`);
 	return lines.join("\n");
 }
 

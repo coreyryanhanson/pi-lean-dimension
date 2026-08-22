@@ -55,9 +55,7 @@
   `dirName` to prevent sibling-clobber in multi-recipe domains). `api-probe` fetches a
   templated path over the real transport, summarizes the JSON shape,
   and emits a draft YAML operation block — it only suggests, never
-  writes. `api-probe({scaffold: true})` emits a full recipe skeleton
-  (frontmatter + `auth:` translated from the inline auth block + an op
-  block) instead of just the op block, auto-degrading by guide count.
+  writes.
   On 404 it walks the `apiHost` version backward to recover an
   over-claimed version. Authoring is spec-first, probe-second; the
   agent never authors guides unprompted outside `/api learn`.
@@ -118,6 +116,14 @@
   `Caritas` repo.
 
 ### Changed
+
+- **`pi-lean-host` — `api-probe` scaffold path removed** — the
+  `scaffold: true` full-recipe-skeleton emission (and its `scaffoldNudge`
+  footer hint) is gone. The `/tmp` starter template from
+  `api-learn({domain, new: true})` already carries the frontmatter + auth
+  skeleton, and the probe's op-block draft covers the operations — the
+  duplicate inline skeleton was redundant. `api-probe` now always emits the
+  single op-block draft.
 
 - **Crash events now surface in navigate results** — `DialogEvent`
   gained a `"crash"` type and `handledAs` became optional (absent for
