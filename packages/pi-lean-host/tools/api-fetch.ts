@@ -62,7 +62,7 @@ export const apiFetchTool = defineTool({
 	description:
 		"Fetch structured data from a REST API using a recipe-based guide. " +
 		"Requires an API guide for the target domain. " +
-		"Call api-guide({domain}) to see available operations, or api-learn({domain, recipe}) to author a new guide.",
+		"Call api-guide({domain}) to see available operations, or api-learn({domain, recipeFile}) to author a new guide.",
 
 	parameters: Type.Object({
 		domain: Type.String({

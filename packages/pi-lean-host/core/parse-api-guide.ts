@@ -1894,7 +1894,9 @@ export function formatApiGuideCatalog(
 		);
 	}
 	if (Object.keys(loaded.guides).length === 0 && loaded.malformed.length === 0) {
-		lines.push("  (no guides — call api-learn({domain, recipe}) to author one)");
+		lines.push(
+			"  (no guides — call api-learn({domain, recipeFile}) to author one)",
+		);
 	}
 	lines.push("");
 	lines.push(

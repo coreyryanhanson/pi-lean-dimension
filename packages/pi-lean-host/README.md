@@ -238,14 +238,11 @@ one) — turning a failed execute into a discovery moment in one round-trip.
 ### 3. `api-learn` — Author / Update a Guide (local write)
 
 ```text
-api-learn                                       → field reference + pointer to the starter template
 api-learn domain="arxiv.org" new=true           → stages a fresh placeholder template to /tmp/pi-lean-host/arxiv.org/guide.md
 api-learn domain="arxiv.org"                    → fetches an existing guide's raw recipe into the staged file
 api-learn domain="arxiv.org" recipeFile="/tmp/pi-lean-host/arxiv.org/guide.md"  → validates + writes the guide to disk
 ```
 
-- No parameters → a concise field reference plus a pointer to
-  `{domain, new: true}` for a domain-specific starter template.
 - `{domain, new: true}` → a fresh starter template with `domains: [<domain>]`
   **staged to `/tmp/pi-lean-host/<domain>/guide.md`**. Only `domains` is real;
   the other fields are `<placeholder>` values that **fail closed**, so a
@@ -254,6 +251,9 @@ api-learn domain="arxiv.org" recipeFile="/tmp/pi-lean-host/arxiv.org/guide.md"  
   guide into the staged file (surfaces `dirName` to prevent sibling-clobber
   in multi-recipe domains); a disambiguation menu if several guides claim the
   domain.
+- Every staged pull (template or fetched recipe) is prepended with the
+  authoring manual — the field reference + defaults + semantics the author
+  needs at the moment of authoring.
 - `{domain, recipeFile}` → reads the staged draft, validates it **before**
   touching disk, then writes to
   `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`, overwriting any

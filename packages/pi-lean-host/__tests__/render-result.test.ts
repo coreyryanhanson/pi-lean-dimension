@@ -320,20 +320,6 @@ describe("api-learn renderResult", () => {
 		expect(out.text).not.toContain("(expand)");
 	});
 
-	it("collapsed manual shows 📝 Authoring manual header", () => {
-		const content = "# API guide authoring manual\n## Required fields\n...";
-		const out = renderResult(
-			apiLearnTool,
-			{
-				content: [{ type: "text", text: content }],
-				details: { mode: "manual" },
-			},
-			{ expanded: false },
-		);
-		expect(out.text).toContain("📝 Authoring manual");
-		expect(out.text).toContain(`${content.length} chars (expand)`);
-	});
-
 	it("template mode shows 📝 Template for <domain>", () => {
 		const content = "```yaml\n---\nkind: api\n...\n```";
 		const out = renderResult(

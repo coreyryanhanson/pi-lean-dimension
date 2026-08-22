@@ -89,12 +89,11 @@ function saveRecipe(domain: string, recipe: string) {
 }
 
 function callLearn(
-	domain?: string,
+	domain: string,
 	recipeFile?: string,
 	extra?: { new?: boolean; guide?: string },
 ) {
-	const p: Record<string, unknown> = {};
-	if (domain !== undefined) p.domain = domain;
+	const p: Record<string, unknown> = { domain };
 	if (recipeFile !== undefined) p.recipeFile = recipeFile;
 	if (extra?.new !== undefined) p.new = extra.new;
 	if (extra?.guide !== undefined) p.guide = extra.guide;
@@ -115,6 +114,8 @@ describe("api-learn fetch-recipe", () => {
 		expect(text).toContain("written to");
 		expect(text).toContain(stagedPath("fresh.example"));
 		expect(text).not.toContain("```yaml");
+		// The authoring manual travels with the staged template.
+		expect(text).toContain("authoring manual");
 		// Draft written to the deterministic path.
 		const draft = readFileSync(stagedPath("fresh.example"), "utf-8");
 		expect(draft).toContain("domains: [fresh.example]");
@@ -134,6 +135,8 @@ describe("api-learn fetch-recipe", () => {
 		expect(text).toContain("Directory: solo.example");
 		expect(text).toContain(stagedPath("solo.example"));
 		expect(text).toContain("edit the staged file");
+		// The authoring manual travels with the staged raw recipe.
+		expect(text).toContain("authoring manual");
 		// Draft contents equal the saved raw recipe (incl. schemaVersion stamp).
 		const raw = readFileSync(
 			join(tmpGuidesDir, "solo.example", "guide.md"),
@@ -211,21 +214,15 @@ describe("api-learn fetch-recipe", () => {
 });
 
 describe("api-learn entry-point split", () => {
-	it("bare → manual + pointer, no recipe body", async () => {
-		const text = contentText(await callLearn());
-		expect(text).toContain("authoring manual");
-		expect(text).toContain("new: true");
-		expect(text).not.toContain("```yaml");
-		expect(text).not.toContain("searchDiary");
-	});
-
-	it("{domain, new: true} → template staged, no instruction block", async () => {
+	it("{domain, new: true} → template staged, manual travels with the pull", async () => {
 		const text = contentText(
 			await callLearn("split.example", undefined, { new: true }),
 		);
 		expect(text).toContain(stagedPath("split.example"));
-		expect(text).not.toContain("Required fields");
-		expect(text).not.toContain("Executor semantics");
+		// The authoring manual is prepended to the template result.
+		expect(text).toContain("authoring manual");
+		expect(text).toContain("Required fields");
+		expect(text).toContain("Executor semantics");
 		// Template content lives in the staged file, not the result text.
 		const draft = readFileSync(stagedPath("split.example"), "utf-8");
 		expect(draft).toContain("domains: [split.example]");
