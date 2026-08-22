@@ -119,7 +119,7 @@ describe("api-learn fetch-recipe", () => {
 		// Draft written to the deterministic path.
 		const draft = readFileSync(stagedPath("fresh.example"), "utf-8");
 		expect(draft).toContain("domains: [fresh.example]");
-		// Placeholders, not another API's real values (gap 1).
+		// Placeholders, not another API's real values.
 		expect(draft).toContain("<base url>");
 		expect(draft).toContain("<short>");
 		expect(draft).toContain("<emoji>");

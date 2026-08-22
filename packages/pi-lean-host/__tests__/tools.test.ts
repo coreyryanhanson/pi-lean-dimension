@@ -760,7 +760,7 @@ describe("api-learn", () => {
 		}
 	});
 
-	// Gap 1: the template is a placeholder skeleton, not a worked example. It
+	// The template is a placeholder skeleton, not a worked example. It
 	// must fail closed (placeholder apiHost rejected) and carry no foreign API
 	// literals. The dateParams/path-token-doc demonstration moved to the
 	// probe-scaffold path (api-probe({scaffold: true}) emits real ops).
@@ -799,7 +799,7 @@ describe("api-learn", () => {
 	});
 
 	// Companion — save summary echoes the resolved auth mapping (names only,
-	// never values): wrong-shape is loud (gap 1), right-shape-but-wrong-name
+	// never values): wrong-shape is loud, right-shape-but-wrong-name
 	// is eyeballable at save.
 	it("save summary names the auth header→secret mapping, never values", async () => {
 		setUserGuidesDir(tmpGuidesDir);
@@ -830,7 +830,7 @@ describe("api-learn", () => {
 	it("reports validation failures with field/expected/found and does not save", async () => {
 		setUserGuidesDir(tmpGuidesDir);
 
-		// Gap 1's wrong-auth shape.
+		// Wrong-auth shape: name/secret fields instead of secretRefs/headerPrefixes.
 		const authText = contentText(
 			await callLearn(
 				"authbad.example",

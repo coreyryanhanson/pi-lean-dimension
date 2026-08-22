@@ -571,9 +571,8 @@ async function fetchOne(
 		} else {
 			// Auth injected, nothing missing. A 403 with a plan-limit body means
 			// the key is valid but the endpoint isn't on the caller's plan — the
-			// "verify header" wording would be a false signal (the evaluator's
-			// CMC 1006 case). Only 403: a 401 still means the credentials were
-			// rejected, not the plan.
+			// "verify header" wording would be a false signal. Only 403: a 401
+			// still means the credentials were rejected, not the plan.
 			const plan = res.status === 403 ? planLimitNote(res.body) : undefined;
 			note = plan
 				? `${res.status} — ${plan}`

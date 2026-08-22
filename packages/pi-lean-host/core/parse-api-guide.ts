@@ -98,7 +98,7 @@ const VALID_PAGINATION_STYLE: ReadonlySet<string> = new Set([
 	"tokenBag",
 ]);
 
-// Strict auth schema (gap 1): the only keys validateAuth reads. Any other key
+// Strict auth schema: the only keys validateAuth reads. Any other key
 // under `auth` is rejected at parse — the parser used to silently drop
 // unknowns, so a wrong-but-plausible shape (e.g. `name`/`secret`) saved a
 // guide the executor then silently couldn't honor.
@@ -642,7 +642,7 @@ function validateAuth(
 			fix: "OAuth2 is not yet implemented. Use kind: none (public) or kind: static-key (keyed header) for now.",
 		});
 	}
-	// Strict auth schema — reject unknown keys (gap 1). The parser used to
+	// Strict auth schema — reject unknown keys. The parser used to
 	// silently drop unknown keys (a wrong-but-plausible shape like
 	// `name`/`secret` saved a guide the executor then silently couldn't
 	// honor). Reject, don't infer: the fix is adaptive (near-miss → "did you
