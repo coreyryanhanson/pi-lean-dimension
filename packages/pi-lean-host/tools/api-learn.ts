@@ -273,7 +273,8 @@ function stageTemplate(domain: string): string {
 	return (
 		`📝 Template for '${domain}' written to ${path}\n` +
 		`  Edit the file (or append ops via bash), then call ` +
-		`api-learn({domain: "${domain}", recipeFile: "${path}"}) to validate and save.`
+		`api-learn({domain: "${domain}", recipeFile: "${path}"}) to validate and save.\n` +
+		`  Re-fetching or re-templating this domain replaces the staged draft — save first to keep edits.`
 	);
 }
 
@@ -302,7 +303,8 @@ function stageFetchedRecipe(
 					`  Staged draft: ${path}\n` +
 					`  To edit: edit the staged file with the edit tool or bash, then call ` +
 					`api-learn({domain: "${dirName}", recipeFile: "${path}"}) — pass the ` +
-					`directory name as \`domain\` on re-save so a sibling guide is not clobbered.`,
+					`directory name as \`domain\` on re-save so a sibling guide is not clobbered.\n` +
+					`  Re-fetching or re-templating this domain replaces the staged draft — save first to keep edits.`,
 			},
 		],
 		details: { mode: "fetch", domain, dirName, guide: guide.shortName },
@@ -601,7 +603,7 @@ export const apiLearnTool = defineTool({
 						`\n` +
 						warningBlock +
 						`Call api-fetch({domain: "${domain}", operation: "${parsed.guide.operations[0]!.name}"}) to verify.` +
-						`\n⚠ Direct edits to guide.md are ignored until the next api-learn save (per-session cache). Re-run api-learn to apply changes.`,
+						`\n⚠ Edit the staged /tmp file, not the saved guide.md — direct edits to guide.md are overwritten on save and invisible to api-fetch until then.`,
 				},
 			],
 			details: {
