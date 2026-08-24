@@ -1821,9 +1821,11 @@ org guide.
 			expect(msg).toContain("boe.es");
 			// The one-shot migration banner carries the 0.4.0 structure-change
 			// explanation + /reload, and precedes the per-guide warnings.
-			expect(msg).toContain("0.4.0 changed the guide folder structure");
+			expect(msg).toContain(
+				"pi-lean-host 0.4.0 changed the guide folder structure",
+			);
 			expect(msg).toContain("/reload");
-			expect(msg.indexOf("0.4.0 changed")).toBeLessThan(
+			expect(msg.indexOf("pi-lean-host 0.4.0 changed")).toBeLessThan(
 				msg.indexOf("Malformed guide"),
 			);
 			const catalog = formatApiGuideCatalog(loaded);
@@ -1852,7 +1854,9 @@ org guide.
 			expect(notify).toHaveBeenCalled();
 			expect(warn).not.toHaveBeenCalled();
 			const msgs = notify.mock.calls.map((c) => String(c[0])).join("\n");
-			expect(msgs).toContain("0.4.0 changed the guide folder structure");
+			expect(msgs).toContain(
+				"pi-lean-host 0.4.0 changed the guide folder structure",
+			);
 			expect(msgs).toContain("Malformed guide");
 			expect(msgs).toContain("boe.es");
 			// Every notify call uses the warning kind (ctx.ui.notify signature).
@@ -1885,7 +1889,7 @@ org guide.
 			expect(msg).toContain("/api delete");
 			// The migration banner fires once, not once per malformed guide.
 			expect(
-				msg.match(/0\.4\.0 changed the guide folder structure/g),
+				msg.match(/pi-lean-host 0\.4\.0 changed the guide folder structure/g),
 			).toHaveLength(1);
 		} finally {
 			warn.mockRestore();

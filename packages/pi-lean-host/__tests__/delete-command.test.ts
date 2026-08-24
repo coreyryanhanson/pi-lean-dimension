@@ -104,7 +104,9 @@ describe("load-time warning suppression (once per process)", () => {
 		loadAllGuides(notify);
 		expect(notify).toHaveBeenCalled();
 		const msgs = notify.mock.calls.map((c) => String(c[0])).join("\n");
-		expect(msgs).toContain("0.4.0 changed the guide folder structure");
+		expect(msgs).toContain(
+			"pi-lean-host 0.4.0 changed the guide folder structure",
+		);
 		expect(msgs).toContain("Malformed guide");
 
 		// Later scans (navigating chats / running commands): suppressed.

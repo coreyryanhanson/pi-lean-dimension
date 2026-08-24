@@ -1703,7 +1703,7 @@ export function loadApiGuidesFromDir(
 		if (bannerEmitted) return;
 		bannerEmitted = true;
 		const msg =
-			`\n⚠ 0.4.0 changed the guide folder structure: each guide must now live ` +
+			`\n⚠ pi-lean-host 0.4.0 changed the guide folder structure: each guide must now live ` +
 			`in a folder named slug(shortName). Pass the warnings below to the ` +
 			`agent to fix them (rename the folder or set a valid shortName), then /reload.\n`;
 		warn(msg);
