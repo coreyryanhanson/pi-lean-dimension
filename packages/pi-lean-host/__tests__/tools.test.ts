@@ -792,7 +792,7 @@ describe("api-learn", () => {
 		expect(text).toContain("searchDiary");
 		expect(text).toContain("api-fetch");
 
-		const filepath = join(tmpGuidesDir, "boe.es", "guide.md");
+		const filepath = join(tmpGuidesDir, "boe", "guide.md");
 		const content = readFileSync(filepath, "utf-8");
 		expect(content).toContain("apiHost:");
 	});
@@ -934,7 +934,7 @@ operations:
 		expect(text).toContain("201");
 		expect(result.details).toMatchObject({ error: "description_too_long" });
 		expect(() =>
-			readFileSync(join(tmpGuidesDir, "toolong.example", "guide.md"), "utf-8"),
+			readFileSync(join(tmpGuidesDir, "toolong-example", "guide.md"), "utf-8"),
 		).toThrow();
 	});
 
@@ -997,7 +997,9 @@ operations:
 		const secondText = contentText(await callLearn("collide-second", second));
 		expect(secondText).toContain("Guide saved");
 		expect(secondText).toContain("Multi-recipe");
-		expect(secondText).toContain("collide-second");
+		// The collision warning renders the slug (slug("Second") = "second"),
+		// not the `domain` arg "collide-second".
+		expect(secondText).toContain("writing to directory `second`");
 		expect(secondText).toContain("collide.example");
 	});
 
@@ -1078,7 +1080,8 @@ operations:
 		invalidateCache();
 		const text = contentText(await callLearn("recover-second", second));
 		expect(text).toContain("Multi-recipe");
-		expect(text).toContain("/api delete recover-first");
+		// The existing guide's dirName is slug(shortName) = "first".
+		expect(text).toContain("/api delete first");
 		expect(text).toContain("the agent has no delete tool");
 	});
 
@@ -1140,7 +1143,7 @@ operations:
 		const recipe = `---\nkind: api\ndomains: [stamp-absent.example]\nshortName: StampAbsent\napiHost: ${ctx.serverUrl}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\nProse body.\n`;
 		await callLearn("stamp-absent.example", recipe);
 		const raw = readFileSync(
-			join(tmpGuidesDir, "stamp-absent.example", "guide.md"),
+			join(tmpGuidesDir, "stampabsent", "guide.md"),
 			"utf-8",
 		);
 		expect(raw).toMatch(/^schemaVersion: 0$/m);
@@ -1154,7 +1157,7 @@ operations:
 		const recipe = `---\nkind: api\nschemaVersion: 5\ndomains: [stamp-replace.example]\nshortName: StampReplace\napiHost: ${ctx.serverUrl}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
 		await callLearn("stamp-replace.example", recipe);
 		const raw = readFileSync(
-			join(tmpGuidesDir, "stamp-replace.example", "guide.md"),
+			join(tmpGuidesDir, "stampreplace", "guide.md"),
 			"utf-8",
 		);
 		expect(raw).toMatch(/^schemaVersion: 0$/m);
@@ -1167,7 +1170,7 @@ operations:
 		const recipe = `---\nkind: api\ndomains: [stamp-prose.example]\nshortName: StampProse\napiHost: ${ctx.serverUrl}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\nThe schemaVersion: 5 in this prose must stay untouched.\n`;
 		await callLearn("stamp-prose.example", recipe);
 		const raw = readFileSync(
-			join(tmpGuidesDir, "stamp-prose.example", "guide.md"),
+			join(tmpGuidesDir, "stampprose", "guide.md"),
 			"utf-8",
 		);
 		// Frontmatter got the stamp...
@@ -1184,7 +1187,7 @@ operations:
 		const recipe = `---\nkind: api\ndomains: [stamp-order.example]\n# a comment that must survive\nshortName: StampOrder\napiHost: ${ctx.serverUrl}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
 		await callLearn("stamp-order.example", recipe);
 		const raw = readFileSync(
-			join(tmpGuidesDir, "stamp-order.example", "guide.md"),
+			join(tmpGuidesDir, "stamporder", "guide.md"),
 			"utf-8",
 		);
 		expect(raw).toContain("# a comment that must survive");
@@ -1536,25 +1539,28 @@ describe("api-guide — multi-guide disambiguation", () => {
 		});
 	});
 
-	it("errors when two same-domain guides share a shortName (b)", async () => {
-		await callLearn(
-			"collide.example-a",
-			collideRecipe(ctx.serverUrl, "Collide", "opA"),
-		);
-		await callLearn(
-			"collide.example-b",
-			collideRecipe(ctx.serverUrl, "Collide", "opB"),
-		);
+	it("errors when two same-domain guides share a shortName (ambiguous selector)", async () => {
+		// Two same-shortName guides can no longer be created via api-learn (the
+		// second save is a same-shortName update). Construct the ambiguous state
+		// directly on disk (e.g. hand-edited folders) — the loader loads both,
+		// keyed by folder, and the selector must report the ambiguity.
+		for (const f of ["collide-a", "collide-b"]) {
+			mkdirSync(join(tmpGuidesDir, f), { recursive: true });
+			writeFileSync(
+				join(tmpGuidesDir, f, "guide.md"),
+				collideRecipe(ctx.serverUrl, "Collide", f === "collide-a" ? "opA" : "opB"),
+			);
+		}
 		invalidateCache();
 
 		const result = await callGuideSelect("collide.example", "Collide");
 		const text = contentText(result);
 		expect(text).toContain("Ambiguous guide 'Collide'");
 		expect(text).toContain("2 guides share shortName 'Collide'");
-		expect(text).toContain("directories: collide.example-a, collide.example-b");
+		expect(text).toContain("directories: collide-a, collide-b");
 		expect(result.details).toMatchObject({
 			error: "ambiguous_shortname",
-			directories: ["collide.example-a", "collide.example-b"],
+			directories: ["collide-a", "collide-b"],
 		});
 	});
 });

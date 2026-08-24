@@ -10,7 +10,9 @@
  *    `/tmp/pi-lean-host/<domain>/guide.md`.
  *  - `{domain, recipeFile}` → reads the staged draft, validates via
  *    `parseApiGuide()`, writes to
- *    `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`.
+ *    `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/guide.md` —
+ *    the write target is a function of the guide's own `shortName`, never
+ *    the `domain` arg (the arg is cosmetic on the save branch).
  *
  * No half-write on validation error (validate first, write only on success).
  * Defaults are filled by the validator before writing.
@@ -45,7 +47,7 @@ import {
 	getUserGuidesDir,
 	findGuidesByDomain,
 } from "../core/guide-store.js";
-import { assertSafeDomain } from "../core/path-template.js";
+import { assertSafeDomain, slug } from "../core/path-template.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Staged working copy (/tmp) — the draft the agent edits between saves
@@ -59,16 +61,18 @@ export function setStagingRoot(dir: string): void {
 	_stagingRoot = dir;
 }
 
-/** Deterministic draft path: `<root>/<domain>/guide.md`. */
-function stagingPathFor(domain: string): string {
-	return join(_stagingRoot, domain, "guide.md");
+/** Deterministic draft path: `<root>/<key>/guide.md`. The key is the
+ * requested `domain` for templates (placeholder shortName) and
+ * `slug(shortName)` for fetched recipes (which is the on-disk dirName). */
+function stagingPathFor(key: string): string {
+	return join(_stagingRoot, key, "guide.md");
 }
 
 /** Write the working copy (template or fetched raw recipe) to the staging
  * path. Returns the path. */
-function writeStagedDraft(domain: string, raw: string): string {
-	const path = stagingPathFor(domain);
-	mkdirSync(join(_stagingRoot, domain), { recursive: true });
+function writeStagedDraft(key: string, raw: string): string {
+	const path = stagingPathFor(key);
+	mkdirSync(join(_stagingRoot, key), { recursive: true });
 	writeFileSync(path, raw, "utf-8");
 	return path;
 }
@@ -247,10 +251,11 @@ function stageTemplate(domain: string): string {
 }
 
 /** Fetch-recipe response — the saved guide's raw recipe staged to the
- * staging path, with the file path + resolved dirName surfaced so re-save
- * keys on the directory, not the routing domain (sibling-clobber
- * mitigation). The inline YAML block is dropped: the staged file is the
- * source of truth the agent edits. */
+ * staging path, with the file path + resolved dirName surfaced. Staging
+ * keys on `slug(shortName)` (the on-disk dirName in steady state), and the
+ * re-save self-keys off the draft's own shortName — no "pass the directory
+ * name as domain" guidance (that arg is cosmetic on save). The inline YAML
+ * block is dropped: the staged file is the source of truth the agent edits. */
 function stageFetchedRecipe(
 	domain: string,
 	guide: ApiGuide,
@@ -260,7 +265,8 @@ function stageFetchedRecipe(
 		join(getUserGuidesDir(), dirName, "guide.md"),
 		"utf-8",
 	);
-	const path = writeStagedDraft(domain, raw);
+	const stagedKey = slug(guide.shortName);
+	const path = writeStagedDraft(stagedKey, raw);
 	return {
 		content: [
 			{
@@ -272,8 +278,8 @@ function stageFetchedRecipe(
 					`  Directory: ${dirName}\n` +
 					`  Staged draft: ${path}\n` +
 					`  To edit: edit the staged file with the edit tool or bash, then call ` +
-					`api-learn({domain: "${dirName}", recipeFile: "${path}"}) — pass the ` +
-					`directory name as \`domain\` on re-save so a sibling guide is not clobbered.\n` +
+					`api-learn({domain: "${domain}", recipeFile: "${path}"}) — the guide ` +
+					`saves to its own \`${stagedKey}\` folder (self-keyed by shortName).\n` +
 					`  Re-fetching or re-templating this domain replaces the staged draft — save first to keep edits.`,
 			},
 		],
@@ -316,13 +322,14 @@ export const apiLearnTool = defineTool({
 	parameters: Type.Object({
 		domain: Type.String({
 			description:
-				"Domain (e.g. 'example.com'). With `recipeFile` it's the save directory; " +
-				"with no recipeFile it's the routing domain for fetch-recipe lookup.",
+				"Domain (e.g. 'example.com'). With no recipeFile it's the routing domain " +
+				"for fetch-recipe lookup; with `recipeFile` it's display/error context only — " +
+				"the guide saves to its own slug(shortName) folder.",
 		}),
 		recipeFile: Type.Optional(
 			Type.String({
 				description:
-					"Path to the staged draft guide file (written by a prior api-learn fetch/template call to /tmp/pi-lean-host/<domain>/guide.md). " +
+					"Path to the staged draft guide file (written by a prior api-learn fetch/template call to /tmp/pi-lean-host/<domain-or-slug>/guide.md). " +
 					"Read, validated, and saved. Omit to fetch the current raw recipe of an existing guide (or get a template when none exists).",
 			}),
 		),
@@ -483,30 +490,53 @@ export const apiLearnTool = defineTool({
 			};
 		}
 
+		// Save target — a function of the guide's own `shortName`, never the
+		// `domain` arg. Two guides with different shortNames physically cannot
+		// share a directory. An empty/all-symbol shortName throws here (the
+		// slug flattens to empty) — refuse with a prescriptive error before
+		// any write.
+		let slugged: string;
+		try {
+			slugged = slug(parsed.guide.shortName);
+		} catch (err) {
+			return {
+				content: [
+					{
+						type: "text",
+						text:
+							`⚠ Invalid shortName — guide was NOT saved.\n` +
+							`  ${err instanceof Error ? err.message : `shortName '${parsed.guide.shortName}' does not slug to a directory name.`}\n` +
+							`  Set a valid shortName (lowercase letters, digits, and '-') in the recipe and save again.`,
+					},
+				],
+				details: { error: "invalid_shortname", domain },
+			};
+		}
+
 		// Collision detection — another guide (different directory) already
 		// claims one of this guide's `domains:` keys. Valid (that's the whole
 		// point of multi-recipe), but warn so the author knows they're in
-		// disambiguation territory. Updating the same directory is NOT a
-		// collision. Names both the directory and the colliding `domains:` key
-		// so the routing-vs-identity distinction is explicit.
+		// disambiguation territory. Updating the same directory (same slug) is
+		// NOT a collision. Names both the directory and the colliding `domains:`
+		// key so the routing-vs-identity distinction is explicit.
 		const warnings: string[] = [];
 		const collidingDomains: string[] = [];
 		const collidingDirs: string[] = [];
 		for (const d of parsed.guide.domains ?? []) {
 			const existing = findGuidesByDomain(d);
 			for (const m of existing) {
-				if (m.dirName !== domain && !collidingDirs.includes(m.dirName)) {
+				if (m.dirName !== slugged && !collidingDirs.includes(m.dirName)) {
 					collidingDirs.push(m.dirName);
 				}
 			}
-			if (existing.some((m) => m.dirName !== domain)) {
+			if (existing.some((m) => m.dirName !== slugged)) {
 				collidingDomains.push(d);
 			}
 		}
 		if (collidingDomains.length > 0) {
 			const keys = collidingDomains.join(", ");
 			warnings.push(
-				`⚠ Multi-recipe: writing to directory \`${domain}\`, but \`domains:\` declares [${keys}] which another guide already claims — disambiguation menu applies. Give each guide a distinct \`shortName\`.`,
+				`⚠ Multi-recipe: writing to directory \`${slugged}\`, but \`domains:\` declares [${keys}] which another guide already claims — disambiguation menu applies. Give each guide a distinct \`shortName\`.`,
 			);
 			if (desc === undefined) {
 				warnings.push(
@@ -520,16 +550,16 @@ export const apiLearnTool = defineTool({
 
 		// ── Fail-closed overwrite guard ─────────────────────────
 		// A guide.md already in the target directory is that directory's
-		// identity anchor. If its shortName differs from the incoming
-		// guide's, this save would silently replace a sibling guide (the
-		// multi-recipe clobber bug). Refuse and teach the directory
-		// convention instead. Same shortName = legitimate update, proceeds.
+		// identity anchor. Since the write target is slug(shortName), a
+		// pre-existing guide.md there with a DIFFERENT shortName is reachable
+		// only via a slug collision — refuse and teach the rename-shortName
+		// convention. Same shortName = legitimate update, proceeds.
 		const guidesDir = getUserGuidesDir();
-		const domainDir = join(guidesDir, domain);
+		const domainDir = join(guidesDir, slugged);
 		const filepath = join(domainDir, "guide.md");
 		if (existsSync(filepath)) {
 			const existing = parseApiGuide(readFileSync(filepath, "utf-8"), {
-				filename: domain,
+				filename: slugged,
 			});
 			const existingShort = existing.ok ? existing.guide.shortName : undefined;
 			if (existingShort !== parsed.guide.shortName) {
@@ -539,13 +569,11 @@ export const apiLearnTool = defineTool({
 							type: "text",
 							text:
 								`⚠ Refusing to overwrite — guide was NOT saved.\n` +
-								`  Directory '${domain}' already holds guide '${existingShort ?? "?"}' (guide.md); ` +
+								`  Directory '${slugged}' already holds guide '${existingShort ?? "?"}' (guide.md); ` +
 								`the incoming guide is '${parsed.guide.shortName}'.` +
 								(existing.ok
-									? `\n  To save a SECOND guide for the same routing domain, use a distinct directory:\n` +
-										`    api-learn({domain: "${domain}-${parsed.guide.shortName}", recipeFile: "${recipeFile}"})\n` +
-										`  Keep \`domains: [${parsed.guide.domains?.join(", ")}]\` in the recipe for routing.`
-									: `\n  The existing guide.md is malformed (won't parse). If you intend to replace it, ask the user to run /api delete ${domain} first.`),
+									? `\n  Both shortNames slug to the same directory ('${slugged}') — a slug collision. Rename the incoming guide's \`shortName\` so it slugs to a distinct directory.`
+									: `\n  The existing guide.md is malformed (won't parse). If you intend to replace it, ask the user to run /api delete ${slugged} first.`),
 						},
 					],
 					details: {
@@ -583,8 +611,8 @@ export const apiLearnTool = defineTool({
 				{
 					type: "text",
 					text:
-						`📖 Guide saved to ~/.pi/agent/pi-lean-host/api-guides/${domain}/guide.md\n` +
-						`  Domain: ${domain}\n` +
+						`📖 Guide saved to ~/.pi/agent/pi-lean-host/api-guides/${slugged}/guide.md\n` +
+						`  Directory: ${slugged}\n` +
 						`  Operations: ${opCount} — ${opNames}\n` +
 						`  ${authSummary(parsed.guide.auth)}\n` +
 						`  Verified: ${parsed.guide.verified}\n` +

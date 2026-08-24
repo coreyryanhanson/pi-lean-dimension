@@ -132,27 +132,29 @@ describe("api-learn fetch-recipe", () => {
 	it("1 guide → raw recipe staged; result surfaces path + dirName", async () => {
 		await saveRecipe("solo.example", recipe("solo.example", "Solo", "getSolo"));
 		const text = contentText(await callLearn("solo.example"));
-		expect(text).toContain("Directory: solo.example");
-		expect(text).toContain(stagedPath("solo.example"));
+		// dirName is slug(shortName) = "solo"; fetch-recipe staging keys on
+		// the same value.
+		expect(text).toContain("Directory: solo");
+		expect(text).toContain(stagedPath("solo"));
 		expect(text).toContain("edit the staged file");
 		// The authoring manual travels with the staged raw recipe.
 		expect(text).toContain("authoring manual");
 		// Draft contents equal the saved raw recipe (incl. schemaVersion stamp).
-		const raw = readFileSync(
-			join(tmpGuidesDir, "solo.example", "guide.md"),
-			"utf-8",
-		);
-		const draft = readFileSync(stagedPath("solo.example"), "utf-8");
+		const raw = readFileSync(join(tmpGuidesDir, "solo", "guide.md"), "utf-8");
+		const draft = readFileSync(stagedPath("solo"), "utf-8");
 		expect(draft).toBe(raw);
 		expect(draft).toContain("getSolo");
 		expect(draft).toContain("schemaVersion: 0");
 	});
 
-	it("1 guide with dirName ≠ routing domain surfaces the dirName (sibling-clobber guard)", async () => {
+	it("1 guide with dirName ≠ routing domain surfaces the dirName (self-keyed identity)", async () => {
 		await saveRecipe("foo-api", recipe("foo.example", "Foo", "getFoo"));
 		const text = contentText(await callLearn("foo.example"));
-		expect(text).toContain("Directory: foo-api");
-		expect(text).toContain('api-learn({domain: "foo-api", recipeFile:');
+		expect(text).toContain("Directory: foo");
+		// Re-save self-keys off shortName — no "pass the directory name as
+		// domain" advice remains.
+		expect(text).toContain("self-keyed by shortName");
+		expect(text).not.toContain('domain: "foo-api"');
 	});
 
 	it("N guides → disambiguation menu by shortName; guide selector resolves", async () => {
@@ -176,10 +178,10 @@ describe("api-learn fetch-recipe", () => {
 		const picked = contentText(
 			await callLearn("archive.org", undefined, { guide: "wayback" }),
 		);
-		expect(picked).toContain("Directory: archive.org-wayback");
-		expect(picked).toContain(stagedPath("archive.org"));
-		// Selected guide's recipe written to the staging path.
-		const draft = readFileSync(stagedPath("archive.org"), "utf-8");
+		expect(picked).toContain("Directory: wayback");
+		expect(picked).toContain(stagedPath("wayback"));
+		// Selected guide's recipe written to the staging path (slug(shortName)).
+		const draft = readFileSync(stagedPath("wayback"), "utf-8");
 		expect(draft).toContain("getWayback");
 		expect(draft).not.toContain("getArchive");
 	});
@@ -203,12 +205,12 @@ describe("api-learn fetch-recipe", () => {
 		// Template, not an existing recipe.
 		expect(draft).not.toContain("getArchive");
 		expect(draft).not.toContain("getWayback");
-		// Existing guides untouched on disk.
+		// Existing guides untouched on disk (keyed by slug(shortName)).
 		expect(
-			readFileSync(join(tmpGuidesDir, "archive.org", "guide.md"), "utf-8"),
+			readFileSync(join(tmpGuidesDir, "archive", "guide.md"), "utf-8"),
 		).toContain("getArchive");
 		expect(
-			readFileSync(join(tmpGuidesDir, "archive.org-wayback", "guide.md"), "utf-8"),
+			readFileSync(join(tmpGuidesDir, "wayback", "guide.md"), "utf-8"),
 		).toContain("getWayback");
 	});
 });
@@ -235,41 +237,77 @@ describe("api-learn save path (recipeFile)", () => {
 			await saveRecipe("save.example", recipe("save.example", "Save", "getSave")),
 		);
 		expect(text).toContain("Guide saved");
-		const saved = readFileSync(
-			join(tmpGuidesDir, "save.example", "guide.md"),
-			"utf-8",
-		);
+		const saved = readFileSync(join(tmpGuidesDir, "save", "guide.md"), "utf-8");
 		expect(saved).toContain("getSave");
 		expect(saved).toMatch(/^schemaVersion: 0$/m);
 	});
 
-	it("fail-closed: different-shortName guide to an existing directory is refused (no clobber)", async () => {
+	it("slug collision: cmc_full / cmc-full → second save refused with rename-shortName advice", async () => {
+		// Both shortNames slug to "cmc-full" — the second save targets the
+		// same directory, where the overwrite guard now acts as a slug-collision
+		// detector (a different shortName already on disk) and refuses.
 		await saveRecipe(
-			"clobber.example",
-			recipe("clobber.example", "First", "getFirst"),
+			"cmc-full",
+			recipe("coinmarketcap.com", "cmc_full", "getFull"),
 		);
 		const res = await saveRecipe(
-			"clobber.example",
-			recipe("clobber.example", "Second", "getSecond"),
+			"cmc-full",
+			recipe("coinmarketcap.com", "cmc-full", "getFull"),
 		);
 		const text = contentText(res);
 		expect(text).toContain("Refusing to overwrite");
 		expect(text).toContain("NOT saved");
-		// Prescriptive guidance: distinct directory + keep domains for routing.
-		expect(text).toContain("clobber.example-Second");
-		expect(text).toContain("domains: [clobber.example]");
+		// Prescriptive guidance: rename the shortName so it slugs distinctly.
+		expect(text).toContain("slug collision");
+		expect(text).toContain("Rename");
 		expect(res.details).toMatchObject({
 			error: "overwrite_refused",
-			existing: "First",
-			incoming: "Second",
+			existing: "cmc_full",
+			incoming: "cmc-full",
 		});
 		// First guide untouched on disk.
 		const saved = readFileSync(
-			join(tmpGuidesDir, "clobber.example", "guide.md"),
+			join(tmpGuidesDir, "cmc-full", "guide.md"),
 			"utf-8",
 		);
-		expect(saved).toContain("getFirst");
-		expect(saved).not.toContain("getSecond");
+		expect(saved).toContain("getFull");
+	});
+
+	it("empty / all-symbol shortName → save refused with prescriptive error before any write", async () => {
+		// Single-quoted YAML so the parser sees a string (bare `!!!` is a YAML
+		// tag and fails at parse, not at slug()); both slug to empty.
+		for (const bad of ["'!!!'", "''"]) {
+			const res = await saveRecipe(
+				"bad.example",
+				`---\nkind: api\ndomains: [bad.example]\nshortName: ${bad}\napiHost: ${API}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`,
+			);
+			const text = contentText(res);
+			expect(text).toContain("Invalid shortName");
+			expect(text).toContain("NOT saved");
+			expect(res.details).toMatchObject({ error: "invalid_shortname" });
+		}
+		// Nothing written.
+		expect(() =>
+			readFileSync(join(tmpGuidesDir, "bad.example", "guide.md"), "utf-8"),
+		).toThrow();
+	});
+
+	it("re-save of the same guide lands back in the same folder (self-keying, no ghost)", async () => {
+		await saveRecipe("self.example", recipe("self.example", "Self", "getOld"));
+		// Re-save the same shortName via a different `domain` arg — the write
+		// target is slug(shortName), so it lands in the same folder.
+		const res = await saveRecipe(
+			"some-other-arg",
+			recipe("self.example", "Self", "getNew"),
+		);
+		expect(contentText(res)).toContain("Guide saved");
+		const saved = readFileSync(join(tmpGuidesDir, "self", "guide.md"), "utf-8");
+		expect(saved).toContain("getNew");
+		expect(saved).not.toContain("getOld");
+		// No ghost folder for the other arg.
+		expect(() =>
+			readFileSync(join(tmpGuidesDir, "some-other-arg", "guide.md"), "utf-8"),
+		).toThrow();
 	});
 
 	it("same shortName to an existing directory → update proceeds", async () => {
@@ -282,10 +320,7 @@ describe("api-learn save path (recipeFile)", () => {
 			recipe("update.example", "Same", "getNew"),
 		);
 		expect(contentText(res)).toContain("Guide saved");
-		const saved = readFileSync(
-			join(tmpGuidesDir, "update.example", "guide.md"),
-			"utf-8",
-		);
+		const saved = readFileSync(join(tmpGuidesDir, "same", "guide.md"), "utf-8");
 		expect(saved).toContain("getNew");
 	});
 

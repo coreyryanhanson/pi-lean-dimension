@@ -133,12 +133,13 @@ function writeFixtureHelper(name: string, content: string): void {
 function recipeWithHelper(
 	apiHost: string,
 	domain: string = "echo.test",
+	shortName: string = "Echo",
 ): string {
 	return `---
 kind: api
 domains: [${domain}]
 icon: 📡
-shortName: Echo
+shortName: ${shortName}
 updated: 2026-07-17
 apiHost: ${apiHost}
 verified: 2026-07-17
@@ -355,8 +356,9 @@ describe("getAllHelpers / readHelperSource", () => {
 
 describe("api-fetch integration with user helpers", () => {
 	it("executes a restGet with helper-transformed params", async () => {
-		// Write the helper (domain "transform-date" gets helper.mjs)
-		writeFixtureHelper("transform-date", FIXTURE_TRANSFORM);
+		// The guide (shortName: Echo → slug "echo") lives in the echo/ folder;
+		// the helper lives alongside it.
+		writeFixtureHelper("echo", FIXTURE_TRANSFORM);
 		const recipe = recipeWithHelper(echoUrl, "transform-date");
 
 		// Save via api-learn (staged file → recipeFile)
@@ -395,9 +397,10 @@ describe("api-fetch integration with user helpers", () => {
 	});
 
 	it("returns structured error when helper is disabled", async () => {
-		// Write a helper that errors
+		// Distinct shortName → distinct slug folder, so the helper module cache
+		// from the previous test can't mask this one's failing helper.
 		writeFixtureHelper("broken", FIXTURE_CALL_ERROR);
-		const recipe = recipeWithHelper(echoUrl, "broken");
+		const recipe = recipeWithHelper(echoUrl, "broken", "Broken");
 
 		const learnResult = await apiLearnTool.execute(
 			"test",

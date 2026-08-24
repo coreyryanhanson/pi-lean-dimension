@@ -17,8 +17,9 @@
 > that data loss at the moment it would happen; this redesign removes the *class*
 > of confusion.
 >
-> Status: **draft — not yet implemented.** This document exists to evaluate the
-> redesign before committing to it. It is sequenced ahead of the sibling-artifact
+> Status: **implemented.** The redesign is implemented — Sprint 1 landed the
+> `slug()` helper + loader checks, Sprint 2 made the write target a function of
+> `slug(shortName)`. It is sequenced ahead of the sibling-artifact
 > authoring doc [`api-verify-scaffold.md`](api-verify-scaffold.md), whose
 > staging-path keying this redesign supersedes.
 

@@ -519,7 +519,7 @@ function formatAmbiguousOperation(
 		`Call api-guide({domain: "${domain}", guide: "${first.guide.shortName}"}) to read each guide's full recipe,`,
 	);
 	lines.push(
-		`then re-author one guide via api-learn({domain: "${first.dirName}", recipeFile: …}) with the colliding operation renamed so the names no longer clash.`,
+		`then re-author one guide via api-learn({recipeFile: …}) with the colliding operation renamed so the names no longer clash.`,
 	);
 	lines.push(`Note: api-learn rewrites a whole recipe, not a single operation.`);
 	return lines.join("\n");

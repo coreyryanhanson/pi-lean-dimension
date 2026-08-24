@@ -10,7 +10,13 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import {
+	mkdtempSync,
+	mkdirSync,
+	writeFileSync,
+	rmSync,
+	renameSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -1841,6 +1847,32 @@ org guide.
 				rmSync(join(dir, "bad"), { recursive: true, force: true });
 			}
 		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("divergence warning clears after an agent-assisted rename to slug(shortName)", () => {
+		const dir = mkdtempSync(join(tmpdir(), "host-guides-"));
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			// BOE_RECIPE has shortName: BOE → slug "boe"; folder is "boe.es" —
+			// the pre-migration state warns on divergence.
+			mkdirSync(join(dir, "boe.es"), { recursive: true });
+			writeFileSync(join(dir, "boe.es", "guide.md"), BOE_RECIPE);
+			let loaded = loadApiGuidesFromDir(dir);
+			expect(Object.keys(loaded.guides)).toEqual(["boe.es"]);
+			let msg = warn.mock.calls.map((c) => String(c[0])).join("\n");
+			expect(msg).toContain("expected folder 'boe'");
+
+			// The migration instruction (mv boe.es boe, then /reload).
+			warn.mockClear();
+			renameSync(join(dir, "boe.es"), join(dir, "boe"));
+			loaded = loadApiGuidesFromDir(dir);
+			expect(Object.keys(loaded.guides)).toEqual(["boe"]);
+			msg = warn.mock.calls.map((c) => String(c[0])).join("\n");
+			expect(msg).not.toContain("diverges");
+		} finally {
+			warn.mockRestore();
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
