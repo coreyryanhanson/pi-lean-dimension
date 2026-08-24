@@ -7,8 +7,8 @@
 > hotfix.
 >
 > The motivating bug: a second guide for the same routing domain saved with the
-> natural `domain: "coinmarketcap.com"` (== the first guide's folder) targets
-> the same `guide.md` and silently replaces the first. The dual role of `domain`
+> natural `domain: "coinmarketcap.com"` (== the first guide's folder) targets the
+> same `guide.md` and silently replaces the first. The dual role of `domain`
 > (routing argument on fetch, identity argument on save) is the root cause; the
 > pre-hotfix collision warning fired on the wrong condition (different
 > directories) and stayed silent on the dangerous one (same directory, different
@@ -40,14 +40,17 @@ directories) and stays silent on the dangerous one (same directory, different
 guide).
 
 The fail-closed guard stops the data loss at the moment it would happen. This
-redesign removes the *class* of confusion: identity becomes a function of the
-file's own content, never the tool argument, so the clobber is impossible by
-construction.
+redesign removes the *class* of confusion: the write target becomes a function
+of the file's own `shortName`, never the tool argument, so the clobber is
+impossible by construction.
 
 ## Core idea
 
 **The guide's identity is its `shortName`, derived from the file content. The
-write target is a function of `slug(shortName)`, never the `domain` argument.**
+write target is a function of `slug(shortName)`, never the `domain` argument.
+The invariant `dir === slug(shortName)` makes the folder name and the shortName
+two views of the same identity — enforced at save time, monitored at load time.**
+
 Two guides with different shortNames physically cannot share a directory.
 Routing is untouched — the loader already scans every subdirectory and builds a
 multi-valued domain map from each guide's `domains:` field; the folder name was
@@ -63,57 +66,78 @@ api-guides/cmc/guide.md                      # domains: [coinmarketcap.com]
 api-guides/cmc-full/guide.md                 # domains: [coinmarketcap.com]
 ```
 
+### Why invariant-enforcement instead of loader re-keying
+
+An earlier draft of this redesign proposed re-keying `LoadedApiGuides.guides`
+from the folder name to `shortName`, carrying the folder on a new `guide.dir`
+field, and detecting duplicate shortNames at load as a malformed condition.
+That approach works but introduces permanent machinery — a new type field, a
+`findGuidesByDomain` signature change, and a load-time duplicate detector with
+`readdirSync`-order nondeterminism — all to catch a condition that the
+invariant makes structurally impossible in steady state.
+
+Under the invariant approach, the loader **continues to key by folder name**
+(unchanged), and the folder name *is* `slug(shortName)` in steady state, so
+keying-by-folder and keying-by-shortName are the same thing. No `guide.dir`
+field, no `findGuidesByDomain` change, no permanent duplicate detector, no
+co-located test re-keying. The load-time surface shrinks to a **divergence
+check** (permanent — the standing invariant monitor) plus two **temporary
+startup checks** (migration-window only, marked for 0.5.0 deletion). The
+clobber-impossible property is identical; the code surface is smaller.
+
 ## What changes, and what does not
 
 ### Changes (blast radius)
 
-1. **`loadApiGuidesFromDir`** (`core/parse-api-guide.ts`) — key
-   `result.guides` by `parsed.guide.shortName` instead of `entry` (the folder
-   name), and set `guide.dir = entry` so the folder rides on the guide (see item
-   2). Detect a true collision (two folders whose guides share a `shortName`)
-   and push it to `malformed` with a prescriptive error — the *correct* error
-   (duplicate identity), surfaced at load time instead of as a silent
-   ambiguous-resolution at fetch time.
-2. **`LoadedApiGuides`** (`core/api-guide-types.ts`) — each `ApiGuide` carries
-   its folder (`guide.dir: string`). `findGuidesByDomain` returns `{guide,
-   dirName}` where `dirName` is now `guide.dir` (the *folder*), not the record
-   key. **Decision: carry the folder on the guide object, not a separate
-   `shortName → folder` side-channel.** Grounding: `findGuidesByDomain`
-   (`core/guide-store.ts`) does `loaded.guides[name]` and returns
-   `dirName: name`. Once `guides` is re-keyed by `shortName`, a separate folder
-   map makes `findGuidesByDomain` need a second lookup, and its
-   `dirName: name` silently becomes the shortName rather than the folder — a
-   bug with no compile error, and it breaks every `dirName`-keyed reader
-   (`local-helpers.ts`, `verify-command.ts`, `delete-command.ts`, and the
-   follow-up scaffold PR's sibling staging, which reads
-   `<guidesDir>/<dirName>/`). Carrying `dir` on the guide lets
-   `findGuidesByDomain` read `guide.dir` directly and keeps `dirName` honest.
-   (`buildDomainMap` in `core/guide-loader.ts` needs **no change** — it only
-   pushes the record key into domain-map arrays for `loaded.guides[key]`
-   lookup, which is identity-preserving regardless of what the key is.)
-3. **`api-learn` save path** (`tools/api-learn.ts`) — write target becomes
+1. **`loadApiGuidesFromDir`** (`core/parse-api-guide.ts`) — **no re-keying**.
+   The record key stays `entry` (the folder name). Three checks are added after
+   a successful parse:
+   - **Divergence check (permanent):** if `entry !== slug(parsed.guide.shortName)`,
+     emit a warning naming the current folder, the required folder
+     (`slug(shortName)`), and the migration instruction (see Migration). The
+     guide still loads — this is a warning, not a gate. This is the standing
+     invariant monitor: it catches hand-edited folder names, restored backups,
+     and pre-redesign folders that haven't been migrated yet.
+   - **Duplicate-`shortName` check (temporary, remove in 0.5.0):** if two
+     folders declare the same `shortName`, emit a warning naming both folders
+     and suggesting `/api delete <one>`. In steady state (after migration) this
+     is unreachable because two folders can't share `slug(shortName)`. It exists
+     only for the migration window where pre-redesign folders may collide.
+     `// TODO(0.5.0): remove — save-time slug() makes duplicate shortNames
+     // unreachable once all folders are migrated.`
+   - **Illegal-`shortName` check (temporary, remove in 0.5.0):** if
+     `slug(shortName)` throws (empty or all-symbol `shortName`), push to
+     `malformed` with a prescriptive "set a valid `shortName`" error. In steady
+     state this is unreachable because save-time `slug()` refuses before
+     writing. `// TODO(0.5.0): remove — save-time slug() refuses illegal
+     // shortNames before they reach disk.`
+2. **`api-learn` save path** (`tools/api-learn.ts`) — write target becomes
    `join(guidesDir, slug(parsed.guide.shortName), "guide.md")`, derived from the
    parsed draft. The `domain` arg becomes **purely cosmetic on the save branch** —
    it no longer selects the folder *and* no longer feeds collision detection (the
    collision loop iterates `parsed.guide.domains`, the file's own routing keys,
-   not the arg; see item 6 for the comparison re-key). Its only remaining save-
+   not the arg; see item 5 for the comparison re-key). Its only remaining save-
    path uses are error/display context (`parseApiGuide({filename: domain})`) and
    the `details.domain` field. The fetch-recipe advice about "pass the directory
    name as `domain` on re-save" is removed — a re-save self-keys off its own
-   `shortName` and naturally lands back in the same folder. **Three user-visible
-   strings that still name `domain` must be rewritten to name the actual write
-   target** (`slug(shortName)`): the result line `"saved to
-   .../${domain}/guide.md"` (and the `Domain: ${domain}` line beneath it), the
-   collision-warning message (covered in item 6), and the overwrite-guard advice
-   (covered in item 6). A stale or wrong `domain` arg can no longer misroute the
-   write or skew collision detection — strictly more robust than today, where
-   the arg *is* the write target.
-4. **`slug()`** — new small sanitizer in `core/path-template.ts` (or a sibling):
-   lowercase, replace non-`[a-z0-9-]` with `-`, collapse repeats, strip leading/
-   trailing `-`, reject empty / path-traversal results. Reuse `assertSafeDomain`
-   as the final safety check on the slug so the existing guard covers both
-   domains and slugs.
-5. **`stagingPathFor`** (`tools/api-learn.ts`) — rekey off `slug(shortName)`,
+   `shortName` and naturally lands back in the same folder. **Four user-visible
+   strings that still name `domain` (or `dirName` as a save arg) must be
+   rewritten to name the actual write target** (`slug(shortName)`): the result
+   line `"saved to .../${domain}/guide.md"` (and the `Domain: ${domain}` line
+   beneath it), the collision-warning message (covered in item 5), the
+   overwrite-guard advice (covered in item 5), and the `api-fetch`
+   ambiguous-operation advice that tells the author to re-call
+   `api-learn({domain: "${first.dirName}", ...})` (the `domain` arg is no longer
+   load-bearing on save). A stale or wrong `domain` arg can no longer misroute
+   the write or skew collision detection — strictly more robust than today,
+   where the arg *is* the write target.
+3. **`slug()`** — new small sanitizer in `core/path-template.ts` (the path-safety
+   module already owns `assertSafeDomain` — keep one safety surface): lowercase,
+   replace non-`[a-z0-9-]` with `-`, collapse repeats, strip leading/trailing
+   `-`, reject empty / path-traversal results. Reuse `assertSafeDomain` as the
+   final safety check on the slug so the existing guard covers both domains and
+   slugs.
+4. **`stagingPathFor`** (`tools/api-learn.ts`) — rekey off `slug(shortName)`,
    which **is** the new `dirName` (fetch-recipe case has the `shortName` in
    hand). The new-template case has only a placeholder `shortName`, so templates
    continue to stage under the requested `domain` until the author fills
@@ -122,7 +146,7 @@ api-guides/cmc-full/guide.md                 # domains: [coinmarketcap.com]
    "off `shortName`") is load-bearing for the follow-up scaffold PR**: it makes
    the scaffold doc's "key staging by `dirName`" section inherited rather than
    re-decided, so that section can be deleted there outright.
-6. **Collision-warning logic** (`tools/api-learn.ts` save path) — the warning
+5. **Collision-warning logic** (`tools/api-learn.ts` save path) — the warning
    stays (it's still useful guidance for disambiguation territory), but its
    **directory comparison must be re-keyed**. Today it checks `m.dirName !== domain`
    to mean "an existing guide in a *different* folder than the one I'm writing
@@ -140,9 +164,7 @@ api-guides/cmc-full/guide.md                 # domains: [coinmarketcap.com]
    only the folder comparison changes. The warning message itself must also be
    rewritten: today it says ``writing to directory
    \`${domain}\` ``, which is now wrong (the write target is `slug(shortName)`,
-   not `domain`) — render the slug there instead. The
-   dangerous same-directory silent-clobber case is no longer reachable, so the
-   pre-hotfix guard that missed it can be removed rather than patched.
+   not `domain`) — render the slug there instead.
 
    **Note on the shipped overwrite guard's shifted semantics:** the fail-closed
    `shortName`-mismatch guard (item 1 of Sequencing, already shipped) compares the
@@ -161,6 +183,13 @@ api-guides/cmc-full/guide.md                 # domains: [coinmarketcap.com]
 
 ### Does NOT change (load-bearing facts that make this safe)
 
+- **Loader record key** — stays `entry` (the folder name). Under the invariant
+  `dir === slug(shortName)`, the folder *is* the slug, so keying-by-folder is
+  keying-by-identity. No `guide.dir` field, no `findGuidesByDomain` signature
+  change, no `buildDomainMap` change, no co-located test re-keying.
+- **`findGuidesByDomain`** (`core/guide-store.ts`) — unchanged. `dirName: name`
+  stays honest because `name` (the folder) *is* `slug(shortName)` in steady
+  state.
 - **Secrets store** — keyed on `canonicalStoreDomain(guide) = guide.domains[0]`
   (`core/auth.ts`), **not** on the folder. Relocating a guide's folder does not
   move its secrets; `/api secrets coinmarketcap.com` keeps feeding both guides
@@ -170,100 +199,87 @@ api-guides/cmc-full/guide.md                 # domains: [coinmarketcap.com]
   `findGuidesByDomain` still returns. Unchanged behavior.
 - **`local-helpers.ts`** — locates `helper.ts` via `dirName` (the folder). No
   logic change; `ctx.domain = dirName` transform semantics preserved.
-- **Disambiguation menu** — already lists by `shortName`; now `shortName` is also
-  the identity key, so the surface is more consistent, not different.
+- **Disambiguation menu** — already lists by `shortName`; the surface is
+  consistent.
 - **`/api delete`** — deletes by directory + `invalidateCache()`s. Still works;
   the directory is now `slug(shortName)` but the delete command takes whatever
   directory name is shown.
+- **`dirName` consumers** — `api-fetch.ts`, `local-helpers.ts`,
+  `verify-command.ts`, `delete-command.ts`, `guide-picker.ts`, `helpers.ts`,
+  `auth.ts` all destructure `dirName` from `findGuidesByDomain`, which is
+  unchanged. No audit needed; no consumer reads the folder from the record key
+  differently than before.
 
 ## Migration of existing user guides
 
-Guides saved before the change live at `<domain>/guide.md`. After the change
-they still **load** — the loader reads `shortName` from content and keys by it,
-ignoring the old folder name — so there is **no read-time break**. But a re-save
-relocates the guide to `<slug(shortName)>/guide.md`, leaving the old `<domain>/`
-folder behind as a ghost that still parses and double-registers the same
-`shortName` until cleaned.
+Guides saved before the change live at `<domain>/guide.md` (e.g.
+`api-guides/coinmarketcap.com/guide.md` with `shortName: cmc`). After the change
+they still **load** — the loader reads `shortName` from content, keys by the
+folder (unchanged), and the **divergence check** warns that the folder
+`coinmarketcap.com` should be `cmc`. No read-time break; the guide is live with
+a warning.
 
-That double-registration is exactly the new "duplicate `shortName`" malformed
-condition, so the loader will surface it prescriptively after the first re-save,
-pointing the author at `/api delete <old-folder>`. Cleanup is a solved problem
-(`/api delete` + `invalidateCache()` already exist for ghost guides), but it's a
-one-time annoyance per existing multi-recipe user.
+**Migration is agent-assisted, not code-driven.** The divergence warning tells
+the user the current folder, the required folder (`slug(shortName)`), and — for
+the 0.4.0 release only — instructs the user to ask their agent to rename the
+folder (`mv api-guides/coinmarketcap.com api-guides/cmc`), then `/reload`. We
+normally discourage agents from directly modifying guides, but for a one-time
+folder rename this is lower-risk than adding auto-migration code and simpler
+than teaching the user a manual `/api` subcommand. The agent has bash and can
+handle a collision naturally: if the target folder already exists (e.g. the
+user already re-saved, creating `cmc/`), the agent sees the existing folder and
+`/api delete`s the old one instead of renaming. We outsource the edge-case
+handling rather than encoding it.
 
-**Note on which copy wins.** When both the old `<domain>/` and the new
-`<slug(shortName)>/` folder exist, `readdirSync` order decides which guide lands
-in `guides` (live) vs `malformed` (duplicate). Both copies persist on disk either
-way, the malformed error is prescriptive, and `/api delete <old-folder>` clears
-the ghost — so this is not a data-loss path, only a nondeterministic read until
-cleaned. (The save path should `invalidateCache()` so the next read re-scans;
-`/api delete` already does.)
+The `/reload` instruction in the warning is load-bearing: an external `mv`
+doesn't call `invalidateCache()`, so the in-memory `LoadedApiGuides` is stale
+until the next `session_start` or `/reload`.
+
+**Duplicate shortNames during the migration window** (two pre-redesign folders
+both declaring `shortName: cmc`) are caught by the temporary duplicate-shortName
+startup check, which names both folders and suggests `/api delete <one>`. Once
+all folders are migrated, this check is unreachable and is removed in 0.5.0.
 
 **Options considered:**
 
-- **A. Lazy, no auto-migration (recommended).** Old folders load fine; a re-save
-  relocates and the loader flags the resulting ghost. Minimal code, no read-side
-  mutation, no surprise. Cost: one manual `/api delete` per re-saved guide.
-- **B. Auto-migrate on first load.** `mv <domain>/ → <slug(shortName)>/` when the
-  folder name ≠ `slug(shortName)`. Transparent to the user, but **mutating user
-  dirs on read** is surprising and races a concurrent `api-fetch` reading the
-  same folder. Rejected unless the ghost cleanup proves burdensome in practice.
+- **A. Lazy, agent-assisted (recommended).** Old folders load with a divergence
+  warning; the user asks their agent to rename the folder, then `/reload`.
+  Minimal code (the divergence check + two temp startup checks), no read-side
+  mutation, no surprise. Cost: one agent-assisted rename per non-compliant
+  guide.
+- **B. Auto-migrate on first load.** `mv <domain>/ → <slug(shortName)>/` when
+  the folder name ≠ `slug(shortName)`. Transparent to the user, but **mutating
+  user dirs on read** is surprising and races a concurrent `api-fetch` reading
+  the same folder. Rejected.
 - **C. Ship a one-time migration command.** `/api migrate` or a startup sweep
   that renames folders in place with no live readers. More machinery than the
-  problem warrants at current user-guide volume.
+  problem warrants at current user-guide volume, and the agent-assisted path
+  already covers it without a new command.
 
-Recommend **A**; revisit **C** only if reports of ghost folders accumulate.
+Recommend **A**; revisit **C** only if divergence-warning reports accumulate
+faster than users act on them.
 
 ## Edge cases & new failure modes
 
 - **Slug collisions.** Two shortNames that slug to the same value (e.g.
-  `cmc_full` and `cmc-full`) target the same folder. The loader detects the
-  duplicate `shortName` at load and reports it as malformed; the save path
-  detects the pre-existing `guide.md` with a different `shortName` and refuses
-  (the hotfix guard, retained). Real but small — `shortName` is author-chosen and
-  human-readable, so exact and slug collisions are both visible and fixable by
-  renaming one guide.
+  `cmc_full` and `cmc-full`) target the same folder. The save path detects the
+  pre-existing `guide.md` with a different `shortName` and refuses (the hotfix
+  guard, retained and repurposed). Real but small — `shortName` is author-chosen
+  and human-readable, so slug collisions are visible and fixable by renaming one
+  guide's `shortName`.
 - **Empty / unsafe `shortName`.** `slug()` must produce a non-empty, traversal-
-  safe result. An empty or all-symbol `shortName` → slug is empty → save refuses
-  with a prescriptive error. `assertSafeDomain` is reused as the final guard so
-  the existing path-traversal protection covers slugs without a second
-  implementation.
-- **Duplicate `shortName` across folders.** Today this surfaces as an
-  "ambiguous" resolution at `api-fetch`/`api-guide` time. After the change it
-  surfaces earlier, at load, as a malformed entry — a strictly better failure
-  point (fail at identity definition, not at use).
-- **`dirName` consumers.** Any code that read `dirName` off the record key
-  (`Object.entries(loaded.guides)`) must read it from `guide.dir` instead. Audit:
-  `api-guide` catalog rendering, `api-fetch` helper routing,
-  `local-helpers.ts` listing, `verify-command.ts`, `delete-command.ts`, and
-  `core/portal-projection.ts` (`buildProjection` keys the portal projection by
-  the record key — likely benign since portal treats keys as opaque, and
-  shortNames are more meaningful display values, but verify). Also includes
-  **test files** that access `loaded.guides[<folder-name>]` directly or use the
-  record key as a filesystem path: the co-located `api-guides/*/{static-key,
-  local-helper,transform,resumption-token,token-bag}.test.ts` files,
-  `__tests__/transform-{restget,paginate}.test.ts` (fixture key),
-  `__tests__/parse-api-guide.test.ts` (an `Object.keys(loaded.guides)` equality
-  assertion), `__tests__/delete-command.test.ts`, and `__tests__/axis-coverage.test.ts`
-  (the subtle one — iterates `Object.entries(GUIDES)` and builds a filesystem
-  path from the key via `existsSync(join(GUIDES_DIR, dirName, ...))`; must switch
-  to `guide.dir` so the path still resolves to the real folder). All production
-  `dirName` consumers already destructure from `findGuidesByDomain`, so most are
-  transparent (the change is inside `findGuidesByDomain`, which returns
-  `dirName: guide.dir` rather than `dirName: name`; `buildDomainMap` needs *no*
-  change — it only pushes the record key into arrays for `loaded.guides[key]`
-  lookup, which is identity-preserving regardless of what the key is). The audit
-  is for any *direct* record iteration that still reads the key as the folder.
-- **Cosmetic display changes (folder name → shortName).** Two surfaces render
-  the record key to the user and will show shortNames instead of folder names
-  after re-keying: `tools/api-guide.ts`'s "Known guides" list
-  (`Object.keys(loadAllGuides().guides)`) and `formatApiGuideCatalog`'s orgless
-  fallback (`guide.domains.join(", ") : name` in `core/parse-api-guide.ts`).
-  The fallback is dead code for `ApiGuide`s (`domains:` is parser-required
-  non-empty), so it only matters if a malformed guide slips through; the
-  "Known guides" list is live and arguably an improvement (shortNames are more
-  meaningful than folder names). No code change needed, but the blast radius
-  should be honest about it.
+  safe result. An empty or all-symbol `shortName` → slug is empty →
+  `assertSafeDomain` throws → save refuses with a prescriptive error. At load
+  time, the temporary illegal-shortName check (0.5.0 removal) catches the same
+  condition for pre-redesign guides that somehow have an empty shortName.
+- **Divergent folder name.** `entry !== slug(shortName)` — the permanent
+  divergence check warns. Causes: pre-redesign folder not yet migrated,
+  hand-edited folder name, restored backup. The guide still loads; the warning
+  is prescriptive (names the required folder).
+- **Duplicate `shortName` across folders (migration window only).** Two
+  pre-redesign folders declaring the same `shortName`. The temporary duplicate
+  check warns and names both folders. In steady state this is unreachable (two
+  folders can't share `slug(shortName)`). Removed in 0.5.0.
 
 ## Pros
 
@@ -272,32 +288,32 @@ Recommend **A**; revisit **C** only if reports of ghost folders accumulate.
 - **Kills the dual-role `domain` confusion** (routing vs. identity) that caused
   both the save clobber and the staging collision. `shortName` is the single
   identity axis; `domains:` stays the single routing axis.
-- **Enforces `shortName` uniqueness by construction** — the filesystem rejects
-  duplicate identity at write time rather than `selectGuideByShortName`
-  reporting "ambiguous" at read time.
+- **Enforces `shortName` uniqueness by construction** — save-time `slug()`
+  makes two guides with different shortNames physically unable to share a
+  directory; the retained overwrite guard refuses slug collisions at write
+  time.
 - **Re-save self-keys** — the fetch-recipe "pass the directory name" advice
   disappears; a guide naturally lands back in its own folder.
+- **Smaller code surface than re-keying** — no `guide.dir` field, no
+  `findGuidesByDomain` change, no co-located test re-keying. The load-time
+  surface is a permanent divergence check plus two temporary checks with a
+  0.5.0 deletion date.
 - **No secret-store migration, no auth change, no transport change, no routing
-  change.** Blast radius is the loader keying + `api-learn` write target + one
-  new malformed condition + a slug function.
+  change.** Blast radius is `slug()` + the `api-learn` write target + the
+  divergence/temp checks + four string rewrites.
 
 ## Cons / costs
 
-- **Storage-layout change.** Existing user guides need a one-time `/api delete`
-  of the ghost folder after their first re-save (under recommended migration A).
-  No read-time break, but a per-guide cleanup annoyance.
+- **Storage-layout change.** Existing user guides need a one-time folder rename
+  (agent-assisted) if their folder name doesn't match `slug(shortName)`. No
+  read-time break, but a per-guide cleanup action.
 - **New `slug()` surface.** Trivial but real: a sanitizer with its own edge
   cases (slug collisions, empty result, unicode). Reusing `assertSafeDomain` as
   the final guard keeps the safety story to one function.
-- **`LoadedApiGuides` `guide.dir` field.** Type/API churn touching
-  `findGuidesByDomain` and direct-record-iteration sites (`buildDomainMap`
-  needs no change — see blast-radius item 2). Minor but non-zero. (A separate
-  `shortName → folder` side-channel was rejected — see blast-radius item 2;
-  it would let `findGuidesByDomain`'s `dirName: name` silently return the
-  shortName instead of the folder, a bug with no compile error.)
-- **One new malformed error path** (duplicate `shortName` across folders).
-  Correct failure point, but a new user-visible failure where today the guide
-  loads and fails later as "ambiguous."
+- **Temporary startup checks.** The duplicate-shortName and illegal-shortName
+  checks are migration-window scaffolding marked for 0.5.0 deletion. They add a
+  small amount of code that is intentionally self-deleting; the 0.5.0 removal
+  must not be forgotten.
 - **Does not fully fix the staging collision** — `stagingPathFor` can rekey off
   `shortName` only for the fetch-recipe case; the new-template case has no
   `shortName` yet, so templates stay domain-keyed in /tmp. Acceptable: staging is
@@ -316,14 +332,17 @@ Recommend **A**; revisit **C** only if reports of ghost folders accumulate.
    `shortName` differs from the guide.md already in the target directory.
    Already shipping; do **not** re-implement it in this redesign's PR. After
    this redesign lands it shifts from "clobber detector" to "slug-collision
-   detector" (see blast-radius item 6), but stays.
-2. **Next (this redesign):** implement the structural change as a focused PR —
-   loader keying by `shortName`, `guide.dir` carry-through, `slug()`,
-   `api-learn` write target, audit `dirName` consumers, add the
-   duplicate-`shortName` malformed test, update the fetch-recipe advice. Ship
-   migration **A** (lazy, ghost flagged on re-save).
-3. **Later (only if needed):** revisit auto-migration (**B** or **C**) if ghost-
-  folder cleanup reports accumulate; otherwise leave it.
+   detector" (see blast-radius item 5), but stays.
+2. **Next (this redesign):** implement the structural change in two sprints —
+   Sprint 1: `slug()` + loader checks (divergence + temp startup checks);
+   Sprint 2: `api-learn` write target + collision warning re-key + guard advice
+   - string rewrites + test updates. Ship migration **A** (lazy,
+   agent-assisted folder rename).
+3. **0.5.0:** remove the temporary duplicate-shortName and illegal-shortName
+   startup checks. The permanent divergence check stays as the standing
+   invariant monitor.
+4. **Later (only if needed):** revisit auto-migration (**B** or **C**) if
+   divergence-warning reports accumulate; otherwise leave it.
 
 The hotfix already closes the data-loss hole today. The redesign earns its
 keep as a follow-up because it removes the whole class of confusion rather than
@@ -337,7 +356,7 @@ is smaller:
 
 - **Staging-path keying is already decided here.** That doc's "Staging path
   keying" section (rekey `/tmp` from routing `domain` → `dirName`) is inherited
-  by this redesign's blast-radius item 5 (`stagingPathFor` keys off
+  by this redesign's blast-radius item 4 (`stagingPathFor` keys off
   `slug(shortName)`, which *is* the new `dirName`). The scaffold PR should
   **delete that section outright** rather than re-deciding it.
 - **The deletion-safety gate's wipe surface shrinks.** That doc motivates its
@@ -347,16 +366,43 @@ is smaller:
   `new: true` template has a placeholder `shortName`, so its save target is
   `<slug(placeholder)>/`, which won't collide with a real guide's folder unless
   the author fills in an existing `shortName` — and that's caught by the
-  shifted overwrite guard (blast-radius item 6). The scaffold PR therefore only
+  shifted overwrite guard (blast-radius item 5). The scaffold PR therefore only
   needs to guard the accidental-`/tmp`-cleanup case, not the
   `new: true`-over-existing case. Half the gate's motivation, pre-paid.
 
 ## Resolved decisions
 
+- **Invariant: `dir === slug(shortName)`, not `dir === shortName`.** The folder
+  is always lowercase-safe (the slug forces lowercase); the `shortName`
+  frontmatter field keeps its display casing (e.g. `GitHub`). Requiring exact
+  equality would force the `shortName:` field to lowercase, a tighter
+  authoring constraint for no gain. With `dir === slug(shortName)`, two
+  shortNames that differ only by case (`GitHub` and `github`) slug to the same
+  folder → can't coexist → overwrite guard refuses. The clobber-impossible
+  property holds; the authoring surface stays loose.
+- **Invariant-enforcement over loader re-keying.** The loader continues to key
+  by folder name; the invariant makes folder and `slug(shortName)` equivalent
+  in steady state. This avoids a permanent `guide.dir` field, a
+  `findGuidesByDomain` signature change, a permanent duplicate detector with
+  `readdirSync`-order nondeterminism, and co-located test re-keying — all of
+  which the earlier re-keying draft required. The clobber-impossible property
+  is identical; the code surface is smaller.
+- **Permanent divergence check + temporary startup checks.** The divergence
+  check (`entry !== slug(shortName)`) stays as the standing invariant monitor
+  (hand-edited folders, restored backups, unmigrated guides). The
+  duplicate-shortName and illegal-shortName checks are migration-window-only,
+  marked `// TODO(0.5.0): remove`, because save-time `slug()` makes them
+  unreachable once all folders are migrated.
+- **Agent-assisted migration.** The divergence warning instructs the user to
+  ask their agent to `mv` the folder, then `/reload`. Not auto-migration
+  (option B/C rejected). The agent handles collision-on-rename naturally
+  (existing target → `/api delete` the old folder); we outsource the
+  edge-case handling rather than encoding it. The `/reload` instruction is
+  load-bearing because an external `mv` doesn't call `invalidateCache()`.
 - **`slug()` forces lowercase.** Filesystem-safe default, matches typical slug
   conventions. Cost: `CMC` and `cmc` collide (accepted — author-chosen
   `shortName`s in existing recipes are already lowercase, so no real-world
-  break). Revisit only if a case-sensitive identity becomes wanted.
+  break). Revisit only if a case-sensitive identity is wanted.
 - **Folder name is pure `slug(shortName)`** — no `<domain>-` prefix. Identity is
   the only axis; a prefix would re-couple identity to routing, which is the
   confusion this redesign removes. The on-disk layout being one step removed
@@ -367,7 +413,7 @@ is smaller:
   lookup / template prefill), so it can't be dropped from the tool schema in
   this PR. On save it no longer selects the folder *and* no longer feeds
   collision detection (the collision loop iterates `parsed.guide.domains`, the
-  file's own keys, not the arg — see blast-radius item 6). Its only remaining
+  file's own keys, not the arg — see blast-radius item 5). Its only remaining
   save-path uses are error/display context (`parseApiGuide({filename: domain})`,
   the `details` field). Making it optional-on-save is deferred to the scaffold
   PR, which already reworks the save signature (`recipeFile` → `dir`); this PR
