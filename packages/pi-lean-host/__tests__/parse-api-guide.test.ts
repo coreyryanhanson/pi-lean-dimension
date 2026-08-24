@@ -1659,6 +1659,13 @@ describe("slug()", () => {
 // ═══════════════════════════════════════════════════════════════════
 
 describe("loadApiGuidesFromDir + formatApiGuideCatalog", () => {
+	beforeEach(() => {
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+	});
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	it("lists a healthy and a malformed guide together", () => {
 		const dir = mkdtempSync(join(tmpdir(), "host-guides-"));
 		try {
@@ -1789,6 +1796,7 @@ org guide.
 
 	it("routes a divergent folder (entry !== slug(shortName)) to malformed", () => {
 		const dir = mkdtempSync(join(tmpdir(), "host-guides-"));
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {
 			// BOE_RECIPE has shortName: BOE → slug "boe"; folder is "boe.es" —
 			// the pre-migration state. Under enforcement the guide does NOT load.
@@ -1804,7 +1812,17 @@ org guide.
 			expect(loaded.malformed[0]!.error.fix).toContain("mv");
 			expect(loaded.malformed[0]!.error.fix).toContain("boe");
 			expect(loaded.malformed[0]!.error.fix).toContain("/reload");
+			// The malformed guide is warned about at load, and the catalog
+			// renders its actionable fix (the migration instruction).
+			const msg = warn.mock.calls.map((c) => String(c[0])).join("\n");
+			expect(msg).toContain("Malformed guide");
+			expect(msg).toContain("boe.es");
+			expect(msg).toContain("/reload");
+			const catalog = formatApiGuideCatalog(loaded);
+			expect(catalog).toContain("fix:");
+			expect(catalog).toContain("/reload");
 		} finally {
+			warn.mockRestore();
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});

@@ -11,7 +11,15 @@
  *  - api-fetch integration: disabled helper returns structured error
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import {
+	describe,
+	it,
+	expect,
+	beforeAll,
+	afterAll,
+	beforeEach,
+	vi,
+} from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -363,12 +371,17 @@ describe("getAllHelpers / readHelperSource", () => {
 	});
 
 	it("hides helpers for malformed (divergent-folder) guides", () => {
-		// Folder 'divergent' holds a guide whose shortName slugs to
-		// 'realname' — the loader routes it to malformed, so its helper
-		// must not surface.
-		writeFixtureHelper("divergent", FIXTURE_HEALTHY);
-		writeFixtureGuide("divergent", "RealName");
-		expect(getAllHelpers()).not.toContain("divergent");
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			// Folder 'divergent' holds a guide whose shortName slugs to
+			// 'realname' — the loader routes it to malformed, so its helper
+			// must not surface.
+			writeFixtureHelper("divergent", FIXTURE_HEALTHY);
+			writeFixtureGuide("divergent", "RealName");
+			expect(getAllHelpers()).not.toContain("divergent");
+		} finally {
+			warn.mockRestore();
+		}
 	});
 
 	it("returns source for an existing helper", () => {

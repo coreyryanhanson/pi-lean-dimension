@@ -57,9 +57,13 @@ beforeEach(() => {
 	tmpGuidesDir = mkdtempSync(join(tmpdir(), "host-delete-"));
 	setUserGuidesDir(tmpGuidesDir);
 	invalidateCache();
+	// Malformed-guide tests load broken fixtures — silence the load-time
+	// console.warn so it doesn't leak into test output.
+	vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	rmSync(tmpGuidesDir, { recursive: true, force: true });
 });
 

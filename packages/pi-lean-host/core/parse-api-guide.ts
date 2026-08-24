@@ -1644,6 +1644,27 @@ export function projectToGuide(guide: ApiGuide): Guide {
 // shortName. Flat top-level .md files are not loaded.
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * Push a malformed guide and warn about it. One helper owns both the catalog
+ * entry and the load-time console.warn, so every malformed guide — parse
+ * failure, illegal shortName, divergent folder — surfaces the same signal
+ * (and its actionable `fix` when present) instead of being silently
+ * quarantined. Fires once per cached scan, same channel as the duplicate-
+ * shortName check.
+ */
+function pushMalformed(
+	result: LoadedApiGuides,
+	file: string,
+	filename: string,
+	error: ParseError,
+): void {
+	result.malformed.push({ file, filename, error });
+	console.warn(
+		`⚠ Malformed guide '${filename}': ${error.field} — expected ${error.expected}; found ${error.found}.` +
+			(error.fix ? ` ${error.fix}` : ""),
+	);
+}
+
 export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 	const result: LoadedApiGuides = { guides: {}, malformed: [] };
 	if (!existsSync(dir)) return result;
@@ -1692,15 +1713,11 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 			try {
 				slugged = slug(guide.shortName);
 			} catch {
-				result.malformed.push({
-					file: guidePath,
-					filename: name,
-					error: {
-						field: "shortName",
-						expected: "a shortName that slugs to a non-empty safe directory name",
-						found: `"${guide.shortName}"`,
-						fix: "Set a valid shortName (lowercase letters, digits, and '-') in the guide's frontmatter.",
-					},
+				pushMalformed(result, guidePath, name, {
+					field: "shortName",
+					expected: "a shortName that slugs to a non-empty safe directory name",
+					found: `"${guide.shortName}"`,
+					fix: "Set a valid shortName (lowercase letters, digits, and '-') in the guide's frontmatter.",
 				});
 				continue;
 			}
@@ -1723,25 +1740,17 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 			// divergent guide routes to malformed (never loads), so the active
 			// set structurally holds at most one guide per shortName.
 			if (entry !== slugged) {
-				result.malformed.push({
-					file: guidePath,
-					filename: name,
-					error: {
-						field: "shortName",
-						expected: `a folder named slug(shortName) ('${slugged}')`,
-						found: `folder '${entry}'`,
-						fix: `Rename the folder to '${slugged}': mv ${entryPath} ${join(dir, slugged)}, then /reload.`,
-					},
+				pushMalformed(result, guidePath, name, {
+					field: "shortName",
+					expected: `a folder named slug(shortName) ('${slugged}')`,
+					found: `folder '${entry}'`,
+					fix: `Rename the folder to '${slugged}': mv ${entryPath} ${join(dir, slugged)}, then /reload.`,
 				});
 				continue;
 			}
 			result.guides[entry] = guide;
 		} else {
-			result.malformed.push({
-				file: guidePath,
-				filename: name,
-				error: parsed.error,
-			});
+			pushMalformed(result, guidePath, name, parsed.error);
 		}
 	}
 	return result;
@@ -1950,6 +1959,10 @@ export function formatApiGuideCatalog(
 		lines.push(
 			`  ⚠ malformed — ${mal.filename}: ${mal.error.field} — expected ${mal.error.expected}; found ${mal.error.found}`,
 		);
+		// Actionable advice on its own line, matching api-fetch/api-learn's
+		// `Fix:` convention — multi-line fixes (e.g. the frontmatter template)
+		// render naturally instead of being inlined into the summary line.
+		if (mal.error.fix) lines.push(`    fix: ${mal.error.fix}`);
 	}
 	if (Object.keys(loaded.guides).length === 0 && loaded.malformed.length === 0) {
 		lines.push(
