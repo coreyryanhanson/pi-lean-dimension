@@ -50,7 +50,7 @@ to a `failedItems` group; no item dropped). Cannot inspect response headers.
 The synthetic axis set keeps every guide-driven axis covered in-repo: all six
 pagination styles, both `transform × via` combos (restGet + paginate), both
 realized auth kinds (none + static-key), XML parsing, local-helper, SSRF guard
-(nextLink), and multi-recipe domains (`archive.org` + `archive.org-wayback`).
+(nextLink), and multi-recipe domains (`internet-archive` + `wayback-availability`).
 `axis-coverage.test.ts` is the regression tripwire pinning that set.
 
 ## When to upgrade a local-helper quirk to built-in
