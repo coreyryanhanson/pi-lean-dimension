@@ -93,14 +93,21 @@ api-guides/cmc-full/guide.md                 # domains: [coinmarketcap.com]
    lookup, which is identity-preserving regardless of what the key is.)
 3. **`api-learn` save path** (`tools/api-learn.ts`) — write target becomes
    `join(guidesDir, slug(parsed.guide.shortName), "guide.md")`, derived from the
-   parsed draft. The `domain` arg on save becomes vestigial for the write target
-   but is retained for the multi-recipe collision *warning's `findGuidesByDomain`
-   lookup* (it still names the routing domain to search for siblings). The
-   collision warning's **directory comparison** must switch from `domain` to the
-   actual write target `slug(parsed.guide.shortName)` — see item 6. The
-   fetch-recipe advice about "pass the directory name as `domain` on re-save" is
-   removed — a re-save self-keys off its own `shortName` and naturally lands back
-   in the same folder.
+   parsed draft. The `domain` arg becomes **purely cosmetic on the save branch** —
+   it no longer selects the folder *and* no longer feeds collision detection (the
+   collision loop iterates `parsed.guide.domains`, the file's own routing keys,
+   not the arg; see item 6 for the comparison re-key). Its only remaining save-
+   path uses are error/display context (`parseApiGuide({filename: domain})`) and
+   the `details.domain` field. The fetch-recipe advice about "pass the directory
+   name as `domain` on re-save" is removed — a re-save self-keys off its own
+   `shortName` and naturally lands back in the same folder. **Three user-visible
+   strings that still name `domain` must be rewritten to name the actual write
+   target** (`slug(shortName)`): the result line `"saved to
+   .../${domain}/guide.md"` (and the `Domain: ${domain}` line beneath it), the
+   collision-warning message (covered in item 6), and the overwrite-guard advice
+   (covered in item 6). A stale or wrong `domain` arg can no longer misroute the
+   write or skew collision detection — strictly more robust than today, where
+   the arg *is* the write target.
 4. **`slug()`** — new small sanitizer in `core/path-template.ts` (or a sibling):
    lowercase, replace non-`[a-z0-9-]` with `-`, collapse repeats, strip leading/
    trailing `-`, reject empty / path-traversal results. Reuse `assertSafeDomain`
@@ -127,8 +134,13 @@ api-guides/cmc-full/guide.md                 # domains: [coinmarketcap.com]
    the *same* `slug(shortName)` folder flags as a collision and tells the author
    to `/api delete` the guide they're updating) and false negatives (an existing
    guide in a different folder that happens to match the `domain` arg is treated
-   as same-directory). The `domain` arg is still passed to `findGuidesByDomain`
-   to find sibling candidates — only the folder comparison changes. The
+   as same-directory). The lookup is unchanged — the loop already iterates
+   `parsed.guide.domains` (the file's own routing keys) and calls
+   `findGuidesByDomain` on each, so sibling discovery never read the `domain` arg;
+   only the folder comparison changes. The warning message itself must also be
+   rewritten: today it says ``writing to directory
+   \`${domain}\` ``, which is now wrong (the write target is `slug(shortName)`,
+   not `domain`) — render the slug there instead. The
    dangerous same-directory silent-clobber case is no longer reachable, so the
    pre-hotfix guard that missed it can be removed rather than patched.
 
@@ -141,6 +153,11 @@ api-guides/cmc-full/guide.md                 # domains: [coinmarketcap.com]
    The guard is retained, but it transforms from "clobber detector" into
    "slug-collision detector." It is not dead code — keep it; the follow-up
    scaffold PR reads it as the slug-collision backstop, not as removable legacy.
+   Its advice text must also be rewritten: today it tells the author to "use a
+   distinct directory" by re-calling with `domain: "${domain}-${shortName}"` —
+   that workaround no longer makes sense (the write target is the slug, not the
+   arg). The correct guidance for a slug collision is to **rename the
+   `shortName`** so it slugs distinctly.
 
 ### Does NOT change (load-bearing facts that make this safe)
 
@@ -334,19 +351,27 @@ is smaller:
   needs to guard the accidental-`/tmp`-cleanup case, not the
   `new: true`-over-existing case. Half the gate's motivation, pre-paid.
 
-## Open questions
+## Resolved decisions
 
-- **Should `slug()` preserve case or force lowercase?** Lowercase is the
-  filesystem-safe default and matches typical slug conventions, but it means
-  `CMC` and `cmc` collide. Author-chosen `shortName`s in the existing recipes are
-  already lowercase, so lowercase-first is safe; revisit only if a case-sensitive
-  identity becomes wanted.
-- **Should the folder name be `slug(shortName)` or `<domain>-<slug(shortName)>`?**
-  Pure `slug(shortName)` is cleanest (identity is the only axis); the
-  `<domain>-` prefix preserves a hint of routing at the filesystem level but
-  re-couples identity to routing, which is the confusion we're removing.
-  Recommend pure `slug(shortName)`.
-- **Does `api-learn`'s `domain` param stay on the save path at all?** It becomes
-  vestigial for the write target but is still useful for the multi-recipe
-  collision *warning* (detecting that another guide already claims this
-  `domains:` key). Keep it; document that it no longer selects the folder.
+- **`slug()` forces lowercase.** Filesystem-safe default, matches typical slug
+  conventions. Cost: `CMC` and `cmc` collide (accepted — author-chosen
+  `shortName`s in existing recipes are already lowercase, so no real-world
+  break). Revisit only if a case-sensitive identity becomes wanted.
+- **Folder name is pure `slug(shortName)`** — no `<domain>-` prefix. Identity is
+  the only axis; a prefix would re-couple identity to routing, which is the
+  confusion this redesign removes. The on-disk layout being one step removed
+  from the routing domain is the acknowledged cost (Cons), offset by the
+  disambiguation menu and `/api status` already surfacing `shortName`.
+- **`api-learn`'s `domain` param stays as a tool param, but is purely cosmetic
+  on the save branch.** The fetch and template branches require it (routing
+  lookup / template prefill), so it can't be dropped from the tool schema in
+  this PR. On save it no longer selects the folder *and* no longer feeds
+  collision detection (the collision loop iterates `parsed.guide.domains`, the
+  file's own keys, not the arg — see blast-radius item 6). Its only remaining
+  save-path uses are error/display context (`parseApiGuide({filename: domain})`,
+  the `details` field). Making it optional-on-save is deferred to the scaffold
+  PR, which already reworks the save signature (`recipeFile` → `dir`); this PR
+  keeps the schema stable. **Emergent pro:** the save is now fully self-keying
+  from the parsed file — a stale or wrong `domain` arg can't misroute the write
+  or skew collision detection, strictly more robust than today where the arg
+  *is* the write target.
