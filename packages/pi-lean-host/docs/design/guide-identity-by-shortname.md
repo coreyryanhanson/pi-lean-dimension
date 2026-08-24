@@ -78,24 +78,29 @@ api-guides/cmc-full/guide.md                 # domains: [coinmarketcap.com]
    its folder (`guide.dir: string`). `findGuidesByDomain` returns `{guide,
    dirName}` where `dirName` is now `guide.dir` (the *folder*), not the record
    key. **Decision: carry the folder on the guide object, not a separate
-   `shortName → folder` side-channel.** Grounding: `buildDomainMap`
-   (`core/guide-loader.ts`) iterates `Object.entries(guides)` and pushes the
-   *record key* into the domain-map arrays; `findGuidesByDomain` then does
-   `loaded.guides[name]` and returns `dirName: name`. Once `guides` is re-keyed
-   by `shortName`, a separate folder map makes both functions need a second
-   lookup, and `findGuidesByDomain`'s `dirName: name` silently becomes the
-   shortName rather than the folder — a bug with no compile error, and it
-   breaks every `dirName`-keyed reader (`local-helpers.ts`, `verify-command.ts`,
-   `delete-command.ts`, and the follow-up scaffold PR's sibling staging, which
-   reads `<guidesDir>/<dirName>/`). Carrying `dir` on the guide lets both
-   functions read `guide.dir` directly and keeps `dirName` honest.
+   `shortName → folder` side-channel.** Grounding: `findGuidesByDomain`
+   (`core/guide-store.ts`) does `loaded.guides[name]` and returns
+   `dirName: name`. Once `guides` is re-keyed by `shortName`, a separate folder
+   map makes `findGuidesByDomain` need a second lookup, and its
+   `dirName: name` silently becomes the shortName rather than the folder — a
+   bug with no compile error, and it breaks every `dirName`-keyed reader
+   (`local-helpers.ts`, `verify-command.ts`, `delete-command.ts`, and the
+   follow-up scaffold PR's sibling staging, which reads
+   `<guidesDir>/<dirName>/`). Carrying `dir` on the guide lets
+   `findGuidesByDomain` read `guide.dir` directly and keeps `dirName` honest.
+   (`buildDomainMap` in `core/guide-loader.ts` needs **no change** — it only
+   pushes the record key into domain-map arrays for `loaded.guides[key]`
+   lookup, which is identity-preserving regardless of what the key is.)
 3. **`api-learn` save path** (`tools/api-learn.ts`) — write target becomes
    `join(guidesDir, slug(parsed.guide.shortName), "guide.md")`, derived from the
-   parsed draft. The `domain` arg on save becomes vestigial (retained only for
-   the multi-recipe collision *warning*, not the write target). The fetch-recipe
-   advice about "pass the directory name as `domain` on re-save" is removed — a
-   re-save self-keys off its own `shortName` and naturally lands back in the same
-   folder.
+   parsed draft. The `domain` arg on save becomes vestigial for the write target
+   but is retained for the multi-recipe collision *warning's `findGuidesByDomain`
+   lookup* (it still names the routing domain to search for siblings). The
+   collision warning's **directory comparison** must switch from `domain` to the
+   actual write target `slug(parsed.guide.shortName)` — see item 6. The
+   fetch-recipe advice about "pass the directory name as `domain` on re-save" is
+   removed — a re-save self-keys off its own `shortName` and naturally lands back
+   in the same folder.
 4. **`slug()`** — new small sanitizer in `core/path-template.ts` (or a sibling):
    lowercase, replace non-`[a-z0-9-]` with `-`, collapse repeats, strip leading/
    trailing `-`, reject empty / path-traversal results. Reuse `assertSafeDomain`
@@ -110,11 +115,22 @@ api-guides/cmc-full/guide.md                 # domains: [coinmarketcap.com]
    "off `shortName`") is load-bearing for the follow-up scaffold PR**: it makes
    the scaffold doc's "key staging by `dirName`" section inherited rather than
    re-decided, so that section can be deleted there outright.
-6. **Collision-warning logic** (`tools/api-learn.ts` save path) — simplified. The
-   "different directory claims the same `domains:`" warning stays (it's still
-   useful guidance for disambiguation territory), but the dangerous same-
-   directory case is no longer reachable, so the guard that missed it can be
-   removed rather than patched.
+6. **Collision-warning logic** (`tools/api-learn.ts` save path) — the warning
+   stays (it's still useful guidance for disambiguation territory), but its
+   **directory comparison must be re-keyed**. Today it checks `m.dirName !== domain`
+   to mean "an existing guide in a *different* folder than the one I'm writing
+   to." That equality held only because `domain` *was* the write target. After
+   this redesign the write target is `slug(shortName)`, not `domain`, so the
+   comparison must become `m.dirName !== slug(parsed.guide.shortName)` (compute
+   the slug once before the loop; reuse the same value the write path uses).
+   Without this change the warning fires false positives (an existing guide in
+   the *same* `slug(shortName)` folder flags as a collision and tells the author
+   to `/api delete` the guide they're updating) and false negatives (an existing
+   guide in a different folder that happens to match the `domain` arg is treated
+   as same-directory). The `domain` arg is still passed to `findGuidesByDomain`
+   to find sibling candidates — only the folder comparison changes. The
+   dangerous same-directory silent-clobber case is no longer reachable, so the
+   pre-hotfix guard that missed it can be removed rather than patched.
 
    **Note on the shipped overwrite guard's shifted semantics:** the fail-closed
    `shortName`-mismatch guard (item 1 of Sequencing, already shipped) compares the
@@ -158,6 +174,14 @@ pointing the author at `/api delete <old-folder>`. Cleanup is a solved problem
 (`/api delete` + `invalidateCache()` already exist for ghost guides), but it's a
 one-time annoyance per existing multi-recipe user.
 
+**Note on which copy wins.** When both the old `<domain>/` and the new
+`<slug(shortName)>/` folder exist, `readdirSync` order decides which guide lands
+in `guides` (live) vs `malformed` (duplicate). Both copies persist on disk either
+way, the malformed error is prescriptive, and `/api delete <old-folder>` clears
+the ghost — so this is not a data-loss path, only a nondeterministic read until
+cleaned. (The save path should `invalidateCache()` so the next read re-scans;
+`/api delete` already does.)
+
 **Options considered:**
 
 - **A. Lazy, no auto-migration (recommended).** Old folders load fine; a re-save
@@ -194,11 +218,35 @@ Recommend **A**; revisit **C** only if reports of ghost folders accumulate.
 - **`dirName` consumers.** Any code that read `dirName` off the record key
   (`Object.entries(loaded.guides)`) must read it from `guide.dir` instead. Audit:
   `api-guide` catalog rendering, `api-fetch` helper routing,
-  `local-helpers.ts` listing, `verify-command.ts`, `delete-command.ts`. All
-  already destructure `dirName` from `findGuidesByDomain`, so most are
-  transparent (the change is inside `findGuidesByDomain`/`buildDomainMap`, which
-  read `guide.dir` rather than the record key); the audit is for any *direct*
-  record iteration that still reads the key as the folder.
+  `local-helpers.ts` listing, `verify-command.ts`, `delete-command.ts`, and
+  `core/portal-projection.ts` (`buildProjection` keys the portal projection by
+  the record key — likely benign since portal treats keys as opaque, and
+  shortNames are more meaningful display values, but verify). Also includes
+  **test files** that access `loaded.guides[<folder-name>]` directly or use the
+  record key as a filesystem path: the co-located `api-guides/*/{static-key,
+  local-helper,transform,resumption-token,token-bag}.test.ts` files,
+  `__tests__/transform-{restget,paginate}.test.ts` (fixture key),
+  `__tests__/parse-api-guide.test.ts` (an `Object.keys(loaded.guides)` equality
+  assertion), `__tests__/delete-command.test.ts`, and `__tests__/axis-coverage.test.ts`
+  (the subtle one — iterates `Object.entries(GUIDES)` and builds a filesystem
+  path from the key via `existsSync(join(GUIDES_DIR, dirName, ...))`; must switch
+  to `guide.dir` so the path still resolves to the real folder). All production
+  `dirName` consumers already destructure from `findGuidesByDomain`, so most are
+  transparent (the change is inside `findGuidesByDomain`, which returns
+  `dirName: guide.dir` rather than `dirName: name`; `buildDomainMap` needs *no*
+  change — it only pushes the record key into arrays for `loaded.guides[key]`
+  lookup, which is identity-preserving regardless of what the key is). The audit
+  is for any *direct* record iteration that still reads the key as the folder.
+- **Cosmetic display changes (folder name → shortName).** Two surfaces render
+  the record key to the user and will show shortNames instead of folder names
+  after re-keying: `tools/api-guide.ts`'s "Known guides" list
+  (`Object.keys(loadAllGuides().guides)`) and `formatApiGuideCatalog`'s orgless
+  fallback (`guide.domains.join(", ") : name` in `core/parse-api-guide.ts`).
+  The fallback is dead code for `ApiGuide`s (`domains:` is parser-required
+  non-empty), so it only matters if a malformed guide slips through; the
+  "Known guides" list is live and arguably an improvement (shortNames are more
+  meaningful than folder names). No code change needed, but the blast radius
+  should be honest about it.
 
 ## Pros
 
@@ -225,11 +273,11 @@ Recommend **A**; revisit **C** only if reports of ghost folders accumulate.
   cases (slug collisions, empty result, unicode). Reusing `assertSafeDomain` as
   the final guard keeps the safety story to one function.
 - **`LoadedApiGuides` `guide.dir` field.** Type/API churn touching
-  `findGuidesByDomain`, `buildDomainMap`, and direct-record-iteration sites.
-  Minor but non-zero. (A separate `shortName → folder` side-channel was
-  rejected — see blast-radius item 2; it would let `findGuidesByDomain`'s
-  `dirName: name` silently return the shortName instead of the folder, a bug
-  with no compile error.)
+  `findGuidesByDomain` and direct-record-iteration sites (`buildDomainMap`
+  needs no change — see blast-radius item 2). Minor but non-zero. (A separate
+  `shortName → folder` side-channel was rejected — see blast-radius item 2;
+  it would let `findGuidesByDomain`'s `dirName: name` silently return the
+  shortName instead of the folder, a bug with no compile error.)
 - **One new malformed error path** (duplicate `shortName` across folders).
   Correct failure point, but a new user-visible failure where today the guide
   loads and fails later as "ambiguous."
