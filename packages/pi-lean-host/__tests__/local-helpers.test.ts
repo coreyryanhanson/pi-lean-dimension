@@ -127,6 +127,33 @@ function writeFixtureHelper(name: string, content: string): void {
 }
 
 /**
+ * Write a minimal valid guide.md at <guidesDir>/<folder>/guide.md so the
+ * folder is a LOADED guide (getAllHelpers only surfaces helpers for folders
+ * that hold a loaded, non-malformed guide). The folder name must equal
+ * slug(shortName) — default shortName = folder name slugs to itself.
+ */
+function writeFixtureGuide(folder: string, shortName: string = folder): void {
+	const domainDir = join(tmpGuidesDir, folder);
+	mkdirSync(domainDir, { recursive: true });
+	writeFileSync(
+		join(domainDir, "guide.md"),
+		`---
+kind: api
+domains: [${folder}.test]
+shortName: ${shortName}
+apiHost: https://${folder}.test
+operations:
+  - name: get
+    via: restGet
+    path: /items
+---
+${folder} test guide.
+`,
+		"utf-8",
+	);
+}
+
+/**
  * Build a recipe that sets helper: true on the 'get' operation.
  * The helper is resolved by the guide's domain name (not a separate helper name).
  */
@@ -321,10 +348,27 @@ describe("getAllHelpers / readHelperSource", () => {
 	it("lists helpers in the directory", () => {
 		writeFixtureHelper("list-test-a", FIXTURE_HEALTHY);
 		writeFixtureHelper("list-test-b", FIXTURE_HEALTHY);
+		writeFixtureGuide("list-test-a");
+		writeFixtureGuide("list-test-b");
 
 		const all = getAllHelpers();
 		expect(all).toContain("list-test-a");
 		expect(all).toContain("list-test-b");
+	});
+
+	it("hides helpers whose folder holds no loaded guide", () => {
+		// Helper in a folder with no guide.md at all — dead, never listed.
+		writeFixtureHelper("no-guide", FIXTURE_HEALTHY);
+		expect(getAllHelpers()).not.toContain("no-guide");
+	});
+
+	it("hides helpers for malformed (divergent-folder) guides", () => {
+		// Folder 'divergent' holds a guide whose shortName slugs to
+		// 'realname' — the loader routes it to malformed, so its helper
+		// must not surface.
+		writeFixtureHelper("divergent", FIXTURE_HEALTHY);
+		writeFixtureGuide("divergent", "RealName");
+		expect(getAllHelpers()).not.toContain("divergent");
 	});
 
 	it("returns source for an existing helper", () => {
@@ -486,6 +530,8 @@ describe("/api helpers command", () => {
 	it("lists helpers via handleHelpersSubcommand", async () => {
 		writeFixtureHelper("cmd-list-a", FIXTURE_HEALTHY);
 		writeFixtureHelper("cmd-list-b", FIXTURE_HEALTHY);
+		writeFixtureGuide("cmd-list-a");
+		writeFixtureGuide("cmd-list-b");
 
 		const notifications: string[] = [];
 		const mockCtx = {
