@@ -9,7 +9,7 @@
  *  - Catalog rendering lists healthy + ⚠ malformed together.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,7 @@ import {
 	formatApiGuideCatalog,
 	stampFrontmatterField,
 } from "../core/parse-api-guide.js";
+import { slug } from "../core/path-template.js";
 import {
 	GATHER_ALL_MAX_FALLBACK,
 	type ApiGuide,
@@ -1620,6 +1621,34 @@ describe("projectToGuide", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// slug() — the shortName → identity-folder sanitizer
+// ═══════════════════════════════════════════════════════════════════
+
+describe("slug()", () => {
+	it("lowercases and replaces non-[a-z0-9-] runs with a single '-'", () => {
+		expect(slug("BOE")).toBe("boe");
+		expect(slug("CoinMarketCap Pro!")).toBe("coinmarketcap-pro");
+		expect(slug("a/b")).toBe("a-b");
+	});
+
+	it("collapses repeated '-' and strips leading/trailing '-'", () => {
+		expect(slug("a--b")).toBe("a-b");
+		expect(slug("-foo-")).toBe("foo");
+	});
+
+	it("slug-collision pair: cmc_full and cmc-full both slug to cmc-full", () => {
+		expect(slug("cmc_full")).toBe("cmc-full");
+		expect(slug("cmc-full")).toBe("cmc-full");
+	});
+
+	it("throws on empty or all-symbol shortName (slug flattens to empty)", () => {
+		expect(() => slug("")).toThrow(/shortName/);
+		expect(() => slug("!!!")).toThrow(/shortName/);
+		expect(() => slug("..")).toThrow(/shortName/);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // Loader + catalog — one malformed guide doesn't block the store
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1744,6 +1773,73 @@ org guide.
 
 			const loaded = loadApiGuidesFromDir(dir);
 			expect(Object.keys(loaded.guides)).toEqual(["good"]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("warns on folder/slug divergence but still loads the guide", () => {
+		const dir = mkdtempSync(join(tmpdir(), "host-guides-"));
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			// BOE_RECIPE has shortName: BOE → slug "boe"; folder is "boe.es".
+			mkdirSync(join(dir, "boe.es"), { recursive: true });
+			writeFileSync(join(dir, "boe.es", "guide.md"), BOE_RECIPE);
+
+			const loaded = loadApiGuidesFromDir(dir);
+			expect(Object.keys(loaded.guides)).toEqual(["boe.es"]);
+			const msg = warn.mock.calls.map((c) => String(c[0])).join("\n");
+			expect(msg).toContain("boe.es");
+			expect(msg).toContain("expected folder 'boe'");
+			expect(msg).toContain("/reload");
+		} finally {
+			warn.mockRestore();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("warns on duplicate shortName across folders; both guides load", () => {
+		const dir = mkdtempSync(join(tmpdir(), "host-guides-"));
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			// Two folders declaring the same shortName (migration-window
+			// collision). Both load, keyed by their distinct folders.
+			for (const f of ["alpha", "beta"]) {
+				mkdirSync(join(dir, f), { recursive: true });
+				writeFileSync(join(dir, f, "guide.md"), BOE_RECIPE);
+			}
+
+			const loaded = loadApiGuidesFromDir(dir);
+			expect(Object.keys(loaded.guides)).toEqual(["alpha", "beta"]);
+			const msg = warn.mock.calls.map((c) => String(c[0])).join("\n");
+			expect(msg).toContain("Duplicate shortName");
+			expect(msg).toContain("alpha");
+			expect(msg).toContain("beta");
+			expect(msg).toContain("/api delete");
+		} finally {
+			warn.mockRestore();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("routes an empty/all-symbol shortName to malformed without throwing", () => {
+		const dir = mkdtempSync(join(tmpdir(), "host-guides-"));
+		try {
+			for (const bad of ["'!!!'", "''"]) {
+				mkdirSync(join(dir, "bad"), { recursive: true });
+				writeFileSync(
+					join(dir, "bad", "guide.md"),
+					BOE_RECIPE.replace("shortName: BOE", `shortName: ${bad}`),
+				);
+
+				const loaded = loadApiGuidesFromDir(dir);
+				expect(Object.keys(loaded.guides)).toEqual([]);
+				expect(loaded.malformed).toHaveLength(1);
+				expect(loaded.malformed[0]!.filename).toBe("bad");
+				expect(loaded.malformed[0]!.error.field).toBe("shortName");
+				expect(loaded.malformed[0]!.error.fix).toContain("shortName");
+				rmSync(join(dir, "bad"), { recursive: true, force: true });
+			}
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

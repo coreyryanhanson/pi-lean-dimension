@@ -12,7 +12,7 @@ import { parse as yamlParse } from "yaml";
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Guide } from "./guide-loader.js";
-import { extractPathTokens } from "./path-template.js";
+import { extractPathTokens, slug } from "./path-template.js";
 import {
 	GATHER_ALL_MAX_FALLBACK,
 	GUIDE_SCHEMA_VERSION,
@@ -1652,6 +1652,10 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 	} catch {
 		return result;
 	}
+	// Scan-local duplicate-shortName tracker (migration-window check only).
+	// shortName → the first folder that declared it, so the duplicate warning
+	// can name both folders. Not a field on LoadedApiGuides.
+	const seenShortNames = new Map<string, string>();
 	for (const entry of entries) {
 		const entryPath = join(dir, entry);
 		try {
@@ -1677,7 +1681,49 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 			filename: name,
 		});
 		if (parsed.ok) {
-			result.guides[name] = parsed.guide;
+			const guide = parsed.guide;
+			// Illegal-shortName + divergence checks (permanent). One try/catch
+			// owns the slug() call: a throw (empty or all-symbol shortName) is
+			// routed to malformed, never escaped. This wrapping lives in the
+			// permanent checks so the loader stays safe after the 0.5.0
+			// duplicate-check deletion.
+			let slugged: string;
+			try {
+				slugged = slug(guide.shortName);
+			} catch {
+				result.malformed.push({
+					file: guidePath,
+					filename: name,
+					error: {
+						field: "shortName",
+						expected: "a shortName that slugs to a non-empty safe directory name",
+						found: `"${guide.shortName}"`,
+						fix: "Set a valid shortName (lowercase letters, digits, and '-') in the guide's frontmatter.",
+					},
+				});
+				continue;
+			}
+			// Divergence check (permanent) — the standing invariant monitor:
+			// the folder name must equal slug(shortName). Warns, never gates.
+			if (entry !== slugged) {
+				console.warn(
+					`⚠ Guide folder '${entry}' diverges from shortName '${guide.shortName}' — ` +
+						`expected folder '${slugged}'. Rename it: mv ${entryPath} ` +
+						`${join(dir, slugged)}, then /reload.`,
+				);
+			}
+			// TODO(0.5.0): remove — save-time slug() makes duplicate shortNames
+			// unreachable once all folders are migrated.
+			const first = seenShortNames.get(guide.shortName);
+			if (first !== undefined) {
+				console.warn(
+					`⚠ Duplicate shortName '${guide.shortName}' in folders '${first}' and '${entry}'. ` +
+						`Delete one: /api delete <one>.`,
+				);
+			} else {
+				seenShortNames.set(guide.shortName, entry);
+			}
+			result.guides[entry] = guide;
 		} else {
 			result.malformed.push({
 				file: guidePath,

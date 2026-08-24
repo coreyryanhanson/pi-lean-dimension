@@ -77,3 +77,29 @@ export function assertSafeDomain(domain: string): string {
 	}
 	return domain;
 }
+
+/**
+ * Slugify a guide `shortName` into the safe single path segment that names
+ * its identity folder (`<guidesDir>/<slug(shortName)>/guide.md`). Lowercase;
+ * replace every run of non-`[a-z0-9-]` chars with `-`; collapse repeated `-`;
+ * strip leading/trailing `-`. The result is passed through `assertSafeDomain`
+ * as the single safety guard (it already rejects `/`, `\`, `\0`, `.`, `..`,
+ * and empty), so domains and slugs share one safety surface. After the
+ * transform the only reachable failure is empty (an empty or all-symbol
+ * `shortName`), so the throw is wrapped with a prescriptive message that
+ * names `shortName` rather than `domain`.
+ */
+export function slug(shortName: string): string {
+	const s = shortName
+		.toLowerCase()
+		.replace(/[^a-z0-9-]+/g, "-")
+		.replace(/-+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	try {
+		return assertSafeDomain(s);
+	} catch {
+		throw new Error(
+			`Invalid shortName '${shortName}': must slug to a non-empty directory name (lowercase letters, digits, and '-').`,
+		);
+	}
+}

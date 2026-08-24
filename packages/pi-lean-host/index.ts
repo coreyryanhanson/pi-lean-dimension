@@ -8,6 +8,7 @@ import {
 } from "./tools/index.js";
 import initApiToggle from "./core/api-toggle.js";
 import { registerPortalProjection } from "./core/portal-projection.js";
+import { invalidateCache } from "./core/guide-store.js";
 import { cleanupAllSpill } from "./core/response-spill.js";
 import { resetToggleModuleState } from "./core/api-toggle.js";
 import { resetDisabledHelpers } from "./core/local-helpers.js";
@@ -35,6 +36,11 @@ export default function (pi: ExtensionAPI): void {
 	// session_start ensures registration even if host loads before portal.
 	pi.on("session_start", async () => {
 		registerPortalProjection();
+		// Clear the guide-store cache so a folder rename made between sessions
+		// (the divergence check's "mv then /reload" migration) is picked up —
+		// regardless of whether pi re-evaluates the module or re-calls the entry
+		// function with persisted module-level state (the /resume path).
+		invalidateCache();
 	});
 
 	// ── Response spill cleanup ─────────────────────────────────
