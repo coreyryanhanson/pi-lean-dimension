@@ -1811,16 +1811,24 @@ org guide.
 			expect(loaded.malformed[0]!.error.found).toBe("folder 'boe.es'");
 			expect(loaded.malformed[0]!.error.fix).toContain("mv");
 			expect(loaded.malformed[0]!.error.fix).toContain("boe");
-			expect(loaded.malformed[0]!.error.fix).toContain("/reload");
+			// The per-guide fix names the mv only; the /reload instruction lives
+			// in the migration banner, not on each path line.
+			expect(loaded.malformed[0]!.error.fix).not.toContain("/reload");
 			// The malformed guide is warned about at load, and the catalog
 			// renders its actionable fix (the migration instruction).
 			const msg = warn.mock.calls.map((c) => String(c[0])).join("\n");
 			expect(msg).toContain("Malformed guide");
 			expect(msg).toContain("boe.es");
+			// The one-shot migration banner carries the 0.4.0 structure-change
+			// explanation + /reload, and precedes the per-guide warnings.
+			expect(msg).toContain("0.4.0 changed the guide folder structure");
 			expect(msg).toContain("/reload");
+			expect(msg.indexOf("0.4.0 changed")).toBeLessThan(
+				msg.indexOf("Malformed guide"),
+			);
 			const catalog = formatApiGuideCatalog(loaded);
 			expect(catalog).toContain("fix:");
-			expect(catalog).toContain("/reload");
+			expect(catalog).not.toContain("/reload");
 		} finally {
 			warn.mockRestore();
 			rmSync(dir, { recursive: true, force: true });
@@ -1847,6 +1855,10 @@ org guide.
 			expect(msg).toContain("alpha");
 			expect(msg).toContain("beta");
 			expect(msg).toContain("/api delete");
+			// The migration banner fires once, not once per malformed guide.
+			expect(
+				msg.match(/0\.4\.0 changed the guide folder structure/g),
+			).toHaveLength(1);
 		} finally {
 			warn.mockRestore();
 			rmSync(dir, { recursive: true, force: true });
@@ -1912,7 +1924,7 @@ org guide.
 			expect(Object.keys(loaded.guides)).toEqual([]);
 			expect(loaded.malformed).toHaveLength(1);
 
-			// The migration instruction (mv boe.es boe, then /reload).
+			// The migration instruction (mv boe.es boe); /reload lives in the banner.
 			renameSync(join(dir, "boe.es"), join(dir, "boe"));
 			loaded = loadApiGuidesFromDir(dir);
 			expect(Object.keys(loaded.guides)).toEqual(["boe"]);

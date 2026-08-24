@@ -20,6 +20,16 @@
 > SearXNG search, install
 > [`pi-lean-search`](https://www.npmjs.com/package/pi-lean-search).
 
+> ⚠️ **Breaking change in 0.4.0 — guide folders are now keyed by `shortName`.**
+> Each guide must live in a folder named `slug(shortName)` — its `shortName`
+> lowercased, with non-alphanumeric runs replaced by `-` (e.g. `shortName:
+> BOE` → folder `boe`). Guides still sitting in a `<domain>/` folder from 0.3.x
+> are flagged **malformed** and won't load until you rename the folder to
+> `slug(shortName)` and `/reload` — the startup warnings give the exact `mv`
+> command. Hand the warnings to the agent; it will fix them for you.
+
+<!-- TODO(0.5.0): remove this temporary breaking-change note once the 0.4.0 migration is settled. -->
+
 > ⚠️ **Early release (0.3.1).** The API tools here work today, but this is a
 > development preview. The recipe schema, tool surfaces, and guide format are
 > still settling as we test more APIs to finalize the shape — **future

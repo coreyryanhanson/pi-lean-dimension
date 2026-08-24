@@ -1678,6 +1678,22 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 	// shortName → the first folder that declared it, so the duplicate warning
 	// can name both folders. Not a field on LoadedApiGuides.
 	const seenShortNames = new Map<string, string>();
+
+	// TODO(0.5.0): remove — migration banner for the 0.4.0 folder-structure
+	// change only. The permanent divergence + illegal-shortName checks below
+	// stay; only this prelude and the duplicate-shortName check are 0.5.0
+	// deletions. Fires once, immediately before the first identity warning, so
+	// it prepends the wall of migration warnings with the agent instructions.
+	let bannerEmitted = false;
+	const emitMigrationBanner = () => {
+		if (bannerEmitted) return;
+		bannerEmitted = true;
+		console.warn(
+			`\n⚠ 0.4.0 changed the guide folder structure: each guide must now live ` +
+				`in a folder named slug(shortName). Pass the warnings below to the ` +
+				`agent to fix them (rename the folder or set a valid shortName), then /reload.\n`,
+		);
+	};
 	for (const entry of entries) {
 		const entryPath = join(dir, entry);
 		try {
@@ -1713,6 +1729,7 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 			try {
 				slugged = slug(guide.shortName);
 			} catch {
+				emitMigrationBanner();
 				pushMalformed(result, guidePath, name, {
 					field: "shortName",
 					expected: "a shortName that slugs to a non-empty safe directory name",
@@ -1730,9 +1747,10 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 			if (first === undefined) {
 				seenShortNames.set(guide.shortName, entry);
 			} else {
+				emitMigrationBanner();
 				console.warn(
 					`⚠ Duplicate shortName '${guide.shortName}' in folders '${first}' and '${entry}'. ` +
-						`Delete one: /api delete <one>.`,
+						`Delete one: /api delete <one>`,
 				);
 			}
 			// Divergence check (permanent) — ENFORCED, not advisory: the folder
@@ -1740,11 +1758,12 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 			// divergent guide routes to malformed (never loads), so the active
 			// set structurally holds at most one guide per shortName.
 			if (entry !== slugged) {
+				emitMigrationBanner();
 				pushMalformed(result, guidePath, name, {
 					field: "shortName",
 					expected: `a folder named slug(shortName) ('${slugged}')`,
 					found: `folder '${entry}'`,
-					fix: `Rename the folder to '${slugged}': mv ${entryPath} ${join(dir, slugged)}, then /reload.`,
+					fix: `Rename the folder to '${slugged}': mv ${entryPath} ${join(dir, slugged)}`,
 				});
 				continue;
 			}
