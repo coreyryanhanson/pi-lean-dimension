@@ -81,9 +81,12 @@ Under the invariant approach, the loader **continues to key by folder name**
 keying-by-folder and keying-by-shortName are the same thing. No `guide.dir`
 field, no `findGuidesByDomain` change, no permanent duplicate detector, no
 co-located test re-keying. The load-time surface shrinks to a **divergence
-check** (permanent — the standing invariant monitor) plus two **temporary
-startup checks** (migration-window only, marked for 0.5.0 deletion). The
-clobber-impossible property is identical; the code surface is smaller.
+check** (permanent — the standing invariant monitor) plus the
+**illegal-shortName check** (permanent — guards hand-edited or restored-backup
+guides the same way the divergence check guards hand-edited folders) and one
+**temporary startup check** (the duplicate-shortName check, migration-window
+only, marked for 0.5.0 deletion). The clobber-impossible property is
+identical; the code surface is smaller.
 
 ## What changes, and what does not
 
@@ -105,12 +108,13 @@ clobber-impossible property is identical; the code surface is smaller.
      only for the migration window where pre-redesign folders may collide.
      `// TODO(0.5.0): remove — save-time slug() makes duplicate shortNames
      // unreachable once all folders are migrated.`
-   - **Illegal-`shortName` check (temporary, remove in 0.5.0):** if
-     `slug(shortName)` throws (empty or all-symbol `shortName`), push to
-     `malformed` with a prescriptive "set a valid `shortName`" error. In steady
-     state this is unreachable because save-time `slug()` refuses before
-     writing. `// TODO(0.5.0): remove — save-time slug() refuses illegal
-     // shortNames before they reach disk.`
+   - **Illegal-`shortName` check (permanent):** if `slug(shortName)` throws
+     (empty or all-symbol `shortName`), push to `malformed` with a
+     prescriptive "set a valid `shortName`" error. This is permanent, not
+     migration-window: a hand-edited or restored-backup `guide.md` with
+     `shortName: "!!!"` reaches disk by a path save-time `slug()` never gates
+     — the same class of drift the permanent divergence check guards for
+     folder names. No `// TODO(0.5.0): remove` marker.
 2. **`api-learn` save path** (`tools/api-learn.ts`) — write target becomes
    `join(guidesDir, slug(parsed.guide.shortName), "guide.md")`, derived from the
    parsed draft. The `domain` arg becomes **purely cosmetic on the save branch** —
@@ -244,7 +248,8 @@ all folders are migrated, this check is unreachable and is removed in 0.5.0.
 
 - **A. Lazy, agent-assisted (recommended).** Old folders load with a divergence
   warning; the user asks their agent to rename the folder, then `/reload`.
-  Minimal code (the divergence check + two temp startup checks), no read-side
+  Minimal code (the divergence + illegal-shortName checks + one temp duplicate
+  check), no read-side
   mutation, no surprise. Cost: one agent-assisted rename per non-compliant
   guide.
 - **B. Auto-migrate on first load.** `mv <domain>/ → <slug(shortName)>/` when
@@ -270,8 +275,9 @@ faster than users act on them.
 - **Empty / unsafe `shortName`.** `slug()` must produce a non-empty, traversal-
   safe result. An empty or all-symbol `shortName` → slug is empty →
   `assertSafeDomain` throws → save refuses with a prescriptive error. At load
-  time, the temporary illegal-shortName check (0.5.0 removal) catches the same
-  condition for pre-redesign guides that somehow have an empty shortName.
+  time, the permanent illegal-shortName check catches the same condition for
+  guides that reach disk with an empty or all-symbol shortName (hand-edited or
+  restored backup, not just pre-redesign).
 - **Divergent folder name.** `entry !== slug(shortName)` — the permanent
   divergence check warns. Causes: pre-redesign folder not yet migrated,
   hand-edited folder name, restored backup. The guide still loads; the warning
@@ -296,8 +302,9 @@ faster than users act on them.
   disappears; a guide naturally lands back in its own folder.
 - **Smaller code surface than re-keying** — no `guide.dir` field, no
   `findGuidesByDomain` change, no co-located test re-keying. The load-time
-  surface is a permanent divergence check plus two temporary checks with a
-  0.5.0 deletion date.
+  surface is a permanent divergence check, a permanent illegal-shortName
+  check, and one temporary check (duplicate-shortName) with a 0.5.0 deletion
+  date.
 - **No secret-store migration, no auth change, no transport change, no routing
   change.** Blast radius is `slug()` + the `api-learn` write target + the
   divergence/temp checks + four string rewrites.
@@ -310,10 +317,10 @@ faster than users act on them.
 - **New `slug()` surface.** Trivial but real: a sanitizer with its own edge
   cases (slug collisions, empty result, unicode). Reusing `assertSafeDomain` as
   the final guard keeps the safety story to one function.
-- **Temporary startup checks.** The duplicate-shortName and illegal-shortName
-  checks are migration-window scaffolding marked for 0.5.0 deletion. They add a
-  small amount of code that is intentionally self-deleting; the 0.5.0 removal
-  must not be forgotten.
+- **Temporary startup check.** The duplicate-shortName check is migration-
+  window scaffolding marked for 0.5.0 deletion. It adds a small amount of code
+  that is intentionally self-deleting; the 0.5.0 removal must not be forgotten.
+  (The illegal-shortName check is permanent — see Edge cases.)
 - **Does not fully fix the staging collision** — `stagingPathFor` can rekey off
   `shortName` only for the fetch-recipe case; the new-template case has no
   `shortName` yet, so templates stay domain-keyed in /tmp. Acceptable: staging is
@@ -334,13 +341,13 @@ faster than users act on them.
    this redesign lands it shifts from "clobber detector" to "slug-collision
    detector" (see blast-radius item 5), but stays.
 2. **Next (this redesign):** implement the structural change in two sprints —
-   Sprint 1: `slug()` + loader checks (divergence + temp startup checks);
+   Sprint 1: `slug()` + loader checks (divergence + illegal-shortName + temp duplicate check);
    Sprint 2: `api-learn` write target + collision warning re-key + guard advice
    - string rewrites + test updates. Ship migration **A** (lazy,
    agent-assisted folder rename).
-3. **0.5.0:** remove the temporary duplicate-shortName and illegal-shortName
-   startup checks. The permanent divergence check stays as the standing
-   invariant monitor.
+3. **0.5.0:** remove the temporary duplicate-shortName startup check. The
+   permanent divergence and illegal-shortName checks stay as the standing
+   invariant monitors.
 4. **Later (only if needed):** revisit auto-migration (**B** or **C**) if
    divergence-warning reports accumulate; otherwise leave it.
 
@@ -387,12 +394,15 @@ is smaller:
   `readdirSync`-order nondeterminism, and co-located test re-keying — all of
   which the earlier re-keying draft required. The clobber-impossible property
   is identical; the code surface is smaller.
-- **Permanent divergence check + temporary startup checks.** The divergence
-  check (`entry !== slug(shortName)`) stays as the standing invariant monitor
-  (hand-edited folders, restored backups, unmigrated guides). The
-  duplicate-shortName and illegal-shortName checks are migration-window-only,
-  marked `// TODO(0.5.0): remove`, because save-time `slug()` makes them
-  unreachable once all folders are migrated.
+- **Permanent divergence + illegal-shortName checks; temporary duplicate
+  check.** The divergence check (`entry !== slug(shortName)`) and the
+  illegal-shortName check (`slug(shortName)` throws → `malformed`) both stay
+  as standing invariant monitors — both guard hand-edited or restored-backup
+  guides that reach disk by a path save-time `slug()` never gates. The
+  duplicate-shortName check is migration-window-only, marked
+  `// TODO(0.5.0): remove`, because save-time `slug()` plus the
+  folder-name-is-`slug(shortName)` invariant make two folders with the same
+  shortName unreachable once all folders are migrated.
 - **Agent-assisted migration.** The divergence warning instructs the user to
   ask their agent to `mv` the folder, then `/reload`. Not auto-migration
   (option B/C rejected). The agent handles collision-on-rename naturally
@@ -420,4 +430,8 @@ is smaller:
   keeps the schema stable. **Emergent pro:** the save is now fully self-keying
   from the parsed file — a stale or wrong `domain` arg can't misroute the write
   or skew collision detection, strictly more robust than today where the arg
-  *is* the write target.
+  *is* the write target. (One edge caveat: when `shortName:` is *absent* from
+  the draft, the parser defaults `shortName` to `filename` = `domain`, so
+  `slug(domain)` becomes the save target — the arg indirectly selects the
+  folder in that case. Unreachable for saved guides: the placeholder template
+  always includes `shortName:`, so the redesign does not defend against it.)

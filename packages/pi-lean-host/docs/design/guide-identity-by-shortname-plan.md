@@ -12,12 +12,14 @@ The redesign has one load-bearing dependency: `slug()` must exist before the
 loader checks can call it and before the `api-learn` write path can compute the
 save target. The loader checks (Sprint 1) are observability-only — they warn
 on divergence and flag migration-window duplicates, but they don't change
-keying or write behavior, so they can't break anything downstream. The
-`api-learn` rewrite (Sprint 2) is the user-visible behavior change and depends
-on `slug()` existing.
+keying or write behavior, so they can't break anything downstream (the
+permanent illegal-shortName check does move a guide to `malformed`, but only
+for an already-pathological all-symbol `shortName` — the same class as a
+hand-edited traversal-shaped folder name). The `api-learn` rewrite (Sprint 2)
+is the user-visible behavior change and depends on `slug()` existing.
 
 ```
-Sprint 1 (slug() + loader checks: divergence + temp startup checks)
+Sprint 1 (slug() + loader checks: divergence + illegal-shortName + temp duplicate check + session_start cache clear)
    └─▶ Sprint 2 (api-learn write target + collision re-key + guard advice + string rewrites + tests)
 ```
 
@@ -32,12 +34,15 @@ of loader re-keying" for the rationale.
 
 ## Sprint 1 — Foundation: `slug()` + loader checks
 
-**Goal.** Land the `slug()` helper and the three loader checks: the permanent
-divergence check plus the two temporary migration-window checks (marked for
-0.5.0 deletion). No write-path change yet — nothing calls `slug()` from
-`api-learn`, so no guide's save target changes. The loader checks are
-observability-only: they warn/flag but don't change which guides load or how
-they're keyed.
+**Goal.** Land the `slug()` helper and the loader checks: the permanent
+divergence check, the permanent illegal-shortName check, and the temporary
+duplicate-shortName migration-window check (marked for 0.5.0 deletion). Also
+add `invalidateCache()` to the `session_start` handler so the migration
+"mv then /reload" instruction is correct regardless of pi's module-re-eval
+semantics. No write-path change yet — nothing calls `slug()` from `api-learn`,
+so no guide's save target changes. The loader checks are observability-only:
+they warn/flag but don't change which guides load or how they're keyed (the
+illegal-shortName check excepted as noted above).
 
 ### Work
 
@@ -58,7 +63,11 @@ they're keyed.
      emit a warning naming the current folder, the required folder
      (`slug(shortName)`), and the migration instruction (for 0.4.0: ask the
      agent to `mv <old> <new>`, then `/reload`). The guide still loads. This is
-     the standing invariant monitor.
+     the standing invariant monitor. **This check owns its own try/catch**
+     around its `slug()` call: if `slug()` throws (empty or all-symbol
+     `shortName`), route to `malformed` rather than letting the throw escape.
+     This wrapping lives in the permanent divergence check, not in the
+     temporary checks, so the loader stays safe after the 0.5.0 deletion.
    - **Duplicate-`shortName` check (temporary, remove in 0.5.0):** if a parsed
      guide's `shortName` was already seen in an earlier folder this scan, emit
      a warning naming both folders and suggesting `/api delete <one>`. In
@@ -68,16 +77,26 @@ they're keyed.
      // unreachable once all folders are migrated.`
      (Track seen shortNames in a local `Set<string>` scoped to the scan loop;
      this is scan-local state, not a persistent field on `LoadedApiGuides`.)
-   - **Illegal-`shortName` check (temporary, remove in 0.5.0):** if
+   - **Illegal-`shortName` check (permanent):** if
      `slug(parsed.guide.shortName)` throws (empty or all-symbol `shortName`),
      push to `malformed` with a prescriptive "set a valid `shortName`" error
-     instead of letting the throw escape. In steady state this is unreachable
-     because save-time `slug()` refuses before writing. Mark with
-     `// TODO(0.5.0): remove — save-time slug() refuses illegal shortNames
-     // before they reach disk.`
-     (The divergence check and duplicate check both call `slug()`; wrap those
-     calls so the illegal-shortName path routes to `malformed` rather than
-     throwing out of the loader.)
+     instead of letting the throw escape. This is permanent, not temporary:
+     hand-editing a `guide.md` to set `shortName: "!!!"` (or restoring a
+     backup) is the same class of drift the permanent divergence check guards
+     — save-time `slug()` only refuses at write time, so it does not cover
+     guides that reach disk by other paths. No `// TODO(0.5.0): remove` marker.
+     (Implemented as the divergence check's own try/catch, above — there is a
+     single illegal-shortName routing path shared by the permanent checks, not
+     a second implementation.)
+3. **`invalidateCache()` on `session_start`** (`index.ts`): the current
+   `session_start` handler only re-registers the portal projection; it does
+   *not* clear the module-level guide-store `_cache`. The design doc's claim
+   that a renamed folder is "stale until the next `session_start` or `/reload`"
+   only holds if `session_start` actually clears the cache. Add
+   `invalidateCache()` to the handler so the divergence check's "mv then
+   `/reload`" migration instruction is correct regardless of whether pi
+   re-evaluates the module vs. re-calls the entry function with persisted
+   module-level state (the `/resume` path).
 
 ### Acceptance criteria
 
@@ -94,8 +113,8 @@ they're keyed.
       naming both folders; both guides load (keyed by their distinct folders).
 - [ ] Illegal-shortName check: an empty or all-symbol `shortName` pushes to
       `malformed` with a prescriptive error; the loader doesn't throw.
-- [ ] The duplicate and illegal-shortName checks carry `// TODO(0.5.0): remove`
-      comments; the divergence check does not.
+- [ ] The duplicate-shortName check carries a `// TODO(0.5.0): remove`
+      comment; the divergence and illegal-shortName checks do not.
 - [ ] `npm run test:ci` green (no write-path code consumes `slug()` yet, so no
       save-target regressions; the loader checks are additive observability).
 - [ ] No save-target behavior change observable from any tool or command
@@ -115,12 +134,17 @@ save paths and warning text.
 
 1. **Save target** (`tools/api-learn.ts` save branch):
    `join(guidesDir, slug(parsed.guide.shortName), "guide.md")`,
-   computed from the parsed draft. The `domain` arg becomes purely cosmetic
-   on the save branch (error/display context + `parseApiGuide({filename:
+   computed from the parsed draft. The `domain` arg becomes cosmetic on
+   the save branch (error/display context + `parseApiGuide({filename:
    domain})` + the `details.domain` field) — it no longer selects the folder
    and no longer feeds collision detection. Compute the slug **once** before
    the collision loop and reuse it for the write path, the collision
-   comparison, and the guard.
+   comparison, and the guard. (Caveat: when `shortName:` is *absent* from the
+   draft, the parser defaults `shortName` to `filename` = `domain`, so
+   `slug(domain)` becomes the save target — the arg indirectly selects the
+   folder in that edge case. In practice the placeholder template always
+   includes `shortName:`, so this leak is unreachable for saved guides; the
+   rewrite does not need to defend against it.)
 2. **`stagingPathFor` rekey**: the fetch-recipe case has the `shortName` in
    hand, so stage under `slug(shortName)` — which **is** the new `dirName`.
    The new-template case has only a placeholder `shortName`, so templates
@@ -179,7 +203,7 @@ save paths and warning text.
     collision warning now renders the slug, not the `domain` arg
     `"collide-second"`. Update to assert the slug of the second guide's
     `shortName`.
-  - Line ~1086: `expect(text).toContain("/api delete recover-first")` —
+  - Line ~1081: `expect(text).toContain("/api delete recover-first")` —
     after redesign the existing guide's `dirName` is `slug(shortName)`, not
     the `domain` arg. Update to the slugged value.
   - Lines ~1140-1190: stamp test paths like
@@ -191,14 +215,14 @@ save paths and warning text.
 - `__tests__/api-learn-fetch-recipe.test.ts` — update the fetch-recipe
   `dirName`-surfacing and re-save advice assertions to the new self-keying
   behavior (no "pass directory as domain" advice).
-- `__tests__/tools.test.ts` existing clobber test (~line 248-270 / the
-  "fail-closed: different-shortName guide to an existing directory is
-  refused" test) — **becomes a no-op under the redesign**. Different
-  shortNames slug to different folders, so the overwrite guard never fires
-  and the second save succeeds silently. Replace this test with a
-  slug-collision test using shortNames that slug to the same value (e.g.
-  `cmc_full` / `cmc-full`) — the second save is refused with the
-  rename-`shortName` advice.
+- `__tests__/api-learn-fetch-recipe.test.ts` existing clobber test
+  (~line 246-268 / the "fail-closed: different-shortName guide to an
+  existing directory is refused" test) — **becomes a no-op under the
+  redesign**. Different shortNames slug to different folders, so the
+  overwrite guard never fires and the second save succeeds silently.
+  Replace this test with a slug-collision test using shortNames that slug
+  to the same value (e.g. `cmc_full` / `cmc-full`) — the second save is
+  refused with the rename-`shortName` advice.
 - New save-path tests:
   - A guide saves to `<slug(shortName)>/guide.md`, not
     `<domain>/guide.md`, when `shortName` slugs differently from `domain`.
@@ -264,8 +288,8 @@ save paths and warning text.
       a guide naturally lands back in its own folder.
 - [ ] **Smaller code surface than re-keying**: no `guide.dir` field, no
       `findGuidesByDomain` change, no co-located test re-keying. Load-time
-      surface is the permanent divergence check plus two temporary checks
-      with a 0.5.0 deletion date.
+      surface is the permanent divergence and illegal-shortName checks plus
+      the temporary duplicate-shortName check with a 0.5.0 deletion date.
 - [ ] **No cross-cutting churn**: secrets store, auth, transport, routing,
       and `api-fetch` operation resolution are unchanged. Blast radius is
       `slug()` + the `api-learn` write target + the loader checks + four
@@ -278,9 +302,9 @@ save paths and warning text.
 - Auto-migration (design doc options B/C) — deferred unless divergence-warning
   reports accumulate; this plan ships lazy option A (agent-assisted rename)
   only.
-- Removing the temporary duplicate-shortName and illegal-shortName startup
-  checks — scheduled for 0.5.0; the `// TODO(0.5.0): remove` comments are the
-  removal trigger. The permanent divergence check stays.
+- Removing the temporary duplicate-shortName startup check — scheduled
+  for 0.5.0; the `// TODO(0.5.0): remove` comment is the removal trigger. The
+  permanent divergence and illegal-shortName checks stay.
 - Making `api-learn`'s `domain` param optional on the save branch — the fetch
   and template branches still require it, so the tool schema stays stable in
   this PR.
