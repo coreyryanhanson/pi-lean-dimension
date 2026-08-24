@@ -28,6 +28,7 @@ import {
 	invalidateCache,
 	findGuidesByDomain,
 	loadAllGuides,
+	_resetLoadWarningsForTest,
 } from "../core/guide-store.js";
 import { handleDeleteSubcommand } from "../core/delete-command.js";
 
@@ -85,6 +86,34 @@ function mockCtx(overrides: Record<string, unknown> = {}): any {
 function notifyText(ctx: any): string {
 	return ctx.ui.notify.mock.calls.map((c: unknown[]) => c[0]).join("\n");
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Load-time warning suppression (once per process)
+// ═══════════════════════════════════════════════════════════════════
+
+describe("load-time warning suppression (once per process)", () => {
+	it("emits warnings on the first cold scan, then suppresses on later scans", () => {
+		// Deterministic start regardless of prior tests in this file.
+		_resetLoadWarningsForTest();
+		// Divergent folder: shortName BOE slugs to "boe", folder is "boe.es" —
+		// the migration-window state that must warn exactly once at startup.
+		setupGuide("boe.es", recipe("boe.es", "BOE"));
+		const notify = vi.fn();
+
+		// First cold scan (pi startup): the banner + per-guide warning fire.
+		loadAllGuides(notify);
+		expect(notify).toHaveBeenCalled();
+		const msgs = notify.mock.calls.map((c) => String(c[0])).join("\n");
+		expect(msgs).toContain("0.4.0 changed the guide folder structure");
+		expect(msgs).toContain("Malformed guide");
+
+		// Later scans (navigating chats / running commands): suppressed.
+		notify.mockClear();
+		invalidateCache();
+		loadAllGuides(notify);
+		expect(notify).not.toHaveBeenCalled();
+	});
+});
 
 // ═══════════════════════════════════════════════════════════════════
 // Whole-domain delete (confirm)

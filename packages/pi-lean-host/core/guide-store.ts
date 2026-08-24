@@ -13,7 +13,7 @@ import {
 	formatApiGuideCatalog,
 } from "./parse-api-guide.js";
 import { buildDomainMap } from "./guide-loader.js";
-import type { ApiGuide, LoadedApiGuides } from "./api-guide-types.js";
+import type { ApiGuide, LoadedApiGuides, NotifyFn } from "./api-guide-types.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Directory resolution
@@ -33,6 +33,14 @@ let _cache: {
 	domainMap: Record<string, string[]>;
 } | null = null;
 
+// Load-time diagnostics (migration banner + per-guide malformed warnings) are
+// a startup concern: emit them once per pi process on the first cold scan,
+// then suppress for the rest of the session so navigating chats or running
+// commands doesn't re-warn. A no-op notify (not `undefined`) is what
+// suppresses — `undefined` falls back to console.warn inside the loader.
+let loadWarningsEmitted = false;
+const suppressWarnings: NotifyFn = () => {};
+
 // ═══════════════════════════════════════════════════════════════════
 // Public API — override hooks for testing
 // ═══════════════════════════════════════════════════════════════════
@@ -50,17 +58,24 @@ export function invalidateCache(): void {
 	_cache = null;
 }
 
+/** @internal Reset once-per-process warning suppression (test helper). */
+export function _resetLoadWarningsForTest(): void {
+	loadWarningsEmitted = false;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Internal load
 // ═══════════════════════════════════════════════════════════════════
 
-function load(): {
+function load(notify?: NotifyFn): {
 	loaded: LoadedApiGuides;
 	domainMap: Record<string, string[]>;
 } {
 	if (_cache) return _cache;
 
-	const user = loadApiGuidesFromDir(_userGuidesDir);
+	const warnNotify = loadWarningsEmitted ? suppressWarnings : notify;
+	loadWarningsEmitted = true;
+	const user = loadApiGuidesFromDir(_userGuidesDir, warnNotify);
 
 	const loaded: LoadedApiGuides = {
 		guides: user.guides,
@@ -76,8 +91,8 @@ function load(): {
 // Public lookup API
 // ═══════════════════════════════════════════════════════════════════
 
-export function loadAllGuides(): LoadedApiGuides {
-	return load().loaded;
+export function loadAllGuides(notify?: NotifyFn): LoadedApiGuides {
+	return load(notify).loaded;
 }
 
 export function findGuidesByDomain(

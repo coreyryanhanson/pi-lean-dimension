@@ -1835,6 +1835,34 @@ org guide.
 		}
 	});
 
+	it("routes warnings through the notify callback when provided", () => {
+		const dir = mkdtempSync(join(tmpdir(), "host-guides-"));
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const notify = vi.fn();
+		try {
+			// Divergent folder (boe.es vs slug "boe") — the migration-window
+			// state that must surface loudly.
+			mkdirSync(join(dir, "boe.es"), { recursive: true });
+			writeFileSync(join(dir, "boe.es", "guide.md"), BOE_RECIPE);
+
+			const loaded = loadApiGuidesFromDir(dir, notify);
+			expect(Object.keys(loaded.guides)).toEqual([]);
+			expect(loaded.malformed).toHaveLength(1);
+			// The banner + per-guide warning go through notify, not console.warn.
+			expect(notify).toHaveBeenCalled();
+			expect(warn).not.toHaveBeenCalled();
+			const msgs = notify.mock.calls.map((c) => String(c[0])).join("\n");
+			expect(msgs).toContain("0.4.0 changed the guide folder structure");
+			expect(msgs).toContain("Malformed guide");
+			expect(msgs).toContain("boe.es");
+			// Every notify call uses the warning kind (ctx.ui.notify signature).
+			expect(notify.mock.calls.every((c) => c[1] === "warning")).toBe(true);
+		} finally {
+			warn.mockRestore();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("warns on duplicate shortName across folders during the migration window", () => {
 		const dir = mkdtempSync(join(tmpdir(), "host-guides-"));
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});

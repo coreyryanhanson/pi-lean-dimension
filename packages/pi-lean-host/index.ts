@@ -8,7 +8,7 @@ import {
 } from "./tools/index.js";
 import initApiToggle from "./core/api-toggle.js";
 import { registerPortalProjection } from "./core/portal-projection.js";
-import { invalidateCache } from "./core/guide-store.js";
+import { invalidateCache, loadAllGuides } from "./core/guide-store.js";
 import { cleanupAllSpill } from "./core/response-spill.js";
 import { resetToggleModuleState } from "./core/api-toggle.js";
 import { resetDisabledHelpers } from "./core/local-helpers.js";
@@ -34,13 +34,20 @@ export default function (pi: ExtensionAPI): void {
 	// Runtime feature-detect — no static portal import.
 	registerPortalProjection();
 	// session_start ensures registration even if host loads before portal.
-	pi.on("session_start", async () => {
+	pi.on("session_start", async (_event, ctx) => {
 		registerPortalProjection();
 		// Clear the guide-store cache so a folder rename made between sessions
 		// (the divergence check's "mv then /reload" migration) is picked up —
 		// regardless of whether pi re-evaluates the module or re-calls the entry
 		// function with persisted module-level state (the /resume path).
 		invalidateCache();
+		// Trigger a fresh scan with the UI notify channel so the migration
+		// banner + per-guide warnings render through the Text component (wraps
+		// long lines, honors newlines) instead of raw console.warn (truncates
+		// + merges with the status bar). No-op on a warm cache; every later
+		// command/tool call hits the cached scan, so this is the single
+		// load-time warning point.
+		loadAllGuides(ctx.ui.notify);
 	});
 
 	// ── Response spill cleanup ─────────────────────────────────

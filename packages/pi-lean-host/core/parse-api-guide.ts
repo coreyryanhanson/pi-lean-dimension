@@ -34,6 +34,7 @@ import {
 	type AcceptType,
 	type QueryParamSpec,
 	type LoadedApiGuides,
+	type NotifyFn,
 } from "./api-guide-types.js";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1646,7 +1647,7 @@ export function projectToGuide(guide: ApiGuide): Guide {
 
 /**
  * Push a malformed guide and warn about it. One helper owns both the catalog
- * entry and the load-time console.warn, so every malformed guide — parse
+ * entry and the load-time warn, so every malformed guide — parse
  * failure, illegal shortName, divergent folder — surfaces the same signal
  * (and its actionable `fix` when present) instead of being silently
  * quarantined. Fires once per cached scan, same channel as the duplicate-
@@ -1657,15 +1658,19 @@ function pushMalformed(
 	file: string,
 	filename: string,
 	error: ParseError,
+	warn: (msg: string) => void,
 ): void {
 	result.malformed.push({ file, filename, error });
-	console.warn(
+	warn(
 		`⚠ Malformed guide '${filename}': ${error.field} — expected ${error.expected}; found ${error.found}.` +
 			(error.fix ? ` ${error.fix}` : ""),
 	);
 }
 
-export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
+export function loadApiGuidesFromDir(
+	dir: string,
+	notify?: NotifyFn,
+): LoadedApiGuides {
 	const result: LoadedApiGuides = { guides: {}, malformed: [] };
 	if (!existsSync(dir)) return result;
 	let entries: string[];
@@ -1679,6 +1684,15 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 	// can name both folders. Not a field on LoadedApiGuides.
 	const seenShortNames = new Map<string, string>();
 
+	// Every load-time diagnostic routes through one channel: ctx.ui.notify
+	// when the caller has a UI context (renders via the Text component —
+	// wraps long lines, honors newlines), else console.warn. One fallback
+	// here, not one repeated per call site.
+	const warn = (msg: string) => {
+		if (notify) notify(msg, "warning");
+		else console.warn(msg);
+	};
+
 	// TODO(0.5.0): remove — migration banner for the 0.4.0 folder-structure
 	// change only. The permanent divergence + illegal-shortName checks below
 	// stay; only this prelude and the duplicate-shortName check are 0.5.0
@@ -1688,11 +1702,11 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 	const emitMigrationBanner = () => {
 		if (bannerEmitted) return;
 		bannerEmitted = true;
-		console.warn(
+		const msg =
 			`\n⚠ 0.4.0 changed the guide folder structure: each guide must now live ` +
-				`in a folder named slug(shortName). Pass the warnings below to the ` +
-				`agent to fix them (rename the folder or set a valid shortName), then /reload.\n`,
-		);
+			`in a folder named slug(shortName). Pass the warnings below to the ` +
+			`agent to fix them (rename the folder or set a valid shortName), then /reload.\n`;
+		warn(msg);
 	};
 	for (const entry of entries) {
 		const entryPath = join(dir, entry);
@@ -1730,12 +1744,18 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 				slugged = slug(guide.shortName);
 			} catch {
 				emitMigrationBanner();
-				pushMalformed(result, guidePath, name, {
-					field: "shortName",
-					expected: "a shortName that slugs to a non-empty safe directory name",
-					found: `"${guide.shortName}"`,
-					fix: "Set a valid shortName (lowercase letters, digits, and '-') in the guide's frontmatter.",
-				});
+				pushMalformed(
+					result,
+					guidePath,
+					name,
+					{
+						field: "shortName",
+						expected: "a shortName that slugs to a non-empty safe directory name",
+						found: `"${guide.shortName}"`,
+						fix: "Set a valid shortName (lowercase letters, digits, and '-') in the guide's frontmatter.",
+					},
+					warn,
+				);
 				continue;
 			}
 			// TODO(0.5.0): remove — save-time slug() makes duplicate shortNames
@@ -1748,10 +1768,10 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 				seenShortNames.set(guide.shortName, entry);
 			} else {
 				emitMigrationBanner();
-				console.warn(
+				const dupMsg =
 					`⚠ Duplicate shortName '${guide.shortName}' in folders '${first}' and '${entry}'. ` +
-						`Delete one: /api delete <one>`,
-				);
+					`Delete one: /api delete <one>`;
+				warn(dupMsg);
 			}
 			// Divergence check (permanent) — ENFORCED, not advisory: the folder
 			// name must equal slug(shortName); the coupling IS the identity. A
@@ -1759,17 +1779,23 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 			// set structurally holds at most one guide per shortName.
 			if (entry !== slugged) {
 				emitMigrationBanner();
-				pushMalformed(result, guidePath, name, {
-					field: "shortName",
-					expected: `a folder named slug(shortName) ('${slugged}')`,
-					found: `folder '${entry}'`,
-					fix: `Rename the folder to '${slugged}': mv ${entryPath} ${join(dir, slugged)}`,
-				});
+				pushMalformed(
+					result,
+					guidePath,
+					name,
+					{
+						field: "shortName",
+						expected: `a folder named slug(shortName) ('${slugged}')`,
+						found: `folder '${entry}'`,
+						fix: `Rename the folder to '${slugged}': mv ${entryPath} ${join(dir, slugged)}`,
+					},
+					warn,
+				);
 				continue;
 			}
 			result.guides[entry] = guide;
 		} else {
-			pushMalformed(result, guidePath, name, parsed.error);
+			pushMalformed(result, guidePath, name, parsed.error, warn);
 		}
 	}
 	return result;
