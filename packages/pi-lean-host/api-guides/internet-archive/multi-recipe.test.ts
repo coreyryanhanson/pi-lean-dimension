@@ -95,7 +95,7 @@ describe("archive.org multi-recipe dispatch (mocked transport)", () => {
 		]);
 	});
 
-	it("an op unique to archive.org-wayback dispatches via that guide", async () => {
+	it("an op unique to wayback-availability dispatches via that guide", async () => {
 		await setupRecipe();
 		const hits = resolveOp("archive.org", "getClosestSnapshot");
 		expect(hits).toEqual([
