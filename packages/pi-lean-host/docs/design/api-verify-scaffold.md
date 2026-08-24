@@ -59,9 +59,15 @@ declaration).
    explicitly asks for it. Zero noise for guides that don't need siblings.
 4. Require **zero format change** to `verify.json` — no new dependency, no
    loader migration, no parser duplication.
-5. Enforce the **guide↔helper relationship** at save time — refuse to save
-   a guide that declares `helper: true`/`transform: true` but has no
-   loadable `helper.ts`.
+5. **Validate the guide↔helper relationship at save time** — refuse to
+   save a guide that declares `helper: true`/`transform: true` but has no
+   `helper.ts` staged, AND refuse if a staged `helper.ts` won't load (parse
+   error) or is missing an export the guide declares (`helper: true` →
+   default export, `transform: true` → `transform` named export). A guide
+   that declares no helper usage with no `helper.ts` → no refusal (normal;
+   most guides have no helper). This minimizes users having to correct
+   broken guides their agents author, and the `/tmp` staging makes the fix
+   loop trivial.
 
 ## Non-goals
 
@@ -126,7 +132,10 @@ writes them to the guides dir.
 
 The agent passes `dir` (the staged dir path surfaced by fetch/template/
 scaffold) and `domain` (the write target, set to `dirName` per the existing
-pattern — fetch surfaces `dirName` in its result).
+pattern — fetch surfaces `dirName` in its result). An optional
+`confirmDeletions` boolean is also accepted but **not described in the tool
+description** — it is the escape-hatch for the deletion-safety gate (see
+[Deletion-safety gate](#deletion-safety-gate)).
 
 #### Mirror-save semantics
 
@@ -138,28 +147,88 @@ Save **mirrors the staged dir exactly**:
 Deleting a file from the staged `/tmp` dir is the signal to drop it. This
 gives the agent a deletion path with no extra API surface.
 
-This is safe because fetch-recipe always stages all existing siblings — the
-staged dir is an honest snapshot. The only wipe window is `new: true` saved
-over an existing directory (see [Risks](#risks)).
+The snapshot is honest on the common path (fetch → edit → save stages all
+siblings), but two wipe windows exist — `new: true`-over-existing and
+accidental `/tmp` cleanup — so mirror-save is guarded by the
+deletion-safety gate below before any file is removed.
 
-#### Helper-relationship validation at save time
+#### Deletion-safety gate
 
-Save refuses if the guide declares `helper: true` or `transform: true` on
-any op but:
+Mirror-save can wipe a sibling silently in two cases: a `new: true`
+template (stages only `guide.md`) saved over a directory that has a
+`helper.ts`/`verify.json`, and an agent deleting a sibling from `/tmp` to
+"clean up" without realizing save mirrors the deletion into the guides dir.
+Both present the same shape: the sibling exists in the guides dir but is
+absent from the staged dir at save time.
 
-1. **`helper.ts` is absent from the staged dir**, OR
-2. **`import()` of the staged `helper.ts` fails** (syntax error, missing
-   default export, top-level throw).
+A **deletion-safety gate** closes both. Before mirroring, save computes the
+deletion set — siblings present in the guides dir but absent from the
+staged `/tmp` dir. If non-empty, save **refuses** and returns a message
+naming the doomed files and the one way to proceed:
 
-This reuses `local-helpers.ts`'s existing `loadHelper`/`loadTransform`
-mechanism — no new import path. The guarantee: **if `api-learn` saved the
-guide, the helper exists AND loads.** No silently-degraded guides.
+> `⚠ Save refused — these sibling files exist in the guides dir but are
+> absent from your staged /tmp dir and would be deleted: helper.ts.
+> Re-call with confirmDeletions: true to delete them, or restore them in
+> /tmp first.`
 
-> ⚠ **Implementation note:** `loadHelper`/`loadTransform` have a side
-> effect — they set the `disabledHelpers` map on failure. The save-time
-> check must not pollute session state. Use a non-mutating variant or
-> reset the disabled flag after the check. This is an implementation
-> detail, not a design decision.
+The `confirmDeletions` boolean is in the tool schema **but not described in
+the tool description** — the only discovery path is the refusal message that
+names it. This keeps the tool's param surface uncluttered for the guides
+that never hit the gate; the discovery loop is closed by the refusal →
+re-call pattern that `api-learn`'s overwrite guard already uses.
+
+The gate is uniform — it doesn't care *why* the file is gone, only that it
+is. It fires for `new: true`-over-existing, accidental `/tmp` cleanup, and
+a deliberate "I'm removing the helper" flow alike; the agent confirms
+intent via `confirmDeletions: true` on re-call and the save proceeds,
+surfacing which files were written and which were deleted in the result.
+It does **not** fire on the common path (fetch → edit → save, where all
+siblings are staged) or on a first-time save of a brand-new guide.
+
+#### Guide↔helper validation at save time
+
+**Decision tree (run after the deletion-safety gate, before writing):**
+
+1. **Does any op declare `helper: true` or `transform: true`?**
+   - **No** → skip helper validation entirely. A guide with no helper
+     usage and no staged `helper.ts` is the normal case (most guides have
+     no helper); a stray staged `helper.ts` with no declarations is inert
+     (the runtime never imports it). Proceed to write.
+   - **Yes** → the guide references helper functionality, so a loadable
+     `helper.ts` is required. Continue to step 2.
+
+2. **Is `helper.ts` present in the staged dir?**
+   - **No** → **refuse.** The guide declares `helper: true`/`transform:
+     true` but no `helper.ts` is staged — the declaration references
+     functionality that doesn't exist. This is a broken guide on its face;
+     the runtime would silently degrade (warn + run untransformed). Error
+     names the declaration and offers the two fixes: scaffold a helper
+     with `api-scaffold` or drop the declaration from the guide.
+   - **Yes** → validate it (step 3).
+
+3. **`await import(stagedHelperPath)` — refuse on:**
+   1. **Load failure** — any throw from `import()` (syntax/parse error,
+      broken top-level import, top-level throw). Catches the common
+      authoring bug (typo, stray comma, missing file the helper imports).
+   2. **Missing declared export** — after a successful `import()`, inspect
+      the module's namespace. If any op declares `helper: true`, require a
+      default export. If any op declares `transform: true`, require a
+      `transform` named export. Refuse if a required export is absent.
+      Catches "scaffolded the stub but forgot to uncomment the export."
+
+**None of this calls `local-helpers.ts`'s `loadHelper`/`loadTransform`.**
+Those resolve against `getUserGuidesDir()` (not the staging dir) and set
+the `disabledHelpers` map on failure — a session-state side effect a
+save-time check must not have. Step 2 is a pure file-presence check; step 3
+is a bare `import()` of the staged path. Both target
+`/tmp/pi-lean-host/<dirName>/helper.ts` directly and mutate nothing. So
+`core/local-helpers.ts` needs **no new export** for this check; the
+validation is self-contained in `tools/api-learn.ts`.
+
+The guarantee: **if `api-learn` saved a guide that declares helper usage,
+a loadable `helper.ts` with the declared exports reaches the guides dir.**
+No broken code, no dangling declarations. Runtime still handles any deeper
+failure (a transform that throws at call time) by degrading.
 
 `verify.json` is written as-is — no JSON validation at save time. It's
 valid by construction when scaffolded; manual edits are caught by
@@ -262,19 +331,65 @@ sentinels are added for newly-unsatisfiable params. The full merged result
 is written to `/tmp`. (This is the initial-scaffold merge. Re-scaffold after
 the file is already in `/tmp` is delete + re-scaffold — no merge.)
 
-##### `unsatisfiableParams` export + return-shape fix
+##### `unsatisfiableParams` export + 3-function split
 
 `unsatisfiableParams()` is currently private to `core/verify-command.ts`.
 It's exported as part of this change so `api-scaffold` can call it — the
 codebase's "one parser, two call sites" philosophy applies; do not
-duplicate the logic.
+duplicate the rule.
 
-The return shape must be enriched. Today the `requiresAnyOf` branch pushes
-a composite string `"one of: id, slug, code"` — a single entry. The
-scaffold needs **individual member names** (`id`, `slug`, `code`) to write
-`{"id": "__FILL_ME__", ...}`. The fix: return structured objects
-(`{param: string, kind: "path"|"query"|"group"}[]`) or a companion function
-that expands group members into individual names.
+The function's two consumers want divergent shapes from the same rule:
+
+- **The verify loop** (verify-command.ts:217,222) wants human-readable
+  display strings to `join(", ")` into a report line. Today's composite
+  string `"one of: id, slug, code"` reads naturally there.
+- **`api-scaffold`** wants individual member names (`id`, `slug`, `code`)
+  to write `{"id": "__FILL_ME__", ...}`.
+
+The fix is a **3-function split**: one core holding the rule, two thin
+renderers holding the format.
+
+```typescript
+type Unsatisfiable =
+  | { kind: "path"; param: string }
+  | { kind: "group"; members: string[] }
+  | { kind: "query"; param: string };
+
+// the rule — single source of truth for "what is unsatisfiable"
+export function unsatisfiable(op: Operation, supplied: Record<string, unknown>): Unsatisfiable[] { … }
+
+// verify loop: reconstructs today's exact report text
+function renderForReport(items: Unsatisfiable[]): string[] {
+  return items.map(u =>
+    u.kind === "group" ? `one of: ${u.members.join(", ")}` : u.param);
+}
+
+// scaffold: expands groups to individual names, one sentinel each
+export function renderForSentinels(items: Unsatisfiable[]): string[] {
+  return items.flatMap(u => u.kind === "group" ? u.members : [u.param]);
+}
+```
+
+Verify loop: `renderForReport(unsatisfiable(op, supplied)).join(", ")` —
+byte-identical output to today's report line. Scaffold:
+`renderForSentinels(unsatisfiable(op, supplied))` → `["query","tag","category"]`.
+
+**Why not change the return shape in place** (the earlier "structured
+objects" option): that forces the working verify report to reconstruct its
+display format from structured data — rewriting a live display path to
+serve a new consumer, a needless regression surface.
+
+**Why not a companion function alongside the original** (the earlier
+"companion function" option): that duplicates the *business rule*
+(the three branches that define unsatisfiable: pathParams, `requiresAnyOf`,
+required-no-default query). Drift between the two functions would silently
+diverge the verify loop and the scaffold on which params block an op.
+
+The 3-function split puts the rule in one place; the renderers are pure
+format with nothing to drift. The `kind` discriminated union plus
+exhaustive switching in both renderers means the compiler forces every
+consumer to handle any new case — adding a 4th kind changes the core once
+and fails both renderers to typecheck until handled.
 
 ##### Sentinel semantics (strict JSON)
 
@@ -465,16 +580,18 @@ unsatisfiable params.
 
 ### Mirror-save vs. never-delete
 
-| | Mirror the staged dir | Never-delete (additive only) |
+| | Mirror the staged dir + deletion gate | Never-delete (additive only) |
 |---|---|---|
-| Deletion path | Delete from `/tmp` + save | Separate explicit step (bash or `/api delete`) |
-| Data-loss risk | Low (fetch stages all siblings) | Zero |
-| API surface | None (deletion = delete file) | Extra flag/mode for intentional deletion |
+| Deletion path | Delete from `/tmp` + save (gate confirms) | Separate explicit step (bash or `/api delete`) |
+| Data-loss risk | Near-zero (gate refuses unconfirmed wipes) | Zero |
+| API surface | One undescribed `confirmDeletions` flag | Extra flag/mode for intentional deletion |
 
-**Choice: mirror the staged dir.** Fetch-recipe always stages all existing
-siblings, so the staged dir is an honest snapshot. Deleting a file from
-`/tmp` is an intentional act. The only wipe window is `new: true` over an
-existing directory (see [Risks](#risks)).
+**Choice: mirror the staged dir + deletion gate.** Fetch-recipe always
+stages all existing siblings, so the staged dir is an honest snapshot and
+the common path never trips the gate. The gate closes the `new: true`-over-
+existing and accidental-`/tmp`-cleanup wipe windows with a refuse-with-
+message confirmation loop — the same pattern `api-learn`'s overwrite guard
+already uses.
 
 ### Directory-path save vs. file-path + sibling discovery
 
@@ -500,27 +617,32 @@ path for low-param agents. Clean break from the single-file `recipeFile`.
   Mitigated by the `/tmp` staging surface for manual pruning.
 - **`"__FILL_ME__"` is noisier than `null`.** A string sentinel in every
   unfilled slot. Justified by zero collision risk and self-documentation.
-- **Mirror-save can wipe siblings on `new: true` rewrite.** See Risks.
+- **Mirror-save can wipe siblings — closed by the deletion-safety gate.**
+  Unconfirmed wipes refuse; `confirmDeletions: true` on re-call proceeds.
+  See [Deletion-safety gate](#deletion-safety-gate).
 
 ## Risks
 
 - **`new: true` saved over an existing directory with siblings.** The
-  template stages only `guide.md`; if the agent saves it over a directory
-  that has a `helper.ts`, mirror-save removes the helper. Mitigations:
-  (a) the overwrite guard already refuses different-`shortName` saves;
-  (b) a same-`shortName` `new: true` save is a legitimate "rewrite from
-  scratch" where not staging the helper is arguably intentional;
-  (c) if the new guide declares `helper: true`, the helper-relationship
-  check forces the agent to scaffold/fetch the helper before saving.
+  template stages only `guide.md`; saving it over a directory that has a
+  `helper.ts`/`verify.json` would remove the sibling. **Closed by the
+  deletion-safety gate** — the save refuses and names the doomed file; the
+  agent re-calls with `confirmDeletions: true` to proceed. The overwrite
+  guard still refuses different-`shortName` saves independently.
 - **`api-scaffold` reads from the guides dir while the agent edits in
   `/tmp`.** The scaffold is a snapshot of the *saved* guide, not the staged
   edit. If the guide changes between scaffold and save, the `/tmp` file is
   stale. Re-running the scaffold refreshes it. Same snapshot property as
   `api-learn` fetch-recipe → edit → save.
-- **`import()` side effects in save-time validation.** `loadHelper`/
-  `loadTransform` set the `disabledHelpers` map on failure. The save-time
-  check must not pollute session state — use a non-mutating variant or
-  reset after the check. Implementation detail, not a design decision.
+- **Save-time helper validation couples to the guide's declarations.**
+  The check reads the parsed guide to know whether helper usage is
+  declared and which exports to require (`helper: true` → default,
+  `transform: true` → `transform`). If the guide and the staged helper
+  disagree because the agent edited one but not the other — including a
+  declaration with no `helper.ts` staged at all — the check refuses with a
+  message naming the gap (missing file vs. missing export) and the agent
+  fixes the helper or the guide in `/tmp` and re-saves. Trivial fix loop
+  by design (the staging is the editable copy).
 - **Agent fills all `requiresAnyOf` members.** The manual says "fill one,"
   but the agent might fill all blindly. Harmless — the op runs (any one
   satisfies the group), and extra values are just extra query params.
@@ -568,16 +690,27 @@ Follows the existing vitest + mocked-fs pattern (`verify-command.test.ts`,
     the staged dir, writes them to the guides dir.
 3. **Mirror-save present → overwrite** — existing guides-dir files
     overwritten by staged versions.
-4. **Mirror-save absent → remove** — a sibling absent from the staged dir
-    is removed from the guides dir.
-5. **Helper-relationship refuse on missing** — save refused if
-    `helper: true`/`transform: true` declared but `helper.ts` absent from
-    staged dir.
-6. **Helper-relationship refuse on import() failure** — save refused if
-    `helper.ts` present but `import()` fails.
-7. **`verify.json` written as-is** — no JSON validation at save time;
+4. **Mirror-save absent → gate refuses without `confirmDeletions`** — a
+    sibling present in the guides dir but absent from the staged dir makes
+    save refuse and name the doomed file; re-call with
+    `confirmDeletions: true` removes it and the result surfaces the
+    deletion.
+5. **Deletion gate does not fire on the common path** — fetch → edit →
+    save (all siblings staged) proceeds without `confirmDeletions`.
+6. **Declaration + absent helper → refuse** — save refused when an op
+    declares `helper: true`/`transform: true` but no `helper.ts` is staged;
+    error names the declaration and offers scaffold-or-drop-declaration.
+7. **No declaration → no helper check** — a guide with no `helper:`/`
+   transform:` declarations saves fine with no `helper.ts` staged.
+8. **Present helper must load** — save refused when `helper.ts` is staged
+    but `import()` throws (syntax error).
+9. **Present helper must satisfy declarations** — save refused when an op
+    declares `helper: true` but the staged `helper.ts` has no default
+    export (and symmetric for `transform: true` + `transform` named
+    export).
+10. **`verify.json` written as-is** — no JSON validation at save time;
     valid by construction from scaffold.
-8. **Staging path keyed by `dirName`** — staging dir is
+11. **Staging path keyed by `dirName`** — staging dir is
     `/tmp/pi-lean-host/<dirName>/`, not `/tmp/pi-lean-host/<domain>/`.
 
 **P1 fix tests:**
@@ -588,17 +721,27 @@ Follows the existing vitest + mocked-fs pattern (`verify-command.test.ts`,
 2. **`requiresAnyOf` sentinel doesn't leak** — filling one member does not
     send `__FILL_ME__` for the other members in the query string.
 
-**`unsatisfiableParams` return-shape tests:**
+**`unsatisfiableParams` 3-function split tests:**
 
-1. **Individual member names** — `requiresAnyOf` branch returns individual
-    member names, not composite `"one of: ..."` strings.
+1. **Core returns the union** — `unsatisfiable(op, supplied)` returns the
+   structured `Unsatisfiable[]` (path / group / query kinds); the
+   `requiresAnyOf` branch surfaces as one `{kind:"group", members:[…]}`
+   entry, not a composite string.
+2. **Verify-loop renderer is byte-identical** — `renderForReport` on the
+   structured output produces today's exact report text (composite
+   `"one of: …"` for groups, bare name otherwise); the existing verify
+   report-line test still passes unchanged.
+3. **Scaffold renderer expands groups** — `renderForSentinels` returns
+   individual member names for group entries (one sentinel each) and bare
+   names otherwise.
 
 **Edge cases:**
 
 1. **No existing siblings** → fetch stages only `guide.md`.
 2. **`new: true` over existing directory** → template stages only
-    `guide.md`; save would remove existing siblings (mitigated by overwrite
-    guard for different shortName).
+    `guide.md`; deletion-safety gate refuses the save and names the doomed
+    siblings; `confirmDeletions: true` proceeds (overwrite guard still
+    refuses different shortName independently).
 3. **Malformed existing `verify.json` in guides dir** → scaffold can't
     merge; clear error, guides dir untouched.
 4. **Path-traversal `domain`** → `assertSafeDomain` rejects before any
@@ -608,25 +751,29 @@ Follows the existing vitest + mocked-fs pattern (`verify-command.test.ts`,
 
 | File | Change |
 |------|--------|
-| `core/verify-command.ts` | Export `unsatisfiableParams`; enrich return shape (individual member names, not composite strings); add sentinel strip in verify loop before `unsatisfiableParams` and `resolveOpForExecution` |
+| `core/verify-command.ts` | Export `unsatisfiable`; split into 3 functions (`unsatisfiable` → `Unsatisfiable[]` core, `renderForReport` for the verify loop, exported `renderForSentinels` for `api-scaffold`); verify loop wraps the core with `renderForReport` (byte-identical report output); add sentinel strip in verify loop before `unsatisfiable` and `resolveOpForExecution` |
 | `tools/api-scaffold.ts` | **New file** — tool definition (`domain` + `guide` + `verify`/`helper` booleans, multi-recipe disambiguation, `/tmp` staging keyed by `dirName`, refuse-to-overwrite, sentinel compute + additive merge for `verify.json`, stub generation for `helper.ts`, authoring manual) |
-| `tools/api-learn.ts` | Multi-file staging (fetch-recipe stages all siblings); directory-path save (retire `recipeFile`, add `dir`); mirror-save semantics; helper-relationship validation (refuse on missing + refuse on `import()` error); staging path keyed by `dirName` |
+| `tools/api-learn.ts` | Multi-file staging (fetch-recipe stages all siblings); directory-path save (retire `recipeFile`, add `dir` + undescribed `confirmDeletions`); mirror-save semantics with deletion-safety gate (refuse unconfirmed sibling wipes, surface deleted files in result); guide↔helper validation at save (declaration + staged-`helper.ts` presence check; bare `import()` + declared-export check; does not touch `core/local-helpers.ts`); staging path keyed by `dirName` |
 | `tools/index.ts` | Export `apiScaffoldTool`; update the barrel comment (currently "all 4 tool definitions" → 5) |
 | `core/api-toggle.ts` | Add `"api-scaffold"` to `HOST_API_LEARN_SPEC.names`; update stale UI text that hardcodes "four tools" / "api-learn + api-probe" |
 | `index.ts` | `pi.registerTool(apiScaffoldTool)` |
 | `package.json` | Add `"tools/api-scaffold.ts"` to the `files` array (`ship-manifest.test.ts` tripwire) |
-| `__tests__/api-scaffold.test.ts` | **New file** — tests 1–9, 21–23 |
-| `__tests__/api-learn-multi-file.test.ts` | **New file** (or extend `api-learn-fetch-recipe.test.ts`) — tests 10–17, 22 |
-| `__tests__/verify-command.test.ts` | Add tests 18–20 (sentinel strip, no-leak, return-shape) |
+| `__tests__/api-scaffold.test.ts` | **New file** — `api-scaffold` tests 1–9 + edge case 3 (malformed guides-dir `verify.json`) |
+| `__tests__/api-learn-multi-file.test.ts` | **New file** (or extend `api-learn-fetch-recipe.test.ts`) — `api-learn` tests 1–11 + edge cases 1, 2, 4 (no siblings; `new: true` over existing; path-traversal `domain`) |
+| `__tests__/verify-command.test.ts` | Add P1 fix tests 1–2 (sentinel strip, no-leak) + `unsatisfiable` 3-function split tests 1–3 |
 
 ## Downstream
 
 An implementation plan is the next artifact, **after team review** of this
-design doc. The plan would sequence: (1) `unsatisfiableParams` export +
-return-shape fix, (2) verify-loop sentinel strip (P1 fix), (3) `api-scaffold`
+design doc. The plan would sequence: (1) `unsatisfiable` 3-function split
+(export the core + `renderForSentinels`; wrap verify loop with
+`renderForReport`; byte-identical report output), (2) verify-loop sentinel
+strip (P1 fix), (3) `api-scaffold`
 tool (`helper` + `verify` paths, refuse-to-overwrite, `/tmp` staging), (4)
 `api-learn` multi-file staging + directory-path save + mirror-save, (5)
-helper-relationship validation, (6) staging path keying by `dirName`, (7)
+guide↔helper validation (declaration + staged-`helper.ts` presence check,
+bare `import()` + declared-export check, self-contained — no
+`local-helpers.ts` change), (6) staging path keying by `dirName`, (7)
 `HOST_API_LEARN_SPEC` update + stale UI text, (8) `tools/index.ts` export +
 barrel comment, (9) `index.ts` registration, (10) `package.json` `files`
 entry, (11) authoring manual, (12) test files.
