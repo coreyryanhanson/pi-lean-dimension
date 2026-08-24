@@ -124,7 +124,8 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
     session. See `api-helper-escape-valve.md` for the built-in vs local-helper
     classification.
 - **Multi-recipe domains**: a domain may claim multiple guides (each in its own
-  directory, e.g. `archive.org` + `archive.org-wayback`). `buildDomainMap` is
+  directory, e.g. `internet-archive` + `wayback-availability`, both claiming
+  `archive.org`). `buildDomainMap` is
   multi-valued (`Record<string, string[]>`); `api-fetch` resolves the operation
   by name across all matching guides (helper routed by **directory name**, not
   the routing `domain`); `api-guide` shows a disambiguation menu and accepts a

@@ -1638,9 +1638,10 @@ export function projectToGuide(guide: ApiGuide): Guide {
 // ═══════════════════════════════════════════════════════════════════
 // Directory loader — one malformed guide doesn't block the store.
 //
-// Loads from per-domain subdirectories: <dir>/<domain>/guide.md.
-// Flat top-level .md files are no longer loaded (pre-ship break;
-// no production user guides exist before this change).
+// Loads from per-guide subdirectories: <dir>/<slug(shortName)>/guide.md.
+// The folder name must equal slug(shortName) — a divergent folder routes to
+// malformed (enforced), so the active set holds at most one guide per
+// shortName. Flat top-level .md files are not loaded.
 // ═══════════════════════════════════════════════════════════════════
 
 export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
@@ -1669,7 +1670,7 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 		} catch {
 			continue;
 		}
-		const name = entry; // domain name = subdir name
+		const name = entry; // folder name = slug(shortName) in steady state
 		let raw: string;
 		try {
 			raw = readFileSync(guidePath, "utf-8");
@@ -1703,25 +1704,36 @@ export function loadApiGuidesFromDir(dir: string): LoadedApiGuides {
 				});
 				continue;
 			}
-			// Divergence check (permanent) — the standing invariant monitor:
-			// the folder name must equal slug(shortName). Warns, never gates.
-			if (entry !== slugged) {
-				console.warn(
-					`⚠ Guide folder '${entry}' diverges from shortName '${guide.shortName}' — ` +
-						`expected folder '${slugged}'. Rename it: mv ${entryPath} ` +
-						`${join(dir, slugged)}, then /reload.`,
-				);
-			}
 			// TODO(0.5.0): remove — save-time slug() makes duplicate shortNames
-			// unreachable once all folders are migrated.
+			// unreachable once all folders are migrated. Tracked on guides that
+			// pass the slug (before divergence routing) so the migration window —
+			// two divergent folders sharing a valid shortName — still surfaces a
+			// clear "delete one" warning instead of two opaque malformed entries.
 			const first = seenShortNames.get(guide.shortName);
-			if (first !== undefined) {
+			if (first === undefined) {
+				seenShortNames.set(guide.shortName, entry);
+			} else {
 				console.warn(
 					`⚠ Duplicate shortName '${guide.shortName}' in folders '${first}' and '${entry}'. ` +
 						`Delete one: /api delete <one>.`,
 				);
-			} else {
-				seenShortNames.set(guide.shortName, entry);
+			}
+			// Divergence check (permanent) — ENFORCED, not advisory: the folder
+			// name must equal slug(shortName); the coupling IS the identity. A
+			// divergent guide routes to malformed (never loads), so the active
+			// set structurally holds at most one guide per shortName.
+			if (entry !== slugged) {
+				result.malformed.push({
+					file: guidePath,
+					filename: name,
+					error: {
+						field: "shortName",
+						expected: `a folder named slug(shortName) ('${slugged}')`,
+						found: `folder '${entry}'`,
+						fix: `Rename the folder to '${slugged}': mv ${entryPath} ${join(dir, slugged)}, then /reload.`,
+					},
+				});
+				continue;
 			}
 			result.guides[entry] = guide;
 		} else {

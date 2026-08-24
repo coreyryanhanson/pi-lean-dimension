@@ -18,8 +18,10 @@
 > of confusion.
 >
 > Status: **implemented.** The redesign is implemented — Sprint 1 landed the
-> `slug()` helper + loader checks, Sprint 2 made the write target a function of
-> `slug(shortName)`. It is sequenced ahead of the sibling-artifact
+> `slug()` helper + loader checks (the divergence check is **enforced**, not
+> advisory: a divergent folder routes to `malformed` and does not load until
+> renamed), Sprint 2 made the write target a function of `slug(shortName)`.
+> It is sequenced ahead of the sibling-artifact
 > authoring doc [`api-verify-scaffold.md`](api-verify-scaffold.md), whose
 > staging-path keying this redesign supersedes.
 
@@ -50,7 +52,7 @@ impossible by construction.
 **The guide's identity is its `shortName`, derived from the file content. The
 write target is a function of `slug(shortName)`, never the `domain` argument.
 The invariant `dir === slug(shortName)` makes the folder name and the shortName
-two views of the same identity — enforced at save time, monitored at load time.**
+two views of the same identity — enforced at save time and at load time.**
 
 Two guides with different shortNames physically cannot share a directory.
 Routing is untouched — the loader already scans every subdirectory and builds a
@@ -96,12 +98,14 @@ identical; the code surface is smaller.
 1. **`loadApiGuidesFromDir`** (`core/parse-api-guide.ts`) — **no re-keying**.
    The record key stays `entry` (the folder name). Three checks are added after
    a successful parse:
-   - **Divergence check (permanent):** if `entry !== slug(parsed.guide.shortName)`,
-     emit a warning naming the current folder, the required folder
-     (`slug(shortName)`), and the migration instruction (see Migration). The
-     guide still loads — this is a warning, not a gate. This is the standing
-     invariant monitor: it catches hand-edited folder names, restored backups,
-     and pre-redesign folders that haven't been migrated yet.
+   - **Divergence check (permanent, enforced):** if `entry !== slug(parsed.guide.shortName)`,
+     route to `malformed` with a prescriptive error naming the current folder,
+     the required folder (`slug(shortName)`), and the migration instruction (see
+     Migration). The guide does NOT load until the folder is renamed — the
+     coupling is enforced, not advisory. This is the standing invariant monitor:
+     it catches hand-edited folder names, restored backups, and pre-redesign
+     folders that haven't been migrated yet, and guarantees at most one loaded
+     guide per shortName.
    - **Duplicate-`shortName` check (temporary, remove in 0.5.0):** if two
      folders declare the same `shortName`, emit a warning naming both folders
      and suggesting `/api delete <one>`. In steady state (after migration) this
@@ -219,12 +223,13 @@ identical; the code surface is smaller.
 
 Guides saved before the change live at `<domain>/guide.md` (e.g.
 `api-guides/coinmarketcap.com/guide.md` with `shortName: cmc`). After the change
-they still **load** — the loader reads `shortName` from content, keys by the
-folder (unchanged), and the **divergence check** warns that the folder
-`coinmarketcap.com` should be `cmc`. No read-time break; the guide is live with
-a warning.
+they route to **malformed** until renamed — the **divergence check** is enforced,
+not advisory: a folder `coinmarketcap.com` whose guide declares `shortName: cmc`
+(required folder `cmc`) does not load, and the malformed entry is prescriptive
+(names the required folder). The active set structurally holds at most one guide
+per shortName from day one.
 
-**Migration is agent-assisted, not code-driven.** The divergence warning tells
+**Migration is agent-assisted, not code-driven.** The divergence error tells
 the user the current folder, the required folder (`slug(shortName)`), and — for
 the 0.4.0 release only — instructs the user to ask their agent to rename the
 folder (`mv api-guides/coinmarketcap.com api-guides/cmc`), then `/reload`. We
@@ -247,12 +252,11 @@ all folders are migrated, this check is unreachable and is removed in 0.5.0.
 
 **Options considered:**
 
-- **A. Lazy, agent-assisted (recommended).** Old folders load with a divergence
-  warning; the user asks their agent to rename the folder, then `/reload`.
+- **A. Lazy, agent-assisted (recommended).** Old folders route to malformed
+  until renamed; the user asks their agent to rename the folder, then `/reload`.
   Minimal code (the divergence + illegal-shortName checks + one temp duplicate
-  check), no read-side
-  mutation, no surprise. Cost: one agent-assisted rename per non-compliant
-  guide.
+  check), no read-side mutation. Cost: one agent-assisted rename per
+  non-compliant guide, enforced (the guide is not live until renamed).
 - **B. Auto-migrate on first load.** `mv <domain>/ → <slug(shortName)>/` when
   the folder name ≠ `slug(shortName)`. Transparent to the user, but **mutating
   user dirs on read** is surprising and races a concurrent `api-fetch` reading
@@ -280,9 +284,10 @@ faster than users act on them.
   guides that reach disk with an empty or all-symbol shortName (hand-edited or
   restored backup, not just pre-redesign).
 - **Divergent folder name.** `entry !== slug(shortName)` — the permanent
-  divergence check warns. Causes: pre-redesign folder not yet migrated,
-  hand-edited folder name, restored backup. The guide still loads; the warning
-  is prescriptive (names the required folder).
+  divergence check routes to malformed. Causes: pre-redesign folder not yet
+  migrated, hand-edited folder name, restored backup. The guide does not load
+  until the folder is renamed; the malformed error is prescriptive (names the
+  required folder).
 - **Duplicate `shortName` across folders (migration window only).** Two
   pre-redesign folders declaring the same `shortName`. The temporary duplicate
   check warns and names both folders. In steady state this is unreachable (two
@@ -313,8 +318,9 @@ faster than users act on them.
 ## Cons / costs
 
 - **Storage-layout change.** Existing user guides need a one-time folder rename
-  (agent-assisted) if their folder name doesn't match `slug(shortName)`. No
-  read-time break, but a per-guide cleanup action.
+  (agent-assisted) if their folder name doesn't match `slug(shortName)`.
+  Divergent guides are not live until renamed (enforced), so the migration is a
+  per-guide cleanup action with a hard — but prescriptive — read-time signal.
 - **New `slug()` surface.** Trivial but real: a sanitizer with its own edge
   cases (slug collisions, empty result, unicode). Reusing `assertSafeDomain` as
   the final guard keeps the safety story to one function.
@@ -400,11 +406,13 @@ is smaller:
   illegal-shortName check (`slug(shortName)` throws → `malformed`) both stay
   as standing invariant monitors — both guard hand-edited or restored-backup
   guides that reach disk by a path save-time `slug()` never gates. The
-  duplicate-shortName check is migration-window-only, marked
-  `// TODO(0.5.0): remove`, because save-time `slug()` plus the
-  folder-name-is-`slug(shortName)` invariant make two folders with the same
-  shortName unreachable once all folders are migrated.
-- **Agent-assisted migration.** The divergence warning instructs the user to
+  divergence check is **enforced** (routes to `malformed`, so the active set
+  structurally holds at most one guide per shortName); the illegal-shortName
+  check is enforced the same way. The duplicate-shortName check is
+  migration-window-only, marked `// TODO(0.5.0): remove`, because save-time
+  `slug()` plus the folder-name-is-`slug(shortName)` invariant make two
+  folders with the same shortName unreachable once all folders are migrated.
+- **Agent-assisted migration.** The divergence error instructs the user to
   ask their agent to `mv` the folder, then `/reload`. Not auto-migration
   (option B/C rejected). The agent handles collision-on-rename naturally
   (existing target → `/api delete` the old folder); we outsource the

@@ -1,5 +1,5 @@
 /**
- * api.github.com synthetic axis guide — static-key auth, mocked transport.
+ * github synthetic axis guide — static-key auth, mocked transport.
  *
  * Covers the `static-key-auth` axis guide-driven: the guide parses with the
  * declared `secretRefs`/`optional` shape, and store-injected auth headers
@@ -42,14 +42,14 @@ let tmpBase: string;
 
 async function setupRecipe(): Promise<{ guide: ApiGuide }> {
 	const guidesDir = mkdtempSync(join(tmpBase, "guides-"));
-	const domainDir = join(guidesDir, "api.github.com");
+	const domainDir = join(guidesDir, "github");
 	mkdirSync(domainDir, { recursive: true });
 	const source = readFileSync(new URL("./guide.md", import.meta.url), "utf-8");
 	writeFileSync(join(domainDir, "guide.md"), source, "utf-8");
 	setUserGuidesDir(guidesDir);
 	invalidateCache();
 	const loaded = loadApiGuidesFromDir(guidesDir);
-	return { guide: loaded.guides["api.github.com"]! };
+	return { guide: loaded.guides["github"]! };
 }
 
 function findOp(guide: ApiGuide, name: string): Operation {
@@ -65,7 +65,7 @@ afterAll(() => {
 	rmSync(tmpBase, { recursive: true, force: true });
 });
 
-describe("api.github.com static-key auth (mocked transport)", () => {
+describe("github static-key auth (mocked transport)", () => {
 	it("parses as static-key with the declared ref shape", async () => {
 		const { guide } = await setupRecipe();
 		expect(guide.auth.kind).toBe("static-key");

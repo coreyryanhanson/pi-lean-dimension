@@ -1663,7 +1663,7 @@ describe("loadApiGuidesFromDir + formatApiGuideCatalog", () => {
 		const dir = mkdtempSync(join(tmpdir(), "host-guides-"));
 		try {
 			// Healthy guide in subdirectory
-			const boeDir = join(dir, "boe.es");
+			const boeDir = join(dir, "boe");
 			mkdirSync(boeDir, { recursive: true });
 			writeFileSync(join(boeDir, "guide.md"), BOE_RECIPE);
 
@@ -1685,7 +1685,7 @@ body
 			);
 
 			const loaded = loadApiGuidesFromDir(dir);
-			expect(Object.keys(loaded.guides)).toEqual(["boe.es"]);
+			expect(Object.keys(loaded.guides)).toEqual(["boe"]);
 			expect(loaded.malformed).toHaveLength(1);
 			expect(loaded.malformed[0]!.filename).toBe("broken");
 			expect(loaded.malformed[0]!.error.field).toBe("operations[0].via");
@@ -1727,16 +1727,19 @@ operations:
 ---
 org guide.
 `;
-			for (const d of ["archive.org", "web.archive.org"]) {
-				mkdirSync(join(dir, d), { recursive: true });
+			for (const [domain, folder, shortName] of [
+				["archive.org", "archive", "Archive"],
+				["web.archive.org", "wayback", "Wayback"],
+			] as const) {
+				mkdirSync(join(dir, folder), { recursive: true });
 				writeFileSync(
-					join(dir, d, "guide.md"),
-					orgRecipe(d, d === "archive.org" ? "Archive" : "Wayback", d),
+					join(dir, folder, "guide.md"),
+					orgRecipe(domain, shortName, domain),
 				);
 			}
 			// Orgless guide keeps the per-guide line (fallback).
-			mkdirSync(join(dir, "boe.es"), { recursive: true });
-			writeFileSync(join(dir, "boe.es", "guide.md"), BOE_RECIPE);
+			mkdirSync(join(dir, "boe"), { recursive: true });
+			writeFileSync(join(dir, "boe", "guide.md"), BOE_RECIPE);
 
 			const loaded = loadApiGuidesFromDir(dir);
 			const catalog = formatApiGuideCatalog(loaded);
@@ -1771,57 +1774,86 @@ org guide.
 			writeFileSync(join(dir, "no-guide", "helper.ts"), "export default p => p;");
 
 			// A valid subdir with guide.md — loaded
-			mkdirSync(join(dir, "good"), { recursive: true });
-			writeFileSync(join(dir, "good", "guide.md"), BOE_RECIPE);
+			mkdirSync(join(dir, "boe"), { recursive: true });
+			writeFileSync(join(dir, "boe", "guide.md"), BOE_RECIPE);
 
 			// Flat .md files at top level — ignored
 			writeFileSync(join(dir, "README.txt"), "not a guide");
 
 			const loaded = loadApiGuidesFromDir(dir);
-			expect(Object.keys(loaded.guides)).toEqual(["good"]);
+			expect(Object.keys(loaded.guides)).toEqual(["boe"]);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 
-	it("warns on folder/slug divergence but still loads the guide", () => {
+	it("routes a divergent folder (entry !== slug(shortName)) to malformed", () => {
 		const dir = mkdtempSync(join(tmpdir(), "host-guides-"));
-		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {
-			// BOE_RECIPE has shortName: BOE → slug "boe"; folder is "boe.es".
+			// BOE_RECIPE has shortName: BOE → slug "boe"; folder is "boe.es" —
+			// the pre-migration state. Under enforcement the guide does NOT load.
 			mkdirSync(join(dir, "boe.es"), { recursive: true });
 			writeFileSync(join(dir, "boe.es", "guide.md"), BOE_RECIPE);
 
 			const loaded = loadApiGuidesFromDir(dir);
-			expect(Object.keys(loaded.guides)).toEqual(["boe.es"]);
-			const msg = warn.mock.calls.map((c) => String(c[0])).join("\n");
-			expect(msg).toContain("boe.es");
-			expect(msg).toContain("expected folder 'boe'");
-			expect(msg).toContain("/reload");
+			expect(Object.keys(loaded.guides)).toEqual([]);
+			expect(loaded.malformed).toHaveLength(1);
+			expect(loaded.malformed[0]!.filename).toBe("boe.es");
+			expect(loaded.malformed[0]!.error.field).toBe("shortName");
+			expect(loaded.malformed[0]!.error.found).toBe("folder 'boe.es'");
+			expect(loaded.malformed[0]!.error.fix).toContain("mv");
+			expect(loaded.malformed[0]!.error.fix).toContain("boe");
+			expect(loaded.malformed[0]!.error.fix).toContain("/reload");
 		} finally {
-			warn.mockRestore();
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 
-	it("warns on duplicate shortName across folders; both guides load", () => {
+	it("warns on duplicate shortName across folders during the migration window", () => {
 		const dir = mkdtempSync(join(tmpdir(), "host-guides-"));
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {
-			// Two folders declaring the same shortName (migration-window
-			// collision). Both load, keyed by their distinct folders.
+			// Two divergent folders declaring the same shortName (migration-window
+			// collision). The duplicate warning names both; enforcement routes
+			// both to malformed (neither loads).
 			for (const f of ["alpha", "beta"]) {
 				mkdirSync(join(dir, f), { recursive: true });
 				writeFileSync(join(dir, f, "guide.md"), BOE_RECIPE);
 			}
 
 			const loaded = loadApiGuidesFromDir(dir);
-			expect(Object.keys(loaded.guides)).toEqual(["alpha", "beta"]);
+			expect(Object.keys(loaded.guides)).toEqual([]);
+			expect(loaded.malformed).toHaveLength(2);
 			const msg = warn.mock.calls.map((c) => String(c[0])).join("\n");
 			expect(msg).toContain("Duplicate shortName");
 			expect(msg).toContain("alpha");
 			expect(msg).toContain("beta");
 			expect(msg).toContain("/api delete");
+		} finally {
+			warn.mockRestore();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("a divergent + convergent pair sharing shortName warns and loads only the convergent one", () => {
+		const dir = mkdtempSync(join(tmpdir(), "host-guides-"));
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			// Old divergent folder (pre-migration) + new convergent folder
+			// (slug). The duplicate warning names both; only the convergent one
+			// loads — the guarantee holds.
+			mkdirSync(join(dir, "boe.es"), { recursive: true });
+			writeFileSync(join(dir, "boe.es", "guide.md"), BOE_RECIPE);
+			mkdirSync(join(dir, "boe"), { recursive: true });
+			writeFileSync(join(dir, "boe", "guide.md"), BOE_RECIPE);
+
+			const loaded = loadApiGuidesFromDir(dir);
+			expect(Object.keys(loaded.guides)).toEqual(["boe"]);
+			expect(loaded.malformed).toHaveLength(1);
+			const msg = warn.mock.calls.map((c) => String(c[0])).join("\n");
+			expect(msg).toContain("Duplicate shortName");
+			expect(msg).toContain("boe.es");
+			expect(msg).toContain("boe");
 		} finally {
 			warn.mockRestore();
 			rmSync(dir, { recursive: true, force: true });
@@ -1851,28 +1883,23 @@ org guide.
 		}
 	});
 
-	it("divergence warning clears after an agent-assisted rename to slug(shortName)", () => {
+	it("a divergent guide loads after an agent-assisted rename to slug(shortName)", () => {
 		const dir = mkdtempSync(join(tmpdir(), "host-guides-"));
-		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		try {
 			// BOE_RECIPE has shortName: BOE → slug "boe"; folder is "boe.es" —
-			// the pre-migration state warns on divergence.
+			// the pre-migration state routes to malformed.
 			mkdirSync(join(dir, "boe.es"), { recursive: true });
 			writeFileSync(join(dir, "boe.es", "guide.md"), BOE_RECIPE);
 			let loaded = loadApiGuidesFromDir(dir);
-			expect(Object.keys(loaded.guides)).toEqual(["boe.es"]);
-			let msg = warn.mock.calls.map((c) => String(c[0])).join("\n");
-			expect(msg).toContain("expected folder 'boe'");
+			expect(Object.keys(loaded.guides)).toEqual([]);
+			expect(loaded.malformed).toHaveLength(1);
 
 			// The migration instruction (mv boe.es boe, then /reload).
-			warn.mockClear();
 			renameSync(join(dir, "boe.es"), join(dir, "boe"));
 			loaded = loadApiGuidesFromDir(dir);
 			expect(Object.keys(loaded.guides)).toEqual(["boe"]);
-			msg = warn.mock.calls.map((c) => String(c[0])).join("\n");
-			expect(msg).not.toContain("diverges");
+			expect(loaded.malformed).toEqual([]);
 		} finally {
-			warn.mockRestore();
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});

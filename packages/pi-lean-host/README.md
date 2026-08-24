@@ -522,7 +522,8 @@ per-guide (top-level `responseShape`) and overridable per-op (`parse:`):
 ## Multi-Recipe Domains
 
 A domain may claim **multiple guides** — each in its own directory (e.g.
-`archive.org` + `archive.org-wayback`). `buildDomainMap` is multi-valued
+`internet-archive` + `wayback-availability`, both claiming the `archive.org`
+domain). `buildDomainMap` is multi-valued
 (`Record<string, string[]>`):
 
 - `api-guide({domain})` shows a **disambiguation menu** and accepts a `guide`

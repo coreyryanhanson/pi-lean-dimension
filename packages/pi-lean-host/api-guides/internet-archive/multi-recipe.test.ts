@@ -1,7 +1,7 @@
 /**
  * archive.org synthetic axis guides — multi-recipe domains, mocked
  * transport. Covers the `multi-recipe-domains` axis guide-driven: two
- * axis guides (`archive.org`, `archive.org-wayback`) claim the
+ * axis guides (`internet-archive`, `wayback-availability`) claim the
  * `archive.org` domain, and `api-fetch`-style dispatch resolves an op by
  * name across all matches — exactly one hit executes (routed via that
  * guide's dirName, the helper-routing key); zero hits reports cleanly.
@@ -36,7 +36,8 @@ import {
 	invalidateCache,
 } from "../../core/guide-store.js";
 
-const DOMAINS = ["archive.org", "archive.org-wayback"] as const;
+// Folder keys (slug(shortName)) for the two guides claiming archive.org.
+const DOMAINS = ["internet-archive", "wayback-availability"] as const;
 
 let tmpBase: string;
 
@@ -83,20 +84,22 @@ describe("archive.org multi-recipe dispatch (mocked transport)", () => {
 		const matches = findGuidesByDomain("archive.org");
 		expect(matches.length).toBe(2);
 		const dirs = matches.map((m) => m.dirName).sort();
-		expect(dirs).toEqual(["archive.org", "archive.org-wayback"]);
+		expect(dirs).toEqual(["internet-archive", "wayback-availability"]);
 	});
 
 	it("an op unique to archive.org dispatches via that guide", async () => {
 		await setupRecipe();
 		const hits = resolveOp("archive.org", "listSnapshots");
-		expect(hits).toEqual([{ dirName: "archive.org", name: "listSnapshots" }]);
+		expect(hits).toEqual([
+			{ dirName: "internet-archive", name: "listSnapshots" },
+		]);
 	});
 
 	it("an op unique to archive.org-wayback dispatches via that guide", async () => {
 		await setupRecipe();
 		const hits = resolveOp("archive.org", "getClosestSnapshot");
 		expect(hits).toEqual([
-			{ dirName: "archive.org-wayback", name: "getClosestSnapshot" },
+			{ dirName: "wayback-availability", name: "getClosestSnapshot" },
 		]);
 	});
 

@@ -138,7 +138,7 @@ function setupGuide(
 	helper: { filename: string; content: string } | null,
 ): void {
 	const guidesDir = mkdtempSync(join(tmpDir, "guides-"));
-	const domainDir = join(guidesDir, "fixture.test");
+	const domainDir = join(guidesDir, "fixture");
 	mkdirSync(domainDir, { recursive: true });
 	writeFileSync(join(domainDir, "guide.md"), recipe, "utf-8");
 	if (helper) {
@@ -254,9 +254,7 @@ describe("api-fetch paginate transform rendering", () => {
 		);
 
 		// The ⠂ section header names the count.
-		expect(text).toContain(
-			"⠂ 1 item(s) failed transform (raw, untransformed):",
-		);
+		expect(text).toContain("⠂ 1 item(s) failed transform (raw, untransformed):");
 		// The raw failed item appears in the section.
 		expect(text).toContain('"id": 3');
 		// Transformed items carry the shaped flag.

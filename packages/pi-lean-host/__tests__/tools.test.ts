@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startTestServer } from "../../pi-lean-portal/__tests__/helpers/test-server.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { ApiGuide } from "../core/api-guide-types.js";
 
 // ── Tools ────────────────────────────────────────────────────────
 import { apiGuideTool } from "../tools/api-guide.js";
@@ -32,7 +33,10 @@ import {
 } from "../tools/api-fetch.js";
 import { apiLearnTool, setStagingRoot } from "../tools/api-learn.js";
 import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
-import { parseApiGuide } from "../core/parse-api-guide.js";
+import {
+	parseApiGuide,
+	selectGuideByShortName,
+} from "../core/parse-api-guide.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Test server for API endpoints
@@ -460,39 +464,6 @@ operations:
     accept: json
 ---
 Shared Action guide.
-`;
-}
-
-/** One-op guide on collide.example — parametrized for shortName/op-name collision tests. */
-function collideRecipe(
-	apiHost: string,
-	shortName: string,
-	opName: string,
-): string {
-	return `---
-kind: api
-domains: [collide.example]
-icon: 🔼
-shortName: ${shortName}
-updated: 2026-07-17
-apiHost: ${apiHost}
-verified: 2026-07-17
-gatherAllMax: 500
-
-auth:
-  kind: none
-
-responseShape:
-  format: json
-  charset: utf-8
-
-operations:
-  - name: ${opName}
-    via: restGet
-    path: /diario/{date}
-    accept: json
----
-Collide guide.
 `;
 }
 
@@ -1539,29 +1510,24 @@ describe("api-guide — multi-guide disambiguation", () => {
 		});
 	});
 
-	it("errors when two same-domain guides share a shortName (ambiguous selector)", async () => {
+	it("errors when two same-domain guides share a shortName (ambiguous selector)", () => {
 		// Two same-shortName guides can no longer be created via api-learn (the
-		// second save is a same-shortName update). Construct the ambiguous state
-		// directly on disk (e.g. hand-edited folders) — the loader loads both,
-		// keyed by folder, and the selector must report the ambiguity.
-		for (const f of ["collide-a", "collide-b"]) {
-			mkdirSync(join(tmpGuidesDir, f), { recursive: true });
-			writeFileSync(
-				join(tmpGuidesDir, f, "guide.md"),
-				collideRecipe(ctx.serverUrl, "Collide", f === "collide-a" ? "opA" : "opB"),
-			);
-		}
-		invalidateCache();
-
-		const result = await callGuideSelect("collide.example", "Collide");
-		const text = contentText(result);
-		expect(text).toContain("Ambiguous guide 'Collide'");
-		expect(text).toContain("2 guides share shortName 'Collide'");
-		expect(text).toContain("directories: collide-a, collide-b");
-		expect(result.details).toMatchObject({
-			error: "ambiguous_shortname",
-			directories: ["collide-a", "collide-b"],
-		});
+		// second save is a same-shortName update), and the loader can no longer
+		// produce the state — same shortName → same slug → same folder, so a
+		// second folder is divergent → malformed. The shared selector's
+		// ambiguous branch is now defensive; unit-test it directly with
+		// hand-built matches.
+		const sel = selectGuideByShortName(
+			[
+				{ guide: { shortName: "Collide" } as ApiGuide, dirName: "collide-a" },
+				{ guide: { shortName: "Collide" } as ApiGuide, dirName: "collide-b" },
+			],
+			"Collide",
+		);
+		expect(sel.ok).toBe(false);
+		if (sel.ok) throw new Error("unreachable");
+		expect(sel.reason).toBe("ambiguous");
+		expect(sel.directories).toEqual(["collide-a", "collide-b"]);
 	});
 });
 

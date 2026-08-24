@@ -121,13 +121,17 @@ const OP_GROUP: OpDef = {
 };
 
 /** A valid recipe for the verify.test domain. */
-function recipe(opBlocks: string, authBlock?: string): string {
+function recipe(
+	opBlocks: string,
+	authBlock?: string,
+	shortName = "Verify",
+): string {
 	const auth = authBlock ?? "auth:\n  kind: none";
 	return `---
 kind: api
 domains: [verify.test]
 icon: ✅
-shortName: Verify
+shortName: ${shortName}
 updated: 2026-07-17
 apiHost: https://verify.test
 verified: 2026-07-17
@@ -195,7 +199,7 @@ function setupGuide(
 	recipeText: string,
 	opts?: { verifyJson?: string; helper?: { content: string } },
 ): void {
-	setupGuideIn("verify.test", recipeText, opts);
+	setupGuideIn("verify", recipeText, opts);
 }
 
 /** Setup a guide in an explicit directory (multi-guide domains). */
@@ -217,7 +221,7 @@ function setupGuideIn(
 }
 
 function readGuide(): string {
-	return readGuideIn("verify.test");
+	return readGuideIn("verify");
 }
 
 function readGuideIn(dirName: string): string {
@@ -259,8 +263,8 @@ describe("/api verify — threshold + stamp", () => {
 
 	it("picks a guide interactively (TUI) and verifies only that guide", async () => {
 		// Two guides claim verify.test; the picker resolves to the second.
-		setupGuideIn("verify-a", recipe(opBlock(OP_HEALTH)));
-		setupGuideIn("verify-b", recipe(opBlock(OP_LIST)));
+		setupGuideIn("verify-a", recipe(opBlock(OP_HEALTH), undefined, "Verify A"));
+		setupGuideIn("verify-b", recipe(opBlock(OP_LIST), undefined, "Verify B"));
 		const ctx = mockCtx({
 			mode: "tui",
 			ui: {
@@ -398,7 +402,7 @@ describe("/api verify — param precheck + verify.json", () => {
 		await handleVerifySubcommand("verify.test", ctx);
 
 		const text = notifyText(ctx);
-		expect(text).toContain("verify.json for 'verify.test' is malformed");
+		expect(text).toContain("verify.json for 'verify' is malformed");
 		expect(text).toContain("⚠ NOT stamped — all ops skipped");
 	});
 

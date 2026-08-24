@@ -82,7 +82,7 @@ function setupGuides(
 	gatherAllMax?: number,
 ): { op: Operation; guide: ApiGuide } {
 	const guidesDir = mkdtempSync(join(tmpDir, "guides-"));
-	const domainDir = join(guidesDir, "fixture.test");
+	const domainDir = join(guidesDir, "fixture");
 	mkdirSync(domainDir, { recursive: true });
 	let recipe = makeRecipe(transform);
 	if (gatherAllMax !== undefined) {
@@ -96,7 +96,7 @@ function setupGuides(
 	setUserGuidesDir(guidesDir);
 	invalidateCache();
 	const loaded = loadApiGuidesFromDir(guidesDir);
-	const guide = loaded.guides["fixture.test"]!;
+	const guide = loaded.guides["fixture"]!;
 	const op = guide.operations.find((o) => o.name === "list")!;
 	return { op, guide };
 }
