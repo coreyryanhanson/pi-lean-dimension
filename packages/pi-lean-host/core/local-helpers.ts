@@ -2,7 +2,7 @@
  * Local user helpers — `import()`-loaded transform modules.
  *
  * User-authored TypeScript helpers live alongside their guide in a per-domain
- * subdirectory: `~/.pi/agent/pi-lean-host/api-guides/<domain>/helper.ts`.
+ * subdirectory: `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/helper.ts`.
  * They are loaded on demand via dynamic `import()` when an API guide's
  * operation sets `helper: true`. A load failure (syntax error, missing
  * dep, top-level throw) or execution throw disables the helper for the
