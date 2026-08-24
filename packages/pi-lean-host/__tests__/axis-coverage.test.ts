@@ -39,13 +39,13 @@ const GUIDES_DIR = join(__dirname, "..", "api-guides");
 // ── The finalized axis set ─────────────────────────────────────────
 
 const AXIS_DIRS = [
-	"boe.es",
-	"earthquake.usgs.gov",
-	"api.github.com",
-	"archive.org",
-	"archive.org-wayback",
-	"services.dnb.de",
-	"en.wikipedia.org-action",
+	"boe",
+	"usgs",
+	"github",
+	"internet-archive",
+	"wayback-availability",
+	"dnb",
+	"wikimedia-action",
 ];
 
 const GUIDES: Record<string, ApiGuide> =
@@ -172,48 +172,46 @@ describe("axis-coverage — every guide-driven axis is covered by ≥1 guide", (
 // Per-guide spot checks — each single-coverage axis maps 1:1 to a guide
 // whose primary purpose is that axis (regression-isolation rule).
 describe("axis-coverage — single-coverage guide ownership", () => {
-	it("local-helper is owned by boe.es (helper: true op, not elsewhere required)", () => {
-		expect(opOf(GUIDES["boe.es"]).some((o) => o.helper === true)).toBe(true);
-		expect(existsSync(join(GUIDES_DIR, "boe.es", "helper.ts"))).toBe(true);
+	it("local-helper is owned by boe (helper: true op, not elsewhere required)", () => {
+		expect(opOf(GUIDES["boe"]).some((o) => o.helper === true)).toBe(true);
+		expect(existsSync(join(GUIDES_DIR, "boe", "helper.ts"))).toBe(true);
 	});
 
-	it("static-key-auth is owned by api.github.com", () => {
-		expect(GUIDES["api.github.com"]?.auth.kind).toBe("static-key");
+	it("static-key-auth is owned by github", () => {
+		expect(GUIDES["github"]?.auth.kind).toBe("static-key");
 	});
 
-	it("ssrf-guard is owned by archive.org's nextLink op", () => {
+	it("ssrf-guard is owned by internet-archive's nextLink op", () => {
 		expect(
-			opOf(GUIDES["archive.org"]).some(
+			opOf(GUIDES["internet-archive"]).some(
 				(o) => o.via === "paginate" && o.pagination?.style === "nextLink",
 			),
 		).toBe(true);
 	});
 
-	it("resumptionToken is owned by services.dnb.de", () => {
+	it("resumptionToken is owned by dnb", () => {
 		expect(
-			opOf(GUIDES["services.dnb.de"]).some(
-				(o) => o.pagination?.style === "resumptionToken",
-			),
+			opOf(GUIDES["dnb"]).some((o) => o.pagination?.style === "resumptionToken"),
 		).toBe(true);
 	});
 
-	it("tokenBag is owned by en.wikipedia.org-action", () => {
+	it("tokenBag is owned by wikimedia-action", () => {
 		expect(
-			opOf(GUIDES["en.wikipedia.org-action"]).some(
+			opOf(GUIDES["wikimedia-action"]).some(
 				(o) => o.pagination?.style === "tokenBag",
 			),
 		).toBe(true);
 	});
 
-	it("requires-any-of is owned by en.wikipedia.org-action's queryPages op", () => {
-		const op = opOf(GUIDES["en.wikipedia.org-action"]).find(
+	it("requires-any-of is owned by wikimedia-action's queryPages op", () => {
+		const op = opOf(GUIDES["wikimedia-action"]).find(
 			(o) => o.name === "queryPages",
 		);
 		expect(op?.requiresAnyOf).toEqual(["titles", "pageids", "revids"]);
 	});
 
 	it("multi-recipe-domains is owned by the archive.org pair", () => {
-		const pair = ["archive.org", "archive.org-wayback"];
+		const pair = ["internet-archive", "wayback-availability"];
 		const domains = pair
 			.map((d) => GUIDES[d])
 			.filter((g): g is ApiGuide => g !== undefined);

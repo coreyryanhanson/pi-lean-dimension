@@ -49,7 +49,7 @@ mocked transport. nextLink/cursor behavior itself is proved in
 `ssrf-guard` axis and the `archive.org` multi-recipe pair stay in the kept
 union.
 
-Claims `domains: [archive.org]`, sharing it with the `archive.org-wayback`
+Claims `domains: [archive.org]`, sharing it with the `wayback-availability`
 axis guide — together they exercise `multi-recipe-domains` dispatch (see the
 co-located test).
 

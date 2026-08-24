@@ -20,7 +20,17 @@
 > SearXNG search, install
 > [`pi-lean-search`](https://www.npmjs.com/package/pi-lean-search).
 
-> ⚠️ **Early release (0.3.1).** The API tools here work today, but this is a
+> ⚠️ **Breaking change in 0.4.0 — guide folders are now keyed by `shortName`.**
+> Each guide must live in a folder named `slug(shortName)` — its `shortName`
+> lowercased, with non-alphanumeric runs replaced by `-` (e.g. `shortName:
+> BOE` → folder `boe`). Guides still sitting in a `<domain>/` folder from 0.3.x
+> are flagged **malformed** and won't load until you rename the folder to
+> `slug(shortName)` and `/reload` — the startup warnings give the exact `mv`
+> command. Hand the warnings to the agent; it will fix them for you.
+
+<!-- TODO(0.5.0): remove this temporary breaking-change note once the 0.4.0 migration is settled. -->
+
+> ⚠️ **Early release (0.4.0).** The API tools here work today, but this is a
 > development preview. The recipe schema, tool surfaces, and guide format are
 > still settling as we test more APIs to finalize the shape — **future
 > compatibility is not guaranteed** until the package reaches lockstep with
@@ -69,12 +79,14 @@ From a fresh install you have no guides yet, so the workflow is:
    endpoint; it drafts a YAML operation block to paste into a recipe.
 3. **`api-learn({domain, recipeFile})`** — validate the staged draft and write
    the guide to
-   `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`.
+   `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/guide.md`.
 4. **`api-fetch({domain, operation})`** — execute and verify.
 
 Or skip the authoring and **copy a bundled reference recipe** (see
 [Bundled Reference Recipes](#bundled-reference-recipes)) into
-`~/.pi/agent/pi-lean-host/api-guides/<domain>/` — it loads immediately.
+`~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/` — it loads
+immediately. The folder name must match `slug(shortName)` (see the
+0.4.0 breaking-change note above).
 
 > **Host-only is a first-class install.** `pi-lean-host` declares
 > `pi-lean-portal` as an *optional* peer dependency and has zero static
@@ -127,7 +139,7 @@ demand. A skill is pure text with no in-process eval, whereas a loaded
 | Tier | Where it lives | Who writes it | Ships in tarball? | Trust |
 |------|----------------|---------------|-------------------|-------|
 | Built-in helpers | package source (`core/`) | maintainers | yes | reviewed |
-| Local user helpers | `~/.pi/agent/pi-lean-host/api-guides/<domain>/helper.ts` | you, or the agent in `/api learn` | no | user-owned |
+| Local user helpers | `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/helper.ts` | you, or the agent in `/api learn` | no | user-owned |
 | Bundled recipes | `caritas` repo (`api-guides/<domain>/`) | maintainers | no (reference) | **inert — never auto-executed** |
 
 Built-in helpers cover the common 90%. Local user helpers cover the weird 10%
@@ -248,21 +260,23 @@ api-learn domain="arxiv.org" recipeFile="/tmp/pi-lean-host/arxiv.org/guide.md"  
   the other fields are `<placeholder>` values that **fail closed**, so a
   pasted template cannot save until you fill it in.
 - `{domain}` (no `recipeFile`) → fetch the current raw recipe of an existing
-  guide into the staged file (surfaces `dirName` to prevent sibling-clobber
-  in multi-recipe domains); a disambiguation menu if several guides claim the
+  guide into the staged file (surfacing the guide's `dirName` so you know
+  which folder it lives in); a disambiguation menu if several guides claim the
   domain.
 - Every staged pull (template or fetched recipe) is prepended with the
   authoring manual — the field reference + defaults + semantics the author
   needs at the moment of authoring.
 - `{domain, recipeFile}` → reads the staged draft, validates it **before**
   touching disk, then writes to
-  `~/.pi/agent/pi-lean-host/api-guides/<domain>/guide.md`. A fail-closed
+  `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/guide.md` — the
+  folder is derived from the guide's own `shortName`, not the `domain` arg,
+  so a re-save naturally lands back in the same folder. A fail-closed
   guard refuses to overwrite an existing `guide.md` whose `shortName`
-  differs from the incoming guide (prevents clobbering a sibling in a
-  multi-recipe domain); a same-`shortName` save is a legitimate update.
-  On a structural error it names the field, the expected shape, and what
-  was found — the file on disk is left untouched (no half-written guide).
-  Requires `/api learn`.
+  differs from the incoming guide — a slug collision (two shortNames that
+  slug to the same folder, e.g. `cmc_full` / `cmc-full`); a same-`shortName`
+  save is a legitimate update. On a structural error it names the field, the
+  expected shape, and what was found — the file on disk is left untouched (no
+  half-written guide). Requires `/api learn`.
 
 The working copy is staged at `/tmp/pi-lean-host/<domain>/guide.md` (`/tmp`
 self-cleans, so drafts don't accumulate) — fetch/template calls write the
@@ -438,7 +452,7 @@ For sites that need a computed signature, a strange date transform, or a
 custom auth flow a declarative recipe can't express — one local user helper
 per guide:
 
-- **Location:** `~/.pi/agent/pi-lean-host/api-guides/<domain>/helper.ts`
+- **Location:** `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/helper.ts`
   (alongside the guide's `guide.md`).
 - **Authoring gate:** `/api learn` (the explicit opt-in, mirroring `/web
   learn`). **Execution gate:** `/api on` only — a persisted helper runs on
@@ -522,7 +536,8 @@ per-guide (top-level `responseShape`) and overridable per-op (`parse:`):
 ## Multi-Recipe Domains
 
 A domain may claim **multiple guides** — each in its own directory (e.g.
-`archive.org` + `archive.org-wayback`). `buildDomainMap` is multi-valued
+`internet-archive` + `wayback-availability`, both claiming the `archive.org`
+domain). `buildDomainMap` is multi-valued
 (`Record<string, string[]>`):
 
 - `api-guide({domain})` shows a **disambiguation menu** and accepts a `guide`
@@ -547,7 +562,9 @@ The comprehensive recipe library lives in the
 verified recipes spanning the no-auth **and keyed** axes, each with a
 per-recipe `verified:`-date provenance and the perpetual drift disclaimer.
 They are inert reference material: nothing executes until you copy a recipe
-into your own `~/.pi/agent/pi-lean-host/api-guides/<domain>/` directory.
+into your own `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/`
+directory — the folder name must match `slug(shortName)` or it routes to
+**malformed** (see the 0.4.0 breaking-change note above).
 
 The domains caritas covers (a discoverability index, may drift from the live
 repo):

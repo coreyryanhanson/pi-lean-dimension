@@ -29,9 +29,9 @@ function withFixtureGuide(fn: () => void): void {
 	const tmpDir = mkdtempSync(join(tmpdir(), "host-projection-test-"));
 	const guidesDir = join(tmpDir, "api-guides");
 	mkdirSync(guidesDir, { recursive: true });
-	mkdirSync(join(guidesDir, "boe.test"), { recursive: true });
+	mkdirSync(join(guidesDir, "boe-test"), { recursive: true });
 	writeFileSync(
-		join(guidesDir, "boe.test", "guide.md"),
+		join(guidesDir, "boe-test", "guide.md"),
 		[
 			"---",
 			"shortName: BOE Test",

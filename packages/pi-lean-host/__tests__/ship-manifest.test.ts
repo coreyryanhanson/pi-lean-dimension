@@ -52,10 +52,8 @@ describe("publish manifest", () => {
 		// repo tree, not in the published `files` array. The synthetic axis
 		// guides carry helper.ts where their axis needs one (transform /
 		// local-helper).
-		expect(
-			existsSync(
-				resolve(PACKAGE_ROOT, "api-guides/earthquake.usgs.gov/helper.ts"),
-			),
-		).toBe(true);
+		expect(existsSync(resolve(PACKAGE_ROOT, "api-guides/usgs/helper.ts"))).toBe(
+			true,
+		);
 	});
 });

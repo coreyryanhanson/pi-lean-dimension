@@ -154,9 +154,9 @@ describe("/api secrets <domain> — assisted entry", () => {
 	it("guide-aware: single declared secret name prompts its value directly", async () => {
 		const guidesDir = mkdtempSync(join(tmpdir(), "secrets-cmd-guides-"));
 		try {
-			mkdirSync(join(guidesDir, "d.example"), { recursive: true });
+			mkdirSync(join(guidesDir, "d-example"), { recursive: true });
 			writeFileSync(
-				join(guidesDir, "d.example", "guide.md"),
+				join(guidesDir, "d-example", "guide.md"),
 				`---
 domains: [d.example]
 apiHost: https://d.example
@@ -199,9 +199,9 @@ body
 	it("guide-declared headerPrefixes → prompt hints the raw token", async () => {
 		const guidesDir = mkdtempSync(join(tmpdir(), "secrets-cmd-prefix-guides-"));
 		try {
-			mkdirSync(join(guidesDir, "d.example"), { recursive: true });
+			mkdirSync(join(guidesDir, "d-example"), { recursive: true });
 			writeFileSync(
-				join(guidesDir, "d.example", "guide.md"),
+				join(guidesDir, "d-example", "guide.md"),
 				`---
 domains: [d.example]
 apiHost: https://d.example

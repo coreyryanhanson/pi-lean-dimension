@@ -11,7 +11,7 @@
   auth, pagination, and response shape; a fixed executor runs the
   declared operation so an API encoded once is reusable forever, not
   re-derived each session. Guides live at
-  `~/.pi/agent/pi-lean-host/api-guides/<domain>/` and only files you
+  `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/` and only files you
   place there execute — bundled recipes are inert reference material.
   Ships 4 tools (`api-guide`, `api-fetch`, `api-learn`, `api-probe`)
   and the `/api` command. The package declares `pi-lean-portal` as an

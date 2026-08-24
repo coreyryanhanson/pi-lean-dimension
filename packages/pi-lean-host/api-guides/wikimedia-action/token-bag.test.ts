@@ -1,5 +1,5 @@
 /**
- * en.wikipedia.org-action synthetic axis guide — tokenBag + transform
+ * wikimedia-action synthetic axis guide — tokenBag + transform
  * (paginate), mocked transport. Covers the `tokenBag` pagination style
  * guide-driven (merge continuation keys into the next request) and
  * `transform: true × via: paginate` (`failedItems` routing on throw). No
@@ -56,7 +56,7 @@ let tmpBase: string;
 
 async function setupRecipe(): Promise<{ guide: ApiGuide }> {
 	const guidesDir = mkdtempSync(join(tmpBase, "guides-"));
-	const domainDir = join(guidesDir, "en.wikipedia.org-action");
+	const domainDir = join(guidesDir, "wikimedia-action");
 	mkdirSync(domainDir, { recursive: true });
 	for (const file of ["guide.md", "helper.ts"] as const) {
 		const source = readFileSync(new URL(`./${file}`, import.meta.url), "utf-8");
@@ -65,7 +65,7 @@ async function setupRecipe(): Promise<{ guide: ApiGuide }> {
 	setUserGuidesDir(guidesDir);
 	invalidateCache();
 	const loaded = loadApiGuidesFromDir(guidesDir);
-	return { guide: loaded.guides["en.wikipedia.org-action"]! };
+	return { guide: loaded.guides["wikimedia-action"]! };
 }
 
 beforeAll(() => {
@@ -75,7 +75,7 @@ afterAll(() => {
 	rmSync(tmpBase, { recursive: true, force: true });
 });
 
-describe("en.wikipedia.org-action tokenBag + transform (mocked transport)", () => {
+describe("wikimedia-action tokenBag + transform (mocked transport)", () => {
 	it("walks pages via the merged token bag and applies the per-item transform", async () => {
 		const { fetchUrl } = await import("../../core/transport.js");
 		const mock = vi.mocked(fetchUrl);
@@ -97,7 +97,7 @@ describe("en.wikipedia.org-action tokenBag + transform (mocked transport)", () =
 		const op = guide.operations.find((o) => o.name === "listRecentChanges")!;
 		expect(op.pagination?.style).toBe("tokenBag");
 
-		const transformFn = await loadTransform("en.wikipedia.org-action");
+		const transformFn = await loadTransform("wikimedia-action");
 		expect(typeof transformFn).toBe("function");
 
 		const result = await paginate(
@@ -107,7 +107,7 @@ describe("en.wikipedia.org-action tokenBag + transform (mocked transport)", () =
 			guide,
 			{ gatherAll: true },
 			transformFn ?? undefined,
-			"en.wikipedia.org-action",
+			"wikimedia-action",
 		);
 
 		// Two pages: 2 + 1 recentchanges, each projected by the transform.
@@ -135,13 +135,13 @@ describe("en.wikipedia.org-action tokenBag + transform (mocked transport)", () =
 		expect(
 			transform(
 				{ pageid: 9, title: "X", timestamp: "t", user: "u", type: "edit" },
-				{ operation: "listRecentChanges", domain: "en.wikipedia.org-action" },
+				{ operation: "listRecentChanges", domain: "wikimedia-action" },
 			),
 		).toEqual({ pageid: 9, title: "X", timestamp: "t", user: "u", type: "edit" });
 		expect(
 			transform("plain", {
 				operation: "listRecentChanges",
-				domain: "en.wikipedia.org-action",
+				domain: "wikimedia-action",
 			}),
 		).toBe("plain");
 	});
@@ -168,7 +168,7 @@ describe("en.wikipedia.org-action tokenBag + transform (mocked transport)", () =
 			guide,
 			{},
 			throwing,
-			"en.wikipedia.org-action",
+			"wikimedia-action",
 		);
 
 		expect(result.items.length).toBe(0);

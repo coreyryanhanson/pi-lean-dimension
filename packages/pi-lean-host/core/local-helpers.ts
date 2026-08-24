@@ -2,7 +2,7 @@
  * Local user helpers — `import()`-loaded transform modules.
  *
  * User-authored TypeScript helpers live alongside their guide in a per-domain
- * subdirectory: `~/.pi/agent/pi-lean-host/api-guides/<domain>/helper.ts`.
+ * subdirectory: `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/helper.ts`.
  * They are loaded on demand via dynamic `import()` when an API guide's
  * operation sets `helper: true`. A load failure (syntax error, missing
  * dep, top-level throw) or execution throw disables the helper for the
@@ -28,7 +28,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { getUserGuidesDir } from "./guide-store.js";
+import { getUserGuidesDir, loadAllGuides } from "./guide-store.js";
 import { assertSafeDomain } from "./path-template.js";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -93,10 +93,17 @@ export type CallHelperResult =
 
 /**
  * List all persisted helper domains (domain subdirs with a helper.ts).
+ *
+ * Only helpers whose folder holds a LOADED (non-malformed) guide are surfaced
+ * — a malformed guide's helper is dead (it can never be routed to at fetch
+ * time), so listing it is misleading. A helper in a folder with no guide at
+ * all is equally dead and hidden. The enumeration intersects the raw
+ * filesystem scan with the loader's active-guide set.
  */
 export function getAllHelpers(): string[] {
 	const guidesDir = getUserGuidesDir();
 	if (!existsSync(guidesDir)) return [];
+	const loadedDirs = new Set(Object.keys(loadAllGuides().guides));
 	const result: string[] = [];
 	for (const entry of readdirSync(guidesDir)) {
 		const entryPath = join(guidesDir, entry);
@@ -105,6 +112,7 @@ export function getAllHelpers(): string[] {
 		} catch {
 			continue;
 		}
+		if (!loadedDirs.has(entry)) continue;
 		// Check for helper.ts (or .mjs / .js fallback for tests)
 		for (const ext of [".ts", ".mjs", ".js"] as const) {
 			if (existsSync(join(entryPath, `helper${ext}`))) {

@@ -86,7 +86,7 @@ function setupGuides(
 	transform: boolean | undefined = true,
 ): { op: Operation; guide: ApiGuide } {
 	const guidesDir = mkdtempSync(join(tmpDir, "guides-"));
-	const domainDir = join(guidesDir, "fixture.test");
+	const domainDir = join(guidesDir, "fixture");
 	mkdirSync(domainDir, { recursive: true });
 	writeFileSync(join(domainDir, "guide.md"), makeRecipe(transform), "utf-8");
 	if (helper) {
@@ -96,7 +96,7 @@ function setupGuides(
 	setUserGuidesDir(guidesDir);
 	invalidateCache();
 	const loaded = loadApiGuidesFromDir(guidesDir);
-	const guide = loaded.guides["fixture.test"]!;
+	const guide = loaded.guides["fixture"]!;
 	const op = guide.operations.find((o) => o.name === "get")!;
 	return { op, guide };
 }
@@ -112,7 +112,7 @@ afterAll(() => {
 describe("loadTransform", () => {
 	it("returns the named `transform` export when helper.mjs has one", async () => {
 		setupGuides({ filename: "helper.mjs", content: FIXTURE_TRANSFORM_OK });
-		const fn = await loadTransform("fixture.test");
+		const fn = await loadTransform("fixture");
 		expect(typeof fn).toBe("function");
 		expect(
 			fn!({ rows: [] }, { operation: "get", domain: "fixture.test" }),
@@ -121,12 +121,12 @@ describe("loadTransform", () => {
 
 	it("returns null when helper file is missing", async () => {
 		setupGuides(null);
-		expect(await loadTransform("fixture.test")).toBeNull();
+		expect(await loadTransform("fixture")).toBeNull();
 	});
 
 	it("returns null when the helper has no named transform export", async () => {
 		setupGuides({ filename: "helper.mjs", content: FIXTURE_NO_NAMED });
-		expect(await loadTransform("fixture.test")).toBeNull();
+		expect(await loadTransform("fixture")).toBeNull();
 	});
 });
 
@@ -144,7 +144,7 @@ describe("restGet post-response transform hookpoint", () => {
 			cached: false,
 		});
 
-		const transformFn = await loadTransform("fixture.test");
+		const transformFn = await loadTransform("fixture");
 		const result = await restGet(
 			"https://fixture.test",
 			op,
@@ -152,7 +152,7 @@ describe("restGet post-response transform hookpoint", () => {
 			guide,
 			undefined,
 			transformFn ?? undefined,
-			"fixture.test",
+			"fixture",
 		);
 
 		expect(result.data).toEqual({
@@ -177,7 +177,7 @@ describe("restGet post-response transform hookpoint", () => {
 			cached: false,
 		});
 
-		const transformFn = await loadTransform("fixture.test");
+		const transformFn = await loadTransform("fixture");
 		const spy = vi.fn((d: unknown) =>
 			transformFn!(d, { operation: "get", domain: "fixture.test" }),
 		);
@@ -189,7 +189,7 @@ describe("restGet post-response transform hookpoint", () => {
 			guide,
 			undefined,
 			spy,
-			"fixture.test",
+			"fixture",
 		);
 		const second = await restGet(
 			"https://fixture.test",
@@ -198,7 +198,7 @@ describe("restGet post-response transform hookpoint", () => {
 			guide,
 			undefined,
 			spy,
-			"fixture.test",
+			"fixture",
 		);
 
 		// Raw body preserved on both calls; the transform was attempted twice.
@@ -242,7 +242,7 @@ describe("restGet post-response transform hookpoint", () => {
 			guide,
 			undefined,
 			() => undefined,
-			"fixture.test",
+			"fixture",
 		);
 		const nul = await restGet(
 			"https://fixture.test",
@@ -251,7 +251,7 @@ describe("restGet post-response transform hookpoint", () => {
 			guide,
 			undefined,
 			() => null,
-			"fixture.test",
+			"fixture",
 		);
 
 		expect(undef.data).toBeUndefined();

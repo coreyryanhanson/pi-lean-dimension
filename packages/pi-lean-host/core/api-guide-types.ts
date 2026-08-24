@@ -300,5 +300,19 @@ export interface LoadedApiGuides {
 	malformed: MalformedGuide[];
 }
 
+/**
+ * Warning channel for load-time diagnostics — `ctx.ui.notify` when the
+ * caller has a UI context, else `console.warn`. The loader defaults to
+ * `console.warn` so pure call sites (and tests) stay unchanged; the
+ * `session_start` handler passes `ctx.ui.notify` so the migration banner
+ * and per-guide warnings render through the Text component (wraps long
+ * lines, honors newlines) instead of raw stderr (truncates + merges with
+ * the status bar).
+ */
+export type NotifyFn = (
+	message: string,
+	type?: "info" | "warning" | "error",
+) => void;
+
 // `Guide` (the projection-slice base type) is imported above and extended by
 // `ApiGuide`; consumers import it directly from ./guide-loader.js when needed.

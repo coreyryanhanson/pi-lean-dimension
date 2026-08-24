@@ -35,7 +35,7 @@ Synthetic coverage fixture for the `transform-builtin` axis via a
 pair. There is **no live endpoint** — exercised only against mocked
 transport.
 
-Claims `domains: [archive.org]`, sharing it with the `archive.org` axis
+Claims `domains: [archive.org]`, sharing it with the `internet-archive` axis
 guide. The co-located `helper.ts` exports a named `transform` that reshapes
 the text/plain body; a throwing transform keeps the raw body with a
 warning (no disable).

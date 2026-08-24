@@ -123,8 +123,19 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
     load failure or execution throw disables the helper for the rest of the
     session. See `api-helper-escape-valve.md` for the built-in vs local-helper
     classification.
+- **Guide folder identity (`slug(shortName)` — 0.4.0 breaking change)**: a
+  guide lives at `api-guides/<dirName>/guide.md` where **`dirName` must equal
+  `slug(shortName)`**, never the routing `domain`. A divergent folder name — or
+  an illegal/unslugable `shortName` (empty or all-symbol) — routes the guide to
+  **malformed** and it never loads (enforced in the loader, `parse-api-guide.ts`).
+  `api-learn`'s save derives the write target from the guide's own `shortName`
+  (self-correcting), but an agent hand-writing a guide must not name the folder
+  after the domain or it silently vanishes. `assertSafeDomain` (`path-template.ts`)
+  rejects domains that could escape the guides dir via path traversal. A `slug()`
+  throw is caught and routed to malformed, never escaped.
 - **Multi-recipe domains**: a domain may claim multiple guides (each in its own
-  directory, e.g. `archive.org` + `archive.org-wayback`). `buildDomainMap` is
+  directory, e.g. `internet-archive` + `wayback-availability`, both claiming
+  `archive.org`). `buildDomainMap` is
   multi-valued (`Record<string, string[]>`); `api-fetch` resolves the operation
   by name across all matching guides (helper routed by **directory name**, not
   the routing `domain`); `api-guide` shows a disambiguation menu and accepts a
@@ -223,9 +234,11 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   dispatches all 8 subcommands), `portal-projection.ts`,
   `verify-ship-manifest.ts` (vendored host-only copy of the portal utility).
 - `tools/` — `api-guide.ts`, `api-fetch.ts`, `api-learn.ts` (staged-file
-  authoring: fetch-recipe/template paths write the working copy to
-  `/tmp/pi-lean-host/<domain>/guide.md`; save reads a `recipeFile` path —
-  `{domain, new: true}` → fresh placeholder template), `api-probe.ts`,
+  authoring: `{domain, new: true}` → fresh template; fetch-recipe writes the
+  working copy to `/tmp/pi-lean-host/<domain-or-slug>/guide.md`; save reads a
+  `recipeFile` path and writes to `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/guide.md`
+  — the `domain` arg is cosmetic on save, the target is self-keyed by the
+  guide's `shortName`), `api-probe.ts`,
   `utils.ts`, `index.ts`.
 - `__tests__/` — framework structural tests (no network): `smoke`,
   `parse-api-guide`, `all-guides-parse` (every bundled `guide.md` parses

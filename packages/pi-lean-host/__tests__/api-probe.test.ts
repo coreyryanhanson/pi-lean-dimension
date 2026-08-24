@@ -1077,9 +1077,9 @@ describe("api-probe headerPrefixes without secretRefs", () => {
 // List mode — learn-gated secrets discovery (the bootstrap-gap closure)
 // ═══════════════════════════════════════════════════════════════════
 
-const ETHERSCAN_RECIPE = `---
-domains: [etherscan.io]
-apiHost: https://api.etherscan.io/v2/api
+const EXAMPLE_RECIPE = `---
+domains: [example.com]
+apiHost: https://api.example.com/v2/api
 auth:
   kind: static-key
   secretQueryRefs:
@@ -1107,11 +1107,11 @@ beforeAll(() => {
 	setUserGuidesDir(listTmpGuides);
 	// Learn mode on for the discovery tests (reset per test where needed).
 	_setToggleStateForTest(true, true);
-	// Provision the key + register a guide that declares it (routing domain etherscan.io).
-	writeSecret("etherscan.io", "api_key", "REALKEY");
-	const dir = join(listTmpGuides, "etherscan.io");
+	// Provision the key + register a guide that declares it (routing domain example.com).
+	writeSecret("example.com", "api_key", "REALKEY");
+	const dir = join(listTmpGuides, "example-com");
 	mkdirSync(dir, { recursive: true });
-	writeFileSync(join(dir, "guide.md"), ETHERSCAN_RECIPE);
+	writeFileSync(join(dir, "guide.md"), EXAMPLE_RECIPE);
 	// A hostname-routable secret for the domain-default test (host == domain).
 	writeSecret("api.github.com", "gh_token", "GHKEY");
 	invalidateCache();
@@ -1153,9 +1153,9 @@ describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
 	});
 	it("in learn mode returns provisioned + declared names, no fetch fields", async () => {
 		const res = await runList({
-			apiHost: "https://api.etherscan.io/v2/api",
+			apiHost: "https://api.example.com/v2/api",
 			path: "/",
-			domain: "etherscan.io", // routing domain — hostname (api.etherscan.io) differs
+			domain: "example.com", // routing domain — hostname (api.example.com) differs
 			listSecrets: true,
 		});
 		const d = res.details as Record<string, unknown>;
@@ -1164,7 +1164,7 @@ describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
 			provisioned: string[];
 			declared?: string[];
 		};
-		expect(secrets.domain).toBe("etherscan.io");
+		expect(secrets.domain).toBe("example.com");
 		expect(secrets.provisioned).toEqual(["api_key"]);
 		expect(secrets.declared).toContain("api_key");
 		// Fetch fields are empty in list mode.
@@ -1216,9 +1216,9 @@ describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
 
 	it("names only — never emits a secret value", async () => {
 		const res = await runList({
-			apiHost: "https://api.etherscan.io/v2/api",
+			apiHost: "https://api.example.com/v2/api",
 			path: "/",
-			domain: "etherscan.io",
+			domain: "example.com",
 			listSecrets: true,
 		});
 		expect(contentText(res)).not.toContain("REALKEY");
@@ -1243,9 +1243,9 @@ describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
 		_setToggleStateForTest(true, false); // /api on — learn off
 		try {
 			const res = await runList({
-				apiHost: "https://api.etherscan.io/v2/api",
+				apiHost: "https://api.example.com/v2/api",
 				path: "/",
-				domain: "etherscan.io",
+				domain: "example.com",
 				listSecrets: true,
 			});
 			const d = res.details as Record<string, unknown>;
@@ -1262,7 +1262,7 @@ describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
 		const d = res.details as Record<string, unknown>;
 		const unscoped = d.unscoped as string[];
 		expect(unscoped).toContain("api.github.com"); // provisioned, no guide
-		expect(unscoped).not.toContain("etherscan.io"); // scoped to a guide
+		expect(unscoped).not.toContain("example.com"); // scoped to a guide
 		expect(d.secrets).toBeUndefined(); // no per-domain view
 		const text = contentText(res);
 		expect(text).toContain("unscoped store domains");
@@ -1312,16 +1312,16 @@ describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
 
 	it("domain present: per-domain view unchanged, no unscoped section", async () => {
 		const res = await runList({
-			apiHost: "https://api.etherscan.io/v2/api",
+			apiHost: "https://api.example.com/v2/api",
 			path: "/",
-			domain: "etherscan.io",
+			domain: "example.com",
 			listSecrets: true,
 		});
 		const d = res.details as Record<string, unknown>;
 		expect(d.unscoped).toBeUndefined();
 		expect(contentText(res)).not.toContain("unscoped store domains");
 		const secrets = d.secrets as { domain: string };
-		expect(secrets.domain).toBe("etherscan.io");
+		expect(secrets.domain).toBe("example.com");
 		// domain present also suppresses the probe
 		expect(contentText(res)).toContain(
 			"probe suppressed because listSecrets: true",

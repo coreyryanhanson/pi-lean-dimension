@@ -33,6 +33,7 @@ import {
 	setSecretsDir,
 } from "../core/secrets-store.js";
 import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
+import { slug } from "../core/path-template.js";
 import { apiFetchTool, apiGuideTool } from "../tools/index.js";
 import { contentText } from "../tools/utils.js";
 import type { ApiGuide, Operation } from "../core/api-guide-types.js";
@@ -221,14 +222,16 @@ afterAll(async () => {
 });
 
 function writeGuide(yaml: string): void {
-	const dir = join(tmpGuidesDir, "auth.test");
+	// Folder must equal slug(shortName); these recipes carry no shortName, so
+	// shortName defaults to the filename = folder name.
+	const dir = join(tmpGuidesDir, "auth-test");
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(join(dir, "guide.md"), yaml);
 	invalidateCache();
 }
 
 function writeGuideForDomain(domain: string, yaml: string): void {
-	const dir = join(tmpGuidesDir, domain);
+	const dir = join(tmpGuidesDir, slug(domain));
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(join(dir, "guide.md"), yaml);
 	invalidateCache();

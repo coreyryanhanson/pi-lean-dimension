@@ -70,14 +70,14 @@ afterEach(() => {
 });
 
 function setupGuide(raw: string): void {
-	const dir = join(tmpGuidesDir, "verify.test");
+	const dir = join(tmpGuidesDir, "verify");
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(join(dir, "guide.md"), raw, "utf-8");
 	invalidateCache();
 }
 
 function readGuide(): string {
-	return readFileSync(join(tmpGuidesDir, "verify.test", "guide.md"), "utf-8");
+	return readFileSync(join(tmpGuidesDir, "verify", "guide.md"), "utf-8");
 }
 
 function mockCtx(): any {

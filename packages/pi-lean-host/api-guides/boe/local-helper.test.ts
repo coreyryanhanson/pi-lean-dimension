@@ -1,5 +1,5 @@
 /**
- * boe.es synthetic axis guide — local-helper + XML, mocked transport.
+ * boe synthetic axis guide — local-helper + XML, mocked transport.
  *
  * Covers the `local-helper` axis guide-driven: the op declares
  * `helper: true`, so `callHelper` runs the real `helper.ts` pre-call
@@ -38,7 +38,7 @@ let tmpBase: string;
 
 async function setupRecipe(): Promise<{ guide: ApiGuide }> {
 	const guidesDir = mkdtempSync(join(tmpBase, "guides-"));
-	const domainDir = join(guidesDir, "boe.es");
+	const domainDir = join(guidesDir, "boe");
 	mkdirSync(domainDir, { recursive: true });
 	for (const file of ["guide.md", "helper.ts"] as const) {
 		const source = readFileSync(new URL(`./${file}`, import.meta.url), "utf-8");
@@ -47,7 +47,7 @@ async function setupRecipe(): Promise<{ guide: ApiGuide }> {
 	setUserGuidesDir(guidesDir);
 	invalidateCache();
 	const loaded = loadApiGuidesFromDir(guidesDir);
-	return { guide: loaded.guides["boe.es"]! };
+	return { guide: loaded.guides["boe"]! };
 }
 
 beforeAll(() => {
@@ -57,13 +57,13 @@ afterAll(() => {
 	rmSync(tmpBase, { recursive: true, force: true });
 });
 
-describe("boe.es local-helper through the real pipeline (mocked transport)", () => {
+describe("boe local-helper through the real pipeline (mocked transport)", () => {
 	it("callHelper converts an ISO fecha to aaaammdd before the request", async () => {
 		const { guide } = await setupRecipe();
 		const op = guide.operations.find((o) => o.name === "searchDiary")!;
 		expect(op.helper).toBe(true);
 
-		const helped = await callHelper("boe.es", "searchDiary", {
+		const helped = await callHelper("boe", "searchDiary", {
 			fecha: "2025-01-15",
 		});
 		expect(helped.ok).toBe(true);
@@ -73,7 +73,7 @@ describe("boe.es local-helper through the real pipeline (mocked transport)", () 
 	});
 
 	it("callHelper passes through an already-aaaammdd fecha unchanged", async () => {
-		const helped = await callHelper("boe.es", "searchDiary", {
+		const helped = await callHelper("boe", "searchDiary", {
 			fecha: "20250115",
 		});
 		expect(helped.ok).toBe(true);
@@ -94,7 +94,7 @@ describe("boe.es local-helper through the real pipeline (mocked transport)", () 
 		const { guide } = await setupRecipe();
 		const op = guide.operations.find((o) => o.name === "searchDiary")!;
 
-		const helped = await callHelper("boe.es", "searchDiary", {
+		const helped = await callHelper("boe", "searchDiary", {
 			fecha: "2025-01-15",
 		});
 		expect(helped.ok).toBe(true);

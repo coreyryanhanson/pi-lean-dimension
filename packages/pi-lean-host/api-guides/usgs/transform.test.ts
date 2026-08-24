@@ -1,5 +1,5 @@
 /**
- * earthquake.usgs.gov synthetic axis guide — transform-builtin, mocked
+ * usgs synthetic axis guide — transform-builtin, mocked
  * transport. Covers the `transform: true × via: restGet` and
  * `transform: true × via: paginate` combos + `failedItems` routing, plus
  * `xml`/`exec-restGet`/`exec-paginate`/`transport`. No live endpoint.
@@ -78,7 +78,7 @@ let tmpBase: string;
 
 async function setupRecipe(): Promise<{ guide: ApiGuide }> {
 	const guidesDir = mkdtempSync(join(tmpBase, "guides-"));
-	const domainDir = join(guidesDir, "earthquake.usgs.gov");
+	const domainDir = join(guidesDir, "usgs");
 	mkdirSync(domainDir, { recursive: true });
 	for (const file of ["guide.md", "helper.ts"] as const) {
 		const source = readFileSync(new URL(`./${file}`, import.meta.url), "utf-8");
@@ -87,7 +87,7 @@ async function setupRecipe(): Promise<{ guide: ApiGuide }> {
 	setUserGuidesDir(guidesDir);
 	invalidateCache();
 	const loaded = loadApiGuidesFromDir(guidesDir);
-	return { guide: loaded.guides["earthquake.usgs.gov"]! };
+	return { guide: loaded.guides["usgs"]! };
 }
 
 function findOp(guide: ApiGuide, name: string): Operation {
@@ -103,11 +103,11 @@ afterAll(() => {
 	rmSync(tmpBase, { recursive: true, force: true });
 });
 
-describe("earthquake.usgs.gov transform (real helper.ts)", () => {
+describe("usgs transform (real helper.ts)", () => {
 	it("reshape+projects a whole FeatureCollection (restGet feed shape)", () => {
 		const result = transform(FC, {
 			operation: "getAllHour",
-			domain: "earthquake.usgs.gov",
+			domain: "usgs",
 		}) as { features: Record<string, unknown>[] };
 		const first = result.features[0]!;
 		expect(first["lon"]).toBe(-122.4);
@@ -120,7 +120,7 @@ describe("earthquake.usgs.gov transform (real helper.ts)", () => {
 	it("reshape+projects a single Feature (paginate per-item shape)", () => {
 		const result = transform(FEATURE_A, {
 			operation: "queryEvents",
-			domain: "earthquake.usgs.gov",
+			domain: "usgs",
 		}) as Record<string, unknown>;
 		expect(result["lon"]).toBe(-122.4);
 		expect(result["geometry"]).toBeUndefined();
@@ -130,7 +130,7 @@ describe("earthquake.usgs.gov transform (real helper.ts)", () => {
 		expect(
 			transform("plain text", {
 				operation: "getAllHour",
-				domain: "earthquake.usgs.gov",
+				domain: "usgs",
 			}),
 		).toBe("plain text");
 	});
@@ -148,7 +148,7 @@ describe("restGet transform through the real pipeline (mocked transport)", () =>
 
 		const { guide } = await setupRecipe();
 		const op = findOp(guide, "getAllHour");
-		const transformFn = await loadTransform("earthquake.usgs.gov");
+		const transformFn = await loadTransform("usgs");
 		expect(typeof transformFn).toBe("function");
 
 		const result = await restGet(
@@ -158,7 +158,7 @@ describe("restGet transform through the real pipeline (mocked transport)", () =>
 			guide,
 			undefined,
 			transformFn ?? undefined,
-			"earthquake.usgs.gov",
+			"usgs",
 		);
 		const data = result.data as { features: Record<string, unknown>[] };
 		expect(data.features[0]!.lon).toBe(-122.4);
@@ -187,7 +187,7 @@ describe("restGet transform through the real pipeline (mocked transport)", () =>
 			guide,
 			undefined,
 			throwing,
-			"earthquake.usgs.gov",
+			"usgs",
 		);
 		expect(result.data).toEqual(FC);
 		expect(result.transformWarning).toBe("boom");
@@ -206,7 +206,7 @@ describe("queryEvents per-item transform through the real pipeline (mocked trans
 
 		const { guide } = await setupRecipe();
 		const op = findOp(guide, "queryEvents");
-		const transformFn = await loadTransform("earthquake.usgs.gov");
+		const transformFn = await loadTransform("usgs");
 
 		const result = await paginate(
 			guide.apiHost,
@@ -215,7 +215,7 @@ describe("queryEvents per-item transform through the real pipeline (mocked trans
 			guide,
 			{},
 			transformFn ?? undefined,
-			"earthquake.usgs.gov",
+			"usgs",
 		);
 		expect(result.items.length).toBe(2);
 		const first = result.items[0] as Record<string, unknown>;
@@ -247,7 +247,7 @@ describe("queryEvents per-item transform through the real pipeline (mocked trans
 			guide,
 			{},
 			throwing,
-			"earthquake.usgs.gov",
+			"usgs",
 		);
 		expect(result.items.length).toBe(0);
 		expect(result.failedItems).toEqual([FEATURE_A, FEATURE_B]);

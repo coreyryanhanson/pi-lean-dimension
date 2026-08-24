@@ -1,5 +1,5 @@
 /**
- * services.dnb.de synthetic axis guide — resumptionToken + XML, mocked
+ * dnb synthetic axis guide — resumptionToken + XML, mocked
  * transport. Covers the `resumptionToken` pagination style guide-driven:
  * the opaque token from each page is echoed into the next request's
  * `resumptionToken` param, and a terminal token (no `#text`) stops
@@ -40,14 +40,14 @@ let tmpBase: string;
 
 async function setupRecipe(): Promise<{ guide: ApiGuide }> {
 	const guidesDir = mkdtempSync(join(tmpBase, "guides-"));
-	const domainDir = join(guidesDir, "services.dnb.de");
+	const domainDir = join(guidesDir, "dnb");
 	mkdirSync(domainDir, { recursive: true });
 	const source = readFileSync(new URL("./guide.md", import.meta.url), "utf-8");
 	writeFileSync(join(domainDir, "guide.md"), source, "utf-8");
 	setUserGuidesDir(guidesDir);
 	invalidateCache();
 	const loaded = loadApiGuidesFromDir(guidesDir);
-	return { guide: loaded.guides["services.dnb.de"]! };
+	return { guide: loaded.guides["dnb"]! };
 }
 
 beforeAll(() => {
@@ -57,7 +57,7 @@ afterAll(() => {
 	rmSync(tmpBase, { recursive: true, force: true });
 });
 
-describe("services.dnb.de resumptionToken pagination (mocked transport)", () => {
+describe("dnb resumptionToken pagination (mocked transport)", () => {
 	it("walks pages via the echoed token and stops at the terminal token", async () => {
 		const { fetchUrl } = await import("../../core/transport.js");
 		const mock = vi.mocked(fetchUrl);

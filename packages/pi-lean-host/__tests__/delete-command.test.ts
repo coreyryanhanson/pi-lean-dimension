@@ -28,6 +28,7 @@ import {
 	invalidateCache,
 	findGuidesByDomain,
 	loadAllGuides,
+	_resetLoadWarningsForTest,
 } from "../core/guide-store.js";
 import { handleDeleteSubcommand } from "../core/delete-command.js";
 
@@ -57,9 +58,13 @@ beforeEach(() => {
 	tmpGuidesDir = mkdtempSync(join(tmpdir(), "host-delete-"));
 	setUserGuidesDir(tmpGuidesDir);
 	invalidateCache();
+	// Malformed-guide tests load broken fixtures — silence the load-time
+	// console.warn so it doesn't leak into test output.
+	vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	rmSync(tmpGuidesDir, { recursive: true, force: true });
 });
 
@@ -83,39 +88,69 @@ function notifyText(ctx: any): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Load-time warning suppression (once per process)
+// ═══════════════════════════════════════════════════════════════════
+
+describe("load-time warning suppression (once per process)", () => {
+	it("emits warnings on the first cold scan, then suppresses on later scans", () => {
+		// Deterministic start regardless of prior tests in this file.
+		_resetLoadWarningsForTest();
+		// Divergent folder: shortName BOE slugs to "boe", folder is "boe.es" —
+		// the migration-window state that must warn exactly once at startup.
+		setupGuide("boe.es", recipe("boe.es", "BOE"));
+		const notify = vi.fn();
+
+		// First cold scan (pi startup): the banner + per-guide warning fire.
+		loadAllGuides(notify);
+		expect(notify).toHaveBeenCalled();
+		const msgs = notify.mock.calls.map((c) => String(c[0])).join("\n");
+		expect(msgs).toContain(
+			"pi-lean-host 0.4.0 changed the guide folder structure",
+		);
+		expect(msgs).toContain("Malformed guide");
+
+		// Later scans (navigating chats / running commands): suppressed.
+		notify.mockClear();
+		invalidateCache();
+		loadAllGuides(notify);
+		expect(notify).not.toHaveBeenCalled();
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // Whole-domain delete (confirm)
 // ═══════════════════════════════════════════════════════════════════
 
 describe("/api delete — whole-domain (confirm)", () => {
 	it("confirms, removes the directory, and invalidates the cache", async () => {
-		setupGuide("delete.test", recipe("delete.test", "Delete"));
+		setupGuide("delete", recipe("delete.test", "Delete"));
 		const ctx = mockCtx();
 		await handleDeleteSubcommand("delete.test", ctx);
 
 		expect(ctx.ui.confirm).toHaveBeenCalled();
-		expect(existsSync(join(tmpGuidesDir, "delete.test"))).toBe(false);
-		expect(notifyText(ctx)).toContain("Deleted API guide 'delete.test'");
+		expect(existsSync(join(tmpGuidesDir, "delete"))).toBe(false);
+		expect(notifyText(ctx)).toContain("Deleted API guide 'delete'");
 		// Cache invalidated — the next lookup sees nothing (ghost-guide fix).
 		expect(findGuidesByDomain("delete.test")).toEqual([]);
-		expect(loadAllGuides().guides["delete.test"]).toBeUndefined();
+		expect(loadAllGuides().guides["delete"]).toBeUndefined();
 	});
 
 	it("removes nothing when the confirm is cancelled", async () => {
-		setupGuide("delete.test", recipe("delete.test", "Delete"));
+		setupGuide("delete", recipe("delete.test", "Delete"));
 		const ctx = mockCtx({ ui: { notify: vi.fn(), confirm: vi.fn(() => false) } });
 		await handleDeleteSubcommand("delete.test", ctx);
 
 		expect(notifyText(ctx)).toContain("Cancelled — nothing deleted.");
-		expect(existsSync(join(tmpGuidesDir, "delete.test"))).toBe(true);
+		expect(existsSync(join(tmpGuidesDir, "delete"))).toBe(true);
 	});
 
 	it("headless (no UI) skips the confirm and deletes", async () => {
-		setupGuide("delete.test", recipe("delete.test", "Delete"));
+		setupGuide("delete", recipe("delete.test", "Delete"));
 		const ctx = mockCtx({ hasUI: false });
 		await handleDeleteSubcommand("delete.test", ctx);
 
 		expect(ctx.ui.confirm).not.toHaveBeenCalled();
-		expect(existsSync(join(tmpGuidesDir, "delete.test"))).toBe(false);
+		expect(existsSync(join(tmpGuidesDir, "delete"))).toBe(false);
 	});
 });
 
@@ -126,30 +161,30 @@ describe("/api delete — whole-domain (confirm)", () => {
 describe("/api delete — single-guide (selector)", () => {
 	it("deletes one guide by shortName with no confirm, siblings intact", async () => {
 		// Two guides claim the same domain (multi-recipe), different dirs.
-		setupGuide("multi-a", recipe("multi.example", "Alpha"));
-		setupGuide("multi-b", recipe("multi.example", "Beta"));
+		setupGuide("alpha", recipe("multi.example", "Alpha"));
+		setupGuide("beta", recipe("multi.example", "Beta"));
 		const ctx = mockCtx();
 		await handleDeleteSubcommand("multi.example beta", ctx);
 
 		expect(ctx.ui.confirm).not.toHaveBeenCalled();
-		expect(existsSync(join(tmpGuidesDir, "multi-b"))).toBe(false);
-		expect(existsSync(join(tmpGuidesDir, "multi-a"))).toBe(true);
-		expect(notifyText(ctx)).toContain("Deleted API guide 'multi-b'");
+		expect(existsSync(join(tmpGuidesDir, "beta"))).toBe(false);
+		expect(existsSync(join(tmpGuidesDir, "alpha"))).toBe(true);
+		expect(notifyText(ctx)).toContain("Deleted API guide 'beta'");
 		// Sibling still resolvable after cache invalidation.
 		expect(findGuidesByDomain("multi.example").map((m) => m.dirName)).toEqual([
-			"multi-a",
+			"alpha",
 		]);
 	});
 
 	it("reports a no-match selector and removes nothing", async () => {
-		setupGuide("multi-a", recipe("multi.example", "Alpha"));
-		setupGuide("multi-b", recipe("multi.example", "Beta"));
+		setupGuide("alpha", recipe("multi.example", "Alpha"));
+		setupGuide("beta", recipe("multi.example", "Beta"));
 		const ctx = mockCtx();
 		await handleDeleteSubcommand("multi.example nope", ctx);
 
 		expect(notifyText(ctx)).toContain("No guide named 'nope'");
-		expect(existsSync(join(tmpGuidesDir, "multi-a"))).toBe(true);
-		expect(existsSync(join(tmpGuidesDir, "multi-b"))).toBe(true);
+		expect(existsSync(join(tmpGuidesDir, "alpha"))).toBe(true);
+		expect(existsSync(join(tmpGuidesDir, "beta"))).toBe(true);
 	});
 });
 
@@ -167,8 +202,8 @@ describe("/api delete — not-found / menu / malformed fallback", () => {
 	});
 
 	it("returns the disambiguation menu for an N-guide domain with no selector", async () => {
-		setupGuide("multi-a", recipe("multi.example", "Alpha"));
-		setupGuide("multi-b", recipe("multi.example", "Beta"));
+		setupGuide("alpha", recipe("multi.example", "Alpha"));
+		setupGuide("beta", recipe("multi.example", "Beta"));
 		const ctx = mockCtx();
 		await handleDeleteSubcommand("multi.example", ctx);
 
@@ -177,19 +212,19 @@ describe("/api delete — not-found / menu / malformed fallback", () => {
 		expect(text).toContain("Alpha");
 		expect(text).toContain("Beta");
 		expect(ctx.ui.confirm).not.toHaveBeenCalled();
-		expect(existsSync(join(tmpGuidesDir, "multi-a"))).toBe(true);
-		expect(existsSync(join(tmpGuidesDir, "multi-b"))).toBe(true);
+		expect(existsSync(join(tmpGuidesDir, "alpha"))).toBe(true);
+		expect(existsSync(join(tmpGuidesDir, "beta"))).toBe(true);
 	});
 
 	it("picks a guide interactively (TUI) and deletes it without confirm", async () => {
-		setupGuide("multi-a", recipe("multi.example", "Alpha"));
-		setupGuide("multi-b", recipe("multi.example", "Beta"));
+		setupGuide("alpha", recipe("multi.example", "Alpha"));
+		setupGuide("beta", recipe("multi.example", "Beta"));
 		const ctx = mockCtx({
 			mode: "tui",
 			ui: {
 				notify: vi.fn(),
 				confirm: vi.fn(),
-				custom: vi.fn(async () => "multi-b"),
+				custom: vi.fn(async () => "beta"),
 			},
 		});
 		await handleDeleteSubcommand("multi.example", ctx);
@@ -197,11 +232,11 @@ describe("/api delete — not-found / menu / malformed fallback", () => {
 		// Picked the specific guide — no confirm (explicit selection), only that
 		// directory removed, cache invalidated, sibling intact.
 		expect(ctx.ui.confirm).not.toHaveBeenCalled();
-		expect(existsSync(join(tmpGuidesDir, "multi-b"))).toBe(false);
-		expect(existsSync(join(tmpGuidesDir, "multi-a"))).toBe(true);
-		expect(notifyText(ctx)).toContain("Deleted API guide 'multi-b'");
+		expect(existsSync(join(tmpGuidesDir, "beta"))).toBe(false);
+		expect(existsSync(join(tmpGuidesDir, "alpha"))).toBe(true);
+		expect(notifyText(ctx)).toContain("Deleted API guide 'beta'");
 		expect(findGuidesByDomain("multi.example").map((m) => m.dirName)).toEqual([
-			"multi-a",
+			"alpha",
 		]);
 	});
 

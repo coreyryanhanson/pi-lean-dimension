@@ -287,7 +287,7 @@ describe("api-learn renderResult", () => {
 					domain: "boe.es",
 					operations: 3,
 					verified: "2026-07-17",
-					filePath: "/tmp/guides/boe.es/guide.md",
+					filePath: "/tmp/guides/boe/guide.md",
 				},
 			},
 			{ expanded: false },
@@ -308,7 +308,7 @@ describe("api-learn renderResult", () => {
 					domain: "boe.es",
 					operations: 3,
 					verified: "2026-07-17",
-					filePath: "/tmp/guides/boe.es/guide.md",
+					filePath: "/tmp/guides/boe/guide.md",
 				},
 			},
 			{ expanded: true },
@@ -341,12 +341,12 @@ describe("api-learn renderResult", () => {
 				details: {
 					mode: "fetch",
 					domain: "archive.org",
-					dirName: "archive.org-wayback",
+					dirName: "wayback-availability",
 				},
 			},
 			{ expanded: false },
 		);
-		expect(out.text).toContain("📖 archive.org-wayback");
+		expect(out.text).toContain("📖 wayback-availability");
 		expect(out.text).toContain("fetched recipe");
 	});
 
