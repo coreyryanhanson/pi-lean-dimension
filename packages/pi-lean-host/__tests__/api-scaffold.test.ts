@@ -1,8 +1,8 @@
 /**
  * api-scaffold structural tests (mocked-fs, no network).
  *
- * Covers the design-doc test cases that are testable in isolation (the
- * learn-gating case belongs to Sprint 5's api-toggle wiring):
+ * Covers the api-scaffold test cases that are testable in isolation (the
+ * learn-gating case lives in api-toggle.test.ts):
  *  - helper: true → commented-out stub written to /tmp/pi-lean-host/<dirName>/helper.ts
  *  - verify: true → sentinels for path {token}, required-no-default query,
  *    and every requiresAnyOf member — and all-runnable ops contribute none

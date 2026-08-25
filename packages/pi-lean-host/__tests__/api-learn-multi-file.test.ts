@@ -2,7 +2,7 @@
  * api-learn multi-file staging + mirror-save + helper-validation structural
  * tests (mocked-fs, no network).
  *
- * Covers the design-doc api-learn test cases:
+ * Covers the api-learn multi-file staging / mirror-save / helper-validation cases:
  *  - fetch-recipe stages all siblings (guide.md + helper + verify.json)
  *  - directory-path save ({domain, dir}) reads + mirrors present files
  *  - mirror-save present → overwrite

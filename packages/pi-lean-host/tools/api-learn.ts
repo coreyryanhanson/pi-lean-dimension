@@ -399,7 +399,7 @@ export const apiLearnTool = defineTool({
 			}),
 		),
 		// Undescribed by design — the only discovery path is the deletion-safety
-		// gate's refusal message (see the api-learn-split design doc).
+		// gate's refusal message.
 		confirmDeletions: Type.Optional(Type.Boolean()),
 	}),
 
