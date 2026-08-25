@@ -4,10 +4,10 @@
  * Provides /api on, /api off, /api learn, /api status, and /api helpers
  * commands to enable/disable API tools in the system prompt.
  *
- * Three states: on (api-guide + api-fetch), learn (on + api-learn + api-probe),
- * off (all three disabled).
+ * Three states: on (api-guide + api-fetch), learn (on + api-learn + api-probe +
+ * api-scaffold), off (all disabled).
  *
- * Starts enabled (api-guide + api-fetch on, api-learn + api-probe off), mirroring
+ * Starts enabled (api-guide + api-fetch on, api-learn + api-probe + api-scaffold off), mirroring
  * portal's browser toggle. Both defaults are overridable via the
  * `toolsetDefaults` settings tier read by pi-tool-masking. The /api toggle
  * is an independent peer: it composes freely with /web (portal's toggle)
@@ -54,7 +54,7 @@ const HOST_API_SPEC: ToolsetSpec = {
 
 const HOST_API_LEARN_SPEC: ToolsetSpec = {
 	id: "pi-lean-dimension.api-learn",
-	names: new Set(["api-learn", "api-probe"]),
+	names: new Set(["api-learn", "api-probe", "api-scaffold"]),
 	persistKey: "toolset-state:pi-lean-dimension.api-learn",
 	defaultEnabled: false,
 	requires: ["pi-lean-dimension.api"],
@@ -149,7 +149,7 @@ function handleStatusSubcommand(
 		state = "off";
 	}
 	const learnFlag = learnOn
-		? "✅ on (api-learn + api-probe available)"
+		? "✅ on (api-learn + api-probe + api-scaffold available)"
 		: "❌ off";
 
 	const allGuides = loadAllGuides();
@@ -187,7 +187,7 @@ function handleStatusSubcommand(
 	lines.push(
 		``,
 		`  /api on      enable api-guide + api-fetch`,
-		`  /api learn   enable all four tools (adds api-learn + api-probe)`,
+		`  /api learn   enable all five tools (adds api-learn + api-probe + api-scaffold)`,
 		`  /api off     disable all API tools`,
 		`  /api verify  verify a guide's ops against its live API (stamps verified)`,
 		`  /api delete  delete a guide directory (human-typed recovery gesture)`,
@@ -249,7 +249,7 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 					apiToolset.enable(pi);
 					learnToolset.disable(pi);
 					ctx.ui.notify(
-						"📡 API tools enabled. /api learn to make api-learn + api-probe available.",
+						"📡 API tools enabled. /api learn to make api-learn + api-probe + api-scaffold available.",
 						"info",
 					);
 					return;
@@ -264,7 +264,7 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 				case "learn": {
 					learnToolset.enable(pi); // cascades api on via requires
 					ctx.ui.notify(
-						"📖 api-learn + api-probe tools are now available. " +
+						"📖 api-learn + api-probe + api-scaffold tools are now available. " +
 							"Agent will discover shapes and save/update guides when asked.",
 						"info",
 					);
@@ -317,7 +317,7 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 						`📖 Learn mode: ${learnStatus}`,
 						``,
 						`   /api on           enable api-guide + api-fetch`,
-						`   /api learn        enable all four tools (adds api-learn + api-probe)`,
+						`   /api learn        enable all five tools (adds api-learn + api-probe + api-scaffold)`,
 						`   /api off          disable all API tools`,
 						`   /api status       detailed status (guides, helpers)`,
 						`   /api helpers      list local helpers`,

@@ -5,6 +5,7 @@ import {
 	apiFetchTool,
 	apiLearnTool,
 	apiProbeTool,
+	apiScaffoldTool,
 } from "./tools/index.js";
 import initApiToggle from "./core/api-toggle.js";
 import { registerPortalProjection } from "./core/portal-projection.js";
@@ -25,6 +26,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerTool(apiFetchTool);
 	pi.registerTool(apiLearnTool);
 	pi.registerTool(apiProbeTool);
+	pi.registerTool(apiScaffoldTool);
 
 	// ── Register /api command and session hooks ─────────────────
 	initApiToggle(pi);
