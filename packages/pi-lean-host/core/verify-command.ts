@@ -387,7 +387,7 @@ export function renderForSentinels(items: Unsatisfiable[]): string[] {
 }
 
 /** Load the co-located verify.json sidecar, best-effort. */
-function loadVerifyJson(
+export function loadVerifyJson(
 	dirName: string,
 ):
 	| { data: Record<string, Record<string, unknown>> }
