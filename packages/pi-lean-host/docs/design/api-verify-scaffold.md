@@ -286,7 +286,8 @@ it reads the guide to compute what to scaffold, but writes only to `/tmp`.
   The agent passes the staged `dir` path to `api-learn` save; the write
   target self-keys off the draft's `shortName`, so `dirName` is not a save
   argument.
-- At least one of `verify`/`helper` must be `true`.
+- At least one of `verify`/`helper` must be `true`; calling with neither
+  `true` is a validation error (names the constraint, no `/tmp` write).
 
 #### Refuse-to-overwrite
 
@@ -665,7 +666,11 @@ path for low-param agents. Clean break from the single-file `recipeFile`.
   `/tmp`.** The scaffold is a snapshot of the *saved* guide, not the staged
   edit. If the guide changes between scaffold and save, the `/tmp` file is
   stale. Re-running the scaffold refreshes it. Same snapshot property as
-  `api-learn` fetch-recipe → edit → save.
+  `api-learn` fetch-recipe → edit → save. **Correct workflow when the agent
+  is also editing the guide:** save the guide first (so the guides dir holds
+  the current state), then scaffold — the scaffold reads the just-saved
+  guide, so the staged sibling matches the guide the loader will see. The
+  `api-scaffold` result and authoring manual state this ordering explicitly.
 - **Save-time helper validation couples to the guide's declarations.**
   The check reads the parsed guide to know whether helper usage is
   declared and which exports to require (`helper: true` → default,
@@ -716,6 +721,10 @@ Follows the existing vitest + mocked-fs pattern (`verify-command.test.ts`,
    menu.
 9. **Learn-gating** — tool is in `HOST_API_LEARN_SPEC.names` and masked off
    in on-mode.
+10. **Neither `verify` nor `helper` true** — validation error, no `/tmp`
+    write, message names the "at least one" constraint.
+11. **Both `verify` and `helper` true** — both files written to the same
+    staged `/tmp` dir in one call; result surfaces both paths.
 
 **`api-learn` multi-file tests:**
 
@@ -745,6 +754,9 @@ Follows the existing vitest + mocked-fs pattern (`verify-command.test.ts`,
     export).
 10. **`verify.json` written as-is** — no JSON validation at save time;
     valid by construction from scaffold.
+11. **Non-existent `dir` path** — save refuses with a clear error
+    (replacing today's `recipe_file_unreadable` path for the `dir` case),
+    guides dir untouched.
 
 **P1 fix tests:**
 
@@ -793,7 +805,8 @@ Follows the existing vitest + mocked-fs pattern (`verify-command.test.ts`,
 | `index.ts` | `pi.registerTool(apiScaffoldTool)` |
 | `package.json` | Add `"tools/api-scaffold.ts"` to the `files` array (`ship-manifest.test.ts` tripwire) |
 | `__tests__/api-scaffold.test.ts` | **New file** — `api-scaffold` tests 1–9 + edge case 3 (malformed guides-dir `verify.json`) |
-| `__tests__/api-learn-multi-file.test.ts` | **New file** (or extend `api-learn-fetch-recipe.test.ts`) — `api-learn` tests 1–10 + edge cases 1, 2, 4 (no siblings; `new: true` over existing; path-traversal `domain`) |
+| `__tests__/api-learn-fetch-recipe.test.ts` | **Existing file, must be updated** — ~20 `recipeFile` references across setup helpers and test cases (lines 78–363) break when `recipeFile` is retired for `dir`; rewrite those call sites to the `dir` parameter and adjust assertions. Not optional — retiring `recipeFile` fails these tests as-is |
+| `__tests__/api-learn-multi-file.test.ts` | **New file** (or extend the updated `api-learn-fetch-recipe.test.ts`) — `api-learn` tests 1–11 + edge cases 1, 2, 4 (no siblings; `new: true` over existing; path-traversal `domain`) |
 | `__tests__/verify-command.test.ts` | Add P1 fix tests 1–2 (sentinel strip, no-leak) + `unsatisfiable` 3-function split tests 1–3 |
 
 ## Downstream
