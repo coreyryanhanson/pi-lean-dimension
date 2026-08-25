@@ -17,7 +17,7 @@
 | 2 | Verify-loop sentinel strip (P1 fix) | `core/verify-command.ts`, `__tests__/verify-command.test.ts` | Low — ~5-line pre-filter | Yes (with S1) |
 | 3 | `api-scaffold` tool | `tools/api-scaffold.ts` (new), `__tests__/api-scaffold.test.ts` (new) | Medium — new tool, two artifact paths | After S1 |
 | 4 | `api-learn` multi-file staging + mirror-save + helper validation | `tools/api-learn.ts`, `__tests__/api-learn-fetch-recipe.test.ts`, `__tests__/api-learn-multi-file.test.ts` (new) | High — retires `recipeFile`, breaks ~20 call sites | After S3 (scaffold writes the staged dir learn saves) |
-| 5 | Toggle + registry wiring | `core/api-toggle.ts`, `tools/index.ts`, `index.ts`, `package.json` | Low — mechanical | After S3 |
+| 5 | Toggle + registry wiring | `core/api-toggle.ts`, `tools/index.ts`, `index.ts`, `package.json` | Low — mechanical | After S4 (not S3 — see note) |
 | 6 | Authoring manual + docs sweep | `tools/api-scaffold.ts`, `tools/api-learn.ts`, READMEs | Low — prose | After S4 |
 
 > **Sprints 1 and 2 are order-independent** — neither's correctness depends
@@ -26,6 +26,22 @@
 > two-agent simultaneous edit will likely git-conflict on the same hunk; read
 > "parallelizable" as "order-independent, sequential application is clean," not
 > "conflict-free concurrent edit." Everything else is sequential.
+>
+> **S5 must land after S4, not after S3.** S5 registers `api-scaffold` with
+> `pi.registerTool`, and its result tells the agent to pass `dir` to
+> `api-learn` save — but `api-learn` still expects `recipeFile` until S4
+> lands. Registering the tool before S4 would ship a broken scaffold→save
+> handoff that S5's isolated smoke test (`api-scaffold({domain, verify: true})`
+> writes to `/tmp`) would not catch, because it doesn't exercise the save side.
+>
+> **S4 and S6 must ship in the same release.** S4 retires `recipeFile` from
+> the schema and all call sites; S6 sweeps the agent-visible `recipeFile`
+> nudge strings across 6 source files (`tools/api-guide.ts`, `tools/api-fetch.ts`,
+> `core/helpers-command.ts`, `core/parse-api-guide.ts`). If S4 ships without
+> S6, nudges tell the agent to pass a param `api-learn` no longer accepts —
+> actively misleading, not merely stale. The smallest fix is to fold the
+> 6-string sweep into S4's acceptance (see S4 work item 12), so the sweep
+> can't slip a release behind the schema change.
 
 ---
 
@@ -178,6 +194,15 @@ the executor call. No change to `buildQueryParams`, `helpers.ts`, or
      `verify.json` → clear error, guides dir untouched. An op with no
      unsatisfiable params contributes no entry (an all-runnable guide →
      empty `{}`).
+   - **`loadVerifyJson` export:** `loadVerifyJson` is currently module-
+     private in `core/verify-command.ts` (only `handleVerifySubcommand` is
+     exported). The scaffold needs to load an existing guides-dir
+     `verify.json` for the additive-merge. Export `loadVerifyJson` (add the
+     `export` keyword — the function body is unchanged). This is the one
+     exception to the cross-cutting "`loadVerifyJson` is not modified"
+     acceptance: the `export` keyword is added, the logic is not. Do **not**
+     inline a second read-and-parse in the scaffold — that duplicates the
+     loader.
    - **Both true:** write both files to the same staged dir in one call;
      surface both paths.
    - Authoring manual prepended to the result (the 3-line manual from the
@@ -298,6 +323,19 @@ files — `__tests__/api-learn-fetch-recipe.test.ts` (~5 active refs at lines
    fetch-recipe file) — the 11 design-doc `api-learn` test cases + edge
    cases (no siblings; `new: true` over existing distinct/same `shortName`;
    path-traversal `domain`).
+12. **Fold the agent-visible `recipeFile` string sweep into S4** (was S6
+   work item 4). S4 retires `recipeFile` from the schema; the 6 source-file
+   nudge strings must move to `dir` in the same sprint so no release ships
+   a registered `api-learn` that tells the agent to pass a param it no
+   longer accepts. Rewrite these sites (verify with grep — line numbers may
+   drift):
+
+- `tools/api-guide.ts:80` — `"Call api-learn({domain, recipeFile}) to author one."`
+- `tools/api-fetch.ts:65` — `"Call api-learn({domain, recipeFile}) to author a new guide."`
+- `tools/api-fetch.ts:522` — `"re-author one guide via api-learn({recipeFile: …})"`
+- `tools/api-fetch.ts:582` — `"api-learn({domain: "${domain}", recipeFile: …})"`
+- `core/helpers-command.ts:58` — `"Call api-learn({domain, recipeFile}) to author or update a guide"`
+- `core/parse-api-guide.ts:2040` — `"call api-learn({domain, recipeFile}) to author one"`
 
 ### Acceptance criteria
 
@@ -340,6 +378,10 @@ files — `__tests__/api-learn-fetch-recipe.test.ts` (~5 active refs at lines
 - [ ] `__tests__/tools.test.ts` and `__tests__/local-helpers.test.ts`
       `recipeFile` call sites rewritten to `dir` (no stale `recipeFile`
       argument reaches `apiLearnTool.execute`).
+- [ ] **Agent-visible `recipeFile` strings swept to `dir`** (folded from
+      S6): `grep -rn recipeFile packages/pi-lean-host/{tools,core}` returns
+      nothing after S4 — the 6 nudge strings are rewritten in the same
+      sprint as the schema retirement.
 - [ ] `npx vitest run __tests__/api-learn-fetch-recipe.test.ts` green;
       `npx vitest run __tests__/api-learn-multi-file.test.ts` green (if
       split out); `npx vitest run __tests__/tools.test.ts` green;
@@ -354,7 +396,12 @@ files — `__tests__/api-learn-fetch-recipe.test.ts` (~5 active refs at lines
 export it from the barrel, register it with pi, and add it to the ship
 manifest. Mechanical, low-risk, but blocking the tool from actually running.
 
-**Depends on.** Sprint 3 (the tool exists and is tested).
+**Depends on.** Sprint 4 (not Sprint 3 — see the sprint-map note). S5
+registers `api-scaffold` with `pi.registerTool`, and its result tells the
+agent to pass `dir` to `api-learn` save. Until S4 lands, `api-learn` still
+expects `recipeFile`, so registering the tool before S4 ships a broken
+scaffold→save handoff. S5's isolated smoke test would not catch this
+because it doesn't exercise the save side.
 
 ### Work
 
@@ -428,17 +475,10 @@ package/portal docs for the 4→5 tool count and the new workflow.
    guide↔helper validation, the deletion-safety gate, the `dir`/`confirmDeletions`
    params) and `packages/pi-lean-host/README.md` (tool count, workflow
    summary). Add a CHANGELOG entry.
-4. **Runtime `recipeFile` string sweep across source** — these are
-   agent-visible nudge/error messages, not docs; after Sprint 4 retires
-   `recipeFile` they actively mislead the agent. Grep every source file for
-   `recipeFile` and rewrite to `dir`. Known sites (verify with grep — list is
-   from review, line numbers may drift):
-   - `tools/api-guide.ts:80` — `"Call api-learn({domain, recipeFile}) to author one."`
-   - `tools/api-fetch.ts:65` — `"Call api-learn({domain, recipeFile}) to author a new guide."`
-   - `tools/api-fetch.ts:522` — `"re-author one guide via api-learn({recipeFile: …})"`
-   - `tools/api-fetch.ts:582` — `"api-learn({domain: "${domain}", recipeFile: …})"`
-   - `core/helpers-command.ts:58` — `"Call api-learn({domain, recipeFile}) to author or update a guide"`
-   - `core/parse-api-guide.ts:2040` — `"call api-learn({domain, recipeFile}) to author one"`
+4. **Runtime `recipeFile` string sweep across source** — moved to S4 work
+   item 12 (the sweep must land in the same sprint as the schema retirement).
+   S6's remaining `recipeFile`-related work is the doc/AGENTS.md sweep (work
+   item 3) and confirming the cross-cutting grep is clean post-S4.
 
 ### Acceptance criteria
 
@@ -449,16 +489,18 @@ package/portal docs for the 4→5 tool count and the new workflow.
       in `tools/api-learn.ts`).
 - [ ] `api-learn` manual documents the deletion-safety gate and that
       `confirmDeletions` is discovered via the refusal message (not the tool
-      description — consistent with the design doc's undescribed-param
-      contract).
+      description — the design doc's undescribed-param contract, which is
+      novel in this package: every existing `api-learn`/`api-probe` param
+      carries a `description:` today, so this is a new pattern, not a
+      precedent).
 - [ ] `packages/pi-lean-host/AGENTS.md` tool list shows 5 tools with
       `api-scaffold`; the `api-learn` entry describes multi-file staging,
       `dir`/`confirmDeletions`, mirror-save, the deletion gate, and
       guide↔helper validation.
 - [ ] `README.md` tool count and workflow summary updated.
-- [ ] **Zero `recipeFile` mentions in source** — `grep -rn recipeFile
-      packages/pi-lean-host/{tools,core}` returns nothing (all agent-visible
-      strings swept to `dir`).
+- [ ] **Confirm S4's source sweep held** — `grep -rn recipeFile
+      packages/pi-lean-host/{tools,core}` still returns nothing after S6's
+      doc edits (S4 owns the sweep per work item 12; S6 confirms no regressions).
 - [ ] CHANGELOG entry added under the lockstep version block.
 - [ ] `npm run test:ci` green (manual text is asserted by existing
       `api-learn`/`api-scaffold` tests — confirm no string-assertion
@@ -474,7 +516,8 @@ which sprint shipped them:
 - [ ] **No new runtime dependency** added to `package.json` (sentinel
       approach, not JSONC/YAML).
 - [ ] **`verify.json` format unchanged** — `loadVerifyJson` is not modified
-      (only the verify *loop* that consumes its output is).
+      except for adding the `export` keyword (S3); the verify *loop* that
+      consumes its output is the only other touch.
 - [ ] **`core/local-helpers.ts` has no new export** — the save-time helper
       validation is self-contained in `tools/api-learn.ts`.
 - [ ] **`core/helpers.ts` (`buildQueryParams`) unchanged** — sentinel
