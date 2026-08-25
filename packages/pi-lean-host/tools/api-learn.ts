@@ -373,7 +373,13 @@ export const apiLearnTool = defineTool({
 		"Author an API guide for a domain. " +
 		"Call with {domain, new: true} for a fresh domain-specific template. " +
 		"Call with {domain} and no dir to fetch an existing guide's current raw recipe (and its sibling files). " +
-		"Call with {domain, dir} to validate and save.",
+		"Call with {domain, dir} to validate and save.\n\n" +
+		"Authoring order (follow this to avoid the common mis-ordering):\n" +
+		"1. (optional) api-probe({apiHost, path, params}) — discover a not-yet-guided endpoint's shape and draft an op block from the docs/example.\n" +
+		"2. api-learn({domain, new: true}) — get a fresh template, fill the recipe, then api-learn({domain, dir}) to save it.\n" +
+		"3. ONLY after the guide is saved: api-scaffold({domain, verify: true | helper: true}) — scaffold reads the SAVED guide, so scaffold-before-save fails. Fill the staged verify.json / helper.ts, then api-learn({domain, dir}) to save the siblings.\n" +
+		"4. api-fetch(<op>) — verify the saved guide against the live API. Fix via api-learn({domain}) → edit staged → api-learn({domain, dir}).\n" +
+		"Staged drafts live in /tmp/pi-lean-host/<slug(shortName)>/; the save target is self-keyed by the guide's shortName, never the domain arg.",
 
 	parameters: Type.Object({
 		domain: Type.String({
