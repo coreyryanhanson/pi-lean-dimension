@@ -32,11 +32,13 @@ import {
 	existsSync,
 	mkdirSync,
 	readFileSync,
+	readdirSync,
+	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
 	parseApiGuide,
@@ -74,6 +76,12 @@ export function setStagingRoot(dir: string): void {
  * fetched recipes (which is the on-disk dirName). */
 function stagingDirFor(key: string): string {
 	return join(_stagingRoot, key);
+}
+
+/** True when `p` is a staged dir under the staging root (the root itself
+ * excluded — save must never try to rename the whole root). */
+function isUnderStagingRoot(p: string): boolean {
+	return p !== _stagingRoot && p.startsWith(`${_stagingRoot}${sep}`);
 }
 
 /** Write the working copy (template or fetched raw recipe) to the staged
@@ -571,6 +579,50 @@ export const apiLearnTool = defineTool({
 			};
 		}
 
+		// ── Staged-dir collision guard (drift guard, part 1) ──
+		// The template stages by `domain` (shortName is still a placeholder at
+		// that point), but every later stage (fetch-recipe, scaffold) keys by
+		// `slug(shortName)`. When the draft's staged dir basename doesn't match
+		// its slug, the save re-stages it to the canonical slug dir (part 2).
+		// Before that, refuse if the canonical dir already holds a guide.md
+		// with a DIFFERENT shortName — a divergent save would clobber another
+		// guide's staged recipe (e.g. a shortName copied from another guide).
+		// Same shortName = legitimate update of this guide's own draft; no
+		// guide.md = only scaffold siblings, safe to re-stage beside them.
+		const canonicalStaged = stagingDirFor(slugged);
+		const divergent = basename(dir) !== slugged && isUnderStagingRoot(dir);
+		if (divergent && existsSync(join(canonicalStaged, "guide.md"))) {
+			const existing = parseApiGuide(
+				readFileSync(join(canonicalStaged, "guide.md"), "utf-8"),
+				{ filename: slugged },
+			);
+			const existingShort = existing.ok ? existing.guide.shortName : undefined;
+			if (existingShort !== parsed.guide.shortName) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`⚠ Save refused — '${canonicalStaged}/guide.md' already holds ${existing.ok ? `a different guide ('${existing.guide.shortName}')` : "an unparseable guide"} — not the incoming '${parsed.guide.shortName}'.\n` +
+								`  Your draft is staged at '${dir}', but its shortName slugs to '${canonicalStaged}', which already holds staged files${existing.ok ? " for another guide" : ""}.\n` +
+								`  Resolve the collision, then save again:\n` +
+								`    - If this is a new guide, change \`shortName\` so it slugs to a distinct directory.\n` +
+								`    - If you're re-authoring this guide, delete the staged files in '${canonicalStaged}' (or move your draft there), then save.\n` +
+								`  Guides dir untouched.`,
+						},
+					],
+					details: {
+						error: "staged_dir_collision",
+						domain,
+						dir,
+						canonicalStaged,
+						existing: existingShort ?? null,
+						incoming: parsed.guide.shortName,
+					},
+				};
+			}
+		}
+
 		// Collision detection — another guide (different directory) already
 		// claims one of this guide's `domains:` keys. Valid (that's the whole
 		// point of multi-recipe), but warn so the author knows they're in
@@ -744,6 +796,49 @@ export const apiLearnTool = defineTool({
 			}
 		}
 
+		// ── Self-correct the staged root (drift guard, part 2) ──
+		// Move the draft to the canonical slug dir and read from there for the
+		// rest of save. Runs after all gates pass, so a refused save never
+		// mutates /tmp. When the canonical dir already exists it holds the
+		// same guide's draft (or only scaffold siblings) — the collision guard
+		// above refused a different guide — so merge per-file; otherwise do an
+		// atomic whole-dir rename.
+		let reStagedNote: string | undefined;
+		// `writeDir` is the staged dir the write reads from — reassigned to the
+		// canonical slug dir when the passed dir diverges (see above). `dir`
+		// stays const so its earlier narrowing survives the closure captures.
+		let writeDir = dir;
+		if (divergent) {
+			const oldName = basename(writeDir);
+			try {
+				if (existsSync(canonicalStaged)) {
+					for (const name of readdirSync(writeDir)) {
+						renameSync(join(writeDir, name), join(canonicalStaged, name));
+					}
+					rmSync(writeDir, { recursive: true, force: true });
+				} else {
+					renameSync(writeDir, canonicalStaged);
+				}
+			} catch (err) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`⚠ Could not re-stage the draft from '${writeDir}' to '${canonicalStaged}' — guide was NOT saved.\n` +
+								`  ${err instanceof Error ? err.message : String(err)}\n` +
+								`  Move the staged files manually (or re-fetch via api-learn({domain: "${domain}"})), then save again.`,
+						},
+					],
+					details: { error: "restage_failed", domain, dir, canonicalStaged },
+				};
+			}
+			writeDir = canonicalStaged;
+			reStagedNote =
+				`Re-staged /${oldName} → ${slugged}/ (slug of shortName) — ` +
+				`edit the staged files here from now on.`;
+		}
+
 		mkdirSync(domainDir, { recursive: true });
 
 		// ── Write guide + mirror siblings ───────────────────────
@@ -765,7 +860,7 @@ export const apiLearnTool = defineTool({
 		for (const name of stagedSiblingNames) {
 			writeFileSync(
 				join(domainDir, name),
-				readFileSync(join(dir, name), "utf-8"),
+				readFileSync(join(writeDir, name), "utf-8"),
 				"utf-8",
 			);
 			writtenSiblings.push(name);
@@ -801,6 +896,7 @@ export const apiLearnTool = defineTool({
 						(deletedSiblings.length > 0
 							? `  Deleted: ${deletedSiblings.join(", ")}\n`
 							: "") +
+						(reStagedNote ? `  ${reStagedNote}\n` : "") +
 						`\n` +
 						warningBlock +
 						`Call api-fetch({domain: "${domain}", operation: "${parsed.guide.operations[0]!.name}"}) to verify.` +
@@ -813,6 +909,7 @@ export const apiLearnTool = defineTool({
 				domain,
 				operations: opCount,
 				verified: parsed.guide.verified,
+				...(reStagedNote ? { reStaged: true } : {}),
 				...(writtenSiblings.length > 0 ? { written: writtenSiblings } : {}),
 				...(deletedSiblings.length > 0 ? { deleted: deletedSiblings } : {}),
 			},

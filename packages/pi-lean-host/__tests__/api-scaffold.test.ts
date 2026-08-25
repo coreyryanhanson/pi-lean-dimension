@@ -155,6 +155,44 @@ operations:
 }
 
 describe("api-scaffold", () => {
+	it("no guide + no staged draft → browse + author-one-first guidance", async () => {
+		const res = await callScaffold({ domain: "ghost.example", verify: true });
+		const text = contentText(res);
+		expect(res.details).toMatchObject({
+			error: "no_guide",
+			domain: "ghost.example",
+			stagedDraft: false,
+		});
+		expect(text).toContain("No API guide for 'ghost.example'");
+		expect(text).toContain("Call api-guide({})");
+		expect(text).toContain("author one first");
+		expect(text).toContain("scaffold reads the SAVED guide");
+	});
+
+	it("no guide + staged template present → save-it-first guidance, no browse line", async () => {
+		// Mid-authoring: a template draft already sits at the domain-keyed
+		// staged dir (api-learn {domain, new: true}).
+		const domain = "draft.example";
+		const draftDir = stagedDir(domain);
+		mkdirSync(draftDir, { recursive: true });
+		writeFileSync(join(draftDir, "guide.md"), "# draft\n", "utf-8");
+
+		const res = await callScaffold({ domain, verify: true });
+		const text = contentText(res);
+		expect(res.details).toMatchObject({
+			error: "no_guide",
+			domain,
+			stagedDraft: true,
+		});
+		expect(text).toContain("No SAVED API guide for");
+		expect(text).toContain("save it first");
+		expect(text).toContain(
+			`api-learn({domain: "${domain}", dir: "${draftDir}"})`,
+		);
+		// The browse suggestion is dropped on this path — the user already has a domain.
+		expect(text).not.toContain("Call api-guide({})");
+	});
+
 	it("neither verify nor helper → validation error, no /tmp write", async () => {
 		writeGuide("Scaff", "scaff.example", mixedRecipe("scaff.example", "Scaff"));
 		const res = await callScaffold({ domain: "scaff.example" });

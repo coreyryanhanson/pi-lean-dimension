@@ -254,6 +254,78 @@ describe("api-learn multi-file staging + save", () => {
 		expect(existsSync(dirFor("Ghost"))).toBe(false);
 	});
 
+	it("divergent staged dir → save auto-moves the draft to slug(shortName) staging", async () => {
+		// Template flow: staged at the domain key, shortName slugs elsewhere.
+		const domain = "auto.example";
+		const dir = stageRecipe(domain, recipe(domain, "Auto"));
+		const res = await callLearn({ domain, dir });
+		const text = contentText(res);
+		expect(text).toContain("Guide saved");
+		expect(text).toContain("Re-staged");
+		expect(res.details).toMatchObject({ reStaged: true });
+		// Old domain-keyed staged dir is gone; canonical slug dir holds the draft.
+		expect(existsSync(dir)).toBe(false);
+		expect(existsSync(join(tmpStagingRoot, "auto", "guide.md"))).toBe(true);
+		expect(readFileSync(join(dirFor("Auto"), "guide.md"), "utf-8")).toContain(
+			"shortName: Auto",
+		);
+	});
+
+	it("divergent staged dir + canonical slug dir holding a DIFFERENT guide → refuse, no side effects", async () => {
+		// Canonical slug dir already holds another guide's staged recipe (a
+		// shortName copied from another guide would produce this). Save must
+		// refuse, not silently clobber the other guide's staged guide.md.
+		const domain = "collide.example";
+		const dir = stageRecipe(domain, recipe(domain, "Collide"));
+		const canonical = join(tmpStagingRoot, "collide");
+		mkdirSync(canonical, { recursive: true });
+		writeFileSync(
+			join(canonical, "guide.md"),
+			recipe("other.example", "Other"),
+			"utf-8",
+		);
+		const res = await callLearn({ domain, dir });
+		const text = contentText(res);
+		expect(res.details).toMatchObject({
+			error: "staged_dir_collision",
+			existing: "Other",
+			incoming: "Collide",
+		});
+		expect(text).toContain("Save refused");
+		expect(text).toContain("different guide");
+		expect(text).toContain("change `shortName`");
+		// No side effects: divergent draft untouched, other guide's staged copy untouched, guides dir untouched.
+		expect(existsSync(join(dir, "guide.md"))).toBe(true);
+		expect(readFileSync(join(canonical, "guide.md"), "utf-8")).toContain(
+			"shortName: Other",
+		);
+		expect(existsSync(dirFor("Collide"))).toBe(false);
+	});
+
+	it("divergent staged dir + canonical slug dir holding the SAME guide → update proceeds (no false collision)", async () => {
+		// The whole-dir rename creates the canonical dir on the first save, so a
+		// later divergent save of the same guide must NOT be treated as a
+		// collision — same shortName is a legitimate update. The stale staged
+		// copy is replaced by the incoming draft.
+		const domain = "resave.example";
+		const dir = stageRecipe(domain, recipe(domain, "Resave"));
+		const canonical = join(tmpStagingRoot, "resave");
+		mkdirSync(canonical, { recursive: true });
+		writeFileSync(
+			join(canonical, "guide.md"),
+			recipe(domain, "Resave") + "\n# stale marker\n",
+			"utf-8",
+		);
+		const res = await callLearn({ domain, dir });
+		expect(contentText(res)).toContain("Guide saved");
+		expect(contentText(res)).toContain("Re-staged");
+		// Old divergent dir gone; the incoming draft replaced the stale staged copy.
+		expect(existsSync(dir)).toBe(false);
+		expect(readFileSync(join(canonical, "guide.md"), "utf-8")).not.toContain(
+			"stale marker",
+		);
+	});
+
 	it("verify.json written as-is (no save-time JSON validation)", async () => {
 		const dir = stageRecipe("raw.example", recipe("raw.example", "Raw"));
 		// Malformed JSON — must be written verbatim, not rejected.

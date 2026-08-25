@@ -213,17 +213,26 @@ export const apiScaffoldTool = defineTool({
 		// ── Guide resolution (mirrors api-learn fetch-recipe) ──
 		const matches = findGuidesByDomain(domain);
 		if (matches.length === 0) {
+			// State-aware guidance: if a staged template already exists for this
+			// domain (api-learn {domain, new:true} stages by domain), the user is
+			// mid-authoring — tell them to save it first. Otherwise keep the
+			// browse + author-one-first guidance.
+			const stagedDraftDir = join(_stagingRoot, domain);
+			const hasStagedDraft = existsSync(join(stagedDraftDir, "guide.md"));
 			return {
 				content: [
 					{
 						type: "text",
-						text:
-							`No API guide for '${domain}'. ` +
-							`Call api-guide({}) to list available guides, or api-learn({domain: "${domain}", new: true}) to author one first — ` +
-							`scaffold reads the SAVED guide.`,
+						text: hasStagedDraft
+							? `No SAVED API guide for '${domain}' — scaffold reads the saved guide, not a staged draft.\n` +
+								`  You have a staged template at ${stagedDraftDir}/guide.md — save it first via\n` +
+								`  api-learn({domain: "${domain}", dir: "${stagedDraftDir}"}), then re-call api-scaffold.`
+							: `No API guide for '${domain}'. ` +
+								`Call api-guide({}) to list available guides, or author one first via api-learn({domain: "${domain}", new: true}) — ` +
+								`scaffold reads the SAVED guide.`,
 					},
 				],
-				details: { error: "no_guide", domain },
+				details: { error: "no_guide", domain, stagedDraft: hasStagedDraft },
 			};
 		}
 
