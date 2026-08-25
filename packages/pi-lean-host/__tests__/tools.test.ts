@@ -774,11 +774,13 @@ describe("api-learn", () => {
 	it("save summary names the auth header→secret mapping, never values", async () => {
 		setUserGuidesDir(tmpGuidesDir);
 		invalidateCache();
-		const recipe = `---\nkind: api\ndomains: [authmap.example]\nshortName: AuthMap\napiHost: ${ctx.serverUrl}\nauth:\n  kind: static-key\n  secretRefs:\n    Authorization: apiKey\n    X-CMC-Pro-Key: cmc_key\n  headerPrefixes:\n    Authorization: "Bearer "\n  requires: [apiKey, cmc_key]\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		const recipe = `---\nkind: api\ndomains: [authmap.example]\nshortName: AuthMap\napiHost: ${ctx.serverUrl}\nauth:\n  kind: static-key\n  secretRefs:\n    Authorization: apiKey\n    X-CMC-Pro-Key: cmc_key\n  headerPrefixes:\n    Authorization: "Bearer "\n    X-CMC-Pro-Key: ""\n  requires: [apiKey, cmc_key]\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
 		const text = contentText(await callLearn("authmap.example", recipe));
 		expect(text).toContain("Auth: static-key");
 		expect(text).toContain("Authorization ← secret apiKey (Bearer )");
 		expect(text).toContain("X-CMC-Pro-Key ← secret cmc_key");
+		// Empty prefix (bare-key header) renders without an empty paren.
+		expect(text).not.toContain("cmc_key ()");
 		// Names only — never the store values.
 		expect(text).not.toContain("s3cr3t");
 	});

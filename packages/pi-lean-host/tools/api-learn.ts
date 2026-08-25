@@ -181,9 +181,7 @@ function authSummary(auth: AuthConfig): string {
 	const parts: string[] = [];
 	for (const [header, secretName] of Object.entries(auth.secretRefs ?? {})) {
 		const prefix = auth.headerPrefixes?.[header];
-		parts.push(
-			`${header} ← secret ${secretName}${prefix === undefined ? "" : ` (${prefix})`}`,
-		);
+		parts.push(`${header} ← secret ${secretName}${prefix ? ` (${prefix})` : ""}`);
 	}
 	for (const [param, secretName] of Object.entries(auth.secretQueryRefs ?? {})) {
 		parts.push(`?${param} ← secret ${secretName}`);

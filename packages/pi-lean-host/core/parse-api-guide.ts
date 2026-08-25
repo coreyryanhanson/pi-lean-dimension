@@ -770,10 +770,11 @@ function validateAuth(
 		optional = optRaw as string[];
 	}
 
-	// static-key header prefixes: header name → non-empty prefix string
-	// prepended to the resolved secret value. Same mapping shape as secretRefs;
-	// every key must also be a secretRefs header (a prefix for a non-secret
-	// header is a mistake).
+	// static-key header prefixes: header name → prefix string prepended to the
+	// resolved secret value (empty allowed — a bare-key header like CMC's
+	// X-CMC_PRO_API_KEY has no scheme). Same mapping shape as secretRefs; every
+	// key must also be a secretRefs header (a prefix for a non-secret header is
+	// a mistake).
 	let headerPrefixes: Record<string, string> | undefined;
 	if (a["headerPrefixes"] !== undefined) {
 		const hp = parseStringRecord(
@@ -781,9 +782,8 @@ function validateAuth(
 			file,
 			fm,
 			"auth.headerPrefixes",
-			"a YAML mapping of header name → non-empty prefix string",
-			(v) =>
-				typeof v === "string" && v.length > 0 && !/^\{[a-zA-Z0-9_]+\}$/.test(v),
+			"a YAML mapping of header name → prefix string (empty allowed for bare-key headers)",
+			(v) => typeof v === "string" && !/^\{[a-zA-Z0-9_]+\}$/.test(v),
 		);
 		if (isParseErr(hp)) return hp;
 		headerPrefixes = hp;
