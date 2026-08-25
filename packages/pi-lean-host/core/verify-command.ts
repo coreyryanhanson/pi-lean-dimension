@@ -214,7 +214,7 @@ export async function handleVerifySubcommand(
 
 	for (const op of ops) {
 		const supplied = verifyJson[op.name] ?? {};
-		const missing = unsatisfiableParams(op, supplied);
+		const missing = renderForReport(unsatisfiable(op, supplied));
 		if (missing.length > 0) {
 			skipped++;
 			report.push(
@@ -310,29 +310,36 @@ export async function handleVerifySubcommand(
 // ═══════════════════════════════════════════════════════════════════
 
 /**
- * The params an op still needs to run: path `{token}`s (never defaultable —
- * they're filled from the params map), `required: true` query params with no
- * default, and an unsatisfied `requiresAnyOf` group. Anything the executor
- * would throw on before making a request.
+ * Why an op can't run yet: a path `{token}` (never defaultable — filled from
+ * the params map), a `required: true` query param with no default, or an
+ * unsatisfied `requiresAnyOf` group. Anything the executor would throw on
+ * before making a request.
  *
- * A `requiresAnyOf` group contributes ONE group-level reason when no member
- * is supplied; group members are governed by the group, not per-param
- * required (the parser bans `required: true` on them), so they're skipped
- * in the per-param loop.
+ * A `requiresAnyOf` group contributes ONE group-level entry when no member is
+ * supplied; group members are governed by the group, not per-param required
+ * (the parser bans `required: true` on them), so they're skipped in the
+ * per-param loop.
  */
-function unsatisfiableParams(
+export type Unsatisfiable =
+	| { kind: "path"; param: string }
+	| { kind: "group"; members: string[] }
+	| { kind: "query"; param: string };
+
+/** The params an op still needs to run, as structured entries. */
+export function unsatisfiable(
 	op: Operation,
 	supplied: Record<string, unknown>,
-): string[] {
-	const missing: string[] = [];
+): Unsatisfiable[] {
+	const missing: Unsatisfiable[] = [];
 	for (const token of op.pathParams) {
-		if (supplied[token] === undefined) missing.push(token);
+		if (supplied[token] === undefined)
+			missing.push({ kind: "path", param: token });
 	}
 	const group = op.requiresAnyOf;
 	const groupMember = new Set(group ?? []);
 	if (group && group.length > 0) {
 		const anySupplied = group.some((name) => supplied[name] !== undefined);
-		if (!anySupplied) missing.push(`one of: ${group.join(", ")}`);
+		if (!anySupplied) missing.push({ kind: "group", members: group });
 	}
 	for (const [key, spec] of Object.entries(op.params)) {
 		if (groupMember.has(key)) continue; // governed by the group
@@ -341,10 +348,36 @@ function unsatisfiableParams(
 			spec.default === undefined &&
 			supplied[key] === undefined
 		) {
-			missing.push(key);
+			missing.push({ kind: "query", param: key });
 		}
 	}
 	return missing;
+}
+
+/** Render unsatisfiable entries exactly as the verify report shows them. */
+function renderForReport(items: Unsatisfiable[]): string[] {
+	return items.map((item) => {
+		switch (item.kind) {
+			case "group":
+				return `one of: ${item.members.join(", ")}`;
+			case "path":
+			case "query":
+				return item.param;
+		}
+	});
+}
+
+/** Render unsatisfiable entries as one sentinel key per param. */
+export function renderForSentinels(items: Unsatisfiable[]): string[] {
+	return items.flatMap((item) => {
+		switch (item.kind) {
+			case "group":
+				return item.members;
+			case "path":
+			case "query":
+				return [item.param];
+		}
+	});
 }
 
 /** Load the co-located verify.json sidecar, best-effort. */
