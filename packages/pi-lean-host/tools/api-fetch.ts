@@ -62,7 +62,7 @@ export const apiFetchTool = defineTool({
 	description:
 		"Fetch structured data from a REST API using a recipe-based guide. " +
 		"Requires an API guide for the target domain. " +
-		"Call api-guide({domain}) to see available operations, or api-learn({domain, recipeFile}) to author a new guide.",
+		"Call api-guide({domain}) to see available operations, or api-learn({domain, dir}) to author a new guide.",
 
 	parameters: Type.Object({
 		domain: Type.String({
@@ -519,7 +519,7 @@ function formatAmbiguousOperation(
 		`Call api-guide({domain: "${domain}", guide: "${first.guide.shortName}"}) to read each guide's full recipe,`,
 	);
 	lines.push(
-		`then re-author one guide via api-learn({recipeFile: …}) with the colliding operation renamed so the names no longer clash.`,
+		`then re-author one guide via api-learn({dir: …}) with the colliding operation renamed so the names no longer clash.`,
 	);
 	lines.push(`Note: api-learn rewrites a whole recipe, not a single operation.`);
 	return lines.join("\n");
@@ -579,7 +579,7 @@ function formatHelperError(
 	if (err.url) lines.push(formatRequestLine("GET", err.url));
 	lines.push("");
 	lines.push(
-		`Call api-guide({domain: "${domain}"}) to review the guide, or api-learn({domain: "${domain}", recipeFile: …}) to fix it.`,
+		`Call api-guide({domain: "${domain}"}) to review the guide, or api-learn({domain: "${domain}", dir: …}) to fix it.`,
 	);
 	return lines.join("\n");
 }

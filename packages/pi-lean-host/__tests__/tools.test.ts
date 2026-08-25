@@ -579,18 +579,18 @@ function callLearn(
 ) {
 	const p: Record<string, unknown> = { domain };
 	if (recipe !== undefined) {
-		// Stage the working copy, then save from the file (recipeFile).
-		const staged = join(tmpStagingRoot, domain, "guide.md");
-		mkdirSync(join(tmpStagingRoot, domain), { recursive: true });
-		writeFileSync(staged, recipe, "utf-8");
-		p.recipeFile = staged;
+		// Stage the working copy, then save from the staged dir (dir).
+		const stagedDir = join(tmpStagingRoot, domain);
+		mkdirSync(stagedDir, { recursive: true });
+		writeFileSync(join(stagedDir, "guide.md"), recipe, "utf-8");
+		p.dir = stagedDir;
 	}
 	if (extra?.new !== undefined) p.new = extra.new;
 	if (extra?.guide !== undefined) p.guide = extra.guide;
 	return apiLearnTool.execute("test", p, undefined, undefined, undefined as any);
 }
 
-/** Staged draft path for a domain (mirrors api-learn's stagingPathFor). */
+/** Staged guide.md path for a domain (mirrors api-learn's staging). */
 function stagedPath(domain: string): string {
 	return join(tmpStagingRoot, domain, "guide.md");
 }
@@ -705,7 +705,7 @@ describe("api-learn", () => {
 		const templateText = contentText(
 			await callLearn("example.com", undefined, { new: true }),
 		);
-		// Fetch-existing path ({domain}, no recipeFile) — the manual travels
+		// Fetch-existing path ({domain}, no dir) — the manual travels
 		// with the staged raw recipe.
 		await callLearn("boe.es", boeRecipe(ctx.serverUrl));
 		invalidateCache();
@@ -863,7 +863,7 @@ operations:
 			{
 				domain: "../../escape",
 				// assertSafeDomain rejects before this path is ever read.
-				recipeFile: join(tmpStagingRoot, "escape", "guide.md"),
+				dir: join(tmpStagingRoot, "escape"),
 			},
 			undefined,
 			undefined,

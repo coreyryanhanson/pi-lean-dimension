@@ -77,7 +77,7 @@ export const apiGuideTool = defineTool({
 						text:
 							`No API guide for '${domain}'.` +
 							(known.length > 0 ? ` Known guides: ${known.join(", ")}.` : "") +
-							"\n\nCall api-guide with no params to list all guides, or api-learn({domain, recipeFile}) to author one.",
+							"\n\nCall api-guide with no params to list all guides, or api-learn({domain, dir}) to author one.",
 					},
 				],
 				details: {},

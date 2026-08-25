@@ -55,7 +55,7 @@ export async function handleHelpersSubcommand(
 		lines.push(
 			"",
 			"Call /api helpers <domain> to view a helper's source.",
-			"Call api-learn({domain, recipeFile}) to author or update a guide (and its helper).",
+			"Call api-learn({domain, dir}) to author or update a guide (and its helper).",
 		);
 
 		ctx.ui.notify(lines.join("\n"), "info");
