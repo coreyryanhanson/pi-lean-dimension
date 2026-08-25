@@ -526,7 +526,7 @@ mitigations:
   mitigation is user ownership and review, not a sandbox.
 
 View helpers with `/api helpers` (list) or `/api helpers <domain>` (source).
-Authoring is via `api-learn` in learn mode, or hand-editing the file.
+Authoring: scaffold a starter `helper.ts` stub via `api-scaffold({domain, helper: true})` (writes to the staged `/tmp` dir — never the guides dir), uncomment the export you need, then save via `api-learn({domain, dir})`. Edit a staged helper the same way; avoid hand-editing the file in the guides dir directly.
 
 ---
 

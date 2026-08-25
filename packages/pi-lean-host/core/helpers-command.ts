@@ -35,8 +35,9 @@ export async function handleHelpersSubcommand(
 		if (all.length === 0) {
 			ctx.ui.notify(
 				"No local helpers found. Helpers live alongside their guide: " +
-					`api-guides/<domain>/helper.ts.\n\n` +
-					"Author a helper via api-learn in learn mode, or hand-edit a <domain>/helper.ts file.",
+					`api-guides/<dirName>/helper.ts.\n\n` +
+					"Scaffold a starter helper via api-scaffold({domain, helper: true}) (writes to the staged /tmp dir), " +
+					"uncomment the export you need, and save via api-learn({domain, dir}).",
 				"info",
 			);
 			return;
@@ -81,8 +82,8 @@ export async function handleHelpersSubcommand(
 			all.length > 0 ? ` Known helpers: ${all.join(", ")}.` : " No helpers found.";
 		ctx.ui.notify(
 			`No helper for '${domain}'.${known}\n\n` +
-				`Helpers live alongside guides at api-guides/${domain}/helper.ts.\n` +
-				"Author via api-learn in learn mode.",
+				`Helpers live alongside guides at api-guides/<dirName>/helper.ts.\n` +
+				"Scaffold one via api-scaffold({domain, helper: true}), then save via api-learn({domain, dir}).",
 			"warning",
 		);
 		return;

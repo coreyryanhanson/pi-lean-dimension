@@ -72,8 +72,10 @@ function helpText(): string {
 		"  /api verify --help              this help",
 		"",
 		"  Ops with unsatisfiable params (a path {token} or required query param with no default)",
-		"  are skipped, not failed. Supply them via a co-located verify.json:",
-		`    ~/.pi/agent/pi-lean-host/api-guides/<domain>/verify.json`,
+		"  are skipped, not failed. Scaffold a starter sidecar with api-scaffold({domain, verify: true})",
+		'  (writes to /tmp, with "__FILL_ME__" sentinels for every blocking param), then save via',
+		"  api-learn({domain, dir}) — the sidecar lives at:",
+		`    ~/.pi/agent/pi-lean-host/api-guides/<dirName>/verify.json`,
 		`    { "<opName>": { "<param>": "<value>" } }`,
 		"",
 		"  Not free: N live HTTP requests against the target API (GET only — no mutation).",
@@ -224,7 +226,7 @@ export async function handleVerifySubcommand(
 		if (missing.length > 0) {
 			skipped++;
 			report.push(
-				`  ⏭ ${op.name} — skipped: requires agent-supplied params (${missing.join(", ")}) — verify manually via api-fetch`,
+				`  ⏭ ${op.name} — skipped: requires agent-supplied params (${missing.join(", ")}) — scaffold via api-scaffold({domain, verify: true}), or verify manually via api-fetch`,
 			);
 			continue;
 		}
@@ -291,7 +293,7 @@ export async function handleVerifySubcommand(
 				summary,
 				...report,
 				"",
-				`⚠ NOT stamped — all ops skipped. Supply params via verify.json (${dirName}/verify.json), or verify manually via api-fetch.`,
+				`⚠ NOT stamped — all ops skipped. Scaffold a verify.json via api-scaffold({domain: "${domain}", verify: true}), or supply params via ${dirName}/verify.json, or verify manually via api-fetch.`,
 			].join("\n"),
 			"warning",
 		);
