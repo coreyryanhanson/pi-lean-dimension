@@ -1657,6 +1657,13 @@ describe("slug()", () => {
 		expect(slug("a/b")).toBe("a-b");
 	});
 
+	it("transliterates Latin diacritics instead of dropping them", () => {
+		expect(slug("Café")).toBe("cafe");
+		expect(slug("Überwald")).toBe("uberwald");
+		expect(slug("Bjørk")).toBe("bjork");
+		expect(slug("Münchhausen")).toBe("munchhausen");
+	});
+
 	it("collapses repeated '-' and strips leading/trailing '-'", () => {
 		expect(slug("a--b")).toBe("a-b");
 		expect(slug("-foo-")).toBe("foo");

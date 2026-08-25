@@ -79,6 +79,23 @@ export function assertSafeDomain(domain: string): string {
 }
 
 /**
+ * Non-decomposable Latin letters NFD can't split (single codepoints with no
+ * canonical decomposition: ø ß æ œ ð þ ł). NFD handles the rest of the Latin
+ * diacritic set (é ü å ñ ç …) via combining-mark strip. Non-Latin scripts
+ * (Cyrillic/CJK) still collapse to '-'; add a transliteration lib if a real
+ * guide ever needs them.
+ */
+const NON_DECOMPOSABLE: Record<string, string> = {
+	ø: "o",
+	ß: "ss",
+	æ: "ae",
+	œ: "oe",
+	ð: "d",
+	þ: "th",
+	ł: "l",
+};
+
+/**
  * Slugify a guide `shortName` into the safe single path segment that names
  * its identity folder (`<guidesDir>/<slug(shortName)>/guide.md`). Lowercase;
  * replace every run of non-`[a-z0-9-]` chars with `-`; collapse repeated `-`;
@@ -91,7 +108,10 @@ export function assertSafeDomain(domain: string): string {
  */
 export function slug(shortName: string): string {
 	const s = shortName
+		.normalize("NFD")
+		.replace(/[\u0300-\u036f]/g, "")
 		.toLowerCase()
+		.replace(/[øßæœðþł]/g, (c) => NON_DECOMPOSABLE[c]!)
 		.replace(/[^a-z0-9-]+/g, "-")
 		.replace(/-+/g, "-")
 		.replace(/^-+|-+$/g, "");
