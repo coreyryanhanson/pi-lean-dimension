@@ -31,7 +31,11 @@
   - `/api verify <domain> [guide] [--force]` runs every runnable op of a
     guide against its live API and stamps `verified: today` into the guide's
     frontmatter **only when all runnable ops pass** (skips ≠ failures;
-    transform failures are non-blocking). `--force` stamps without any HTTP
+    transform failures are non-blocking). A `requiresAnyOf` op with >1
+    supplied member **fans out** — one run per member, isolating that member
+    (non-group params carried on every run), so mutually-exclusive peers
+    never ride the same request; all runs must pass for the op to count.
+    `--force` stamps without any HTTP
     (human-attested escape valve). Strict threshold: any partial/all-fail →
     no stamp. Opt-in params sidecar
     `~/.pi/agent/pi-lean-host/api-guides/<dirName>/verify.json`
