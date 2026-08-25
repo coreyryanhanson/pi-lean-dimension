@@ -250,6 +250,14 @@ const AUTHORING_MANUAL = [
 	"  date formats, auth caveats, field semantics, endpoint quirks. Surfaced by",
 	"  api-guide as 'Guide notes'.",
 	"",
+	"## Saving (mirror-save)",
+	"  Save reads every staged file (guide.md + helper.ts + verify.json when present) and",
+	"  mirrors it into the guides dir. A sibling present in the guides dir but absent from",
+	"  the staged /tmp dir would be DELETED — save refuses and names it; re-call with",
+	"  confirmDeletions: true to proceed (that flag is discovered only via the refusal message,",
+	"  never the tool description). A guide declaring helper: true / transform: true must",
+	"  have a loadable staged helper.ts.",
+	"",
 	"Call api-learn({domain: '<domain>', dir: '<staged dir>'}) to save the guide, then api-fetch({domain, operation: '...'}) to verify.",
 ].join("\n");
 
