@@ -194,21 +194,47 @@ interface ReservedPlainHit {
  * relative to the frontmatter block (matching yamlParse) and count from the
  * raw line, indentation included. Advisory: only fires on the reserved-char
  * class, which the parser would reject anyway.
+ *
+ * Block-scalar aware: a `key: >` / `key: |` line opens a folded/literal block
+ * whose continuation lines are free-form prose (markdown backticks, `field:
+ * value` snippets) — not `key: value` pairs — so they are skipped until a line
+ * dedents back to the header's indentation. Without this, a folded
+ * `description: >` block containing e.g. `` `all:` `` would be misread as a
+ * plain scalar starting with a reserved char.
  */
 function scanReservedPlainStarts(fm: string): ReservedPlainHit[] {
 	const hits: ReservedPlainHit[] = [];
 	const lines = fm.split("\n");
+	// Indentation of the currently-open block scalar header line, or -1 when
+	// not inside one. Content stays inside until a line dedents to <= this.
+	let blockIndent = -1;
 	for (let i = 0; i < lines.length; i++) {
 		const raw = lines[i] ?? "";
+		const indent = raw.length - raw.trimStart().length;
 		const line = raw.trimStart();
-		// Skip blank, comment, and list-item lines (op headers like
-		// `- name: …` — the backtick footgun lives in `description:`-style
-		// value lines, which are never `- `-prefixed).
-		if (line === "" || line.startsWith("#") || line.startsWith("- ")) continue;
+		if (blockIndent >= 0) {
+			// Blank lines are block content too; only a non-blank dedent ends it.
+			if (line === "" || indent > blockIndent) continue;
+			blockIndent = -1;
+		}
+		// Skip blank and comment lines.
+		if (line === "" || line.startsWith("#")) continue;
 		const m = /^[^:#]+: /.exec(line);
 		if (!m) continue;
 		const ch = line[m[0].length];
-		if (ch === undefined || !RESERVED_PLAIN_START.has(ch)) continue;
+		if (ch === undefined) continue;
+		// `>` / `|` value → block scalar opener (also on `- `-prefixed list
+		// items like `- description: >`). Enter block mode; its content lines
+		// are prose and must not be scanned.
+		if (ch === ">" || ch === "|") {
+			blockIndent = indent;
+			continue;
+		}
+		// List-item lines (op headers like `- name: …`) are not top-level
+		// `key:` pairs — the backtick footgun lives in `description:`-style
+		// value lines, which are never `- `-prefixed.
+		if (line.startsWith("- ")) continue;
+		if (!RESERVED_PLAIN_START.has(ch)) continue;
 		hits.push({
 			line: i + 1,
 			col: raw.length - line.length + m[0].length + 1,

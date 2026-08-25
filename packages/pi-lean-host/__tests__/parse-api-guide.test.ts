@@ -1169,6 +1169,26 @@ body
 		expect(res.ok).toBe(true);
 	});
 
+	it("backticks inside a folded block scalar (description: >) → not flagged", () => {
+		const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com/v1
+operations:
+  - name: getThing
+    via: restGet
+    path: /things
+    params:
+      id:
+        description: >
+          Field prefixes: \`all:\` \`ti:\` \`au:\`; one date filter
+          \`submittedDate:[YYYYMMDDTTTT+TO+YYYYMMDDTTTT]\` (GMT).
+---
+body
+`;
+		const res = parseApiGuide(raw, { filename: "example.com" });
+		expect(res.ok).toBe(true);
+	});
+
 	it("quoted backtick value → not flagged (valid YAML)", () => {
 		const raw = `---
 domains: [example.com]

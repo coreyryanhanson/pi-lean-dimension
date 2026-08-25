@@ -134,6 +134,17 @@
   learn about page crashes the same way they learn about auto-dismissed
   dialogs.
 
+### Fixed
+
+- **Reserved-char pre-scan is now block-scalar aware** — `parse-api-guide`'s
+  frontmatter pre-scan for plain scalars starting with a reserved YAML
+  character no longer misreads the continuation lines of a folded/literal
+  block scalar (`description: >`) as `key: value` pairs. Guides whose
+  `description: >` blocks contain markdown backticks (e.g. arXiv's
+  `` `all:` `` field prefixes) were being rejected as malformed even though
+  the YAML parsed cleanly; they now load normally. Genuine plain-scalar
+  offenders are still flagged in one pass.
+
 ## [0.4.0] - 2026-08-02
 
 ### Changed
