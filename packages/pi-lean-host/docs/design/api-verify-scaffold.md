@@ -120,8 +120,10 @@ present in the guide directory** — `guide.md` (always), `helper.ts` and
 of the entire directory, not a blank slate that would clobber siblings on
 save.
 
-Staging path keying changes from the routing `domain` to the resolved
-`dirName` (see [Staging path keying](#staging-path-keying)).
+Staging already keys by `slug(shortName)` (the on-disk `dirName` in steady
+state) — shipped in the shortName refactor — so the staged dir name matches
+the save target dir name on the fetch path (see
+[Staging path keying](#staging-path-keying)).
 
 #### Save takes a directory path (retiring `recipeFile`)
 
@@ -131,11 +133,25 @@ The `recipeFile` parameter (a single `guide.md` path) is replaced by `dir`
 writes them to the guides dir.
 
 The agent passes `dir` (the staged dir path surfaced by fetch/template/
-scaffold) and `domain` (the write target, set to `dirName` per the existing
-pattern — fetch surfaces `dirName` in its result). An optional
-`confirmDeletions` boolean is also accepted but **not described in the tool
-description** — it is the escape-hatch for the deletion-safety gate (see
-[Deletion-safety gate](#deletion-safety-gate)).
+scaffold). `domain` is **cosmetic on save** — the write target self-keys
+off the draft's own `shortName` (`slug(shortName)`), shipped in the
+shortName refactor, so the agent no longer passes `dirName` as `domain`.
+An optional `confirmDeletions` boolean is also accepted but **not described
+in the tool description** — it is the escape-hatch for the deletion-safety
+gate (see [Deletion-safety gate](#deletion-safety-gate)).
+
+**Why `dir` is not the save identity.** The loader enforces `dirName ===
+slug(shortName)` and routes a divergent guide to **malformed** — the
+invariant the shortName refactor exists to uphold. The write target must be
+unable to violate it. If the agent passed `dirName` (or `shortName`) and
+the staged YAML's `shortName` disagreed — a normal edit-after-rename — the
+save could land a guide in a directory whose name no longer matches
+`slug(shortName)`, i.e. **save the very malformed guide the refactor was
+built to prevent.** Self-keying off the parsed `shortName` makes that
+structurally impossible: the write target and the value the loader will
+check are the same value, derived once. `dir` tells save *where to read the
+draft from*; the draft's own `shortName` tells it *where to write*. There
+is no second identity copy to reconcile, so no consistency guard is needed.
 
 #### Mirror-save semantics
 
@@ -147,19 +163,27 @@ Save **mirrors the staged dir exactly**:
 Deleting a file from the staged `/tmp` dir is the signal to drop it. This
 gives the agent a deletion path with no extra API surface.
 
-The snapshot is honest on the common path (fetch → edit → save stages all
-siblings), but two wipe windows exist — `new: true`-over-existing and
-accidental `/tmp` cleanup — so mirror-save is guarded by the
-deletion-safety gate below before any file is removed.
+The snapshot is honest on the fetch path (fetch → edit → save stages all
+siblings, and the staged dir name now matches the save target dir name via
+the shipped `slug(shortName)` keying). The `new: true`-over-existing wipe
+window is largely closed by self-keying — a `new: true` guide with a
+distinct `shortName` writes to its own directory, leaving the existing
+guide's siblings untouched. The residual wipe window is accidental `/tmp`
+cleanup (and the narrow same-`shortName` `new: true` case), so mirror-save
+is guarded by the deletion-safety gate below before any file is removed.
 
 #### Deletion-safety gate
 
-Mirror-save can wipe a sibling silently in two cases: a `new: true`
-template (stages only `guide.md`) saved over a directory that has a
-`helper.ts`/`verify.json`, and an agent deleting a sibling from `/tmp` to
-"clean up" without realizing save mirrors the deletion into the guides dir.
-Both present the same shape: the sibling exists in the guides dir but is
-absent from the staged dir at save time.
+Mirror-save can wipe a sibling silently in two cases: an agent deleting a
+sibling from `/tmp` to "clean up" without realizing save mirrors the
+deletion into the guides dir, and the narrow same-`shortName` `new: true`
+case (a `new: true` template stages only `guide.md`; if the agent reuses an
+existing guide's `shortName`, the self-keyed save target is that guide's
+directory and the unstaged siblings would be removed). The broader
+`new: true`-over-existing case is already closed by self-keying — a
+distinct `shortName` writes to its own directory. Both residual cases
+present the same shape: the sibling exists in the guides dir but is absent
+from the staged dir at save time.
 
 A **deletion-safety gate** closes both. Before mirroring, save computes the
 deletion set — siblings present in the guides dir but absent from the
@@ -178,12 +202,12 @@ that never hit the gate; the discovery loop is closed by the refusal →
 re-call pattern that `api-learn`'s overwrite guard already uses.
 
 The gate is uniform — it doesn't care *why* the file is gone, only that it
-is. It fires for `new: true`-over-existing, accidental `/tmp` cleanup, and
-a deliberate "I'm removing the helper" flow alike; the agent confirms
-intent via `confirmDeletions: true` on re-call and the save proceeds,
-surfacing which files were written and which were deleted in the result.
-It does **not** fire on the common path (fetch → edit → save, where all
-siblings are staged) or on a first-time save of a brand-new guide.
+is. It fires for accidental `/tmp` cleanup, the same-`shortName` `new: true`
+case, and a deliberate "I'm removing the helper" flow alike; the agent
+confirms intent via `confirmDeletions: true` on re-call and the save
+proceeds, surfacing which files were written and which were deleted in the
+result. It does **not** fire on the common path (fetch → edit → save, where
+all siblings are staged) or on a first-time save of a brand-new guide.
 
 #### Guide↔helper validation at save time
 
@@ -221,7 +245,8 @@ Those resolve against `getUserGuidesDir()` (not the staging dir) and set
 the `disabledHelpers` map on failure — a session-state side effect a
 save-time check must not have. Step 2 is a pure file-presence check; step 3
 is a bare `import()` of the staged path. Both target
-`/tmp/pi-lean-host/<dirName>/helper.ts` directly and mutate nothing. So
+`/tmp/pi-lean-host/<slug(shortName)>/helper.ts` directly and mutate
+nothing. So
 `core/local-helpers.ts` needs **no new export** for this check; the
 validation is self-contained in `tools/api-learn.ts`.
 
@@ -257,8 +282,10 @@ it reads the guide to compute what to scaffold, but writes only to `/tmp`.
   menu for N-guide domains with no selector). The agent uses the same
   mental model for both tools.
 - `dirName` is **always derived** (never passed in) and **surfaced in the
-  result** alongside the staged dir path, so the agent can pass them to
-  `api-learn` save.
+  result** alongside the staged dir path, for display/routing consistency.
+  The agent passes the staged `dir` path to `api-learn` save; the write
+  target self-keys off the draft's `shortName`, so `dirName` is not a save
+  argument.
 - At least one of `verify`/`helper` must be `true`.
 
 #### Refuse-to-overwrite
@@ -484,20 +511,20 @@ This is a ~5-line pre-filter co-located with the only call site that passes
 
 ### Staging path keying
 
-Today `stagingPathFor(domain)` keys the `/tmp` path by the routing `domain`:
-`/tmp/pi-lean-host/<domain>/guide.md`. The agent is told to pass `dirName`
-as `domain` on re-save, so it works in practice — but the convention is
-implicit and fragile.
+**Already shipped for `api-learn`** in the shortName refactor: fetch-recipe
+keys the `/tmp` path by `slug(shortName)` (= the on-disk `dirName` in steady
+state), not the routing `domain`, and the save self-keys off the draft's
+own `shortName`. The implicit "agent passes `dirName` as `domain`"
+convention is gone — `domain` is cosmetic on save.
 
-**Change:** Both `api-learn` and `api-scaffold` resolve `dirName` from the
-guide store (`findGuidesByDomain` → `{guide, dirName}`) and use `dirName`
-as the staging dir name: `/tmp/pi-lean-host/<dirName>/`. Deterministic
-regardless of routing domain — `archive.org` and `archive.org-wayback`
-each get their own `dirName`-keyed staged dir. Eliminates the implicit
-"agent passes `dirName` as `domain`" convention.
+**Remaining:** `api-scaffold` follows the same keying — derive
+`slug(shortName)` and stage to `/tmp/pi-lean-host/<slug(shortName)>/`,
+matching the save target. Deterministic regardless of routing domain —
+`archive.org` and `archive.org-wayback` each get their own staged dir.
 
-The `new: true` template path (no existing guide, no `dirName`) stays keyed
-by the requested `domain` — there's no `dirName` to resolve yet.
+The `new: true` template path (no existing guide, no `shortName` yet) stays
+keyed by the requested `domain` — there's no `shortName` to slug until the
+agent fills one in.
 
 ### Gating: toolset masking only
 
@@ -587,11 +614,13 @@ unsatisfiable params.
 | API surface | One undescribed `confirmDeletions` flag | Extra flag/mode for intentional deletion |
 
 **Choice: mirror the staged dir + deletion gate.** Fetch-recipe always
-stages all existing siblings, so the staged dir is an honest snapshot and
-the common path never trips the gate. The gate closes the `new: true`-over-
-existing and accidental-`/tmp`-cleanup wipe windows with a refuse-with-
-message confirmation loop — the same pattern `api-learn`'s overwrite guard
-already uses.
+stages all existing siblings, and the shipped `slug(shortName)` keying
+makes the staged dir name match the save target dir name, so the staged dir
+is an honest snapshot and the common path never trips the gate. Self-keying
+already closes the broad `new: true`-over-existing wipe window; the gate
+closes the residual accidental-`/tmp`-cleanup and same-`shortName` `new:
+true` cases with a refuse-with-message confirmation loop — the same pattern
+`api-learn`'s overwrite guard already uses.
 
 ### Directory-path save vs. file-path + sibling discovery
 
@@ -623,12 +652,15 @@ path for low-param agents. Clean break from the single-file `recipeFile`.
 
 ## Risks
 
-- **`new: true` saved over an existing directory with siblings.** The
-  template stages only `guide.md`; saving it over a directory that has a
-  `helper.ts`/`verify.json` would remove the sibling. **Closed by the
-  deletion-safety gate** — the save refuses and names the doomed file; the
-  agent re-calls with `confirmDeletions: true` to proceed. The overwrite
-  guard still refuses different-`shortName` saves independently.
+- **`new: true` saved over an existing directory with siblings.** A
+  `new: true` guide with a **distinct** `shortName` self-keys to its own
+  directory — no sibling wipe, the existing guide is untouched. The
+  **same-`shortName`** case (template stages only `guide.md`, reuses an
+  existing guide's `shortName` so the self-keyed target is that guide's
+  directory) would remove the siblings — **closed by the deletion-safety
+  gate**, which refuses and names the doomed file; the agent re-calls with
+  `confirmDeletions: true` to proceed. The overwrite guard refuses
+  `shortName`s that slug-collide with an existing guide independently.
 - **`api-scaffold` reads from the guides dir while the agent edits in
   `/tmp`.** The scaffold is a snapshot of the *saved* guide, not the staged
   edit. If the guide changes between scaffold and save, the `/tmp` file is
@@ -647,8 +679,11 @@ path for low-param agents. Clean break from the single-file `recipeFile`.
   but the agent might fill all blindly. Harmless — the op runs (any one
   satisfies the group), and extra values are just extra query params.
 - **Path traversal via crafted `domain`.** The save path writes to
-  `<guidesDir>/<dirName>/`. Mitigated by `assertSafeDomain(domain)` at the
-  top of the save path — the same guard `api-learn` uses today.
+  `<guidesDir>/<slug(shortName)>/` — `slug` is safe-by-construction
+  (lowercase letters, digits, hyphens only), so the write target cannot
+  escape the guides dir. The `domain` arg (cosmetic on save, used for
+  routing/display) is still guarded by `assertSafeDomain(domain)` at the
+  top of the save path — shipped in the shortName refactor.
 - **Sentinel collision with a real API value.** `"__FILL_ME__"` is
   unlikely to be a valid API param value. Low probability; the claim is
   near-absolute but not mathematically guaranteed.
@@ -710,8 +745,6 @@ Follows the existing vitest + mocked-fs pattern (`verify-command.test.ts`,
     export).
 10. **`verify.json` written as-is** — no JSON validation at save time;
     valid by construction from scaffold.
-11. **Staging path keyed by `dirName`** — staging dir is
-    `/tmp/pi-lean-host/<dirName>/`, not `/tmp/pi-lean-host/<domain>/`.
 
 **P1 fix tests:**
 
@@ -738,10 +771,11 @@ Follows the existing vitest + mocked-fs pattern (`verify-command.test.ts`,
 **Edge cases:**
 
 1. **No existing siblings** → fetch stages only `guide.md`.
-2. **`new: true` over existing directory** → template stages only
-    `guide.md`; deletion-safety gate refuses the save and names the doomed
-    siblings; `confirmDeletions: true` proceeds (overwrite guard still
-    refuses different shortName independently).
+2. **`new: true` over existing directory** → distinct `shortName` writes
+    to its own dir (no wipe, existing guide untouched); same-`shortName`
+    stages only `guide.md`, deletion-safety gate refuses and names the
+    doomed siblings, `confirmDeletions: true` proceeds (overwrite guard
+    refuses slug collisions independently).
 3. **Malformed existing `verify.json` in guides dir** → scaffold can't
     merge; clear error, guides dir untouched.
 4. **Path-traversal `domain`** → `assertSafeDomain` rejects before any
@@ -752,14 +786,14 @@ Follows the existing vitest + mocked-fs pattern (`verify-command.test.ts`,
 | File | Change |
 |------|--------|
 | `core/verify-command.ts` | Export `unsatisfiable`; split into 3 functions (`unsatisfiable` → `Unsatisfiable[]` core, `renderForReport` for the verify loop, exported `renderForSentinels` for `api-scaffold`); verify loop wraps the core with `renderForReport` (byte-identical report output); add sentinel strip in verify loop before `unsatisfiable` and `resolveOpForExecution` |
-| `tools/api-scaffold.ts` | **New file** — tool definition (`domain` + `guide` + `verify`/`helper` booleans, multi-recipe disambiguation, `/tmp` staging keyed by `dirName`, refuse-to-overwrite, sentinel compute + additive merge for `verify.json`, stub generation for `helper.ts`, authoring manual) |
-| `tools/api-learn.ts` | Multi-file staging (fetch-recipe stages all siblings); directory-path save (retire `recipeFile`, add `dir` + undescribed `confirmDeletions`); mirror-save semantics with deletion-safety gate (refuse unconfirmed sibling wipes, surface deleted files in result); guide↔helper validation at save (declaration + staged-`helper.ts` presence check; bare `import()` + declared-export check; does not touch `core/local-helpers.ts`); staging path keyed by `dirName` |
+| `tools/api-scaffold.ts` | **New file** — tool definition (`domain` + `guide` + `verify`/`helper` booleans, multi-recipe disambiguation, `/tmp` staging keyed by `slug(shortName)` (same pattern `api-learn` ships), refuse-to-overwrite, sentinel compute + additive merge for `verify.json`, stub generation for `helper.ts`, authoring manual) |
+| `tools/api-learn.ts` | Multi-file staging (fetch-recipe stages all siblings); directory-path save (retire `recipeFile`, add `dir` + undescribed `confirmDeletions`); mirror-save semantics with deletion-safety gate (refuse unconfirmed sibling wipes, surface deleted files in result); guide↔helper validation at save (declaration + staged-`helper.ts` presence check; bare `import()` + declared-export check; does not touch `core/local-helpers.ts`). Staging-path keying by `slug(shortName)` and the self-keyed save target are already shipped |
 | `tools/index.ts` | Export `apiScaffoldTool`; update the barrel comment (currently "all 4 tool definitions" → 5) |
 | `core/api-toggle.ts` | Add `"api-scaffold"` to `HOST_API_LEARN_SPEC.names`; update stale UI text that hardcodes "four tools" / "api-learn + api-probe" |
 | `index.ts` | `pi.registerTool(apiScaffoldTool)` |
 | `package.json` | Add `"tools/api-scaffold.ts"` to the `files` array (`ship-manifest.test.ts` tripwire) |
 | `__tests__/api-scaffold.test.ts` | **New file** — `api-scaffold` tests 1–9 + edge case 3 (malformed guides-dir `verify.json`) |
-| `__tests__/api-learn-multi-file.test.ts` | **New file** (or extend `api-learn-fetch-recipe.test.ts`) — `api-learn` tests 1–11 + edge cases 1, 2, 4 (no siblings; `new: true` over existing; path-traversal `domain`) |
+| `__tests__/api-learn-multi-file.test.ts` | **New file** (or extend `api-learn-fetch-recipe.test.ts`) — `api-learn` tests 1–10 + edge cases 1, 2, 4 (no siblings; `new: true` over existing; path-traversal `domain`) |
 | `__tests__/verify-command.test.ts` | Add P1 fix tests 1–2 (sentinel strip, no-leak) + `unsatisfiable` 3-function split tests 1–3 |
 
 ## Downstream
@@ -769,11 +803,12 @@ design doc. The plan would sequence: (1) `unsatisfiable` 3-function split
 (export the core + `renderForSentinels`; wrap verify loop with
 `renderForReport`; byte-identical report output), (2) verify-loop sentinel
 strip (P1 fix), (3) `api-scaffold`
-tool (`helper` + `verify` paths, refuse-to-overwrite, `/tmp` staging), (4)
+tool (`helper` + `verify` paths, refuse-to-overwrite, `/tmp` staging keyed
+by `slug(shortName)` — same pattern `api-learn` already ships), (4)
 `api-learn` multi-file staging + directory-path save + mirror-save, (5)
 guide↔helper validation (declaration + staged-`helper.ts` presence check,
 bare `import()` + declared-export check, self-contained — no
-`local-helpers.ts` change), (6) staging path keying by `dirName`, (7)
-`HOST_API_LEARN_SPEC` update + stale UI text, (8) `tools/index.ts` export +
-barrel comment, (9) `index.ts` registration, (10) `package.json` `files`
-entry, (11) authoring manual, (12) test files.
+`local-helpers.ts` change), (6) `HOST_API_LEARN_SPEC` update + stale UI
+text, (7) `tools/index.ts` export + barrel comment, (8) `index.ts`
+registration, (9) `package.json` `files` entry, (10) authoring manual,
+(11) test files.
