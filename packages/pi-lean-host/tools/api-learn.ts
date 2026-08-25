@@ -234,7 +234,7 @@ const AUTHORING_MANUAL = [
 	`  \`params.<token>.description\` — docs-only description for a {token} path param (format, e.g. 'yyyy-mm-dd'); never sent as a query param, shown in api-guide`,
 	`  \`params.<name>.required\` — true → query param must be supplied (verify skips the op if missing; api-fetch errors before the request)`,
 	`  \`params.<name>.default\`  — value (any YAML scalar: string, number, boolean) used when the caller omits the param (verify runs the op with it; a \`required\`+\`default\` op is always verifiable without a verify.json sidecar)`,
-	`  \`requiresAnyOf\` — [param, ...] — at least one of these params must be supplied (one group per op). Members may not be \`required: true\` — a group member is a plain optional param (verify it via a verify.json sidecar value). Use \`required: true\` for a single-param constraint; \`requiresAnyOf\` is for two or more interchangeable params`,
+	`  \`requiresAnyOf\` — [param, ...] — at least one of these params must be supplied (one group per op). Use it when the API identifies a resource by exactly one of several interchangeable params and rejects them together (id XOR symbol XOR slug — the "exclusive peers" 400). Members may not be \`required: true\` NOR carry a \`default\` (both parser-enforced) — a default would always fire alongside a caller-supplied sibling and cause the conflict. Use \`required: true\` for a single-param constraint; \`requiresAnyOf\` is for two or more interchangeable params`,
 	`  \`passthrough\` — true → forward undeclared caller params onto the query string`,
 	`  \`parse\`       — op-level responseShape override (format/charset) for this operation`,
 	"",

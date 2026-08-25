@@ -501,6 +501,115 @@ describe("/api verify — requiresAnyOf", () => {
 		);
 		expect(text).toContain("⚠ NOT stamped — all ops skipped");
 	});
+
+	it("fans out: >1 supplied member → one run per member, each isolating the peer", async () => {
+		setupGuide(recipe(opBlock(OP_GROUP)), {
+			verifyJson: JSON.stringify({
+				group: { id: "1", slug: "s", code: "c" },
+			}),
+		});
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("✓ group (id) — /group (restGet)");
+		expect(text).toContain("✓ group (slug) — /group (restGet)");
+		expect(text).toContain("✓ group (code) — /group (restGet)");
+		expect(text).toContain(
+			`✅ All runnable ops passed — stamped verified: ${TODAY()}`,
+		);
+		// Three runs, each carrying exactly one group member — never two peers
+		// together (the mutually-exclusive 400 case).
+		expect(requestedUrls()).toHaveLength(3);
+		for (const u of requestedUrls()) {
+			expect(
+				["id=1", "slug=s", "code=c"].filter((p) => u.includes(p)),
+			).toHaveLength(1);
+		}
+	});
+
+	it("fan-out: any peer failing → no stamp", async () => {
+		setupGuide(recipe(opBlock(OP_GROUP)), {
+			verifyJson: JSON.stringify({
+				group: { id: "1", slug: "s", code: "c" },
+			}),
+		});
+		// The `code` peer route is broken (500); the others pass.
+		vi.mocked(fetchUrl).mockImplementation(async (url: string) => {
+			if (url.includes("code=c")) {
+				return {
+					status: 500,
+					headers: {},
+					body: JSON.stringify({ error: "boom" }),
+					cached: false,
+				};
+			}
+			return {
+				status: 200,
+				headers: {},
+				body: JSON.stringify({ ok: true }),
+				cached: false,
+			};
+		});
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("✓ group (id) — /group (restGet)");
+		expect(text).toContain("✓ group (slug) — /group (restGet)");
+		expect(text).toContain("✗ group (code) — Unexpected HTTP 500");
+		expect(text).toContain("❌ NOT stamped");
+		expect(readGuide()).toContain("verified: 2026-07-17"); // unchanged
+	});
+
+	it("single supplied member → one run, no member tag (today's behavior)", async () => {
+		setupGuide(recipe(opBlock(OP_GROUP)), {
+			verifyJson: JSON.stringify({ group: { id: "1" } }),
+		});
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("✓ group — /group (restGet)");
+		expect(requestedUrls()).toHaveLength(1);
+		expect(text).toContain(
+			`✅ All runnable ops passed — stamped verified: ${TODAY()}`,
+		);
+	});
+
+	it("fan-out + helper-disabled → one skip line, not one per member", async () => {
+		const groupHelper: OpDef = {
+			name: "group",
+			path: "/group",
+			extra:
+				"    helper: true\n" +
+				"    requiresAnyOf: [id, slug, code]\n" +
+				"    params:\n" +
+				"      id:\n" +
+				"        description: Resource id.\n" +
+				"      slug:\n" +
+				"        description: Resource slug.\n" +
+				"      code:\n" +
+				"        description: Resource code.",
+		};
+		setupGuide(recipe(opBlock(groupHelper)), {
+			verifyJson: JSON.stringify({
+				group: { id: "1", slug: "s", code: "c" },
+			}),
+			helper: { content: FIXTURE_CALL_ERROR },
+		});
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain(
+			"⏭ group (id) — skipped: local helper disabled this session",
+		);
+		// The break stops the fan-out — no per-member duplicate skip lines.
+		expect(text).not.toContain("group (slug)");
+		expect(text).not.toContain("group (code)");
+		expect(text).toContain("⚠ NOT stamped — all ops skipped");
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════

@@ -249,7 +249,9 @@ describe("api-scaffold", () => {
 		expect(merged.runnable).toBeUndefined();
 		// Authoring manual prepended to the result.
 		expect(contentText(res)).toContain("__FILL_ME__");
-		expect(contentText(res)).toContain("fill any ONE member");
+		expect(contentText(res)).toContain(
+			"tests each supplied member independently",
+		);
 	});
 
 	it("verify additive merge → existing real values preserved, new sentinels added", async () => {

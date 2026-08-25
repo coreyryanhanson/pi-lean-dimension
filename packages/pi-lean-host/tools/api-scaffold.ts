@@ -66,7 +66,7 @@ const AUTHORING_MANUAL = [
 	"# verify.json authoring manual",
 	"",
 	'1. "__FILL_ME__" means "replace with a real value." The sentinel is treated as unsupplied; the op skips until you replace it.',
-	"2. For requiresAnyOf groups, fill any ONE member — not all. The op runs when any member is supplied; the remaining sentinels are correctly ignored.",
+	"2. For requiresAnyOf groups, fill one or more members — /api verify tests each supplied member independently, so mutually-exclusive peers (e.g. id XOR symbol) never conflict. Sentinels left as __FILL_ME__ are ignored.",
 	"3. Source the values. Don't invent them — use api-fetch or api-probe to discover a real {token} value, or read the guide's param descriptions for format hints.",
 	"",
 	"Save the guide FIRST, then scaffold: api-scaffold reads the SAVED guide, so the staged sibling matches what the loader will see. Re-scaffold = delete the staged file from /tmp + re-call (no merge).",

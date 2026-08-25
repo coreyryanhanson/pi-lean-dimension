@@ -231,43 +231,66 @@ export async function handleVerifySubcommand(
 			continue;
 		}
 
-		let outcome: ResolveOpResult;
-		try {
-			outcome = await resolveOpForExecution(guide, op, dirName, {
-				userParams: supplied,
-			});
-		} catch (err) {
-			failed++;
-			const msg =
-				err instanceof HelperError
-					? err.message
-					: err instanceof Error
-						? err.message
-						: String(err);
-			report.push(`  ✗ ${op.name} — ${msg}`);
-			continue;
-		}
+		// Fan-out: a requiresAnyOf group with >1 supplied member is verified
+		// once per member, isolating that member (non-group params carried on
+		// every run). Mutually-exclusive peers (id ⊻ symbol) never ride the
+		// same request; inclusive-OR filters get per-peer coverage. ≤1 supplied
+		// member → today's single run. Sentinels are already stripped above, so
+		// a partially-filled file still runs just the real values.
+		const group = op.requiresAnyOf ?? [];
+		const suppliedMembers = group.filter((m) => supplied[m] !== undefined);
+		const runs =
+			suppliedMembers.length > 1
+				? suppliedMembers.map((m) => {
+						const params = { ...supplied };
+						for (const peer of group) {
+							if (peer !== m) delete params[peer];
+						}
+						return { params, tag: m };
+					})
+				: [{ params: supplied, tag: undefined }];
 
-		if (!outcome.ok) {
-			if (outcome.reason === "helper_disabled") {
-				// Session-persistent condition — unverifiable this session, not broken.
-				skipped++;
+		for (const run of runs) {
+			let outcome: ResolveOpResult;
+			try {
+				outcome = await resolveOpForExecution(guide, op, dirName, {
+					userParams: run.params,
+				});
+			} catch (err) {
+				failed++;
+				const msg =
+					err instanceof HelperError
+						? err.message
+						: err instanceof Error
+							? err.message
+							: String(err);
+				report.push(`  ✗ ${opTag(op.name, run.tag)} — ${msg}`);
+				continue;
+			}
+
+			if (!outcome.ok) {
+				if (outcome.reason === "helper_disabled") {
+					// Session-persistent condition — unverifiable this session, not broken.
+					skipped++;
+					report.push(
+						`  ⏭ ${opTag(op.name, run.tag)} — skipped: local helper disabled this session (${outcome.message})`,
+					);
+					// Disabled helpers are session-persistent and deterministic — the
+					// remaining fan-out runs would skip identically, so stop here.
+					break;
+				}
+				// auth_required_not_provisioned — unreachable after the precheck
+				// (auth is per-guide constant); defensive.
+				failed++;
 				report.push(
-					`  ⏭ ${op.name} — skipped: local helper disabled this session (${outcome.message})`,
+					`  ✗ ${opTag(op.name, run.tag)} — requires secret not provisioned: ${outcome.missing.join(", ")}`,
 				);
 				continue;
 			}
-			// auth_required_not_provisioned — unreachable after the precheck
-			// (auth is per-guide constant); defensive.
-			failed++;
-			report.push(
-				`  ✗ ${op.name} — requires secret not provisioned: ${outcome.missing.join(", ")}`,
-			);
-			continue;
-		}
 
-		ran++;
-		report.push(opLine(outcome, op));
+			ran++;
+			report.push(opLine(outcome, op, run.tag));
+		}
 	}
 
 	const header = `📡 Verify: ${guide.shortName} (${dirName})`;
@@ -408,22 +431,29 @@ export function loadVerifyJson(
 	}
 }
 
+/** `name (member)` when a fan-out run is tagged, else `name`. */
+function opTag(name: string, tag?: string): string {
+	return tag === undefined ? name : `${name} (${tag})`;
+}
+
 /** One report line for a successful op run. A transform warning is noted but
  *  non-blocking — the HTTP op succeeded, so the op counts as pass. */
 function opLine(
 	outcome: Extract<ResolveOpResult, { ok: true }>,
 	op: Operation,
+	tag?: string,
 ): string {
+	const name = opTag(op.name, tag);
 	if (outcome.via === "restGet") {
 		const r = outcome.result as RestGetResult;
 		const warn =
 			r.transformWarning === undefined
 				? ""
 				: ` — transform warning: ${r.transformWarning}`;
-		return `  ✓ ${op.name} — ${op.path} (restGet)${warn}`;
+		return `  ✓ ${name} — ${op.path} (restGet)${warn}`;
 	}
 	const r = outcome.result as PaginateResult;
-	return `  ✓ ${op.name} — ${r.totalFetched} item(s) (paginate)`;
+	return `  ✓ ${name} — ${r.totalFetched} item(s) (paginate)`;
 }
 
 /**
