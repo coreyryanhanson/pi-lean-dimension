@@ -421,6 +421,58 @@ describe("/api verify — param precheck + verify.json", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// Sentinel strip (P1 fix)
+// ═══════════════════════════════════════════════════════════════════
+
+describe("/api verify — sentinel strip", () => {
+	it("strips __FILL_ME__ so a sentinel-valued op is skipped, never executed", async () => {
+		setupGuide(recipe([opBlock(OP_GET), opBlock(OP_HEALTH)].join("\n")), {
+			verifyJson: JSON.stringify({ get: { id: "__FILL_ME__" } }),
+		});
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain(
+			"⏭ get — skipped: requires agent-supplied params (id)",
+		);
+		expect(text).toContain("✅ All runnable ops passed");
+		// The executor never ran for `get` — no request hit /thing/.
+		expect(requestedUrls().some((u) => u.includes("/thing/"))).toBe(false);
+	});
+
+	it("does not leak __FILL_ME__ into the query string (requiresAnyOf)", async () => {
+		setupGuide(recipe(opBlock(OP_GROUP)), {
+			verifyJson: JSON.stringify({
+				group: { id: "real", slug: "__FILL_ME__", code: "__FILL_ME__" },
+			}),
+		});
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("✓ group — /group (restGet)");
+		expect(requestedUrls().some((u) => u.includes("id=real"))).toBe(true);
+		expect(requestedUrls().every((u) => !u.includes("__FILL_ME__"))).toBe(true);
+	});
+
+	it("does not leak __FILL_ME__ into the query string (passthrough)", async () => {
+		setupGuide(recipe(opBlock(OP_QUERY)), {
+			verifyJson: JSON.stringify({
+				query: { foo: "bar", secret: "__FILL_ME__" },
+			}),
+		});
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("✓ query — /query (restGet)");
+		expect(requestedUrls().some((u) => u.includes("foo=bar"))).toBe(true);
+		expect(requestedUrls().every((u) => !u.includes("__FILL_ME__"))).toBe(true);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // requiresAnyOf
 // ═══════════════════════════════════════════════════════════════════
 

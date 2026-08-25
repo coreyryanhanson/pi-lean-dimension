@@ -213,7 +213,13 @@ export async function handleVerifySubcommand(
 	let skipped = 0;
 
 	for (const op of ops) {
-		const supplied = verifyJson[op.name] ?? {};
+		// Strip `"__FILL_ME__"` sentinels (from verify.json / api-scaffold) so
+		// they never count as supplied params or serialize into the query string.
+		const rawSupplied = verifyJson[op.name] ?? {};
+		const supplied: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(rawSupplied)) {
+			if (v !== "__FILL_ME__") supplied[k] = v;
+		}
 		const missing = renderForReport(unsatisfiable(op, supplied));
 		if (missing.length > 0) {
 			skipped++;
