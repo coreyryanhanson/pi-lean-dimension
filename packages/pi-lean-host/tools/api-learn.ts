@@ -264,7 +264,7 @@ const AUTHORING_MANUAL = [
 	"  never the tool description). A guide declaring helper: true / transform: true must",
 	"  have a loadable staged helper.ts.",
 	"",
-	"Call api-learn({domain: '<domain>', dir: '<staged dir>'}) to save the guide, then api-fetch({domain, operation: '...'}) to verify.",
+	"Call api-learn({domain: '<domain>', dir: '<staged dir>'}) to save the guide, then test each op via api-fetch({domain, operation, params: <your verify.json values>}) — pass the values yourself; verify.json feeds /api verify (the user's batch stamp), not api-fetch.",
 ].join("\n");
 
 /** Template path — write the placeholder skeleton to the staging dir and
@@ -378,7 +378,7 @@ export const apiLearnTool = defineTool({
 		"1. (optional) api-probe({apiHost, path, params}) — discover a not-yet-guided endpoint's shape and draft an op block from the docs/example.\n" +
 		"2. api-learn({domain, new: true}) — get a fresh template, fill the recipe, then api-learn({domain, dir}) to save it.\n" +
 		"3. ONLY after the guide is saved: api-scaffold({domain, verify: true | helper: true}) — scaffold reads the SAVED guide, so scaffold-before-save fails. Fill the staged verify.json / helper.ts, then api-learn({domain, dir}) to save the siblings.\n" +
-		"4. api-fetch(<op>) — verify the saved guide against the live API. Fix via api-learn({domain}) → edit staged → api-learn({domain, dir}).\n" +
+		"4. Test each op: api-fetch({domain, operation, params: <your verify.json values>}) — verify.json feeds /api verify, not api-fetch, so pass the values yourself. Fix via api-learn({domain}) → edit staged → api-learn({domain, dir}). /api verify is the user's batch attestation stamp (runs every op + stamps verified:).\n" +
 		"Staged drafts live in /tmp/pi-lean-host/<slug(shortName)>/; the save target is self-keyed by the guide's shortName, never the domain arg.",
 
 	parameters: Type.Object({
@@ -903,7 +903,7 @@ export const apiLearnTool = defineTool({
 						(reStagedNote ? `  ${reStagedNote}\n` : "") +
 						`\n` +
 						warningBlock +
-						`Call api-fetch({domain: "${domain}", operation: "${parsed.guide.operations[0]!.name}"}) to verify.` +
+						`Test each op via api-fetch({domain: "${domain}", operation: "${parsed.guide.operations[0]!.name}", params: <your verify.json values>}) — pass the values yourself (verify.json feeds /api verify, not api-fetch). /api verify is the user's batch stamp.` +
 						`\n⚠ Edit the staged /tmp files, not the saved guide.md — direct edits to guide.md are overwritten on save and invisible to api-fetch until then.`,
 				},
 			],
