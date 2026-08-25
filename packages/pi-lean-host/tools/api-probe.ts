@@ -34,6 +34,7 @@ import {
 import { listDomains, listNames } from "../core/secrets-store.js";
 import { findGuidesByDomain } from "../core/guide-store.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
+import { serverMessage, isPlanGated } from "../core/status-hint.js";
 import { appendFooter, contentText } from "./utils.js";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -308,41 +309,6 @@ function resolveProbeAuth(
 const MISCONFIGURED_PREFIXES_NOTE =
 	"headerPrefixes ignored: no secretRefs to apply them to; put the secret name in auth.secretRefs";
 
-/** Extracts the server's own human-readable reason from a 403 body — the
- *  note says what the API actually means instead of a synthesized
- *  classification. A 403 is "authenticated but forbidden", not a
- *  header/secret problem, so surfacing the server's words beats both the
- *  bare status and a "verify header" false signal. Returns undefined when
- *  the body isn't JSON or carries no message field; the caller falls back
- *  to the bare status.
- *  ponytail: secret-scrub invariant — this MUST parse the scrubbed `raw`
- *  slice, never the raw `res.body`, or a key echoed in the body would leak
- *  into agent context. */
-function serverMessage(raw: string): string | undefined {
-	let data: unknown;
-	try {
-		data = JSON.parse(raw);
-	} catch {
-		return undefined;
-	}
-	if (!isObj(data)) return undefined;
-	const d = data as Record<string, unknown>;
-	const status = isObj(d["status"])
-		? (d["status"] as Record<string, unknown>)
-		: undefined;
-	const candidates: unknown[] = [
-		d["message"],
-		d["error"],
-		d["error_message"],
-		d["detail"],
-		status?.["error_message"],
-	];
-	const msg = candidates.find(
-		(c) => typeof c === "string" && c.trim().length > 0,
-	);
-	return typeof msg === "string" ? msg.trim().slice(0, 200) : undefined;
-}
-
 /** First missing secret name as a one-line note (names only, never values).
  *  Prescriptive: names the other provisioned domains and tells the author to
  *  pass `domain:` — the probe's domain is inferred from apiHost, so a miss is
@@ -551,12 +517,23 @@ async function fetchOne(
 			// forbidden — "verify header name" is a 401 signal, not a 403 one.
 			// Surface the server's own reason (from the scrubbed `raw`, never
 			// `res.body`) when we can parse it; fall back to the bare status.
-			const msg = res.status === 403 ? serverMessage(raw) : undefined;
-			note = msg
-				? `${res.status} — ${msg} (auth configured correctly; not a header/secret problem)`
-				: res.status === 401
-					? `${res.status} — auth injected but rejected; verify header name and secret value`
-					: `${res.status}`;
+			// When the reason reads as plan-gating, say so — it's the key's
+			// plan, not the recipe.
+			if (res.status === 403) {
+				const msg = serverMessage(raw);
+				if (msg) {
+					const suffix = isPlanGated(raw)
+						? "plan/subscription limitation on the key, not the recipe"
+						: "auth configured correctly; not a header/secret problem";
+					note = `${res.status} — ${msg} (${suffix})`;
+				} else {
+					note = `${res.status}`;
+				}
+			} else if (res.status === 401) {
+				note = `${res.status} — auth injected but rejected; verify header name and secret value`;
+			} else {
+				note = `${res.status}`;
+			}
 		}
 		if (authCtx.misconfiguredPrefixes) {
 			note += ` — ${MISCONFIGURED_PREFIXES_NOTE}`;

@@ -238,7 +238,10 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `auth.ts` (static-key secret resolution + shared auth-status footer),
   `transport.ts` (shared fetch pipeline: UA, charset, 429-retry, ETag cache —
   the sanctioned way to reach even WAF'd hosts), `path-template.ts`,
-  `ssrf-guard.ts`, `response-spill.ts`, `api-toggle.ts` (`/api` toggle —
+  `ssrf-guard.ts`, `status-hint.ts` (shared 403 classifier — `serverMessage`
+  extracts the server's reason, `isPlanGated` flags plan/subscription
+  limitations; one implementation used by both `api-probe` and
+  `api-fetch`/`/api verify`), `response-spill.ts`, `api-toggle.ts` (`/api` toggle —
   dispatches all 8 subcommands), `portal-projection.ts`,
   `verify-ship-manifest.ts` (vendored host-only copy of the portal utility).
 - `tools/` — `api-guide.ts`, `api-fetch.ts`, `api-learn.ts` (directory-level
@@ -274,6 +277,8 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   recipe can reliably force a 429, so the unit test is the proof),
   `api-probe`, `verify-command` (mocked-transport: strict threshold, auth
   precheck, param precheck, `verify.json`, helper-disabled skip),
+  `status-hint` (shared 403 classifier: server-message extraction +
+  plan-gating detection),
   `verify-stamp` (frontmatter-isolated `verified:` edit, `--force`),
   `delete-command` (ghost-guide cache fix), `guide-picker` (TUI gate + row
   mapping), `ship-manifest` (tarball coverage + asserts `api-guides/` is

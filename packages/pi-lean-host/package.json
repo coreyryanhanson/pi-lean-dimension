@@ -35,6 +35,7 @@
 		"index.ts",
 		"LICENSE",
 		"core/ssrf-guard.ts",
+		"core/status-hint.ts",
 		"core/guide-loader.ts",
 		"core/api-guide-types.ts",
 		"core/parse-api-guide.ts",

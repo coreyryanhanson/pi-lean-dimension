@@ -439,6 +439,25 @@ async function createTestServer(): Promise<TestContext> {
 			return;
 		}
 
+		if (pathname === "/api/error-403-plan") {
+			res.writeHead(403, { "Content-Type": "application/json" });
+			res.end(
+				JSON.stringify({
+					status: {
+						error_code: 1006,
+						error_message: "plan doesn't support this endpoint",
+					},
+				}),
+			);
+			return;
+		}
+
+		if (pathname === "/api/error-403-generic") {
+			res.writeHead(403, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ error: "forbidden" }));
+			return;
+		}
+
 		// 404
 		res.writeHead(404, { "Content-Type": "application/json" });
 		res.end(JSON.stringify({ error: "not found" }));
@@ -1699,6 +1718,40 @@ describe("non-2xx status handling", () => {
 				expect(e.message).toContain("500");
 				expect(e.message).toContain("internal server error");
 				expect(e.found).toBe("500");
+			}
+		}
+	});
+
+	it("403 with plan-gated JSON surfaces the server reason + plan hint", async () => {
+		const guide = makeGuide({ apiHost: ctx.serverUrl });
+		const op = makeOp({ path: "/api/error-403-plan" });
+
+		try {
+			await restGet(ctx.serverUrl, op, {}, guide);
+			expect.fail("should have thrown");
+		} catch (e) {
+			expect(e).toBeInstanceOf(HelperError);
+			if (e instanceof HelperError) {
+				expect(e.message).toContain("403");
+				expect(e.message).toContain("plan doesn't support this endpoint");
+				expect(e.message).toContain("plan/subscription limitation");
+			}
+		}
+	});
+
+	it("403 with generic JSON surfaces the server reason, no plan hint", async () => {
+		const guide = makeGuide({ apiHost: ctx.serverUrl });
+		const op = makeOp({ path: "/api/error-403-generic" });
+
+		try {
+			await restGet(ctx.serverUrl, op, {}, guide);
+			expect.fail("should have thrown");
+		} catch (e) {
+			expect(e).toBeInstanceOf(HelperError);
+			if (e instanceof HelperError) {
+				expect(e.message).toContain("403");
+				expect(e.message).toContain("forbidden");
+				expect(e.message).not.toContain("plan/subscription limitation");
 			}
 		}
 	});
