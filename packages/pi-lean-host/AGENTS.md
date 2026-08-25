@@ -99,7 +99,15 @@ they live in the [`caritas`](https://github.com/coreyryanhanson/caritas) repo, g
 - **off** — all five disabled
 
 Starts **on**. Defaults are overridable via the `toolsetDefaults` settings tier
-read by `pi-tool-masking` (persistKey on the `ToolsetSpec`).
+read by `pi-tool-masking`. The two `ToolsetSpec`s (defined in `core/api-toggle.ts`):
+
+- `pi-lean-dimension.api` → `api-guide` + `api-fetch`, persistKey
+  `toolset-state:pi-lean-dimension.api` (default `true`).
+- `pi-lean-dimension.api-learn` → `api-learn` + `api-probe` + `api-scaffold`,
+  persistKey `toolset-state:pi-lean-dimension.api-learn` (default `false`),
+  `requires: ["pi-lean-dimension.api"]` — enabling learn cascades api on;
+  disabling api cascades learn off. There is no `host.*` settings block;
+credentials live in the per-domain secrets store, not `settings.json`.
 
 **Focus-mode guard:** actuating subcommands (`on`/`off`/`learn`) are refused
 while `pi-tool-masking` holds focus (inclusion mode or allowlist focus) — a
