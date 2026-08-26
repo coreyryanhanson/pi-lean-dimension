@@ -502,7 +502,7 @@ body
 		expect(err.fix).toContain("new: true");
 	});
 
-	it("unknown auth key (name/secret wrong shape) → ParseError with fix pointing at secretRefs/requires", () => {
+	it("unknown auth key (name/secret wrong shape) → expected lists the known keys", () => {
 		const raw = `---
 domains: [example.com]
 apiHost: https://api.example.com
@@ -520,11 +520,11 @@ body
 		const err = expectErr(raw);
 		expect(err.field).toBe("auth.name");
 		expect(err.found).toBe("unknown key(s): name, secret");
-		expect(err.fix).toContain("secretRefs");
-		expect(err.fix).toContain("requires");
+		expect(err.expected).toContain("secretRefs");
+		expect(err.expected).toContain("requires");
 	});
 
-	it("near-miss auth key (requiers:) → fix says did you mean requires", () => {
+	it("unknown auth key (requiers:) → expected lists the known keys", () => {
 		const raw = `---
 domains: [example.com]
 apiHost: https://api.example.com
@@ -543,7 +543,9 @@ body
 `;
 		const err = expectErr(raw);
 		expect(err.field).toBe("auth.requiers");
-		expect(err.fix).toContain('did you mean "requires"?');
+		expect(err.expected).toContain(
+			"kind, headers, secretRefs, secretQueryRefs, requires, optional, headerPrefixes",
+		);
 	});
 
 	it("paginate op with no pagination → ParseError", () => {

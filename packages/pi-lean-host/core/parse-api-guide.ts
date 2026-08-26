@@ -567,65 +567,6 @@ function isParseErr<T>(v: T | ParseApiGuideResult): v is ParseApiGuideResult {
 	);
 }
 
-/** Levenshtein edit distance — spots near-miss auth keys (e.g. `requiers:` →
- * `requires`) so the unknown-key error can say "did you mean X?" instead of a
- * bare rejection. */
-function editDistance(a: string, b: string): number {
-	const m = a.length;
-	const n = b.length;
-	if (m === 0) return n;
-	if (n === 0) return m;
-	let prev = Array.from({ length: n + 1 }, (_, j) => j);
-	for (let i = 1; i <= m; i++) {
-		const cur = new Array<number>(n + 1);
-		cur[0] = i;
-		for (let j = 1; j <= n; j++) {
-			cur[j] = Math.min(
-				prev[j]! + 1,
-				cur[j - 1]! + 1,
-				prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
-			);
-		}
-		prev = cur;
-	}
-	return prev[n]!;
-}
-
-/** Nearest known auth key within edit distance ≤ 2, or undefined. */
-function nearestKnownKey(
-	key: string,
-	known: ReadonlySet<string>,
-): string | undefined {
-	let best: string | undefined;
-	let bestDist = Infinity;
-	for (const k of known) {
-		const d = editDistance(key, k);
-		if (d < bestDist) {
-			bestDist = d;
-			best = k;
-		}
-	}
-	return bestDist <= 2 ? best : undefined;
-}
-
-/**
- * Adaptive fix for an unknown-auth-key rejection: near-miss → "did you mean
- * X?"; the observed wrong shape (`name`/`secret` under static-key) → point at
- * the real secretRefs/requires shape; anything else → list the known keys.
- */
-function authUnknownKeyFix(unknownKeys: string[]): string {
-	for (const key of unknownKeys) {
-		const known = nearestKnownKey(key, KNOWN_AUTH_KEYS);
-		if (known !== undefined) {
-			return `Unknown auth key "${key}" — did you mean "${known}"?`;
-		}
-	}
-	if (unknownKeys.includes("name") || unknownKeys.includes("secret")) {
-		return `The keyed-header shape is auth.secretRefs: { <header>: <secret-name> } with the secret declared in auth.requires (or auth.optional) — replace name/secret with secretRefs + requires.`;
-	}
-	return `Unknown auth key(s): ${unknownKeys.join(", ")} — known keys: ${KNOWN_AUTH_KEYS_LIST}.`;
-}
-
 function validateAuth(
 	raw: unknown,
 	file: string | undefined,
@@ -672,8 +613,8 @@ function validateAuth(
 	// Strict auth schema — reject unknown keys. The parser used to
 	// silently drop unknown keys (a wrong-but-plausible shape like
 	// `name`/`secret` saved a guide the executor then silently couldn't
-	// honor). Reject, don't infer: the fix is adaptive (near-miss → "did you
-	// mean X?", wrong shape → secretRefs/requires).
+	// honor). Reject, don't infer: `expected` already lists the known keys
+	// and `found` names the offenders — no separate fix needed.
 	const unknownKeys = Object.keys(a).filter((k) => !KNOWN_AUTH_KEYS.has(k));
 	if (unknownKeys.length > 0) {
 		const first = unknownKeys[0]!;
@@ -684,7 +625,6 @@ function validateAuth(
 			`unknown key(s): ${unknownKeys.join(", ")}`,
 			{
 				snippet: snippetFor(fm, "auth"),
-				fix: authUnknownKeyFix(unknownKeys),
 			},
 		);
 	}
