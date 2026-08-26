@@ -7,6 +7,21 @@
 >
 > This is a plan doc, not a spec. It names the seams to touch, the grants to
 > realize, the grants to defer, and scopes the browser-research step early.
+>
+> **Version & release context.** This lands as **one PR of the `0.5.0`
+> version bump**, not a standalone release. `0.5.0` is the coordinated
+> breaking-schema release: the `GUIDE_SCHEMA_VERSION` `0` → `1` bump here
+> rides the same version gate as the lockstep release label change tracked
+> in [`guides-decoupling-caritas-remaining-host.md`](./guides-decoupling-caritas-remaining-host.md).
+> The two are shipped together; do not treat the schema bump as a separate
+> release event. (An earlier review of this doc flagged a "two plans claim
+> the same 0→1 bump" conflict and a "bump rule says this is a non-event"
+> contradiction — both are resolved by this coordination: `0.5.0` owns the
+> bump, the AGENTS.md bump rule is amended below to cover TS-type breaks,
+> and the schema-version check is flipped from a warning to a hard gate.)
+> Until `0.5.0`, `pi-lean-host` docs carry a development-preview notice;
+> `0.4.0` is the last preview release. All prior versions are unofficial,
+> so this is the cheapest moment to lay the v1 foundation cleanly.
 
 ## Current state (the seams already in place)
 
@@ -19,9 +34,12 @@ already exist, which is why this is mostly additive:
   every auth field (`headers`, `secretRefs`, `headerPrefixes`,
   `secretQueryRefs`, `requires`, `optional`) sits on one bag of optionals
   for *every* kind, and every consumer narrows at runtime via
-  `auth.kind === "static-key"` string checks (six call sites today:
+  `auth.kind === "static-key"` string checks (six core call sites today:
   `helpers.ts`, `resolve-op.ts`, `verify-command.ts`, `auth.ts`,
-  `secrets-command.ts`, `parse-api-guide.ts`). OAuth2 does not slot into
+  `secrets-command.ts`, `parse-api-guide.ts`; plus two `tools/` readers —
+  `api-learn.ts`, `api-probe.ts` — that access the flat fields without
+  narrowing, for eight total — see the touch list in the reshape section).
+  OAuth2 does not slot into
   that flat bag cleanly — see the **Auth type reshape** section below for
   the discriminated-union refactor this plan now commits to, and the schema
   bump to v1 it triggers.
@@ -116,27 +134,46 @@ kind. The plan originally kept it flat "to minimize ripples through
 `guide.auth.*` readers." That accommodation is the wrong call now, for two
 reasons that both land because the schema is not yet frozen at v1:
 
-1. **The flat shape taxes every new auth kind, forever.** Today's six
-   `auth.kind === "static-key"` branches become six `oauth2` branches (the
-   five P1 touch-list gaps are literally "you forgot to add the oauth2
-   branch in file X"), then six `mtls` branches, six `private_key_jwt`
-   branches, and so on for the plethora of APIs this suite is meant to
-   serve. The compiler cannot tell you a branch is missing. A
-   discriminated union with `kind` as the discriminant turns each consumer
-   into a `switch (auth.kind)` whose `default: never` arm is an
-   **exhaustiveness error at compile time** the moment a new variant lands.
-2. **The plan already has to edit all six consumer files** for the P1
+1. **The flat shape taxes every new auth kind, forever.** Today's
+   `auth.kind === "static-key"` branches (eight consumer sites — see the
+   touch list below) each become an `oauth2` branch, then an `mtls`
+   branch, a `private_key_jwt` branch, and so on for the plethora of APIs
+   this suite is meant to serve. The compiler cannot tell you a branch is
+   missing. A discriminated union with `kind` as the discriminant turns
+   each consumer into a `switch (auth.kind)` whose `default: never` arm is
+   an **exhaustiveness error at compile time** the moment a new variant
+   lands.
+2. **The plan already has to edit all eight consumer files** for the
    touch-list gaps, so the one-time cost of converting them from `if
    (kind === …)` to `switch (kind)` is marginal over the work already
    scoped. Doing it now is cheaper than doing it later.
 
-This is a **breaking change to the TS type** (any code reading `guide.auth`
-as the flat interface must narrow by discriminant), and since v1 is not yet
-frozen we **bump `GUIDE_SCHEMA_VERSION` from `0` to `1`** alongside it —
-see the revised cross-cutting decision. The YAML author experience is
-unchanged in shape (they still write `auth: { kind: oauth2, … }`); the bump
-records the v1 auth-type vintage. This is the one breaking change this plan
-introduces; it is taken deliberately, while it is still cheap.
+> **Touch list (exhaustive — verified against the codebase).** The eight
+> sites that read `AuthConfig` fields and must convert to `switch (auth.kind)`:
+> `core/helpers.ts` (`checkAuth`), `core/resolve-op.ts`
+> (`resolveOpForExecution` auth block), `core/verify-command.ts` (auth
+> precheck), `core/auth.ts` (`authStatusLine` + `resolveSecretHeaders` +
+> `scrubSecretValues`), `core/secrets-command.ts` (`declaredSecretNames` /
+> `declaredPrefixHint`), `core/parse-api-guide.ts` (kind reject +
+> `none` field-presence check + `secretQueryRefs` collision check +
+> ref-consistency block), **`tools/api-learn.ts`** (`authSummary` reads
+> `secretRefs` / `headerPrefixes` / `secretQueryRefs` without narrowing —
+> breaks under the union), and **`tools/api-probe.ts`** (`listDomainSecrets`
+> reads `requires` / `optional` without a `kind` guard — breaks under the
+> union). `tools/api-guide.ts` (`renderGuideDetail`) only displays
+> `auth.kind` and survives unchanged. The `default: never` exhaustiveness
+> guarantee is only load-bearing **after** every site is converted — the
+> compiler will not surface sites still on the flat shape, so this list is
+> the contract.
+
+This is a **breaking change** — to the TS type *and* the YAML auth-block
+shape (the nested-`secretRefs` reshape below changes how every static-key
+guide authors its secrets). Since v1 is not yet frozen and `0.5.0` is the
+coordinated breaking release, we **bump `GUIDE_SCHEMA_VERSION` from `0` to
+`1`** alongside it, flip the schema-version check from a non-blocking
+warning to a **hard gate** (see the revised cross-cutting decisions), and
+re-stamp every caritas guide's frontmatter to `schemaVersion: 1`. This is
+taken deliberately, while it is still cheap.
 
 ### Target shape
 
@@ -146,14 +183,22 @@ Replace the flat `AuthConfig` interface with a discriminated union on
 ```ts
 interface NoneAuth { kind: "none"; headers?: Record<string, string> }
 
+// A single secret reference — self-contained. Availability is a property
+// of THIS ref (default: required, fail-closed when absent), not a separate
+// roster. prefix folds the old top-level headerPrefixes inline. This makes
+// the three old consistency checks (ref→declared, declared→ref, prefix→ref)
+// structurally impossible to violate, so the parser deletes them.
+interface SecretRef {
+  secret: string;          // store name
+  prefix?: string;         // e.g. "Bearer " — applied at resolution time
+  optional?: boolean;      // default false (absent → fail-closed)
+}
+
 interface StaticKeyAuth {
   kind: "static-key";
-  headers?: Record<string, string>;
-  secretRefs?: Record<string, string>;      // header name → store name
-  headerPrefixes?: Record<string, string>;
-  secretQueryRefs?: Record<string, string>; // query param → store name
-  requires?: string[];
-  optional?: string[];
+  headers?: Record<string, string>;                 // literal headers (X-Api-Key: DEMO_KEY)
+  secretRefs?: Record<string, SecretRef>;           // header name → ref
+  secretQueryRefs?: Record<string, SecretRef>;      // query param name → ref
 }
 
 interface OAuth2Auth {
@@ -161,10 +206,11 @@ interface OAuth2Auth {
   grant: "client_credentials" | "authorization_code";
   tokenUrl: string;
   clientId: string;
-  // client-credentials auth: a map, not a single string — see note below.
-  secretRefs?: Record<string, string>;      // e.g. { client_secret: "<store name>" }
-  requires?: string[];                       // secret names whose absence fails closed
-  optional?: string[];
+  // Reuses the same nested SecretRef shape as static-key. For oauth2 the
+  // map key is a FORM FIELD NAME (e.g. "client_secret"), not a header name —
+  // validateOAuth2 documents this. Future-proofs for private_key_jwt / mTLS
+  // which need more than one secret ref (signing key + cert).
+  secretRefs?: Record<string, SecretRef>;
   scopes?: string[];
   paramStyle?: "bearer-header" | "query";   // default bearer-header
   tokenEndpointAuthMethod?: "client_secret_basic" | "client_secret_post" | "none";
@@ -178,17 +224,63 @@ interface OAuth2Auth {
 type AuthConfig = NoneAuth | StaticKeyAuth | OAuth2Auth;
 ```
 
-Two shape decisions baked in:
+### YAML authoring shape (before → after)
 
-- **`secretRefs` is a map on the oauth2 variant, not a single
-  `clientSecretRef: string`.** The static-key side already proved the
-  `Record<name, secretName>` pattern; reusing it on the oauth2 variant
-  means the existing ref-consistency check (`requires`/`optional` ↔
-  `secretRefs`/`secretQueryRefs`) applies to oauth2 **unchanged** — the P1
-  ref-consistency shape mismatch dissolves. It also future-proofs the
-  variant for `private_key_jwt` / mTLS, which need more than one secret ref
-  (signing key + cert, etc.). `clientSecretRef` as a single string would
-  have been a one-recipe shortcut that the second provider outgrows.
+The nested refactor is the real cleanup. Today one logical fact ("this
+header needs this secret, and it's optional") is split across three
+fields — `secretRefs` (where), `optional` (availability), and the secret
+name duplicated between them — bolted together by ~85 lines of parser
+consistency checks (`parse-api-guide.ts` `checkRefs` / `checkDeclared` /
+the `headerPrefixes`-must-target-a-secretRef check). The nested shape
+makes each ref self-contained and deletes all three checks.
+
+```yaml
+# static-key (the shipped github guide, public-API-with-optional-key-for-rate-limits)
+auth:                              auth:
+  kind: static-key                   kind: static-key
+  secretRefs:                        secretRefs:
+    Authorization: api_key             Authorization:
+  optional:                              secret: api_key
+    - api_key                            optional: true     # default: required (fail-closed)
+```
+
+```yaml
+# oauth2 client_credentials
+auth:
+  kind: oauth2
+  grant: client_credentials
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: my_client_id
+  secretRefs:
+    client_secret:
+      secret: client_secret
+  scopes: [read]
+  paramStyle: bearer-header
+  tokenEndpointAuthMethod: client_secret_post
+```
+
+The public-with-optional-key use case (API is public, user may provision a
+key for better rate limits) survives unchanged in semantics: `optional: true`
+on the ref, `resolveSecretHeaders` proceeds unauthenticated when the store
+misses an optional secret — the same path it uses today, reading
+`refs[h].optional` instead of `optional.includes(name)`.
+
+Three shape decisions baked in:
+
+- **`secretRefs` is a nested `Record<string, SecretRef>`, not a flat
+  `Record<string, string>` + `requires`/`optional`/`headerPrefixes`.** This
+  is the cleanup that actually improves the foundation (not just the TS
+  type). It collapses three fields into one self-contained entry per secret,
+  deletes ~85 lines of parser consistency enforcement (`checkRefs` /
+  `checkDeclared` / the `headerPrefixes`-must-target-a-secretRef check at
+  `parse-api-guide.ts:747-825`), and makes the three violations it guarded
+  against structurally impossible. `core/auth.ts:56` (`resolveSecretHeaders`)
+  folds the prefix application inline (`(ref.prefix ?? "") + value`),
+  deleting the separate `headerPrefixes` lookup. Caritas static-key guides
+  need an auth-block **rewrite** (not just a restamp) — accepted, this is
+  the right moment. The same nested shape is reused on the oauth2 variant
+  (future-proofs for `private_key_jwt` / mTLS, which need >1 secret ref);
+  there the map key is a form-field name, not a header name.
 - **`tokenEndpointAuthMethod` is declared.** RFC 6749 §2.3.1 / RFC 7591:
   clients authenticate at the token endpoint via `client_secret_basic`,
   `client_secret_post`, `private_key_jwt`, `none`, etc. Hardcoding one (the
@@ -196,15 +288,32 @@ Two shape decisions baked in:
   provider that requires basic, or rejects basic. Declaring the method now
   is cheap and is exactly the kind of assumption that does not generalize
   across the plethora of APIs.
+- **Per-variant field allowlists replace the global `KNOWN_AUTH_KEYS`.**
+  Today `KNOWN_AUTH_KEYS` is a single global set, so a `headerPrefixes` or
+  `secretQueryRefs` key on an oauth2 block (or a `tokenUrl` on a static-key
+  block) passes the allowlist and only gets caught — maybe — downstream.
+  For v1 the parser moves to per-variant allowlists keyed by `kind`: each
+  variant rejects fields not legal for it. Strictly cleaner, strictly
+  louder, and the natural shape of the union. (This also retires the old
+  `none`-kind field-presence check as a special case — it becomes the
+  `NoneAuth` allowlist.)
 
-### Mechanical impact on the six consumers
+### Mechanical impact on the eight consumers
 
 Each `auth.kind === "static-key"` site becomes a `switch (auth.kind)` with
-a `default: never` exhaustiveness arm. The P1 touch-list edits (adding the
-oauth2 branch in `helpers.ts`, `resolve-op.ts`, `verify-command.ts`,
-`auth.ts`, `secrets-command.ts`) are done **inside** this refactor, not on
-top of the flat shape — so the oauth2 branch is added once, in the switch,
-and the exhaustiveness check guarantees no seventh site is missed.
+a `default: never` exhaustiveness arm. Seven of the eight convert in
+Phase 1 — the oauth2 branch is added inside the refactor in `helpers.ts`,
+`resolve-op.ts`, `auth.ts`, `secrets-command.ts`, `tools/api-learn.ts`,
+`tools/api-probe.ts`, plus `parse-api-guide.ts` (whose kind-narrowing sites
+— the `oauth2` reject and the `secretQueryRefs` collision check — become
+`switch` arms rather than a consumer "oauth2 branch"). The eighth,
+`verify-command.ts`, converts in **Phase 2** when its oauth2 precheck arm
+lands; until then it stays on `if (kind === "static-key")`, which still
+compiles under the union (narrowing by discriminant inside the `if` is
+sound) — it just isn't exhaustive yet. The exhaustiveness check then
+guarantees no *ninth* site is missed once all eight are on `switch` — but
+only because the eight-site touch list above is the contract; the compiler
+will not surface sites still on the flat shape.
 
 ## Phased plan
 
@@ -246,34 +355,36 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
 
 - **`core/api-guide-types.ts`** — replace the flat `AuthConfig` interface
   with the `NoneAuth | StaticKeyAuth | OAuth2Auth` discriminated union from
-  the **Auth type reshape** section. Bump `GUIDE_SCHEMA_VERSION` from `0` to
-  `1` (see the revised cross-cutting decision). The oauth2 variant carries
-  `tokenUrl`, `clientId`, `secretRefs` (a map, not a single string),
-  `requires`/`optional`, `scopes?`, `paramStyle?`,
-  `tokenEndpointAuthMethod?`, and the auth-code-only `authorizeUrl` /
-  `redirectUri` / `pkce` / `revokeUrl?`.
+  the **Auth type reshape** section, including the nested `SecretRef` shape
+  (`{ secret, prefix?, optional? }`). Drop the top-level `requires` /
+  `optional` / `headerPrefixes` fields from both `StaticKeyAuth` and
+  `OAuth2Auth` — they are now per-ref. Bump `GUIDE_SCHEMA_VERSION` from `0`
+  to `1`. The oauth2 variant carries `tokenUrl`, `clientId`, `secretRefs`,
+  `scopes?`, `paramStyle?`, `tokenEndpointAuthMethod?`, and the auth-code-only
+  `authorizeUrl` / `redirectUri` / `pkce` / `revokeUrl?`.
 - **`core/parse-api-guide.ts`** — un-reject `oauth2`; add `validateOAuth2`
   with invariants: client-credentials ⇒ a `client_secret` entry in
-  `secretRefs` (referenced from `requires`) + `authorizeUrl`/`redirectUri`/
-  `pkce` absent; auth-code ⇒ `pkce: true` + `authorizeUrl` + `redirectUri`,
-  `client_secret` optional in `secretRefs` (PKCE apps have no secret). Every
-  `secretRefs` value targets a declared secrets-store name (same rule as
-  static-key). Because oauth2 reuses the existing `secretRefs` map, the
-  ref-consistency check (`requires`/`optional` ↔ `secretRefs`/
-  `secretQueryRefs`) applies **unchanged** — no special-casing for a single
-  string ref. Two parser-internal touch points the existing static-key path
-  hides:
-  - **Extend `KNOWN_AUTH_KEYS`** (the strict field allowlist that runs after
-    the kind reject) with the new oauth2 field names — `tokenUrl`,
-    `clientId`, `grant`, `scopes`, `paramStyle`, `tokenEndpointAuthMethod`,
-    `authorizeUrl`, `redirectUri`, `pkce`, `revokeUrl`. (`secretRefs`,
-    `requires`, `optional` are already allowed.) Without this every oauth2
-    guide fails with "unknown key(s)" before `validateOAuth2` is reached.
+  `secretRefs` + `authorizeUrl`/`redirectUri`/`pkce` absent; auth-code ⇒
+  `pkce: true` + `authorizeUrl` + `redirectUri`, `client_secret` optional
+  in `secretRefs` (PKCE apps have no secret — see the auth-code-optional
+  decision in cross-cutting). Every `secretRefs` value's `secret` targets a
+  name the secrets store would accept (same rule as static-key). Three
+  parser-internal changes the existing static-key path hides:
+  - **Per-variant field allowlists** replace the single global
+    `KNOWN_AUTH_KEYS` set (see the third baked-in decision). Each variant
+    rejects fields not legal for it; the old `none`-kind field-presence
+    check becomes the `NoneAuth` allowlist. Without this, a `tokenUrl` on a
+    static-key block or a `headerPrefixes` on an oauth2 block slips past the
+    global allowlist.
+  - **Delete the ref-consistency block** (`checkRefs` / `checkDeclared` /
+    the `headerPrefixes`-must-target-a-secretRef check, `parse-api-guide.ts:747-825`).
+    The nested `SecretRef` makes all three violations structurally
+    impossible: there is no `requires`/`optional` list to diverge from the
+    refs, and `prefix` lives on the ref it applies to.
   - **Convert the kind-narrowing sites in this file** (the `oauth2` reject,
-    the `none` field-presence check, the `secretQueryRefs` collision check)
-    to `switch (auth.kind)` arms as part of the union refactor; the
-    `default: never` arm makes the exhaustiveness guarantee load-bearing
-    here too.
+    the `secretQueryRefs` collision check) to `switch (auth.kind)` arms as
+    part of the union refactor; the `default: never` arm makes the
+    exhaustiveness guarantee load-bearing here too.
 - **`core/oauth-store.ts`** (new, small) — per-domain token persistence:
   `{ accessToken, refreshToken?, expiresAt, scope? }`, 0600 file backend,
   lazy-mkdir-on-write. **Separate from the secrets store** because tokens
@@ -290,6 +401,12 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
   `/api oauth <domain>`. The `tokenEndpointAuthMethod` field selects
   `client_secret_basic` (Authorization header) vs `client_secret_post`
   (form body); `none` sends no client credentials (PKCE auth-code).
+  **`resolveAccessToken` must read the token store fresh on every call**
+  (not cache in a closure) so a refresh on op N is visible to op N+1 during
+  a long `/api verify` run — mirrors how the static-key path reads the
+  store fresh per call. Also fold the prefix application into
+  `resolveSecretHeaders` inline (`(ref.prefix ?? "") + value`), deleting
+  the separate `headerPrefixes` lookup.
 - **`core/resolve-op.ts`** — convert the auth-resolution block's
   `guide.auth.kind === "static-key"` check to a `switch (auth.kind)` and add
   the `oauth2` arm; reuse the existing `authOpts` / `secretValues` /
@@ -312,11 +429,13 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
   guards in `declaredSecretNames` and `declaredPrefixHint` to a
   `switch (auth.kind)` and add an `oauth2` arm that reads the variant's
   `secretRefs` map (the `client_secret` entry) for guide-aware assisted
-  provisioning. Without this, `/api secrets <domain>` shows "(none)" for an
-  oauth2 guide's `client_secret` and falls back to the manual prompt — the
-  guide-aware provisioning the cross-cutting decisions promise wouldn't
-  fire. The store key stays decoupled from the routing domain via the
-  existing `canonicalStoreDomain(guide)`.
+  provisioning. `declaredPrefixHint` now reads `ref.prefix` off the nested
+  `SecretRef` instead of the deleted top-level `headerPrefixes` map. Without
+  this, `/api secrets <domain>` shows "(none)" for an oauth2 guide's
+  `client_secret` and falls back to the manual prompt — the guide-aware
+  provisioning the cross-cutting decisions promise wouldn't fire. The store
+  key stays decoupled from the routing domain via the existing
+  `canonicalStoreDomain(guide)`.
 - **`authStatusLine`** (`core/auth.ts`) — convert the `auth.kind !==
   "static-key"` early return to a `switch (auth.kind)` and add the `oauth2`
   arm for states: ok / expired-but-refreshable / missing → nudge
@@ -324,9 +443,30 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
   direction (the footer must read the token store to report state); keep
   `oauth-store.ts` free of any `auth.ts` import so the edge stays one-way and
   no cycle forms.
+- **`tools/api-learn.ts`** — `authSummary` (`:180-191`) reads `auth.secretRefs` /
+  `auth.headerPrefixes` / `auth.secretQueryRefs` directly on the flat
+  `AuthConfig` without narrowing. Under the union those fields only exist on
+  `StaticKeyAuth`, so these accesses become TS errors. Convert to a
+  `switch (auth.kind)` (or narrow per field) and render the nested
+  `SecretRef` shape (`secret` + optional `prefix`/`optional`). This is the
+  seventh consumer site the original plan's "six call sites" claim missed.
+- **`tools/api-probe.ts`** — `listDomainSecrets` (`:1034-1035`) reads
+  `guide.auth.requires` / `guide.auth.optional` without a `kind` guard; under
+  the union those fields don't exist on `NoneAuth`, so this is a TS error.
+  Convert to a `switch (auth.kind)` arm that reads the nested `secretRefs`
+  (and `secretQueryRefs`) instead of the deleted top-level lists. This is
+  the eighth consumer site. (The Phase 2 inline-oauth2-probe decision is
+  separate; this Phase 1 fix is just keeping the union refactor compiling.)
 - **Tests** — `__tests__/oauth-*.test.ts` (mocked transport): token fetch,
   cache hit, expiry → refresh, fail-closed, Bearer injection, scrub of the
-  access token in a 401 body and a surfaced URL.
+  access token in a 401 body and a surfaced URL. **Plus update existing
+  tests for the breaking changes:** `__tests__/helpers.test.ts:1515` (asserts
+  `checkAuth` throws for oauth2 — invert once realized), `__tests__/parse-api-guide.test.ts`
+  (the `secretRefs`-flat + `requires`/`optional`/`headerPrefixes` fixtures
+  move to the nested shape; add per-variant-allowlist rejection cases), and
+  the six test files that carry `headerPrefixes` fixtures
+  (`parse-api-guide` / `secrets-command` / `api-probe` / `auth` / `verify-command` / `tools`)
+  fold `prefix` into the nested `SecretRef`.
 
 ### Phase 2 — Authorization Code with PKCE (the interactive half)
 
@@ -356,7 +496,9 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
   or reading a pre-provisioned token from the token store. Decide during
   Phase 2 whether probe mints on demand (one extra POST per probe) or
   requires a pre-provisioned token; the injection-fields-only model is not
-  enough on its own.
+  enough on its own. (Note: Phase 1 already touches `api-probe.ts` for the
+  `listDomainSecrets` union fix — that is independent of this Phase 2
+  inline-auth decision.)
 - **`core/verify-command.ts`** — convert the auth precheck (`if
   (guide.auth.kind === "static-key")`) to a `switch (auth.kind)` and add an
   `oauth2` arm that resolves the token store / mintability and fail-fasts
@@ -365,8 +507,10 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
   token-missing failures instead of one. The `default: never` arm makes a
   future kind a compile error at the verify seam.
 - **`/api verify`** — handle token refresh mid-loop (a long verify run can
-  cross an expiry boundary; `resolveAccessToken` already refreshes lazily,
-  so this is mostly "make sure verify goes through the same resolver").
+  cross an expiry boundary). `resolveAccessToken` already refreshes lazily
+  and reads the store fresh per call (see cross-cutting), so verify going
+  through the same resolver picks up the refresh on op N+1 automatically —
+  no verify-specific cache.
 - **Tests** — mocked transport + a mocked loopback callback for the
   auth-code exchange; assert PKCE verifier/challenge wiring, state check,
   token-store stamp, headless manual-code path.
@@ -377,32 +521,47 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
   Phase 0 to `api-guides/`, with a co-located mocked-transport test that
   exercises token injection + refresh + fail-closed. Update
   `__tests__/axis-coverage.test.ts` matrix (the kept-set count and the
-  auth-kind axis: `none` + `static-key` + `oauth2`). Move `oauth2` from
-  "Deferred" to "Built-in" in `api-helper-escape-valve.md`'s classification
-  table — this is the promotion the doc's "second independent API" rule
-  calls for.
+  auth-kind axis: `none` + `static-key` + `oauth2`) and
+  `__tests__/all-guides-parse.test.ts:56` (asserts
+  `expect(["none", "static-key"]).toContain(...)` — extend to `oauth2`).
+  Move `oauth2` from "Deferred" to "Built-in" in `api-helper-escape-valve.md`'s
+  classification table — this is the promotion the doc's "second independent
+  API" rule calls for.
 - **Caritas recipes** — publish the Phase-0 client-credentials recipe and
   the auth-code-with-PKCE recipe into caritas with live tests
   (`HOST_INTEGRATION=1`) and `verified:` dates. Caritas owns the drift
-  disclaimer; host ships only the synthetic axis fixture.
+  disclaimer; host ships only the synthetic axis fixture. **Every caritas
+  guide also gets `schemaVersion: 1` stamped** (hard-gate flip below) and
+  any static-key guide gets its auth block rewritten to the nested
+  `SecretRef` shape — this is a one-time `0.5.0` migration, not ongoing
+  drift.
 
 ## Cross-cutting decisions (decide once, apply throughout)
 
-- **Schema bump to v1.** Two things land together under one bump:
-  (a) the **`AuthConfig` discriminated-union refactor** from the Auth type
-  reshape section — a breaking change to the TS type that any `guide.auth`
-  reader must adjust to; and (b) the new oauth2 variant. Realizing `oauth2`
-  *relaxes* a constraint (a guide that used to fail to parse now parses),
-  which under the AGENTS.md bump rule is a non-event on its own — but the
-  union refactor is a genuine type break, and since v1 is not yet frozen we
-  take the bump deliberately: `GUIDE_SCHEMA_VERSION` goes from `0` to `1`
-  as the v1 auth-type vintage. Per the bump rule, `schemaVersion` stays
-  **metadata-only** — a stale guide (`< current`) gets the non-blocking `⚠`
-  warning in the catalog / detail / disambiguation and a note on
-  `api-fetch`; it never gates or fails to load. Existing `kind: none` /
-  `kind: static-key` guides parse unchanged under the union (the variants
-  are a superset of the old flat shape), so the bump records the vintage
-  without forcing a recipe migration.
+- **Schema bump to v1, shipped under `0.5.0`, and the version check
+  becomes a hard gate.** Three things land together under one bump:
+  (a) the **`AuthConfig` discriminated-union refactor**; (b) the **nested
+  `SecretRef` reshape** (a breaking change to the YAML auth-block shape —
+  every static-key guide's `secretRefs`/`requires`/`optional`/`headerPrefixes`
+  collapses to nested entries); and (c) the new oauth2 variant. This is one
+  PR of the coordinated `0.5.0` release; the bump rides the same gate as the
+  lockstep label change tracked in
+  `guides-decoupling-caritas-remaining-host.md`. **AGENTS.md bump-rule
+  amendment (part of this PR):** the existing rule says "do not bump unless a
+  guide that used to parse now fails to parse; relaxing a constraint is a
+  non-event" — that rule is written in terms of *parse behavior* only. Add
+  an explicit bump trigger for **breaking TS-type or YAML-shape changes to
+  `AuthConfig`** even when parse behavior relaxes. Concretely `GUIDE_SCHEMA_VERSION`
+  goes `0` → `1` as the v1 auth-type vintage. **Hard-gate flip:** `isStaleSchema`
+  (`parse-api-guide.ts:1775`) changes from a non-blocking `⚠` warning into a
+  **hard load refusal** — a guide whose `schemaVersion` is `< current` fails
+  to parse. This is the "fail loudly" policy: we do not keep deprecated
+  reading code to support old-schema guides. Every caritas guide is
+  re-stamped to `schemaVersion: 1` (one frontmatter line per guide); static-key
+  guides additionally get the nested auth-block rewrite. The
+  `schema-version.test.ts` "never a gate" assertions invert to "is a gate".
+  Update the AGENTS.md `schemaVersion` section to match (it currently says
+  "never a gate").
 - **Token store is separate from the secrets store.** Tokens rotate and have
   structure (`expiresAt`, `refreshToken`); raw secrets don't. Two 0600 file
   stores, same `SecretStore`-style interface shape, is simpler than one
@@ -410,17 +569,36 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
 - **`client_secret` lives in the secrets store**, not the token store —
   it's a raw credential provisioned once via `/api secrets <domain>`,
   exactly like a static key. The oauth2 variant references it through its
-  `secretRefs` map (e.g. `{ client_secret: "<store name>" }`), reusing the
-  static-key ref-consistency machinery unchanged. Only the minted tokens
-  live in the token store.
+  `secretRefs` map (e.g. `client_secret: { secret: client_secret }`),
+  reusing the same nested `SecretRef` shape as static-key. Only the minted
+  tokens live in the token store.
+- **Auth-code `client_secret` is optional with no ref entry.** A PKCE
+  auth-code app has no client secret, so its guide simply omits the
+  `client_secret` entry from `secretRefs` (and omits it from any list — there
+  is no `optional` list anymore). This sidesteps the old `checkDeclared`
+  rule that rejected an `optional` name not referenced by any ref: there is
+  no list to diverge from. `validateOAuth2` enforces `grant: authorization_code`
+  ⇒ `pkce: true` + `authorizeUrl` + `redirectUri`; `client_secret` in
+  `secretRefs` is allowed but not required.
 - **Refresh is lazy and on-demand**, inside `resolveAccessToken` at fetch
   time. No background worker, no expiry timer. The first call after expiry
-  pays one extra round trip; every subsequent call is cached. Add a worker
+  pays one extra round trip; every subsequent call is cached. `resolveAccessToken`
+  reads the token store fresh on every call (no closure cache) so a refresh
+  on op N is visible to op N+1 during a long `/api verify` run. Add a worker
   only if a recipe's short TTL makes that latency hurt.
 - **`Authorization: Bearer` is the default injection**; a guide may declare
   `paramStyle: query` (`?access_token=…`) for the few providers that require
-  it. Query-injected tokens get the same URL redaction as static-key
-  query secrets.
+  it. **Query-injected tokens feed the existing URL-redaction path:** the
+  oauth2 arm in `resolve-op.ts` adds the token param name (`access_token`,
+  per RFC 6750 §2.3, or the guide-configured name) to the `secretQueryParamNames`
+  set in `AuthOpts`, so `redactSecretParams` (`transport.ts`) redacts it on
+  every surfaced URL (`result.url`, `PaginateResult.urls`, `HelperError.url`).
+  Without this the access token leaks into surfaced URLs — a real redaction
+  gap, not cosmetic.
+- **Per-variant field allowlists.** Replaces the global `KNOWN_AUTH_KEYS`
+  set with per-variant allowlists keyed by `kind` (see the third baked-in
+  decision). Each variant rejects fields not legal for it; this is stricter
+  than the global set and is the natural shape of the union.
 - **Transport stays GET-only.** The OAuth2 token/refresh/revocation POSTs are
   the first non-GET requests host makes — scope them to a small, separate
   helper in `core/oauth-flow.ts` / `core/auth.ts`, **not** a generalization
@@ -454,9 +632,13 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
 - `/api oauth <domain>` provisions tokens (client-credentials: pure HTTP;
   auth-code: loopback + user browser), headless-safe, not focus-guarded.
 - A synthetic OAuth2 axis guide + co-located mocked test land in host;
-  `axis-coverage.test.ts` matrix updated; escape-valve doc table updated.
+  `axis-coverage.test.ts` and `all-guides-parse.test.ts` matrices updated;
+  escape-valve doc table updated.
 - One client-credentials + one auth-code-with-PKCE recipe land in caritas
-  with live tests and `verified:` dates.
-- `GUIDE_SCHEMA_VERSION` bumped `0` → `1` (the v1 auth-type vintage);
-  existing `none`/`static-key` guides parse unchanged under the union;
-  host-only boundary test green; `npm run test:ci` green.
+  with live tests and `verified:` dates; every caritas guide stamped
+  `schemaVersion: 1` and static-key guides rewritten to nested `SecretRef`.
+- `GUIDE_SCHEMA_VERSION` bumped `0` → `1` under `0.5.0`; `isStaleSchema`
+  flipped to a hard gate; AGENTS.md bump rule + `schemaVersion` section
+  amended; all eight consumer sites on `switch (auth.kind)`; per-variant
+  field allowlists in place; ref-consistency block deleted; host-only
+  boundary test green; `npm run test:ci` green.
