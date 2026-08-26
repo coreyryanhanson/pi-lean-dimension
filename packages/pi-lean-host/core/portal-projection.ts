@@ -24,19 +24,18 @@ let _registered = false;
 
 /**
  * Build a snapshot of host's guide projections.
- * Recipe fields (apiHost, operations, auth, pagination, responseShape) are
- * stripped by projectToGuide(); only the presentation slice + kind remain.
- * Self-gates on the /api toggle state.
+ * Recipe fields are stripped by projectToGuide(); only the presentation
+ * slice + kind remain. Self-gates on the /api toggle state.
  */
 function buildProjection(): Record<string, Guide> {
-	if (!getApiToggleState()) return {};
+ if (!getApiToggleState()) return {};
 
-	const { guides } = loadAllGuides();
-	const out: Record<string, Guide> = {};
-	for (const [name, guide] of Object.entries(guides)) {
-		out[name] = projectToGuide(guide);
-	}
-	return out;
+ const { guides } = loadAllGuides();
+ const out: Record<string, Guide> = {};
+ for (const [name, guide] of Object.entries(guides)) {
+  out[name] = projectToGuide(guide);
+ }
+ return out;
 }
 
 /**
@@ -47,23 +46,23 @@ function buildProjection(): Record<string, Guide> {
  * no-ops after the first successful registration.
  */
 export function registerPortalProjection(): void {
-	if (_registered) return;
+ if (_registered) return;
 
-	const fn = (globalThis as Record<string, unknown>)[PORTAL_REGISTRY_KEY];
-	if (typeof fn !== "function") {
-		// Portal not installed or not yet loaded — no-op.
-		return;
-	}
+ const fn = (globalThis as Record<string, unknown>)[PORTAL_REGISTRY_KEY];
+ if (typeof fn !== "function") {
+  // Portal not installed or not yet loaded — no-op.
+  return;
+ }
 
-	try {
-		(fn as (provider: () => Record<string, Guide>) => void)(buildProjection);
-		_registered = true;
-	} catch {
-		// Portal present but registration failed — degrade to host-only.
-	}
+ try {
+  (fn as (provider: () => Record<string, Guide>) => void)(buildProjection);
+  _registered = true;
+ } catch {
+  // Portal present but registration failed — degrade to host-only.
+ }
 }
 
 /** @internal Reset registration state (test helper). */
 export function _resetPortalProjectionForTest(): void {
-	_registered = false;
+ _registered = false;
 }
