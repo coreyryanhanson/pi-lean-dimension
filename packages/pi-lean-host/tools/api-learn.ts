@@ -839,8 +839,8 @@ export const apiLearnTool = defineTool({
 			}
 			writeDir = canonicalStaged;
 			reStagedNote =
-				`Re-staged /${oldName} → ${slugged}/ (slug of shortName) — ` +
-				`edit the staged files here from now on.`;
+				`Re-staged /${oldName} → ${writeDir} (slug of shortName) — ` +
+				`the staged draft moved here; edit these files from now on.`;
 		}
 
 		mkdirSync(domainDir, { recursive: true });
