@@ -143,14 +143,33 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
   `tokenUrl`, `clientId`, `clientSecretRef` (→ secrets store name), `scopes?`,
   `paramStyle?` (`"bearer-header"` default | `"query"`), `grant?`
   (`"client_credentials" | "authorization_code"`), and the auth-code-only
-  fields (`authorizeUrl`, `redirectUri`, `pkce`). Keep it one discriminated
-  shape; don't fork the type.
+  fields (`authorizeUrl`, `redirectUri`, `pkce`). Keep it one flat interface
+  with optional fields + runtime validation in `validateOAuth2` — this matches
+  the existing `AuthConfig` pattern (it is *not* a discriminated union today,
+  despite the `kind` tag). A real `type AuthConfig = StaticKeyAuth | OAuth2Auth
+  | NoneAuth` union would give compile-time per-kind safety and is a reasonable
+  follow-up, but forking the type now would ripple through every `guide.auth.*`
+  reader; the flat shape + `validateOAuth2` invariants are the smaller diff.
 - **`core/parse-api-guide.ts`** — un-reject `oauth2`; add `validateOAuth2`
   with invariants: client-credentials ⇒ `clientSecretRef` required +
   `authorizeUrl`/`redirectUri`/`pkce` absent; auth-code ⇒ `pkce: true` +
   `authorizeUrl` + `redirectUri`, `clientSecretRef` optional (PKCE apps have
   no secret). Every `*Ref` targets a declared secrets-store name
-  (same rule as static-key `secretRefs`).
+  (same rule as static-key `secretRefs`). Two parser-internal touch points
+  the existing static-key path hides:
+  - **Extend `KNOWN_AUTH_KEYS`** (the strict field allowlist that runs after
+    the kind reject) with the new oauth2 field names — `tokenUrl`,
+    `clientId`, `clientSecretRef`, `scopes`, `paramStyle`, `grant`,
+    `authorizeUrl`, `redirectUri`, `pkce`. Without this every oauth2 guide
+    fails with "unknown key(s)" before `validateOAuth2` is reached.
+  - **Reconcile `clientSecretRef` with the ref-consistency check.** The
+    existing `requires`/`optional` ↔ `secretRefs`/`secretQueryRefs` check
+    operates on `Record<string,string>` maps; a single `clientSecretRef`
+    string is not a map entry, so a `requires: [client_secret]` declaration
+    trips "declared but not referenced by any header/query ref." Route
+    `clientSecretRef` through the check (e.g. treat it as a synthetic
+    `secretRefs` entry for validation purposes) rather than relaxing the
+    invariant.
 - **`core/oauth-store.ts`** (new, small) — per-domain token persistence:
   `{ accessToken, refreshToken?, expiresAt, scope? }`, 0600 file backend,
   lazy-mkdir-on-write. **Separate from the secrets store** because tokens
@@ -168,13 +187,32 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
   on `kind: oauth2` alongside `static-key`; reuse the existing
   `authOpts` / `secretValues` / fail-closed-return path. The Bearer token
   enters `secretValues` so the existing scrub redacts it from bodies/URLs.
+- **`core/helpers.ts`** — add `oauth2` to `checkAuth`'s kind allow-list. It
+  is called inside `restGet` and `paginate` *after* `resolveOpForExecution`
+  has already resolved the token and handed it in as `authHeaders`; the
+  current `throw` for unrealized kinds fires there and kills the request
+  even after successful resolution. (Alternative: drop the `checkAuth` call
+  entirely now that `resolve-op.ts` owns auth dispatch — but the allow-list
+  edit is the smaller, safer diff and keeps the executor's guard.)
 - **`core/api-toggle.ts`** — add the `oauth` subcommand: `/api oauth <domain>`
   triggers client-credentials token fetch (no browser) and stamps the token
   store; `--refresh` forces a refresh; `--status` is metadata-only;
   `--revoke` hits the provider's revocation endpoint if declared. Always-
   available / not focus-guarded (peer of `secrets`/`verify`/`delete`).
-- **`authStatusLine`** — extend the shared footer for oauth2 states:
-  ok / expired-but-refreshable / missing → nudge `/api oauth <domain>`.
+- **`core/secrets-command.ts`** — extend `declaredSecretNames` and
+  `declaredPrefixHint` to read `clientSecretRef` from `kind: oauth2` guides
+  (both currently `continue` on `kind !== "static-key"`). Without this,
+  `/api secrets <domain>` assisted-entry shows "(none)" for an oauth2
+  guide's `client_secret` and falls back to the manual name+value prompt —
+  the guide-aware provisioning the cross-cutting decisions promise wouldn't
+  fire. The store key stays decoupled from the routing domain via the
+  existing `canonicalStoreDomain(guide)`.
+- **`authStatusLine`** (`core/auth.ts`) — extend the shared footer for
+  oauth2 states: ok / expired-but-refreshable / missing → nudge
+  `/api oauth <domain>`. This adds a new `auth.ts` → `oauth-store.ts` import
+  direction (the footer must read the token store to report state); keep
+  `oauth-store.ts` free of any `auth.ts` import so the edge stays one-way and
+  no cycle forms.
 - **Tests** — `__tests__/oauth-*.test.ts` (mocked transport): token fetch,
   cache hit, expiry → refresh, fail-closed, Bearer injection, scrub of the
   access token in a 401 body and a surfaced URL.
@@ -183,8 +221,11 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
 
 - **`core/oauth-flow.ts`** (new) — the interactive dance, host-only:
   - Generate `code_verifier` + `code_challenge` (S256).
-  - Spin up a loopback `http.createServer` on an ephemeral port; the
-    `redirectUri` is `http://localhost:<port>/callback`.
+  - Spin up a loopback `http.createServer` on an ephemeral port, bound
+    explicitly to `127.0.0.1` (`listen(port, "127.0.0.1")`) — a bare
+    `listen(port)` defaults to `0.0.0.0` on some platforms and would expose
+    the callback listener to the network. The `redirectUri` is
+    `http://localhost:<port>/callback`.
   - Build the authorize URL (scopes, challenge, state, redirect_uri).
   - Surface the URL to the user — best-effort open-default-browser via
     `ctx.ui`, else print a clickable URL. **Headless**: print the URL and
@@ -197,7 +238,19 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
   the subcommand runs `oauth-flow.ts` instead of the client-credentials
   fetch. Same token store, same `--refresh`/`--status`/`--revoke`.
 - **`api-probe`** — extend the inline `auth` block with oauth2 fields for
-  probing auth-gated endpoints (mirror the static-key inline auth story).
+  probing auth-gated endpoints. This is **non-trivial and does not mirror
+  the static-key inline auth story cleanly**: static-key inline auth is
+  injection-fields-only (resolve a secret, attach a header), whereas oauth2
+  requires either minting a token (a client-credentials POST to `tokenUrl`)
+  or reading a pre-provisioned token from the token store. Decide during
+  Phase 2 whether probe mints on demand (one extra POST per probe) or
+  requires a pre-provisioned token; the injection-fields-only model is not
+  enough on its own.
+- **`core/verify-command.ts`** — extend the auth precheck (`if (guide.auth.kind
+  === "static-key")`) with an oauth2 branch that resolves the token store /
+  mintability and fail-fasts with a single nudge message before the op loop.
+  Today oauth2 silently skips the precheck, so verify proceeds op-by-op and
+  surfaces N identical token-missing failures instead of one.
 - **`/api verify`** — handle token refresh mid-loop (a long verify run can
   cross an expiry boundary; `resolveAccessToken` already refreshes lazily,
   so this is mostly "make sure verify goes through the same resolver").
@@ -246,9 +299,11 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
 - **Transport stays GET-only.** The OAuth2 token/refresh/revocation POSTs are
   the first non-GET requests host makes — scope them to a small, separate
   helper in `core/oauth-flow.ts` / `core/auth.ts`, **not** a generalization
-  of `transport.ts` into a write-capable pipeline. The "general mutations /
-  write gate" deferral stands; OAuth2's POSTs are auth plumbing, not user
-  ops.
+  of `transport.ts` into a write-capable pipeline. The helper issues POSTs
+  via undici's `request()` (or the global `fetch`) directly — do **not**
+  shoehorn POSTs through `transport.ts`'s `fetchUrl`, which is GET-only by
+  contract. The "general mutations / write gate" deferral stands; OAuth2's
+  POSTs are auth plumbing, not user ops.
 - **Host-only boundary holds.** `oauth-flow.ts` must not statically import
   `pi-lean-portal`. The loopback listener + user's-own-browser model keeps
   it host-only by construction. `__tests__/host-only-boundary.test.ts` stays
