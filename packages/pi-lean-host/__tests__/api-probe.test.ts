@@ -839,11 +839,12 @@ describe("api-probe 401/403 wording", () => {
 				},
 			);
 			const note = result.note ?? "";
-			// The server's own words, not a synthesized classification.
+			// The server's own words, not a synthesized classification — and the
+			// plan-gating hint, since the reason reads as a plan limitation.
 			expect(note).toContain(
 				"Your API Key subscription plan doesn't support this endpoint",
 			);
-			expect(note).toContain("auth configured correctly");
+			expect(note).toContain("plan/subscription limitation");
 			expect(note).not.toContain("verify header name");
 		} finally {
 			server.close();

@@ -13,10 +13,17 @@
 
 ## What this package is
 
-- Registers **4 tools**: `api-guide`, `api-fetch`, `api-learn`, `api-probe`.
-  `api-probe` is the shape-discovery tool for the authoring loop (fetch an
-  exploratory path, summarize the JSON shape, emit a draft YAML op block);
-  it never writes the guide.
+- Registers **5 tools**: `api-guide`, `api-fetch`, `api-learn`, `api-probe`,
+  `api-scaffold`. `api-probe` is the shape-discovery tool for the authoring
+  loop (fetch an exploratory path, summarize the JSON shape, emit a draft
+  YAML op block); it never writes the guide. `api-scaffold` is the
+  learn-gated bootstrap tool: it writes a starter `verify.json` (with
+  `"__FILL_ME__"` sentinels for every unsatisfiable param) and/or a
+  commented-out `helper.ts` stub into the `/tmp/pi-lean-host/<slug(shortName)>/`
+  staging dir — never the guides dir. Refuse-to-overwrite on existing staged
+  siblings; `verify.json` merge is additive (real values preserved, sentinels
+  added for newly-unsatisfiable params); at least one of `verify`/`helper`
+  must be `true`.
 - Registers the **`/api`** command with
   `on|off|learn|status|helpers|secrets|verify|delete` subcommands — an
   independent peer toggle that composes freely with portal's `/web`
@@ -24,7 +31,11 @@
   - `/api verify <domain> [guide] [--force]` runs every runnable op of a
     guide against its live API and stamps `verified: today` into the guide's
     frontmatter **only when all runnable ops pass** (skips ≠ failures;
-    transform failures are non-blocking). `--force` stamps without any HTTP
+    transform failures are non-blocking). A `requiresAnyOf` op with >1
+    supplied member **fans out** — one run per member, isolating that member
+    (non-group params carried on every run), so mutually-exclusive peers
+    never ride the same request; all runs must pass for the op to count.
+    `--force` stamps without any HTTP
     (human-attested escape valve). Strict threshold: any partial/all-fail →
     no stamp. Opt-in params sidecar
     `~/.pi/agent/pi-lean-host/api-guides/<dirName>/verify.json`
@@ -86,12 +97,21 @@ they live in the [`caritas`](https://github.com/coreyryanhanson/caritas) repo, g
 
 `/api` has three states, mirroring portal's browser toggle:
 
-- **on** — `api-guide` + `api-fetch` enabled (`api-learn` + `api-probe` off)
-- **learn** — on + `api-learn` + `api-probe` (authoring mode)
-- **off** — all four disabled
+- **on** — `api-guide` + `api-fetch` enabled (`api-learn` + `api-probe` +
+  `api-scaffold` off)
+- **learn** — on + `api-learn` + `api-probe` + `api-scaffold` (authoring mode)
+- **off** — all five disabled
 
 Starts **on**. Defaults are overridable via the `toolsetDefaults` settings tier
-read by `pi-tool-masking` (persistKey on the `ToolsetSpec`).
+read by `pi-tool-masking`. The two `ToolsetSpec`s (defined in `core/api-toggle.ts`):
+
+- `pi-lean-dimension.api` → `api-guide` + `api-fetch`, persistKey
+  `toolset-state:pi-lean-dimension.api` (default `true`).
+- `pi-lean-dimension.api-learn` → `api-learn` + `api-probe` + `api-scaffold`,
+  persistKey `toolset-state:pi-lean-dimension.api-learn` (default `false`),
+  `requires: ["pi-lean-dimension.api"]` — enabling learn cascades api on;
+  disabling api cascades learn off. There is no `host.*` settings block;
+credentials live in the per-domain secrets store, not `settings.json`.
 
 **Focus-mode guard:** actuating subcommands (`on`/`off`/`learn`) are refused
 while `pi-tool-masking` holds focus (inclusion mode or allowlist focus) — a
@@ -230,21 +250,31 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `auth.ts` (static-key secret resolution + shared auth-status footer),
   `transport.ts` (shared fetch pipeline: UA, charset, 429-retry, ETag cache —
   the sanctioned way to reach even WAF'd hosts), `path-template.ts`,
-  `ssrf-guard.ts`, `response-spill.ts`, `api-toggle.ts` (`/api` toggle —
+  `ssrf-guard.ts`, `status-hint.ts` (shared 403 classifier — `serverMessage`
+  extracts the server's reason, `isPlanGated` flags plan/subscription
+  limitations; one implementation used by both `api-probe` and
+  `api-fetch`/`/api verify`), `response-spill.ts`, `api-toggle.ts` (`/api` toggle —
   dispatches all 8 subcommands), `portal-projection.ts`,
   `verify-ship-manifest.ts` (vendored host-only copy of the portal utility).
-- `tools/` — `api-guide.ts`, `api-fetch.ts`, `api-learn.ts` (staged-file
-  authoring: `{domain, new: true}` → fresh template; fetch-recipe writes the
-  working copy to `/tmp/pi-lean-host/<domain-or-slug>/guide.md`; save reads a
-  `recipeFile` path and writes to `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/guide.md`
+- `tools/` — `api-guide.ts`, `api-fetch.ts`, `api-learn.ts` (directory-level
+  staged-file authoring: `{domain, new: true}` → fresh template; fetch-recipe
+  stages `guide.md` + present `helper.ts`/`verify.json` siblings to
+  `/tmp/pi-lean-host/<slug(shortName)>/`; save takes a `dir` (staged dir path)
+  plus an undescribed `confirmDeletions`, reads every staged file and
+  **mirror-saves** it to `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/`
   — the `domain` arg is cosmetic on save, the target is self-keyed by the
-  guide's `shortName`), `api-probe.ts`,
-  `utils.ts`, `index.ts`.
+  guide's `shortName`. A deletion-safety gate refuses unconfirmed sibling
+  wipes (staged sibling absent → doomed; `confirmDeletions: true` re-call
+  proceeds); save-time guide↔helper validation refuses a guide declaring
+  `helper: true` / `transform: true` without a loadable staged `helper.ts`
+  (self-contained, no `core/local-helpers.ts` export)), `api-scaffold.ts`
+  (see above), `api-probe.ts`, `utils.ts`, `index.ts`.
 - `__tests__/` — framework structural tests (no network): `smoke`,
   `parse-api-guide`, `all-guides-parse` (every bundled `guide.md` parses
   cleanly), `tools`, `api-learn-fetch-recipe` (fetch-recipe + entry-point
   split + N-guide disambiguation + file staging), `helpers`, `local-helpers`,
-  `api-toggle`,
+  `api-toggle`, `api-scaffold`, `api-learn-multi-file` (multi-file staging,
+  mirror-save, deletion gate, guide↔helper validation),
   `secrets-store`, `secrets-command`, `auth` (static-key schema/injection/
   output-channel audit/SSRF/footer structural tests), `query-secrets`
   (query-param-secret injection, output-channel redaction, api-probe inline
@@ -259,6 +289,8 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   recipe can reliably force a 429, so the unit test is the proof),
   `api-probe`, `verify-command` (mocked-transport: strict threshold, auth
   precheck, param precheck, `verify.json`, helper-disabled skip),
+  `status-hint` (shared 403 classifier: server-message extraction +
+  plan-gating detection),
   `verify-stamp` (frontmatter-isolated `verified:` edit, `--force`),
   `delete-command` (ghost-guide cache fix), `guide-picker` (TUI gate + row
   mapping), `ship-manifest` (tarball coverage + asserts `api-guides/` is

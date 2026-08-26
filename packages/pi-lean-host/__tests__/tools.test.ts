@@ -579,18 +579,18 @@ function callLearn(
 ) {
 	const p: Record<string, unknown> = { domain };
 	if (recipe !== undefined) {
-		// Stage the working copy, then save from the file (recipeFile).
-		const staged = join(tmpStagingRoot, domain, "guide.md");
-		mkdirSync(join(tmpStagingRoot, domain), { recursive: true });
-		writeFileSync(staged, recipe, "utf-8");
-		p.recipeFile = staged;
+		// Stage the working copy, then save from the staged dir (dir).
+		const stagedDir = join(tmpStagingRoot, domain);
+		mkdirSync(stagedDir, { recursive: true });
+		writeFileSync(join(stagedDir, "guide.md"), recipe, "utf-8");
+		p.dir = stagedDir;
 	}
 	if (extra?.new !== undefined) p.new = extra.new;
 	if (extra?.guide !== undefined) p.guide = extra.guide;
 	return apiLearnTool.execute("test", p, undefined, undefined, undefined as any);
 }
 
-/** Staged draft path for a domain (mirrors api-learn's stagingPathFor). */
+/** Staged guide.md path for a domain (mirrors api-learn's staging). */
 function stagedPath(domain: string): string {
 	return join(tmpStagingRoot, domain, "guide.md");
 }
@@ -705,7 +705,7 @@ describe("api-learn", () => {
 		const templateText = contentText(
 			await callLearn("example.com", undefined, { new: true }),
 		);
-		// Fetch-existing path ({domain}, no recipeFile) — the manual travels
+		// Fetch-existing path ({domain}, no dir) — the manual travels
 		// with the staged raw recipe.
 		await callLearn("boe.es", boeRecipe(ctx.serverUrl));
 		invalidateCache();
@@ -774,11 +774,13 @@ describe("api-learn", () => {
 	it("save summary names the auth header→secret mapping, never values", async () => {
 		setUserGuidesDir(tmpGuidesDir);
 		invalidateCache();
-		const recipe = `---\nkind: api\ndomains: [authmap.example]\nshortName: AuthMap\napiHost: ${ctx.serverUrl}\nauth:\n  kind: static-key\n  secretRefs:\n    Authorization: apiKey\n    X-CMC-Pro-Key: cmc_key\n  headerPrefixes:\n    Authorization: "Bearer "\n  requires: [apiKey, cmc_key]\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		const recipe = `---\nkind: api\ndomains: [authmap.example]\nshortName: AuthMap\napiHost: ${ctx.serverUrl}\nauth:\n  kind: static-key\n  secretRefs:\n    Authorization: apiKey\n    X-CMC-Pro-Key: cmc_key\n  headerPrefixes:\n    Authorization: "Bearer "\n    X-CMC-Pro-Key: ""\n  requires: [apiKey, cmc_key]\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
 		const text = contentText(await callLearn("authmap.example", recipe));
 		expect(text).toContain("Auth: static-key");
 		expect(text).toContain("Authorization ← secret apiKey (Bearer )");
 		expect(text).toContain("X-CMC-Pro-Key ← secret cmc_key");
+		// Empty prefix (bare-key header) renders without an empty paren.
+		expect(text).not.toContain("cmc_key ()");
 		// Names only — never the store values.
 		expect(text).not.toContain("s3cr3t");
 	});
@@ -863,7 +865,7 @@ operations:
 			{
 				domain: "../../escape",
 				// assertSafeDomain rejects before this path is ever read.
-				recipeFile: join(tmpStagingRoot, "escape", "guide.md"),
+				dir: join(tmpStagingRoot, "escape"),
 			},
 			undefined,
 			undefined,

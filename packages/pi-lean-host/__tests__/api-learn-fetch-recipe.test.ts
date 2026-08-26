@@ -10,12 +10,12 @@
  *    draft contents equal the saved raw recipe (incl. schemaVersion stamp).
  *  - N guides → menu unchanged; selected guide's recipe written to the path.
  *  - `new: true` → template written to the path; existing guides untouched.
- *  - Save from `recipeFile` → validates-then-writes `guide.md`; the
+ *  - Save from `dir` → validates-then-writes `guide.md`; the
  *    `schemaVersion` stamp lands on `guide.md`.
- *  - Missing `recipeFile` → clear error, `guide.md` untouched.
+ *  - Missing `dir` → clear error, `guide.md` untouched.
  *  - Inline `recipe` param is no longer a parameter (YAGNI removal).
  *  - Path-traversal domain still rejected by `assertSafeDomain`.
- *  - TUI rendering — `renderCall` shows the 📝 icon for a `recipeFile`-
+ *  - TUI rendering — `renderCall` shows the 📝 icon for a `dir`-
  *    bearing save call and 📖 for fetch; `renderResult` labels unchanged.
  *
  * No network — recipes use a dummy https apiHost; the save path only
@@ -70,18 +70,23 @@ operations:
 `;
 }
 
-/** Staged draft path for a domain (mirrors api-learn's stagingPathFor). */
+/** Staged guide.md path for a domain (mirrors api-learn's staging). */
 function stagedPath(domain: string): string {
 	return join(tmpStagingRoot, domain, "guide.md");
 }
 
-/** Save a recipe by staging it to the draft file, then calling with recipeFile. */
+/** Staged dir path for a domain (what save takes as `dir`). */
+function stagedDirPath(domain: string): string {
+	return join(tmpStagingRoot, domain);
+}
+
+/** Save a recipe by staging it to the draft dir, then calling with dir. */
 function saveRecipe(domain: string, recipe: string) {
 	mkdirSync(join(tmpStagingRoot, domain), { recursive: true });
 	writeFileSync(stagedPath(domain), recipe, "utf-8");
 	return apiLearnTool.execute(
 		"test",
-		{ domain, recipeFile: stagedPath(domain) },
+		{ domain, dir: stagedDirPath(domain) },
 		undefined,
 		undefined,
 		undefined as any,
@@ -90,11 +95,11 @@ function saveRecipe(domain: string, recipe: string) {
 
 function callLearn(
 	domain: string,
-	recipeFile?: string,
+	dir?: string,
 	extra?: { new?: boolean; guide?: string },
 ) {
 	const p: Record<string, unknown> = { domain };
-	if (recipeFile !== undefined) p.recipeFile = recipeFile;
+	if (dir !== undefined) p.dir = dir;
 	if (extra?.new !== undefined) p.new = extra.new;
 	if (extra?.guide !== undefined) p.guide = extra.guide;
 	return apiLearnTool.execute("test", p, undefined, undefined, undefined as any);
@@ -135,7 +140,7 @@ describe("api-learn fetch-recipe", () => {
 		// dirName is slug(shortName) = "solo"; fetch-recipe staging keys on
 		// the same value.
 		expect(text).toContain("Directory: solo");
-		expect(text).toContain(stagedPath("solo"));
+		expect(text).toContain(stagedDirPath("solo"));
 		expect(text).toContain("edit the staged file");
 		// The authoring manual travels with the staged raw recipe.
 		expect(text).toContain("authoring manual");
@@ -179,7 +184,7 @@ describe("api-learn fetch-recipe", () => {
 			await callLearn("archive.org", undefined, { guide: "wayback" }),
 		);
 		expect(picked).toContain("Directory: wayback");
-		expect(picked).toContain(stagedPath("wayback"));
+		expect(picked).toContain(stagedDirPath("wayback"));
 		// Selected guide's recipe written to the staging path (slug(shortName)).
 		const draft = readFileSync(stagedPath("wayback"), "utf-8");
 		expect(draft).toContain("getWayback");
@@ -231,8 +236,8 @@ describe("api-learn entry-point split", () => {
 	});
 });
 
-describe("api-learn save path (recipeFile)", () => {
-	it("save from recipeFile → validates-then-writes guide.md with schemaVersion stamp", async () => {
+describe("api-learn save path (dir)", () => {
+	it("save from dir → validates-then-writes guide.md with schemaVersion stamp", async () => {
 		const text = contentText(
 			await saveRecipe("save.example", recipe("save.example", "Save", "getSave")),
 		);
@@ -324,15 +329,15 @@ describe("api-learn save path (recipeFile)", () => {
 		expect(saved).toContain("getNew");
 	});
 
-	it("missing recipeFile → clear error, guide.md untouched", async () => {
+	it("missing dir → clear error, guide.md untouched", async () => {
 		const res = await callLearn(
 			"ghost.example",
-			join(tmpStagingRoot, "ghost.example", "guide.md"),
+			join(tmpStagingRoot, "ghost.example"),
 		);
 		const text = contentText(res);
-		expect(text).toContain("Could not read recipe file");
+		expect(text).toContain("Could not read staged guide");
 		expect(text).toContain("NOT saved");
-		expect(res.details).toMatchObject({ error: "recipe_file_unreadable" });
+		expect(res.details).toMatchObject({ error: "staged_dir_unreadable" });
 		expect(() =>
 			readFileSync(join(tmpGuidesDir, "ghost.example", "guide.md"), "utf-8"),
 		).toThrow();
@@ -343,11 +348,12 @@ describe("api-learn save path (recipeFile)", () => {
 			(apiLearnTool.parameters as { properties?: Record<string, unknown> })
 				.properties ?? {};
 		expect(props.recipe).toBeUndefined();
-		expect(props.recipeFile).toBeDefined();
+		expect(props.recipeFile).toBeUndefined();
+		expect(props.dir).toBeDefined();
 	});
 
 	it("path-traversal domain still rejected by assertSafeDomain", async () => {
-		const res = await callLearn("../../escape", stagedPath("../../escape"));
+		const res = await callLearn("../../escape", stagedDirPath("../../escape"));
 		const text = contentText(res);
 		expect(text).toContain("Invalid domain");
 		expect(res.details).toMatchObject({
@@ -358,9 +364,9 @@ describe("api-learn save path (recipeFile)", () => {
 });
 
 describe("api-learn TUI rendering", () => {
-	it("renderCall shows the 📝 icon for a recipeFile-bearing save call", () => {
+	it("renderCall shows the 📝 icon for a dir-bearing save call", () => {
 		const out = apiLearnTool.renderCall!(
-			{ domain: "save.example", recipeFile: stagedPath("save.example") },
+			{ domain: "save.example", dir: stagedDirPath("save.example") },
 			mockTheme,
 			undefined as any,
 		);

@@ -22,6 +22,7 @@ function expandAccept(accept: string): string {
 import { XMLParser } from "fast-xml-parser";
 import { ssrfGuard } from "./ssrf-guard.js";
 import { scrubSecretValues } from "./auth.js";
+import { serverMessage, isPlanGated } from "./status-hint.js";
 import {
 	fetchUrl,
 	redactSecretParams,
@@ -408,18 +409,33 @@ function checkResponseStatus(
 ): void {
 	if (result.status < 400) return;
 
+	// Output-channel audit: scrub known store-injected secret values from the
+	// error excerpt so a 401 body echoing an auth header can't leak the key
+	// into agent context.
+	const scrubbed = scrubSecretValues(result.body, secretValues);
 	// Cap the raw body to avoid flooding the error output.
-	let message = result.body.slice(0, 500);
+	let message = scrubbed.slice(0, 500);
 	// Try to extract <text> from BOE-style XML error bodies.
-	const textMatch = result.body.match(/<text>([\s\S]*?)<\/text>/i);
+	const textMatch = scrubbed.match(/<text>([\s\S]*?)<\/text>/i);
 	if (textMatch) {
 		message = textMatch[1]!.trim();
 	}
 
-	// Output-channel audit: scrub known store-injected secret values from the
-	// error excerpt so a 401 body echoing an auth header can't leak the key
-	// into agent context.
-	message = scrubSecretValues(message, secretValues);
+	// 403 + structured JSON: surface the server's own reason and flag
+	// plan-gating so a "plan doesn't support this endpoint" reads as a
+	// key/subscription limitation, not a recipe bug. Same classifier as
+	// api-probe — one implementation, two call sites. Parses the scrubbed
+	// body (full, for the best chance the JSON is intact), never the raw one.
+	// Unlike probe, fetch has no auth context, so it only adds the
+	// plan-gating hint — no "auth configured correctly" claim.
+	if (result.status === 403) {
+		const reason = serverMessage(scrubbed);
+		if (reason) {
+			message = isPlanGated(scrubbed)
+				? `${reason} (plan/subscription limitation on the key, not the recipe)`
+				: reason;
+		}
+	}
 
 	throw new HelperError(
 		"response",

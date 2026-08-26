@@ -44,7 +44,7 @@
 1. [Quick Start](#quick-start)
 2. [The Big Idea: Recipes, Not a Runtime](#the-big-idea-recipes-not-a-runtime)
 3. [`/api` Command — API Toggle](#api-command--api-toggle)
-4. [All 4 Tools](#all-4-tools)
+4. [All 5 Tools](#all-5-tools)
 5. [Guide Recipes (the `recipe` block)](#guide-recipes-the-recipe-block)
 6. [Authoring a Guide](#authoring-a-guide)
 7. [Local User Helpers](#local-user-helpers)
@@ -70,14 +70,15 @@ pi install npm:pi-lean-host
 No browser binaries, no server, no setup wizard. The host tools are **enabled
 by default** — you'll see:
 
-> 📡 API tools enabled. /api learn to make api-learn + api-probe available.
+> 📡 API tools enabled. /api learn to make api-learn + api-probe + api-scaffold available.
 
 From a fresh install you have no guides yet, so the workflow is:
 
-1. **`/api learn`** — enable the authoring tools (`api-learn` + `api-probe`).
+1. **`/api learn`** — enable the authoring tools (`api-learn` + `api-probe` +
+   `api-scaffold`).
 2. **`api-probe({apiHost, path})`** — discover the shape of a not-yet-guided
    endpoint; it drafts a YAML operation block to paste into a recipe.
-3. **`api-learn({domain, recipeFile})`** — validate the staged draft and write
+3. **`api-learn({domain, dir})`** — validate the staged draft(s) and write
    the guide to
    `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/guide.md`.
 4. **`api-fetch({domain, operation})`** — execute and verify.
@@ -160,7 +161,7 @@ touches the other's tools.
 | Command | Effect |
 |---------|--------|
 | `/api on` | **API access** — `api-guide` + `api-fetch` available. Authoring tools hidden. (Default for new sessions.) |
-| `/api learn` | **API access + authoring** — adds `api-learn` + `api-probe` on top of `on`. The agent never authors guides unprompted — it must be in learn mode. |
+| `/api learn` | **API access + authoring** — adds `api-learn` + `api-probe` + `api-scaffold` on top of `on`. The agent never authors guides unprompted — it must be in learn mode. |
 | `/api off` | **All API tools hidden** — removes `api-*` from the agent's context to save tokens on sessions that aren't doing API work. |
 | `/api` | Show current state and available sub-commands. |
 | `/api status` | Detailed runtime status — state, active guides, domains, helpers. |
@@ -194,13 +195,15 @@ and `○ api` when off.
 
 ---
 
-## All 4 Tools
+## All 5 Tools
 
-`pi-lean-host` registers 4 tools. `api-guide` and `api-fetch` are available
-under `/api on`; `api-learn` and `api-probe` are added under `/api learn`.
+`pi-lean-host` registers 5 tools. `api-guide` and `api-fetch` are available
+under `/api on`; `api-learn`, `api-probe`, and `api-scaffold` are added under
+`/api learn`.
 
-The four tools split cleanly by side-effect boundary — one each for **local
-read**, **network read**, **local write**, and **network read (exploratory)**:
+The five tools split cleanly by side-effect boundary — one each for **local
+read**, **network read**, **local write**, **network read (exploratory)**, and
+**local write (bootstrap)**:
 
 ### 1. `api-guide` — Inspect the Guide Store (local read)
 
@@ -251,26 +254,30 @@ one) — turning a failed execute into a discovery moment in one round-trip.
 
 ```text
 api-learn domain="arxiv.org" new=true           → stages a fresh placeholder template to /tmp/pi-lean-host/arxiv.org/guide.md
-api-learn domain="arxiv.org"                    → fetches an existing guide's raw recipe into the staged file
-api-learn domain="arxiv.org" recipeFile="/tmp/pi-lean-host/arxiv.org/guide.md"  → validates + writes the guide to disk
+api-learn domain="arxiv.org"                    → fetches an existing guide's raw recipe + siblings into the staged dir
+api-learn domain="arxiv.org" dir="/tmp/pi-lean-host/arxiv.org"  → validates + mirror-saves the staged dir to disk
 ```
 
 - `{domain, new: true}` → a fresh starter template with `domains: [<domain>]`
   **staged to `/tmp/pi-lean-host/<domain>/guide.md`**. Only `domains` is real;
   the other fields are `<placeholder>` values that **fail closed**, so a
   pasted template cannot save until you fill it in.
-- `{domain}` (no `recipeFile`) → fetch the current raw recipe of an existing
-  guide into the staged file (surfacing the guide's `dirName` so you know
-  which folder it lives in); a disambiguation menu if several guides claim the
-  domain.
+- `{domain}` (no `dir`) → fetch the current raw recipe of an existing guide
+  **and its present siblings** (`helper.ts`, `verify.json`) into the staged
+  dir (surfacing the guide's `dirName` so you know which folder it lives in);
+  a disambiguation menu if several guides claim the domain.
 - Every staged pull (template or fetched recipe) is prepended with the
   authoring manual — the field reference + defaults + semantics the author
   needs at the moment of authoring.
-- `{domain, recipeFile}` → reads the staged draft, validates it **before**
-  touching disk, then writes to
-  `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/guide.md` — the
-  folder is derived from the guide's own `shortName`, not the `domain` arg,
-  so a re-save naturally lands back in the same folder. A fail-closed
+- `{domain, dir}` → reads every staged file, validates the guide **before**
+  touching disk, then **mirror-saves** the staged dir to
+  `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/` — the folder is
+  derived from the guide's own `shortName`, not the `domain` arg, so a
+  re-save naturally lands back in the same folder. Present staged files
+  overwrite their guides-dir counterparts; a sibling present in the guides dir
+  but absent from the staged dir would be deleted, so save **refuses and
+  names the doomed files** until you re-call with `confirmDeletions: true`
+  (that flag is discovered only via the refusal message). A fail-closed
   guard refuses to overwrite an existing `guide.md` whose `shortName`
   differs from the incoming guide — a slug collision (two shortNames that
   slug to the same folder, e.g. `cmc_full` / `cmc-full`); a same-`shortName`
@@ -278,10 +285,10 @@ api-learn domain="arxiv.org" recipeFile="/tmp/pi-lean-host/arxiv.org/guide.md"  
   expected shape, and what was found — the file on disk is left untouched (no
   half-written guide). Requires `/api learn`.
 
-The working copy is staged at `/tmp/pi-lean-host/<domain>/guide.md` (`/tmp`
+The working copy is staged at `/tmp/pi-lean-host/<domain>/` (`/tmp`
 self-cleans, so drafts don't accumulate) — fetch/template calls write the
-draft there and you edit that file between saves; saving reads it and
-publishes to the guides dir. No session-held state, no `/api save`.
+draft there and you edit that file between saves; saving reads the staged dir
+and publishes to the guides dir. No session-held state, no `/api save`.
 
 ### 4. `api-probe` — Discover an Endpoint's Shape (network read, exploratory)
 
@@ -303,6 +310,33 @@ newest version up front.
 `api-probe` only **suggests** — it never writes the guide. The operation must
 still be traceable to your plan source (the API docs or a working curl
 example); this tool surfaces evidence, not authority. Requires `/api learn`.
+
+### 5. `api-scaffold` — Bootstrap `verify.json` / `helper.ts` (local write)
+
+```text
+api-scaffold domain="arxiv.org" verify=true   → writes a starter verify.json with "__FILL_ME__" sentinels to /tmp/pi-lean-host/arxiv.org/verify.json
+api-scaffold domain="arxiv.org" helper=true  → writes a commented-out helper.ts stub to /tmp/pi-lean-host/arxiv.org/helper.ts
+```
+
+Bootstrap tool for the two artifacts the authoring loop needs but that
+`api-learn` can't draft from the recipe alone:
+
+- `{domain, verify: true}` → for every op with unsatisfiable params (path
+  `{token}`, required query with no default, `requiresAnyOf` group), writes
+  `{ "<opName>": { "<param>": "__FILL_ME__" } }` to the staged
+  `/tmp/pi-lean-host/<slug(shortName)>/verify.json`. `"__FILL_ME__"` is a
+  sentinel: treated as unsupplied, so the op skips until you replace it. If a
+  `verify.json` exists in the guides dir, its real values are **additively
+  merged** (preserved; sentinels added only for newly-unsatisfiable params).
+- `{domain, helper: true}` → writes a commented-out `helper.ts` stub (both
+  `default` and `transform` exports, with doc comments) to the same staged
+  dir.
+- At least one of `verify`/`helper` must be `true`. The tool **never
+  overwrites** an existing staged sibling — delete it from `/tmp` first, then
+  re-call. Staging is keyed by `slug(shortName)` (same pattern as
+  `api-learn`), so a scaffolded `verify.json`/`helper.ts` lands in the same
+  dir `api-learn` saves from. Save the guide **first**, then scaffold —
+  `api-scaffold` reads the saved guide. Requires `/api learn`.
 
 ---
 
@@ -492,7 +526,7 @@ mitigations:
   mitigation is user ownership and review, not a sandbox.
 
 View helpers with `/api helpers` (list) or `/api helpers <domain>` (source).
-Authoring is via `api-learn` in learn mode, or hand-editing the file.
+Authoring: scaffold a starter `helper.ts` stub via `api-scaffold({domain, helper: true})` (writes to the staged `/tmp` dir — never the guides dir), uncomment the export you need, then save via `api-learn({domain, dir})`. Edit a staged helper the same way; avoid hand-editing the file in the guides dir directly.
 
 ---
 
@@ -569,13 +603,13 @@ directory — the folder name must match `slug(shortName)` or it routes to
 The domains caritas covers (a discoverability index, may drift from the live
 repo):
 
-```
-api.gbif.org             api.github.com           archive.org              archive.org-wayback
-arxiv.org                boe.es                   coingecko.com            data-api.ecb.europa.eu
-datos.gob.es             earthquake.usgs.gov      en.wikipedia.org         en.wikipedia.org-action
-etherscan.io             eutils.ncbi.nlm.nih.gov  gitlab.com               loc.gov
-musicbrainz.org          openlibrary.org          resources.data.gov       services.dnb.de
-web.archive.org          www.federalregister.gov  www.wikidata.org
+```text
+arxiv                         ecb-data-portal               internet-archive              wayback-availability
+boletin-oficial-del-estado    etherscan                     library-of-congress           wayback-cdx-server
+coingecko                     federal-register              musicbrainz                   wikidata
+data-gov                      gbif                          open-library                  wikimedia-action
+datos-gob-es                  github                        pubmed-e-utilities            wikipedia-rest
+deutsche-nationalbibliothek   gitlab                        usgs-earthquake
 ```
 
 Several are **keyed** (`auth.kind: static-key`), the spread that exercises
@@ -626,7 +660,7 @@ axis-set audit matrix).
   Run /api helpers to list them.
 
   /api on      enable api-guide + api-fetch
-  /api learn   enable all four tools (adds api-learn + api-probe)
+  /api learn   enable all five tools (adds api-learn + api-probe + api-scaffold)
   /api off     disable all API tools
 ```
 

@@ -117,12 +117,21 @@ let tmpStagingRoot: string;
 let ctx: TestCtx;
 let echoUrl: string;
 
-/** Stage a recipe to the draft file and return the recipeFile path. */
+/** Stage a recipe to the staged dir and return the dir path (what api-learn
+ * save takes as `dir`). */
 function stagedRecipe(domain: string, recipe: string): string {
-	const path = join(tmpStagingRoot, domain, "guide.md");
-	mkdirSync(join(tmpStagingRoot, domain), { recursive: true });
-	writeFileSync(path, recipe, "utf-8");
-	return path;
+	const dir = join(tmpStagingRoot, domain);
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, "guide.md"), recipe, "utf-8");
+	return dir;
+}
+
+/** Stage a helper.mjs into the staged dir for the save-time helper check
+ * (mirrors the guides-dir writeFixtureHelper fixture). */
+function stageFixtureHelper(domain: string, content: string): void {
+	const dir = join(tmpStagingRoot, domain);
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, "helper.mjs"), content, "utf-8");
 }
 
 /**
@@ -418,12 +427,15 @@ describe("api-fetch integration with user helpers", () => {
 		writeFixtureHelper("echo", FIXTURE_TRANSFORM);
 		const recipe = recipeWithHelper(echoUrl, "transform-date");
 
-		// Save via api-learn (staged file → recipeFile)
+		// Save via api-learn (staged dir → dir; guide declares helper, so the
+		// staged dir also carries the helper for the save-time check).
+		const stagedDir = stagedRecipe("transform-date", recipe);
+		stageFixtureHelper("transform-date", FIXTURE_TRANSFORM);
 		const learnResult = await apiLearnTool.execute(
 			"test",
 			{
 				domain: "transform-date",
-				recipeFile: stagedRecipe("transform-date", recipe),
+				dir: stagedDir,
 			},
 			undefined,
 			undefined,
@@ -459,9 +471,11 @@ describe("api-fetch integration with user helpers", () => {
 		writeFixtureHelper("broken", FIXTURE_CALL_ERROR);
 		const recipe = recipeWithHelper(echoUrl, "broken", "Broken");
 
+		const stagedDir = stagedRecipe("broken", recipe);
+		stageFixtureHelper("broken", FIXTURE_CALL_ERROR);
 		const learnResult = await apiLearnTool.execute(
 			"test",
-			{ domain: "broken", recipeFile: stagedRecipe("broken", recipe) },
+			{ domain: "broken", dir: stagedDir },
 			undefined,
 			undefined,
 			undefined as any,
@@ -505,14 +519,19 @@ describe("api-fetch integration with user helpers", () => {
 	it("without a helper, api-fetch works normally (passthrough)", async () => {
 		const recipe = recipeWithoutHelper(echoUrl, "nofetch.test");
 
+		// The guide reuses shortName "Echo" → the echo/ folder, which the
+		// transform-date test left a helper.mjs in. Mirror-save would delete it;
+		// this test wants "no helper", so it confirms the deletion.
+		const stagedDir = stagedRecipe("nofetch.test", recipe);
 		const learnResult = await apiLearnTool.execute(
 			"test",
-			{ domain: "nofetch.test", recipeFile: stagedRecipe("nofetch.test", recipe) },
+			{ domain: "nofetch.test", dir: stagedDir, confirmDeletions: true },
 			undefined,
 			undefined,
 			undefined as any,
 		);
 		expect(contentText(learnResult)).toContain("Guide saved");
+		expect(contentText(learnResult)).toContain("Deleted: helper.mjs");
 		invalidateCache();
 		resetDisabledHelpers();
 

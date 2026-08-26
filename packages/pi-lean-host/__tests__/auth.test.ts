@@ -385,7 +385,7 @@ body
 		if (!r.ok) expect(r.error.field).toBe("auth.secretRefs");
 	});
 
-	it("headerPrefixes with an empty prefix value → ParseError", () => {
+	it("headerPrefixes with an empty prefix value → parses (bare-key header)", () => {
 		const r = parseAuthBlock(`  kind: static-key
   secretRefs:
     x-api-key: api_key
@@ -393,8 +393,8 @@ body
     x-api-key: ""
   requires:
     - api_key`);
-		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.error.field).toBe("auth.headerPrefixes");
+		expect(r.ok).toBe(true);
+		if (r.ok) expect(r.guide.auth.headerPrefixes).toEqual({ "x-api-key": "" });
 	});
 
 	it("headerPrefixes with no secretRefs → ParseError (dead prefix)", () => {

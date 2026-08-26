@@ -72,8 +72,10 @@ function helpText(): string {
 		"  /api verify --help              this help",
 		"",
 		"  Ops with unsatisfiable params (a path {token} or required query param with no default)",
-		"  are skipped, not failed. Supply them via a co-located verify.json:",
-		`    ~/.pi/agent/pi-lean-host/api-guides/<domain>/verify.json`,
+		"  are skipped, not failed. Scaffold a starter sidecar with api-scaffold({domain, verify: true})",
+		'  (writes to /tmp, with "__FILL_ME__" sentinels for every blocking param), then save via',
+		"  api-learn({domain, dir}) — the sidecar lives at:",
+		`    ~/.pi/agent/pi-lean-host/api-guides/<dirName>/verify.json`,
 		`    { "<opName>": { "<param>": "<value>" } }`,
 		"",
 		"  Not free: N live HTTP requests against the target API (GET only — no mutation).",
@@ -213,53 +215,82 @@ export async function handleVerifySubcommand(
 	let skipped = 0;
 
 	for (const op of ops) {
-		const supplied = verifyJson[op.name] ?? {};
-		const missing = unsatisfiableParams(op, supplied);
+		// Strip `"__FILL_ME__"` sentinels (from verify.json / api-scaffold) so
+		// they never count as supplied params or serialize into the query string.
+		const rawSupplied = verifyJson[op.name] ?? {};
+		const supplied: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(rawSupplied)) {
+			if (v !== "__FILL_ME__") supplied[k] = v;
+		}
+		const missing = renderForReport(unsatisfiable(op, supplied));
 		if (missing.length > 0) {
 			skipped++;
 			report.push(
-				`  ⏭ ${op.name} — skipped: requires agent-supplied params (${missing.join(", ")}) — verify manually via api-fetch`,
+				`  ⏭ ${op.name} — skipped: requires agent-supplied params (${missing.join(", ")}) — scaffold via api-scaffold({domain, verify: true}), or verify manually via api-fetch`,
 			);
 			continue;
 		}
 
-		let outcome: ResolveOpResult;
-		try {
-			outcome = await resolveOpForExecution(guide, op, dirName, {
-				userParams: supplied,
-			});
-		} catch (err) {
-			failed++;
-			const msg =
-				err instanceof HelperError
-					? err.message
-					: err instanceof Error
-						? err.message
-						: String(err);
-			report.push(`  ✗ ${op.name} — ${msg}`);
-			continue;
-		}
+		// Fan-out: a requiresAnyOf group with >1 supplied member is verified
+		// once per member, isolating that member (non-group params carried on
+		// every run). Mutually-exclusive peers (id ⊻ symbol) never ride the
+		// same request; inclusive-OR filters get per-peer coverage. ≤1 supplied
+		// member → today's single run. Sentinels are already stripped above, so
+		// a partially-filled file still runs just the real values.
+		const group = op.requiresAnyOf ?? [];
+		const suppliedMembers = group.filter((m) => supplied[m] !== undefined);
+		const runs =
+			suppliedMembers.length > 1
+				? suppliedMembers.map((m) => {
+						const params = { ...supplied };
+						for (const peer of group) {
+							if (peer !== m) delete params[peer];
+						}
+						return { params, tag: m };
+					})
+				: [{ params: supplied, tag: undefined }];
 
-		if (!outcome.ok) {
-			if (outcome.reason === "helper_disabled") {
-				// Session-persistent condition — unverifiable this session, not broken.
-				skipped++;
+		for (const run of runs) {
+			let outcome: ResolveOpResult;
+			try {
+				outcome = await resolveOpForExecution(guide, op, dirName, {
+					userParams: run.params,
+				});
+			} catch (err) {
+				failed++;
+				const msg =
+					err instanceof HelperError
+						? err.message
+						: err instanceof Error
+							? err.message
+							: String(err);
+				report.push(`  ✗ ${opTag(op.name, run.tag)} — ${msg}`);
+				continue;
+			}
+
+			if (!outcome.ok) {
+				if (outcome.reason === "helper_disabled") {
+					// Session-persistent condition — unverifiable this session, not broken.
+					skipped++;
+					report.push(
+						`  ⏭ ${opTag(op.name, run.tag)} — skipped: local helper disabled this session (${outcome.message})`,
+					);
+					// Disabled helpers are session-persistent and deterministic — the
+					// remaining fan-out runs would skip identically, so stop here.
+					break;
+				}
+				// auth_required_not_provisioned — unreachable after the precheck
+				// (auth is per-guide constant); defensive.
+				failed++;
 				report.push(
-					`  ⏭ ${op.name} — skipped: local helper disabled this session (${outcome.message})`,
+					`  ✗ ${opTag(op.name, run.tag)} — requires secret not provisioned: ${outcome.missing.join(", ")}`,
 				);
 				continue;
 			}
-			// auth_required_not_provisioned — unreachable after the precheck
-			// (auth is per-guide constant); defensive.
-			failed++;
-			report.push(
-				`  ✗ ${op.name} — requires secret not provisioned: ${outcome.missing.join(", ")}`,
-			);
-			continue;
-		}
 
-		ran++;
-		report.push(opLine(outcome, op));
+			ran++;
+			report.push(opLine(outcome, op, run.tag));
+		}
 	}
 
 	const header = `📡 Verify: ${guide.shortName} (${dirName})`;
@@ -285,7 +316,7 @@ export async function handleVerifySubcommand(
 				summary,
 				...report,
 				"",
-				`⚠ NOT stamped — all ops skipped. Supply params via verify.json (${dirName}/verify.json), or verify manually via api-fetch.`,
+				`⚠ NOT stamped — all ops skipped. Scaffold a verify.json via api-scaffold({domain: "${domain}", verify: true}), or supply params via ${dirName}/verify.json, or verify manually via api-fetch.`,
 			].join("\n"),
 			"warning",
 		);
@@ -310,29 +341,36 @@ export async function handleVerifySubcommand(
 // ═══════════════════════════════════════════════════════════════════
 
 /**
- * The params an op still needs to run: path `{token}`s (never defaultable —
- * they're filled from the params map), `required: true` query params with no
- * default, and an unsatisfied `requiresAnyOf` group. Anything the executor
- * would throw on before making a request.
+ * Why an op can't run yet: a path `{token}` (never defaultable — filled from
+ * the params map), a `required: true` query param with no default, or an
+ * unsatisfied `requiresAnyOf` group. Anything the executor would throw on
+ * before making a request.
  *
- * A `requiresAnyOf` group contributes ONE group-level reason when no member
- * is supplied; group members are governed by the group, not per-param
- * required (the parser bans `required: true` on them), so they're skipped
- * in the per-param loop.
+ * A `requiresAnyOf` group contributes ONE group-level entry when no member is
+ * supplied; group members are governed by the group, not per-param required
+ * (the parser bans `required: true` on them), so they're skipped in the
+ * per-param loop.
  */
-function unsatisfiableParams(
+export type Unsatisfiable =
+	| { kind: "path"; param: string }
+	| { kind: "group"; members: string[] }
+	| { kind: "query"; param: string };
+
+/** The params an op still needs to run, as structured entries. */
+export function unsatisfiable(
 	op: Operation,
 	supplied: Record<string, unknown>,
-): string[] {
-	const missing: string[] = [];
+): Unsatisfiable[] {
+	const missing: Unsatisfiable[] = [];
 	for (const token of op.pathParams) {
-		if (supplied[token] === undefined) missing.push(token);
+		if (supplied[token] === undefined)
+			missing.push({ kind: "path", param: token });
 	}
 	const group = op.requiresAnyOf;
 	const groupMember = new Set(group ?? []);
 	if (group && group.length > 0) {
 		const anySupplied = group.some((name) => supplied[name] !== undefined);
-		if (!anySupplied) missing.push(`one of: ${group.join(", ")}`);
+		if (!anySupplied) missing.push({ kind: "group", members: group });
 	}
 	for (const [key, spec] of Object.entries(op.params)) {
 		if (groupMember.has(key)) continue; // governed by the group
@@ -341,14 +379,40 @@ function unsatisfiableParams(
 			spec.default === undefined &&
 			supplied[key] === undefined
 		) {
-			missing.push(key);
+			missing.push({ kind: "query", param: key });
 		}
 	}
 	return missing;
 }
 
+/** Render unsatisfiable entries exactly as the verify report shows them. */
+function renderForReport(items: Unsatisfiable[]): string[] {
+	return items.map((item) => {
+		switch (item.kind) {
+			case "group":
+				return `one of: ${item.members.join(", ")}`;
+			case "path":
+			case "query":
+				return item.param;
+		}
+	});
+}
+
+/** Render unsatisfiable entries as one sentinel key per param. */
+export function renderForSentinels(items: Unsatisfiable[]): string[] {
+	return items.flatMap((item) => {
+		switch (item.kind) {
+			case "group":
+				return item.members;
+			case "path":
+			case "query":
+				return [item.param];
+		}
+	});
+}
+
 /** Load the co-located verify.json sidecar, best-effort. */
-function loadVerifyJson(
+export function loadVerifyJson(
 	dirName: string,
 ):
 	| { data: Record<string, Record<string, unknown>> }
@@ -367,22 +431,29 @@ function loadVerifyJson(
 	}
 }
 
+/** `name (member)` when a fan-out run is tagged, else `name`. */
+function opTag(name: string, tag?: string): string {
+	return tag === undefined ? name : `${name} (${tag})`;
+}
+
 /** One report line for a successful op run. A transform warning is noted but
  *  non-blocking — the HTTP op succeeded, so the op counts as pass. */
 function opLine(
 	outcome: Extract<ResolveOpResult, { ok: true }>,
 	op: Operation,
+	tag?: string,
 ): string {
+	const name = opTag(op.name, tag);
 	if (outcome.via === "restGet") {
 		const r = outcome.result as RestGetResult;
 		const warn =
 			r.transformWarning === undefined
 				? ""
 				: ` — transform warning: ${r.transformWarning}`;
-		return `  ✓ ${op.name} — ${op.path} (restGet)${warn}`;
+		return `  ✓ ${name} — ${op.path} (restGet)${warn}`;
 	}
 	const r = outcome.result as PaginateResult;
-	return `  ✓ ${op.name} — ${r.totalFetched} item(s) (paginate)`;
+	return `  ✓ ${name} — ${r.totalFetched} item(s) (paginate)`;
 }
 
 /**

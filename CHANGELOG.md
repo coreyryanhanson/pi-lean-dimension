@@ -13,7 +13,8 @@
   re-derived each session. Guides live at
   `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/` and only files you
   place there execute — bundled recipes are inert reference material.
-  Ships 4 tools (`api-guide`, `api-fetch`, `api-learn`, `api-probe`)
+  Ships 5 tools (`api-guide`, `api-fetch`, `api-learn`, `api-probe`,
+  `api-scaffold`)
   and the `/api` command. The package declares `pi-lean-portal` as an
   **optional peer dependency** — host-only installs are valid.
 - **`/api` toggle — independent peer of `/web`** — `on|off|learn|status`
@@ -45,21 +46,33 @@
   (stamped on save by `api-learn`) drives breaking-change detection: a
   stale guide warns non-blockingly in `api-guide`/`api-fetch`, never
   gating the load. v1 is **GET-read only** — no mutation helper.
-- **`api-learn` + `api-probe` authoring loop** — `api-learn` stages the
-  working copy to `/tmp/pi-lean-host/<domain>/guide.md` and saves from a
-  file path (`recipeFile`), so the model never round-trips a giant recipe
-  string. `domain` is required: `{domain, new: true}` stages a fail-closed
-  starter template (only `domains` is real; the rest are `<placeholder>`
-  values that reject until filled), and `{domain}` with no `recipeFile`
-  fetches an existing guide's raw recipe into the staged file (surfacing
-  `dirName` to prevent sibling-clobber in multi-recipe domains). The
-  authoring manual (field reference + defaults + semantics) is prepended
-  to every staged pull so the author sees it at the moment of authoring.
-  On save, a fail-closed overwrite guard refuses to replace an existing
-  `guide.md` whose `shortName` differs from the incoming guide (prevents
-  clobbering a sibling in a multi-recipe domain); a same-`shortName` save
-  is a legitimate update. `api-probe` fetches a templated path over the
-  real transport, summarizes the JSON shape, and emits a draft YAML
+- **`api-learn` + `api-probe` + `api-scaffold` authoring loop** — `api-learn`
+  stages the working copy to `/tmp/pi-lean-host/<slug(shortName)>/` and saves
+  from a staged **directory** (`dir`), so the model never round-trips a giant
+  recipe string. `domain` is required: `{domain, new: true}` stages a
+  fail-closed starter template (only `domains` is real; the rest are
+  `<placeholder>` values that reject until filled), and `{domain}` fetches an
+  existing guide's raw recipe **and its present siblings** (`helper.ts`,
+  `verify.json`) into the staged dir (surfacing `dirName` to prevent
+  sibling-clobber in multi-recipe domains). The authoring manual (field
+  reference + defaults + semantics) is prepended to every staged pull so the
+  author sees it at the moment of authoring. On save, a **mirror-save**
+  overwrites present staged files and a **deletion-safety gate** refuses
+  unconfirmed sibling wipes (a sibling in the guides dir but absent from the
+  staged dir → refusal naming the doomed files; re-call with the undescribed
+  `confirmDeletions: true` to proceed); save-time **guide↔helper validation**
+  refuses a guide declaring `helper: true`/`transform: true` without a
+  loadable staged `helper.ts`. A fail-closed overwrite guard refuses to
+  replace an existing `guide.md` whose `shortName` differs from the incoming
+  guide (prevents clobbering a sibling in a multi-recipe domain); a
+  same-`shortName` save is a legitimate update. `api-scaffold` bootstraps the
+  two artifacts the loop can't draft from the recipe: a starter `verify.json`
+  with `"__FILL_ME__"` sentinels for every unsatisfiable param (additively
+  merged into an existing guides-dir `verify.json`) and/or a commented-out
+  `helper.ts` stub — written to the same staged dir, never the guides dir,
+  refuse-to-overwrite on existing staged siblings. `api-probe` fetches a
+  templated path over the real transport, summarizes the JSON shape, and
+  emits a draft YAML
   operation block — it only suggests, never writes. On 404 it walks the
   `apiHost` version backward to recover an over-claimed version; on 403
   with auth injected it surfaces the server's own (scrubbed) reason

@@ -48,6 +48,7 @@ const ALL_TOOLS = [
 	{ name: "api-guide", description: "API guide" },
 	{ name: "api-fetch", description: "API fetch" },
 	{ name: "api-learn", description: "API learn" },
+	{ name: "api-scaffold", description: "API scaffold" },
 	{ name: "read", description: "read files" },
 	{ name: "bash", description: "shell" },
 	{ name: "edit", description: "edit files" },
@@ -158,6 +159,7 @@ describe("/api command dispatch", () => {
 			expect(finalActive).toContain(name);
 		}
 		expect(finalActive).not.toContain("api-learn");
+		expect(finalActive).not.toContain("api-scaffold");
 	});
 
 	it("off — disables API tools (learn cascades off via requires)", async () => {
@@ -184,6 +186,7 @@ describe("/api command dispatch", () => {
 			expect(finalActive).toContain(name);
 		}
 		expect(finalActive).toContain("api-learn");
+		expect(finalActive).toContain("api-scaffold");
 	});
 
 	it("status — does not change state", async () => {

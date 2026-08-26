@@ -35,6 +35,7 @@
 		"index.ts",
 		"LICENSE",
 		"core/ssrf-guard.ts",
+		"core/status-hint.ts",
 		"core/guide-loader.ts",
 		"core/api-guide-types.ts",
 		"core/parse-api-guide.ts",
@@ -59,6 +60,7 @@
 		"tools/api-guide.ts",
 		"tools/api-fetch.ts",
 		"tools/api-learn.ts",
+		"tools/api-scaffold.ts",
 		"tools/api-probe.ts",
 		"tools/utils.ts",
 		"README.md"

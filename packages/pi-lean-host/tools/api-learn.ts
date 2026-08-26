@@ -4,13 +4,14 @@
  * Authoring entry points:
  *  - `{domain, new: true}` → fresh template with `domains: [<domain>]`
  *    pre-filled (regardless of existing guides).
- *  - `{domain}` (no recipeFile) → fetch the current raw recipe of an existing
+ *  - `{domain}` (no dir) → fetch the current raw recipe of an existing
  *    guide (0 guides → template; 1 guide → raw recipe + dirName surfaced;
  *    N guides → disambiguation menu by shortName), staged to
- *    `/tmp/pi-lean-host/<domain>/guide.md`.
- *  - `{domain, recipeFile}` → reads the staged draft, validates via
+ *    `/tmp/pi-lean-host/<slug(shortName)>/` (guide.md + present siblings).
+ *  - `{domain, dir}` → reads the staged directory (guide.md required,
+ *    helper.ts / verify.json siblings mirrored), validates via
  *    `parseApiGuide()`, writes to
- *    `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/guide.md` —
+ *    `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/` —
  *    the write target is a function of the guide's own `shortName`, never
  *    the `domain` arg (the arg is cosmetic on the save branch).
  *
@@ -27,9 +28,18 @@ import {
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { appendFooter, contentText } from "./utils.js";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	readdirSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
 	parseApiGuide,
 	stampFrontmatterField,
@@ -61,21 +71,38 @@ export function setStagingRoot(dir: string): void {
 	_stagingRoot = dir;
 }
 
-/** Deterministic draft path: `<root>/<key>/guide.md`. The key is the
- * requested `domain` for templates (placeholder shortName) and
- * `slug(shortName)` for fetched recipes (which is the on-disk dirName). */
-function stagingPathFor(key: string): string {
-	return join(_stagingRoot, key, "guide.md");
+/** Deterministic staged dir: `<root>/<key>/`. The key is the requested
+ * `domain` for templates (placeholder shortName) and `slug(shortName)` for
+ * fetched recipes (which is the on-disk dirName). */
+function stagingDirFor(key: string): string {
+	return join(_stagingRoot, key);
 }
 
-/** Write the working copy (template or fetched raw recipe) to the staging
- * path. Returns the path. */
-function writeStagedDraft(key: string, raw: string): string {
-	const path = stagingPathFor(key);
-	mkdirSync(join(_stagingRoot, key), { recursive: true });
-	writeFileSync(path, raw, "utf-8");
-	return path;
+/** True when `p` is a staged dir under the staging root (the root itself
+ * excluded — save must never try to rename the whole root). */
+function isUnderStagingRoot(p: string): boolean {
+	return p !== _stagingRoot && p.startsWith(`${_stagingRoot}${sep}`);
 }
+
+/** Write the working copy (template or fetched raw recipe) to the staged
+ * dir. Returns the staged *dir* path (multi-file — siblings write to the
+ * same dir). */
+function writeStagedDraft(key: string, raw: string): string {
+	const dir = stagingDirFor(key);
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, "guide.md"), raw, "utf-8");
+	return dir;
+}
+
+/** Sibling artifact names mirrored between the staged dir and the guides
+ * dir on save (guide.md is always written). The helper extension set mirrors
+ * core/local-helpers.ts's `findHelperFile` resolution (.ts → .mjs → .js). */
+const SIBLING_NAMES = [
+	"helper.ts",
+	"helper.mjs",
+	"helper.js",
+	"verify.json",
+] as const;
 
 // ═══════════════════════════════════════════════════════════════════
 // Placeholder skeleton (retired worked example)
@@ -154,9 +181,7 @@ function authSummary(auth: AuthConfig): string {
 	const parts: string[] = [];
 	for (const [header, secretName] of Object.entries(auth.secretRefs ?? {})) {
 		const prefix = auth.headerPrefixes?.[header];
-		parts.push(
-			`${header} ← secret ${secretName}${prefix === undefined ? "" : ` (${prefix})`}`,
-		);
+		parts.push(`${header} ← secret ${secretName}${prefix ? ` (${prefix})` : ""}`);
 	}
 	for (const [param, secretName] of Object.entries(auth.secretQueryRefs ?? {})) {
 		parts.push(`?${param} ← secret ${secretName}`);
@@ -209,7 +234,7 @@ const AUTHORING_MANUAL = [
 	`  \`params.<token>.description\` — docs-only description for a {token} path param (format, e.g. 'yyyy-mm-dd'); never sent as a query param, shown in api-guide`,
 	`  \`params.<name>.required\` — true → query param must be supplied (verify skips the op if missing; api-fetch errors before the request)`,
 	`  \`params.<name>.default\`  — value (any YAML scalar: string, number, boolean) used when the caller omits the param (verify runs the op with it; a \`required\`+\`default\` op is always verifiable without a verify.json sidecar)`,
-	`  \`requiresAnyOf\` — [param, ...] — at least one of these params must be supplied (one group per op). Members may not be \`required: true\` — a group member is a plain optional param (verify it via a verify.json sidecar value). Use \`required: true\` for a single-param constraint; \`requiresAnyOf\` is for two or more interchangeable params`,
+	`  \`requiresAnyOf\` — [param, ...] — at least one of these params must be supplied (one group per op). Use it when the API identifies a resource by exactly one of several interchangeable params and rejects them together (id XOR symbol XOR slug — the "exclusive peers" 400). Members may not be \`required: true\` NOR carry a \`default\` (both parser-enforced) — a default would always fire alongside a caller-supplied sibling and cause the conflict. Use \`required: true\` for a single-param constraint; \`requiresAnyOf\` is for two or more interchangeable params`,
 	`  \`passthrough\` — true → forward undeclared caller params onto the query string`,
 	`  \`parse\`       — op-level responseShape override (format/charset) for this operation`,
 	"",
@@ -231,42 +256,64 @@ const AUTHORING_MANUAL = [
 	"  date formats, auth caveats, field semantics, endpoint quirks. Surfaced by",
 	"  api-guide as 'Guide notes'.",
 	"",
-	"Call api-learn({domain: '<domain>', recipeFile: '<staged file path>'}) to save the guide, then api-fetch({domain, operation: '...'}) to verify.",
+	"## Saving (mirror-save)",
+	"  Save reads every staged file (guide.md + helper.ts + verify.json when present) and",
+	"  mirrors it into the guides dir. A sibling present in the guides dir but absent from",
+	"  the staged /tmp dir would be DELETED — save refuses and names it; re-call with",
+	"  confirmDeletions: true to proceed (that flag is discovered only via the refusal message,",
+	"  never the tool description). A guide declaring helper: true / transform: true must",
+	"  have a loadable staged helper.ts.",
+	"",
+	"Call api-learn({domain: '<domain>', dir: '<staged dir>'}) to save the guide, then test each op via api-fetch({domain, operation, params: <your verify.json values>}) — pass the values yourself; verify.json feeds /api verify (the user's batch stamp), not api-fetch.",
 ].join("\n");
 
-/** Template path — write the placeholder skeleton to the staging path and
- * surface the file path (the agent edits the file, not an inline copy).
+/** Template path — write the placeholder skeleton to the staging dir and
+ * surface the guide.md path + staged dir (the agent edits the file, not an
+ * inline copy).
  * Fail-closed: the as-is template cannot save (placeholder `apiHost`
  * is rejected by requireHttpUrl). */
 function stageTemplate(domain: string): string {
-	const path = writeStagedDraft(domain, placeholderSkeleton(domain));
+	const dir = writeStagedDraft(domain, placeholderSkeleton(domain));
 	return (
 		AUTHORING_MANUAL +
 		"\n\n" +
-		`📝 Template for '${domain}' written to ${path}\n` +
+		`📝 Template for '${domain}' written to ${join(dir, "guide.md")}\n` +
 		`  Edit the file (or append ops via bash), then call ` +
-		`api-learn({domain: "${domain}", recipeFile: "${path}"}) to validate and save.\n` +
+		`api-learn({domain: "${domain}", dir: "${dir}"}) to validate and save.\n` +
 		`  Re-fetching or re-templating this domain replaces the staged draft — save first to keep edits.`
 	);
 }
 
-/** Fetch-recipe response — the saved guide's raw recipe staged to the
- * staging path, with the file path + resolved dirName surfaced. Staging
- * keys on `slug(shortName)` (the on-disk dirName in steady state), and the
- * re-save self-keys off the draft's own shortName — no "pass the directory
- * name as domain" guidance (that arg is cosmetic on save). The inline YAML
- * block is dropped: the staged file is the source of truth the agent edits. */
+/** Fetch-recipe response — the saved guide's raw recipe (and present
+ * siblings) staged to the staging dir, with the dir path + resolved dirName
+ * surfaced. Staging keys on `slug(shortName)` (the on-disk dirName in steady
+ * state), and the re-save self-keys off the draft's own shortName — no
+ * "pass the directory name as domain" guidance (that arg is cosmetic on
+ * save). The inline YAML block is dropped: the staged files are the source
+ * of truth the agent edits. */
 function stageFetchedRecipe(
 	domain: string,
 	guide: ApiGuide,
 	dirName: string,
 ): AgentToolResult<unknown> {
-	const raw = readFileSync(
-		join(getUserGuidesDir(), dirName, "guide.md"),
+	const sourceDir = join(getUserGuidesDir(), dirName);
+	const stagedKey = slug(guide.shortName);
+	const stagedDir = stagingDirFor(stagedKey);
+	mkdirSync(stagedDir, { recursive: true });
+	// guide.md always; helper.ts / verify.json when present.
+	writeFileSync(
+		join(stagedDir, "guide.md"),
+		readFileSync(join(sourceDir, "guide.md"), "utf-8"),
 		"utf-8",
 	);
-	const stagedKey = slug(guide.shortName);
-	const path = writeStagedDraft(stagedKey, raw);
+	const stagedSiblings: string[] = [];
+	for (const name of SIBLING_NAMES) {
+		const src = join(sourceDir, name);
+		if (existsSync(src)) {
+			writeFileSync(join(stagedDir, name), readFileSync(src, "utf-8"), "utf-8");
+			stagedSiblings.push(name);
+		}
+	}
 	return {
 		content: [
 			{
@@ -276,14 +323,23 @@ function stageFetchedRecipe(
 					"\n\n" +
 					`📖 Current recipe for '${domain}' — guide '${guide.shortName}'\n` +
 					`  Directory: ${dirName}\n` +
-					`  Staged draft: ${path}\n` +
-					`  To edit: edit the staged file with the edit tool or bash, then call ` +
-					`api-learn({domain: "${domain}", recipeFile: "${path}"}) — the guide ` +
+					`  Staged dir: ${stagedDir}\n` +
+					(stagedSiblings.length > 0
+						? `  Siblings staged: ${stagedSiblings.join(", ")}\n`
+						: "") +
+					`  To edit: edit the staged files with the edit tool or bash, then call ` +
+					`api-learn({domain: "${domain}", dir: "${stagedDir}"}) — the guide ` +
 					`saves to its own \`${stagedKey}\` folder (self-keyed by shortName).\n` +
 					`  Re-fetching or re-templating this domain replaces the staged draft — save first to keep edits.`,
 			},
 		],
-		details: { mode: "fetch", domain, dirName, guide: guide.shortName },
+		details: {
+			mode: "fetch",
+			domain,
+			dirName,
+			guide: guide.shortName,
+			stagedDir,
+		},
 	};
 }
 
@@ -316,28 +372,35 @@ export const apiLearnTool = defineTool({
 	description:
 		"Author an API guide for a domain. " +
 		"Call with {domain, new: true} for a fresh domain-specific template. " +
-		"Call with {domain} and no recipeFile to fetch an existing guide's current raw recipe. " +
-		"Call with {domain, recipeFile} to validate and save.",
+		"Call with {domain} and no dir to fetch an existing guide's current raw recipe (and its sibling files). " +
+		"Call with {domain, dir} to validate and save.\n\n" +
+		"Authoring order (follow this to avoid the common mis-ordering):\n" +
+		"1. (optional) api-probe({apiHost, path, params}) — discover a not-yet-guided endpoint's shape and draft an op block from the docs/example.\n" +
+		"2. api-learn({domain, new: true}) — get a fresh template, fill the recipe, then api-learn({domain, dir}) to save it.\n" +
+		"3. ONLY after the guide is saved: api-scaffold({domain, verify: true | helper: true}) — scaffold reads the SAVED guide, so scaffold-before-save fails. Fill the staged verify.json / helper.ts, then api-learn({domain, dir}) to save the siblings.\n" +
+		"4. Test each op: api-fetch({domain, operation, params: <your verify.json values>}) — verify.json feeds /api verify, not api-fetch, so pass the values yourself. Fix via api-learn({domain}) → edit staged → api-learn({domain, dir}). /api verify is the user's batch attestation stamp (runs every op + stamps verified:).\n" +
+		"Staged drafts live in /tmp/pi-lean-host/<slug(shortName)>/; the save target is self-keyed by the guide's shortName, never the domain arg.",
 
 	parameters: Type.Object({
 		domain: Type.String({
 			description:
-				"Domain (e.g. 'example.com'). With no recipeFile it's the routing domain " +
-				"for fetch-recipe lookup; with `recipeFile` it's display/error context only — " +
+				"Domain (e.g. 'example.com'). With no dir it's the routing domain " +
+				"for fetch-recipe lookup; with `dir` it's display/error context only — " +
 				"the guide saves to its own slug(shortName) folder.",
 		}),
-		recipeFile: Type.Optional(
+		dir: Type.Optional(
 			Type.String({
 				description:
-					"Path to the staged draft guide file (written by a prior api-learn fetch/template call to /tmp/pi-lean-host/<domain-or-slug>/guide.md). " +
-					"Read, validated, and saved. Omit to fetch the current raw recipe of an existing guide (or get a template when none exists).",
+					"Path to the staged directory (written by a prior api-learn fetch/template or api-scaffold call to /tmp/pi-lean-host/<slug(shortName)>/). " +
+					"guide.md is read, validated, and saved; present helper.ts / verify.json siblings are mirrored. " +
+					"Omit to fetch the current raw recipe of an existing guide (or get a template when none exists).",
 			}),
 		),
 		guide: Type.Optional(
 			Type.String({
 				description:
 					"When a domain claims multiple guides, select one by shortName (shown in the disambiguation menu). " +
-					"Only used with the fetch-recipe path (no recipeFile).",
+					"Only used with the fetch-recipe path (no dir).",
 			}),
 		),
 		new: Type.Optional(
@@ -347,19 +410,24 @@ export const apiLearnTool = defineTool({
 					"Does not touch any existing guide.",
 			}),
 		),
+		// Undescribed by design — the only discovery path is the deletion-safety
+		// gate's refusal message.
+		confirmDeletions: Type.Optional(Type.Boolean()),
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 		const {
 			domain,
-			recipeFile,
+			dir,
 			guide: guideSelector,
 			new: isNew,
+			confirmDeletions,
 		} = params as {
 			domain: string;
-			recipeFile?: string;
+			dir?: string;
 			guide?: string;
 			new?: boolean;
+			confirmDeletions?: boolean;
 		};
 
 		// ── Validate domain (path-traversal guard) ─────────────
@@ -385,10 +453,11 @@ export const apiLearnTool = defineTool({
 			};
 		}
 
-		// ── No recipeFile → fetch-recipe ─────────────────────────
-		// 0 guides → template staged; 1 guide → raw recipe staged + dirName
-		// surfaced; N guides → disambiguation menu (guide selector resolves it).
-		if (!recipeFile || !recipeFile.trim()) {
+		// ── No dir → fetch-recipe ──────────────────────────────
+		// 0 guides → template staged; 1 guide → raw recipe + siblings staged +
+		// dirName surfaced; N guides → disambiguation menu (guide selector
+		// resolves it).
+		if (!dir || !dir.trim()) {
 			const matches = findGuidesByDomain(domain);
 			if (matches.length === 0) {
 				return {
@@ -432,24 +501,25 @@ export const apiLearnTool = defineTool({
 			return stageFetchedRecipe(domain, sel.guide, sel.dirName);
 		}
 
-		// ── Save from a staged file ─────────────────────────────
-		// Read the draft, then run the identical validate → stamp → write
-		// path. A missing/unreadable file is a clear error; guide.md untouched.
+		// ── Save from a staged directory ────────────────────────
+		// Read guide.md (required) from the staged dir, then run the identical
+		// validate → stamp → write path. A missing/unreadable dir is a clear
+		// error; guides dir untouched.
 		let recipe: string;
 		try {
-			recipe = readFileSync(recipeFile, "utf-8");
+			recipe = readFileSync(join(dir, "guide.md"), "utf-8");
 		} catch {
 			return {
 				content: [
 					{
 						type: "text",
 						text:
-							`⚠ Could not read recipe file '${recipeFile}' — guide was NOT saved.\n` +
+							`⚠ Could not read staged guide from '${join(dir, "guide.md")}' — guide was NOT saved.\n` +
 							`  Fetch the current recipe first via api-learn({domain: "${domain}"}) ` +
-							`(or a template with {domain, new: true}), then edit the staged file and save with recipeFile.`,
+							`(or a template with {domain, new: true}), then edit the staged files and save with dir.`,
 					},
 				],
-				details: { error: "recipe_file_unreadable", domain, recipeFile },
+				details: { error: "staged_dir_unreadable", domain, dir },
 			};
 		}
 
@@ -511,6 +581,50 @@ export const apiLearnTool = defineTool({
 				],
 				details: { error: "invalid_shortname", domain },
 			};
+		}
+
+		// ── Staged-dir collision guard (drift guard, part 1) ──
+		// The template stages by `domain` (shortName is still a placeholder at
+		// that point), but every later stage (fetch-recipe, scaffold) keys by
+		// `slug(shortName)`. When the draft's staged dir basename doesn't match
+		// its slug, the save re-stages it to the canonical slug dir (part 2).
+		// Before that, refuse if the canonical dir already holds a guide.md
+		// with a DIFFERENT shortName — a divergent save would clobber another
+		// guide's staged recipe (e.g. a shortName copied from another guide).
+		// Same shortName = legitimate update of this guide's own draft; no
+		// guide.md = only scaffold siblings, safe to re-stage beside them.
+		const canonicalStaged = stagingDirFor(slugged);
+		const divergent = basename(dir) !== slugged && isUnderStagingRoot(dir);
+		if (divergent && existsSync(join(canonicalStaged, "guide.md"))) {
+			const existing = parseApiGuide(
+				readFileSync(join(canonicalStaged, "guide.md"), "utf-8"),
+				{ filename: slugged },
+			);
+			const existingShort = existing.ok ? existing.guide.shortName : undefined;
+			if (existingShort !== parsed.guide.shortName) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`⚠ Save refused — '${canonicalStaged}/guide.md' already holds ${existing.ok ? `a different guide ('${existing.guide.shortName}')` : "an unparseable guide"} — not the incoming '${parsed.guide.shortName}'.\n` +
+								`  Your draft is staged at '${dir}', but its shortName slugs to '${canonicalStaged}', which already holds staged files${existing.ok ? " for another guide" : ""}.\n` +
+								`  Resolve the collision, then save again:\n` +
+								`    - If this is a new guide, change \`shortName\` so it slugs to a distinct directory.\n` +
+								`    - If you're re-authoring this guide, delete the staged files in '${canonicalStaged}' (or move your draft there), then save.\n` +
+								`  Guides dir untouched.`,
+						},
+					],
+					details: {
+						error: "staged_dir_collision",
+						domain,
+						dir,
+						canonicalStaged,
+						existing: existingShort ?? null,
+						incoming: parsed.guide.shortName,
+					},
+				};
+			}
 		}
 
 		// Collision detection — another guide (different directory) already
@@ -585,9 +699,153 @@ export const apiLearnTool = defineTool({
 				};
 			}
 		}
+		// ── Deletion-safety gate ────────────────────────────────
+		// Mirror-save can wipe a sibling silently (accidental /tmp cleanup, or
+		// the same-shortName new:true case). Compute the deletion set — siblings
+		// in the guides dir absent from the staged dir — and refuse unless the
+		// agent confirms. `confirmDeletions` is undescribed by design; the
+		// refusal message is its only discovery path.
+		const stagedSiblingNames = SIBLING_NAMES.filter((n) =>
+			existsSync(join(dir, n)),
+		);
+		const doomed = SIBLING_NAMES.filter(
+			(n) => existsSync(join(domainDir, n)) && !stagedSiblingNames.includes(n),
+		);
+		if (doomed.length > 0 && !confirmDeletions) {
+			return {
+				content: [
+					{
+						type: "text",
+						text:
+							`⚠ Save refused — these sibling files exist in the guides dir but are absent from your staged /tmp dir and would be deleted: ${doomed.join(", ")}.\n` +
+							`  Re-call with confirmDeletions: true to delete them, or restore them in /tmp first.`,
+					},
+				],
+				details: { error: "deletion_refused", domain, doomed },
+			};
+		}
+
+		// ── Guide↔helper validation at save time ───────────────
+		// A guide that declares helper/transform usage must have a loadable
+		// staged helper with the declared exports. Self-contained — does not
+		// touch core/local-helpers.ts (no loadHelper/loadTransform, no
+		// disabledHelpers side effects).
+		const ops = parsed.guide.operations;
+		const needsHelper = ops.some(
+			(o) => o.helper === true || o.transform === true,
+		);
+		if (needsHelper) {
+			const stagedHelper = SIBLING_NAMES.find(
+				(n) => n.startsWith("helper.") && existsSync(join(dir, n)),
+			);
+			if (!stagedHelper) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`⚠ Save refused — the guide declares helper usage (helper: true / transform: true) but no helper.ts is in the staged dir.\n` +
+								`  Scaffold one via api-scaffold({domain: "${domain}", helper: true}), or remove the helper: true / transform: true declarations from the guide.`,
+						},
+					],
+					details: { error: "helper_declared_missing_staged", domain },
+				};
+			}
+			try {
+				const mod = await import(pathToFileURL(join(dir, stagedHelper)).href);
+				if (
+					ops.some((o) => o.helper === true) &&
+					typeof mod.default !== "function"
+				) {
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									`⚠ Save refused — staged ${stagedHelper} has no default export, but an op declares helper: true.\n` +
+									`  Uncomment the default export in the staged helper, or drop the helper: true declarations.`,
+							},
+						],
+						details: { error: "helper_missing_default_export", domain },
+					};
+				}
+				if (
+					ops.some((o) => o.transform === true) &&
+					typeof mod.transform !== "function"
+				) {
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									`⚠ Save refused — staged ${stagedHelper} has no transform export, but an op declares transform: true.\n` +
+									`  Uncomment the transform export in the staged helper, or drop the transform: true declarations.`,
+							},
+						],
+						details: { error: "helper_missing_transform_export", domain },
+					};
+				}
+			} catch {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`⚠ Save refused — staged ${stagedHelper} failed to load (syntax error, broken import, or top-level throw).\n` +
+								`  Fix the staged helper, or remove the helper: true / transform: true declarations from the guide.`,
+						},
+					],
+					details: { error: "helper_load_failed", domain },
+				};
+			}
+		}
+
+		// ── Self-correct the staged root (drift guard, part 2) ──
+		// Move the draft to the canonical slug dir and read from there for the
+		// rest of save. Runs after all gates pass, so a refused save never
+		// mutates /tmp. When the canonical dir already exists it holds the
+		// same guide's draft (or only scaffold siblings) — the collision guard
+		// above refused a different guide — so merge per-file; otherwise do an
+		// atomic whole-dir rename.
+		let reStagedNote: string | undefined;
+		// `writeDir` is the staged dir the write reads from — reassigned to the
+		// canonical slug dir when the passed dir diverges (see above). `dir`
+		// stays const so its earlier narrowing survives the closure captures.
+		let writeDir = dir;
+		if (divergent) {
+			const oldName = basename(writeDir);
+			try {
+				if (existsSync(canonicalStaged)) {
+					for (const name of readdirSync(writeDir)) {
+						renameSync(join(writeDir, name), join(canonicalStaged, name));
+					}
+					rmSync(writeDir, { recursive: true, force: true });
+				} else {
+					renameSync(writeDir, canonicalStaged);
+				}
+			} catch (err) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`⚠ Could not re-stage the draft from '${writeDir}' to '${canonicalStaged}' — guide was NOT saved.\n` +
+								`  ${err instanceof Error ? err.message : String(err)}\n` +
+								`  Move the staged files manually (or re-fetch via api-learn({domain: "${domain}"})), then save again.`,
+						},
+					],
+					details: { error: "restage_failed", domain, dir, canonicalStaged },
+				};
+			}
+			writeDir = canonicalStaged;
+			reStagedNote =
+				`Re-staged /${oldName} → ${writeDir} (slug of shortName) — ` +
+				`the staged draft moved here; edit these files from now on.`;
+		}
+
 		mkdirSync(domainDir, { recursive: true });
 
-		// ── Write guide ──────────────────────────────────────────
+		// ── Write guide + mirror siblings ───────────────────────
 
 		// Stamp schemaVersion on save — each guide records the schema vintage
 		// it was authored against (the per-guide vintage that stale detection
@@ -599,6 +857,25 @@ export const apiLearnTool = defineTool({
 			String(GUIDE_SCHEMA_VERSION),
 		);
 		writeFileSync(filepath, stamped, "utf-8");
+
+		// Mirror the staged dir: present siblings overwrite the guides-dir
+		// counterpart; confirmed-absent siblings are removed.
+		const writtenSiblings: string[] = [];
+		for (const name of stagedSiblingNames) {
+			writeFileSync(
+				join(domainDir, name),
+				readFileSync(join(writeDir, name), "utf-8"),
+				"utf-8",
+			);
+			writtenSiblings.push(name);
+		}
+		const deletedSiblings: string[] = [];
+		if (confirmDeletions) {
+			for (const name of doomed) {
+				rmSync(join(domainDir, name), { force: true });
+				deletedSiblings.push(name);
+			}
+		}
 		invalidateCache(); // next api-fetch / api-guide read picks it up
 
 		const opCount = parsed.guide.operations.length;
@@ -617,10 +894,17 @@ export const apiLearnTool = defineTool({
 						`  ${authSummary(parsed.guide.auth)}\n` +
 						`  Verified: ${parsed.guide.verified}\n` +
 						`  Schema version: ${GUIDE_SCHEMA_VERSION}\n` +
+						(writtenSiblings.length > 0
+							? `  Written: ${writtenSiblings.join(", ")}\n`
+							: "") +
+						(deletedSiblings.length > 0
+							? `  Deleted: ${deletedSiblings.join(", ")}\n`
+							: "") +
+						(reStagedNote ? `  ${reStagedNote}\n` : "") +
 						`\n` +
 						warningBlock +
-						`Call api-fetch({domain: "${domain}", operation: "${parsed.guide.operations[0]!.name}"}) to verify.` +
-						`\n⚠ Edit the staged /tmp file, not the saved guide.md — direct edits to guide.md are overwritten on save and invisible to api-fetch until then.`,
+						`Test each op via api-fetch({domain: "${domain}", operation: "${parsed.guide.operations[0]!.name}", params: <your verify.json values>}) — pass the values yourself (verify.json feeds /api verify, not api-fetch). /api verify is the user's batch stamp.` +
+						`\n⚠ Edit the staged /tmp files, not the saved guide.md — direct edits to guide.md are overwritten on save and invisible to api-fetch until then.`,
 				},
 			],
 			details: {
@@ -629,6 +913,9 @@ export const apiLearnTool = defineTool({
 				domain,
 				operations: opCount,
 				verified: parsed.guide.verified,
+				...(reStagedNote ? { reStaged: true } : {}),
+				...(writtenSiblings.length > 0 ? { written: writtenSiblings } : {}),
+				...(deletedSiblings.length > 0 ? { deleted: deletedSiblings } : {}),
 			},
 		};
 	},
@@ -637,7 +924,7 @@ export const apiLearnTool = defineTool({
 		const parts: string[] = [theme.fg("toolTitle", theme.bold("api-learn "))];
 		parts.push(theme.fg("accent", `"${args.domain}"`));
 		if (args.new) parts.push(theme.fg("dim", "✨new"));
-		else if (args.recipeFile) parts.push(theme.fg("dim", "📝"));
+		else if (args.dir) parts.push(theme.fg("dim", "📝"));
 		else parts.push(theme.fg("dim", "📖"));
 		return new Text(parts.join(" "), 0, 0);
 	},
