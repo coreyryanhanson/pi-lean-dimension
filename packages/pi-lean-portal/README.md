@@ -307,6 +307,19 @@ web-guide guide="cookie-consent"    → shows guidance text
 The output includes the guide's last updated date and source (`builtin` or
 `user`).
 
+#### API guides from `pi-lean-host` (co-install)
+
+When `pi-lean-host` is installed alongside portal and `/api` is on, its
+user-authored API guides also **surface in the navigate footer** alongside
+your web guides — same reactive mechanism, no extra setup. API guides sort
+first (API access is cheaper than browsing) but both always appear, so a
+partial-coverage API keeps its web guide for the gaps the API doesn't cover.
+The footer routes API guides to `api-guide({domain, guide})` rather than
+`web-guide`. Portal only consumes a presentation slice (no recipe data); the
+projection is sent host→portal at load time. See the
+[host README](packages/pi-lean-host/README.md#co-installing-with-pi-lean-portal)
+for the host side of the contract.
+
 ### Creating Your Own Site Guides (`web-learn`)
 
 When the agent is in **learn mode** (`/web learn`), it can save or update

@@ -472,7 +472,7 @@ export function resolveApplicableGuides(
 
 	// 2. Domain site guides — all matching guides for the hostname. A guide's
 	//    declared domain matches the exact hostname OR any subdomain of it
-	//    (e.g. "coingecko.com" covers "www.coingecko.com"), so guides that list
+	//    (e.g. "example.com" covers "www.example.com"), so guides that list
 	//    only the apex still surface on www./subdomain navigations. A domain may
 	//    have both an API guide and a web guide; sortApplicableGuides puts
 	//    kind:"api" before kind:"web".
