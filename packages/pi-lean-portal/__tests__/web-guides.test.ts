@@ -94,8 +94,7 @@ function injectTestFixture(): void {
 				icon: "📖",
 				shortName: "test fixture",
 				domains: ["_internal-test.example"],
-				content:
-					"Test-only builtin site guide for exercising domain resolution.",
+				content: "Test-only builtin site guide for exercising domain resolution.",
 			},
 		});
 	}
@@ -135,6 +134,25 @@ describe("resolveApplicableGuides", () => {
 	it("returns empty for unknown domain", () => {
 		const result = resolveApplicableGuides(
 			"https://unknown-site-12345.com/page",
+			noDialog,
+			false,
+		);
+		expect(result).toEqual([]);
+	});
+
+	it("matches apex domain on a www subdomain (suffix match)", () => {
+		const result = resolveApplicableGuides(
+			"https://www._internal-test.example/page",
+			noDialog,
+			false,
+		);
+		expect(result).toHaveLength(1);
+		expect(result[0]!.name).toBe("_builtin-test-fixture");
+	});
+
+	it("does not match a domain that merely ends with the declared domain", () => {
+		const result = resolveApplicableGuides(
+			"https://not-internal-test.example/page",
 			noDialog,
 			false,
 		);
@@ -334,9 +352,7 @@ describe("formatGuideFooter", () => {
 			},
 		];
 		const result = formatGuideFooter(guides);
-		expect(result).toMatch(
-			/• ⚠ bot detection.*web-guide guide="bot-detection"/,
-		);
+		expect(result).toMatch(/• ⚠ bot detection.*web-guide guide="bot-detection"/);
 	});
 });
 
@@ -487,13 +503,9 @@ describe("parseGuideContent", () => {
 
 	it("defaults icon to 📖 when not specified", () => {
 		const result = parseGuideContent(
-			[
-				"---",
-				"category: site",
-				"updated: 2026-06-01",
-				"---",
-				"## Default",
-			].join("\n"),
+			["---", "category: site", "updated: 2026-06-01", "---", "## Default"].join(
+				"\n",
+			),
 			"defaulted.md",
 		);
 		expect(result).not.toBeNull();
@@ -703,9 +715,7 @@ describe("getGuideContent merge", () => {
 	it("contains all builtin guides", () => {
 		for (const name of Object.keys(BUILTIN_GUIDES)) {
 			expect(getGuideContent()[name]).toBeDefined();
-			expect(getGuideContent()[name]!.content).toBe(
-				BUILTIN_GUIDES[name]!.content,
-			);
+			expect(getGuideContent()[name]!.content).toBe(BUILTIN_GUIDES[name]!.content);
 		}
 	});
 

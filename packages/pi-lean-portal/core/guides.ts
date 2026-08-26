@@ -52,6 +52,8 @@ export interface ApplicableGuide {
 	category: GuideCategory;
 	/** Presentation-ordering hint propagated from the underlying Guide (omitted = "web"). */
 	kind?: "web" | "api";
+	/** For api-kind guides: the guide's declared domain, passed to api-guide({domain}). */
+	domain?: string;
 }
 
 /**
@@ -450,13 +452,29 @@ export function resolveApplicableGuides(
 		return sortApplicableGuides(result);
 	}
 
-	// 2. Domain site guides — all matching guides for the hostname (a domain
-	//    may have both an API guide and a web guide; sortApplicableGuides puts
-	//    kind:"api" before kind:"web").
-	for (const guideName of buildDomainMap()[hostname] ?? []) {
+	// 2. Domain site guides — all matching guides for the hostname. A guide's
+	//    declared domain matches the exact hostname OR any subdomain of it
+	//    (e.g. "coingecko.com" covers "www.coingecko.com"), so guides that list
+	//    only the apex still surface on www./subdomain navigations. A domain may
+	//    have both an API guide and a web guide; sortApplicableGuides puts
+	//    kind:"api" before kind:"web".
+	const domainMap = buildDomainMap();
+	const matchedGuideNames = new Set<string>();
+	for (const [domain, names] of Object.entries(domainMap)) {
+		if (hostname === domain || hostname.endsWith("." + domain)) {
+			for (const name of names) matchedGuideNames.add(name);
+		}
+	}
+	for (const guideName of matchedGuideNames) {
 		const guide = content[guideName];
 		if (guide) {
 			const kind = guide.kind ?? "web";
+			// For api-kind guides, record the guide's declared domain (the map
+			// key that matched) so the footer can route to api-guide({domain}),
+			// which resolves by exact domain — not the navigated www. hostname.
+			const matchedDomain = guide.domains?.find(
+				(d) => hostname === d || hostname.endsWith("." + d),
+			);
 			result.push({
 				name: guideName,
 				icon: guide.icon,
@@ -467,6 +485,7 @@ export function resolveApplicableGuides(
 						: `site guide for ${hostname}`,
 				category: guide.category,
 				kind,
+				...(kind === "api" && matchedDomain ? { domain: matchedDomain } : {}),
 			});
 		}
 	}
@@ -484,7 +503,7 @@ export function formatGuideFooter(guides: ApplicableGuide[]): string {
 	if (guides.length === 0) return "";
 
 	const lines: string[] = [
-		"📖 Guides available for this page — call web-guide to review before interacting (once each per conversation):",
+		"📖 Guides available for this page — call the listed tool to review before interacting (once each per conversation):",
 	];
 
 	let addedApiHeader = false;
@@ -497,9 +516,13 @@ export function formatGuideFooter(guides: ApplicableGuide[]): string {
 			lines.push("  Site:");
 			addedSiteHeader = true;
 		}
-		lines.push(
-			`  • ${g.icon} ${g.shortName} — ${g.reason} (web-guide guide="${g.name}")`,
-		);
+		// api-kind guides route to host's api-guide({domain}) — the full op
+		// list + auth — not web-guide, which only sees the stripped projection.
+		const invocation =
+			g.kind === "api"
+				? `api-guide({domain: "${g.domain ?? g.name}"})`
+				: `web-guide guide="${g.name}"`;
+		lines.push(`  • ${g.icon} ${g.shortName} — ${g.reason} (${invocation})`);
 	}
 
 	return lines.join("\n");
@@ -517,11 +540,7 @@ export function formatGuideFooter(guides: ApplicableGuide[]): string {
 export function buildDomainMap(): Record<string, string[]> {
 	const map: Record<string, string[]> = {};
 	for (const [name, guide] of Object.entries(getGuideContent())) {
-		if (
-			guide.category === "site" &&
-			guide.domains &&
-			guide.domains.length > 0
-		) {
+		if (guide.category === "site" && guide.domains && guide.domains.length > 0) {
 			for (const domain of guide.domains) {
 				(map[domain] ??= []).push(name);
 			}

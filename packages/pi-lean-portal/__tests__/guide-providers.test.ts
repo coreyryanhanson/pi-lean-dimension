@@ -212,9 +212,7 @@ describe("kind propagation in resolveApplicableGuides", () => {
 			false,
 			false,
 		);
-		const webGuide = result.find(
-			(g) => g.kind === "web" || g.kind === undefined,
-		);
+		const webGuide = result.find((g) => g.kind === "web" || g.kind === undefined);
 		expect(webGuide).toBeDefined();
 		expect(webGuide!.reason).toBe("site guide for web.example.com");
 	});
@@ -387,12 +385,47 @@ describe("formatGuideFooter — API subheader", () => {
 				reason: "API guide for boe.es",
 				category: "site",
 				kind: "api",
+				domain: "boe.es",
 			},
 		];
 
 		const footer = formatGuideFooter(guides);
 		expect(footer).toContain("API:");
 		expect(footer).toContain("BOE API");
+		// api-kind guides route to api-guide({domain}), not web-guide.
+		expect(footer).toContain('api-guide({domain: "boe.es"})');
+		expect(footer).not.toContain('web-guide guide="boe-api"');
+	});
+
+	it("falls back to the guide name when an api-kind guide has no domain", () => {
+		const guides: ApplicableGuide[] = [
+			{
+				name: "orphan-api",
+				icon: "📡",
+				shortName: "Orphan API",
+				reason: "API guide for example.com",
+				category: "site",
+				kind: "api",
+			},
+		];
+		const footer = formatGuideFooter(guides);
+		expect(footer).toContain('api-guide({domain: "orphan-api"})');
+	});
+
+	it("web-kind site guides still route to web-guide", () => {
+		const guides: ApplicableGuide[] = [
+			{
+				name: "reddit",
+				icon: "📖",
+				shortName: "reddit",
+				reason: "site guide for reddit.com",
+				category: "site",
+				kind: "web",
+			},
+		];
+		const footer = formatGuideFooter(guides);
+		expect(footer).toContain('web-guide guide="reddit"');
+		expect(footer).not.toContain("api-guide");
 	});
 
 	it("shows API: then Site: when both api and web site guides are present (host-first order)", () => {
