@@ -150,17 +150,22 @@ reasons that both land because the schema is not yet frozen at v1:
 
 > **Touch list (exhaustive — verified against the codebase).** The eight
 > sites that read `AuthConfig` fields and must convert to `switch (auth.kind)`:
-> `core/helpers.ts` (`checkAuth`), `core/resolve-op.ts`
+> `core/helpers.ts` (`checkAuth` + the `extraHeaders` spread in `restGet` and `paginate` reads `auth.headers` without narrowing — breaks under the union), `core/resolve-op.ts`
 > (`resolveOpForExecution` auth block), `core/verify-command.ts` (auth
 > precheck), `core/auth.ts` (`authStatusLine` + `resolveSecretHeaders` +
-> `scrubSecretValues`), `core/secrets-command.ts` (`declaredSecretNames` /
+> `resolveSecretQueryParams`; note `scrubSecretValues` is **not** a touch
+> site — it takes `(text, secretValues?)` and never reads `AuthConfig`),
+> `core/secrets-command.ts` (`declaredSecretNames` /
 > `declaredPrefixHint`), `core/parse-api-guide.ts` (kind reject +
 > `none` field-presence check + `secretQueryRefs` collision check +
 > ref-consistency block), **`tools/api-learn.ts`** (`authSummary` reads
 > `secretRefs` / `headerPrefixes` / `secretQueryRefs` without narrowing —
 > breaks under the union), and **`tools/api-probe.ts`** (`listDomainSecrets`
 > reads `requires` / `optional` without a `kind` guard — breaks under the
-> union). `tools/api-guide.ts` (`renderGuideDetail`) only displays
+> union; **`resolveProbeAuth`** at `:237-300` also constructs fake flat
+> `AuthConfig` objects to feed `resolveSecretHeaders`/`resolveSecretQueryParams`,
+> which break when those functions take the nested `StaticKeyAuth` shape).
+> `tools/api-guide.ts` (`renderGuideDetail`) only displays
 > `auth.kind` and survives unchanged. The `default: never` exhaustiveness
 > guarantee is only load-bearing **after** every site is converted — the
 > compiler will not surface sites still on the flat shape, so this list is
@@ -273,7 +278,7 @@ Three shape decisions baked in:
   type). It collapses three fields into one self-contained entry per secret,
   deletes ~85 lines of parser consistency enforcement (`checkRefs` /
   `checkDeclared` / the `headerPrefixes`-must-target-a-secretRef check at
-  `parse-api-guide.ts:747-825`), and makes the three violations it guarded
+  `parse-api-guide.ts:747-823`), and makes the three violations it guarded
   against structurally impossible. `core/auth.ts:56` (`resolveSecretHeaders`)
   folds the prefix application inline (`(ref.prefix ?? "") + value`),
   deleting the separate `headerPrefixes` lookup. Caritas static-key guides
@@ -377,7 +382,7 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
     static-key block or a `headerPrefixes` on an oauth2 block slips past the
     global allowlist.
   - **Delete the ref-consistency block** (`checkRefs` / `checkDeclared` /
-    the `headerPrefixes`-must-target-a-secretRef check, `parse-api-guide.ts:747-825`).
+    the `headerPrefixes`-must-target-a-secretRef check, `parse-api-guide.ts:747-823`).
     The nested `SecretRef` makes all three violations structurally
     impossible: there is no `requires`/`optional` list to diverge from the
     refs, and `prefix` lives on the ref it applies to.
@@ -404,7 +409,12 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
   **`resolveAccessToken` must read the token store fresh on every call**
   (not cache in a closure) so a refresh on op N is visible to op N+1 during
   a long `/api verify` run — mirrors how the static-key path reads the
-  store fresh per call. Also fold the prefix application into
+  store fresh per call. **Serialize refreshes per domain** with a
+  `Map<string, Promise>` lock keyed by `canonicalStoreDomain(guide)` (see
+  cross-cutting decisions) to prevent parallel `api-fetch` calls racing a
+  refresh and double-spending a rotated refresh token. **Apply an
+  `expiresAt - 60_000` skew buffer** so the refresh fires before real expiry
+  instead of on the call that 401s. Also fold the prefix application into
   `resolveSecretHeaders` inline (`(ref.prefix ?? "") + value`), deleting
   the separate `headerPrefixes` lookup.
 - **`core/resolve-op.ts`** — convert the auth-resolution block's
@@ -553,7 +563,7 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
   an explicit bump trigger for **breaking TS-type or YAML-shape changes to
   `AuthConfig`** even when parse behavior relaxes. Concretely `GUIDE_SCHEMA_VERSION`
   goes `0` → `1` as the v1 auth-type vintage. **Hard-gate flip:** `isStaleSchema`
-  (`parse-api-guide.ts:1775`) changes from a non-blocking `⚠` warning into a
+  (`parse-api-guide.ts:1779`) changes from a non-blocking `⚠` warning into a
   **hard load refusal** — a guide whose `schemaVersion` is `< current` fails
   to parse. This is the "fail loudly" policy: we do not keep deprecated
   reading code to support old-schema guides. Every caritas guide is
@@ -585,7 +595,21 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
   pays one extra round trip; every subsequent call is cached. `resolveAccessToken`
   reads the token store fresh on every call (no closure cache) so a refresh
   on op N is visible to op N+1 during a long `/api verify` run. Add a worker
-  only if a recipe's short TTL makes that latency hurt.
+  only if a recipe's short TTL makes that latency hurt. **Two risks the lazy
+  path must guard against:** (a) **Refresh-token rotation races** — some
+  providers issue a fresh refresh token on each refresh; two parallel
+  `api-fetch` calls that both see an expired token can race, double-spend
+  the old refresh token, and corrupt the token store. The static-key path
+  never had this (secrets don't rotate at runtime) and `SecretStore` has no
+  concurrency primitive. Guard the read-check-refresh-write sequence with a
+  **per-domain in-process `Map<string, Promise>` lock** keyed by
+  `canonicalStoreDomain(guide)` so concurrent calls for the same domain
+  serialize on the same refresh. (b) **Clock skew on `expiresAt`** — a token
+  accepted as fresh by the client can be rejected by the server right at the
+  expiry boundary; the lazy refresh only catches it on the *next* call.
+  Apply a small **skew buffer** (refresh when `now >= expiresAt - 60_000`,
+  i.e. one round trip before real expiry) so the refresh fires early
+  instead of on the call that 401s.
 - **`Authorization: Bearer` is the default injection**; a guide may declare
   `paramStyle: query` (`?access_token=…`) for the few providers that require
   it. **Query-injected tokens feed the existing URL-redaction path:** the
