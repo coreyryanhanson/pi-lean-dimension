@@ -603,13 +603,13 @@ directory — the folder name must match `slug(shortName)` or it routes to
 The domains caritas covers (a discoverability index, may drift from the live
 repo):
 
-```
-api.gbif.org             api.github.com           archive.org              archive.org-wayback
-arxiv.org                boe.es                   coingecko.com            data-api.ecb.europa.eu
-datos.gob.es             earthquake.usgs.gov      en.wikipedia.org         en.wikipedia.org-action
-etherscan.io             eutils.ncbi.nlm.nih.gov  gitlab.com               loc.gov
-musicbrainz.org          openlibrary.org          resources.data.gov       services.dnb.de
-web.archive.org          www.federalregister.gov  www.wikidata.org
+```text
+arxiv                         ecb-data-portal               internet-archive              wayback-availability
+boletin-oficial-del-estado    etherscan                     library-of-congress           wayback-cdx-server
+coingecko                     federal-register              musicbrainz                   wikidata
+data-gov                      gbif                          open-library                  wikimedia-action
+datos-gob-es                  github                        pubmed-e-utilities            wikipedia-rest
+deutsche-nationalbibliothek   gitlab                        usgs-earthquake
 ```
 
 Several are **keyed** (`auth.kind: static-key`), the spread that exercises
