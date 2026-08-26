@@ -85,8 +85,8 @@ Prose body.
 `;
 
 describe("GUIDE_SCHEMA_VERSION constant", () => {
-	it("is 0 and exported", () => {
-		expect(GUIDE_SCHEMA_VERSION).toBe(0);
+	it("is 1 and exported", () => {
+		expect(GUIDE_SCHEMA_VERSION).toBe(1);
 	});
 });
 

@@ -55,6 +55,8 @@
 		"core/guide-picker.ts",
 		"core/verify-command.ts",
 		"core/delete-command.ts",
+		"core/oauth-store.ts",
+		"core/oauth-command.ts",
 		"core/verify-ship-manifest.ts",
 		"tools/index.ts",
 		"tools/api-guide.ts",

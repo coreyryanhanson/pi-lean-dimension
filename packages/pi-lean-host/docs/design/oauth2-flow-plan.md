@@ -23,6 +23,15 @@
 > `0.4.0` is the last preview release. All prior versions are unofficial,
 > so this is the cheapest moment to lay the v1 foundation cleanly.
 
+> **Phase 1 status (landed).** The union refactor + client_credentials
+> runtime shipped: `AuthConfig` is now the discriminated union with nested
+> `SecretRef`, `oauth2` parses (both grants), `resolveAccessToken` mints /
+> refreshes lazily (per-domain lock + skew buffer), `/api oauth` provisions
+> tokens, and `GUIDE_SCHEMA_VERSION` is bumped to `1`. **Deferred by
+> decision:** the hard-gate flip (`isStaleSchema` stays a non-blocking ⚠
+> warning) — it lands with the coordinated `0.5.0` step alongside caritas
+> re-stamping. The auth-code interactive flow (`oauth-flow.ts`) is Phase 2.
+
 ## Current state (the seams already in place)
 
 The framework was built with OAuth2 in mind — most of the load-bearing seams

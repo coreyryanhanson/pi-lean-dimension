@@ -118,8 +118,7 @@ function makeAuthGuide(serverUrl: string): ApiGuide {
 		gatherAllMax: 1000,
 		auth: {
 			kind: "static-key",
-			secretRefs: { "x-api-key": "api_key" },
-			requires: ["api_key"],
+			secretRefs: { "x-api-key": { secret: "api_key" } },
 		},
 		responseShape: { format: "json", charset: "utf-8" },
 		operations: [],
@@ -142,8 +141,7 @@ function makeQueryAuthGuide(serverUrl: string): ApiGuide {
 		gatherAllMax: 1000,
 		auth: {
 			kind: "static-key",
-			secretQueryRefs: { apikey: "api_key" },
-			requires: ["api_key"],
+			secretQueryRefs: { apikey: { secret: "api_key" } },
 		},
 		responseShape: { format: "json", charset: "utf-8" },
 		operations: [],
@@ -166,16 +164,22 @@ function authRecipe(
 	opts: { domain?: string; requires?: boolean; optional?: boolean } = {},
 ): string {
 	const domain = opts.domain ?? "auth.test";
-	const req = opts.requires === false ? "" : `  requires:\n    - api_key\n`;
-	const opt = opts.optional ? `  optional:\n    - api_key\n` : "";
+	// requires: false / optional: true → an optional ref (proceeds
+	// unauthenticated when absent); default → a required ref (fail-closed).
+	const optional = opts.requires === false || opts.optional;
+	const ref = optional
+		? `    x-api-key:
+      secret: api_key
+      optional: true`
+		: `    x-api-key:
+      secret: api_key`;
 	return `---
 domains: [${domain}]
 apiHost: ${serverUrl}
 auth:
   kind: static-key
   secretRefs:
-    x-api-key: api_key
-${req}${opt}
+${ref}
 operations:
   - name: ping
     via: restGet
@@ -258,166 +262,234 @@ body
 		return parseApiGuide(raw, { filename: "example.com" });
 	}
 
-	it("static-key with consistent secretRefs/requires parses", () => {
+	it("static-key with a nested secretRef parses", () => {
 		const r = parseAuthBlock(`  kind: static-key
   secretRefs:
-    x-api-key: api_key
-  requires:
-    - api_key`);
+    x-api-key:
+      secret: api_key`);
 		expect(r.ok).toBe(true);
 		if (r.ok) {
 			expect(r.guide.auth.kind).toBe("static-key");
-			expect(r.guide.auth.secretRefs).toEqual({ "x-api-key": "api_key" });
-			expect(r.guide.auth.requires).toEqual(["api_key"]);
+			if (r.guide.auth.kind === "static-key") {
+				expect(r.guide.auth.secretRefs).toEqual({
+					"x-api-key": { secret: "api_key" },
+				});
+			}
 		}
 	});
 
-	it("secretRefs name not in requires/optional → ParseError with fix", () => {
+	it("a ref with optional: true parses and is preserved", () => {
 		const r = parseAuthBlock(`  kind: static-key
   secretRefs:
-    x-api-key: unknownName
-  requires:
-    - api_key`);
+    x-api-key:
+      secret: api_key
+      optional: true`);
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			if (r.guide.auth.kind === "static-key") {
+				expect(r.guide.auth.secretRefs).toEqual({
+					"x-api-key": { secret: "api_key", optional: true },
+				});
+			}
+		}
+	});
+
+	it("a ref missing its secret name → ParseError", () => {
+		const r = parseAuthBlock(`  kind: static-key
+  secretRefs:
+    x-api-key:
+      prefix: "Bearer "`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.secretRefs.x-api-key.secret");
+		}
+	});
+
+	it("a ref with an unknown key → ParseError", () => {
+		const r = parseAuthBlock(`  kind: static-key
+  secretRefs:
+    x-api-key:
+      secret: api_key
+      name: nope`);
 		expect(r.ok).toBe(false);
 		if (!r.ok) {
 			expect(r.error.field).toBe("auth.secretRefs.x-api-key");
-			expect(r.error.fix).toBeDefined();
+			expect(r.error.found).toContain("name");
 		}
 	});
 
-	it("a secret name in BOTH requires and optional → ParseError", () => {
+	it("a ref with a non-boolean optional → ParseError", () => {
 		const r = parseAuthBlock(`  kind: static-key
   secretRefs:
-    x-api-key: api_key
-  requires:
-    - api_key
-  optional:
-    - api_key`);
+    x-api-key:
+      secret: api_key
+      optional: maybe`);
 		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.error.field).toBe("auth.requires");
+		if (!r.ok) expect(r.error.field).toBe("auth.secretRefs.x-api-key.optional");
 	});
 
-	it("requires name not referenced by any ref → ParseError with fix", () => {
+	it("a ref with a bare {name} placeholder prefix → ParseError (misconception guard)", () => {
 		const r = parseAuthBlock(`  kind: static-key
   secretRefs:
-    x-api-key: api_key
-  requires:
-    - api_key
-    - unused_key`);
+    x-api-key:
+      secret: api_key
+      prefix: "{api_key}"`);
 		expect(r.ok).toBe(false);
-		if (!r.ok) {
-			expect(r.error.field).toBe("auth.requires");
-			expect(r.error.fix).toContain("unused_key");
-		}
+		if (!r.ok) expect(r.error.field).toBe("auth.secretRefs.x-api-key.prefix");
 	});
 
-	it("optional name not referenced by any ref → ParseError", () => {
-		const r = parseAuthBlock(`  kind: static-key
-  secretRefs:
-    x-api-key: api_key
-  requires:
-    - api_key
-  optional:
-    - rate_key`);
-		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.error.field).toBe("auth.optional");
-	});
-
-	it("static-key with requires but no refs at all → ParseError", () => {
-		const r = parseAuthBlock(`  kind: static-key
-  requires:
-    - api_key`);
-		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.error.field).toBe("auth.requires");
-	});
-
-	it("secretRefs with kind: none → ParseError (kind↔field consistency)", () => {
+	it("secretRefs with kind: none → ParseError (per-variant allowlist)", () => {
 		const r = parseAuthBlock(`  kind: none
   secretRefs:
-    x-api-key: api_key`);
-		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.error.field).toBe("auth.secretRefs");
-	});
-
-	it("oauth2 is rejected at parse (not yet implemented)", () => {
-		const r = parseAuthBlock(`  kind: oauth2`);
+    x-api-key:
+      secret: api_key`);
 		expect(r.ok).toBe(false);
 		if (!r.ok) {
-			expect(r.error.field).toBe("auth.kind");
-			expect(r.error.fix).toContain("not yet implemented");
+			expect(r.error.field).toBe("auth.secretRefs");
+			expect(r.error.found).toContain("unknown key");
 		}
 	});
 
-	it("headerPrefixes with a secretRefs key parses and is preserved", () => {
-		const r = parseAuthBlock(`  kind: static-key
+	it("oauth2 client_credentials parses with a client_secret ref", () => {
+		const r = parseAuthBlock(`  kind: oauth2
+  grant: client_credentials
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: my_client
   secretRefs:
-    Authorization: api_key
-  headerPrefixes:
-    Authorization: "Bearer "
-  optional:
-    - api_key`);
+    client_secret:
+      secret: client_secret
+  scopes: [read]
+  paramStyle: bearer-header
+  tokenEndpointAuthMethod: client_secret_post`);
 		expect(r.ok).toBe(true);
 		if (r.ok) {
-			expect(r.guide.auth.headerPrefixes).toEqual({ Authorization: "Bearer " });
+			expect(r.guide.auth.kind).toBe("oauth2");
+			if (r.guide.auth.kind === "oauth2") {
+				expect(r.guide.auth.grant).toBe("client_credentials");
+				expect(r.guide.auth.tokenUrl).toBe("https://api.example.com/oauth/token");
+				expect(r.guide.auth.secretRefs).toEqual({
+					client_secret: { secret: "client_secret" },
+				});
+			}
 		}
 	});
 
-	it("headerPrefixes key not in secretRefs → ParseError with fix", () => {
-		const r = parseAuthBlock(`  kind: static-key
-  secretRefs:
-    x-api-key: api_key
-  headerPrefixes:
-    X-Other: "Bearer "
-  requires:
-    - api_key`);
+	it("oauth2 client_credentials without a client_secret ref → ParseError", () => {
+		const r = parseAuthBlock(`  kind: oauth2
+  grant: client_credentials
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: my_client`);
 		expect(r.ok).toBe(false);
 		if (!r.ok) {
-			expect(r.error.field).toBe("auth.headerPrefixes.X-Other");
-			expect(r.error.fix).toContain("X-Other");
+			expect(r.error.field).toBe("auth.secretRefs.client_secret");
+			expect(r.error.fix).toContain("client_secret");
 		}
 	});
 
-	it("headerPrefixes with kind: none → ParseError (kind↔field consistency)", () => {
-		const r = parseAuthBlock(`  kind: none
-  headerPrefixes:
-    x-api-key: "Bearer "`);
+	it("oauth2 client_credentials with authorizeUrl/redirectUri/pkce → ParseError", () => {
+		const r = parseAuthBlock(`  kind: oauth2
+  grant: client_credentials
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: my_client
+  secretRefs:
+    client_secret:
+      secret: client_secret
+  authorizeUrl: https://api.example.com/oauth/authorize
+  pkce: true`);
 		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.error.field).toBe("auth.secretRefs");
+		if (!r.ok) expect(r.error.field).toBe("auth.authorizeUrl");
 	});
 
-	it("headerPrefixes with an empty prefix value → parses (bare-key header)", () => {
-		const r = parseAuthBlock(`  kind: static-key
-  secretRefs:
-    x-api-key: api_key
-  headerPrefixes:
-    x-api-key: ""
-  requires:
-    - api_key`);
+	it("oauth2 authorization_code requires pkce + authorizeUrl + redirectUri; client_secret optional", () => {
+		const r = parseAuthBlock(`  kind: oauth2
+  grant: authorization_code
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: my_client
+  authorizeUrl: https://api.example.com/oauth/authorize
+  redirectUri: http://localhost:9999/callback
+  pkce: true`);
 		expect(r.ok).toBe(true);
-		if (r.ok) expect(r.guide.auth.headerPrefixes).toEqual({ "x-api-key": "" });
-	});
-
-	it("headerPrefixes with no secretRefs → ParseError (dead prefix)", () => {
-		const r = parseAuthBlock(`  kind: static-key
-  headerPrefixes:
-    Authorization: "Bearer "`);
-		expect(r.ok).toBe(false);
-		if (!r.ok) {
-			expect(r.error.field).toBe("auth.headerPrefixes.Authorization");
-			expect(r.error.fix).toContain("Authorization");
+		if (r.ok) {
+			expect(r.guide.auth.kind).toBe("oauth2");
+			if (r.guide.auth.kind === "oauth2") {
+				expect(r.guide.auth.grant).toBe("authorization_code");
+				expect(r.guide.auth.pkce).toBe(true);
+				expect(r.guide.auth.secretRefs).toBeUndefined();
+			}
 		}
 	});
 
-	it("headerPrefixes value that is a bare {name} placeholder → ParseError (misconception guard)", () => {
+	it("oauth2 authorization_code without pkce: true → ParseError", () => {
+		const r = parseAuthBlock(`  kind: oauth2
+  grant: authorization_code
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: my_client
+  authorizeUrl: https://api.example.com/oauth/authorize
+  redirectUri: http://localhost:9999/callback`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error.field).toBe("auth.pkce");
+	});
+
+	it("oauth2 with an unknown kind-only key → ParseError (per-variant allowlist)", () => {
+		const r = parseAuthBlock(`  kind: oauth2
+  grant: client_credentials
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: my_client
+  secretRefs:
+    client_secret:
+      secret: client_secret
+  headers:
+    X-Foo: bar`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.headers");
+			expect(r.error.found).toContain("unknown key");
+		}
+	});
+
+	it("a static-key block with an oauth2-only key → ParseError (per-variant allowlist)", () => {
 		const r = parseAuthBlock(`  kind: static-key
   secretRefs:
-    x-api-key: api_key
-  headerPrefixes:
-    x-api-key: "{api_key}"
-  requires:
-    - api_key`);
+    x-api-key:
+      secret: api_key
+  tokenUrl: https://api.example.com/oauth/token`);
 		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.error.field).toBe("auth.headerPrefixes");
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.tokenUrl");
+			expect(r.error.found).toContain("unknown key");
+		}
+	});
+
+	it("a ref prefix parses and is preserved (folded headerPrefixes)", () => {
+		const r = parseAuthBlock(`  kind: static-key
+  secretRefs:
+    Authorization:
+      secret: api_key
+      prefix: "Bearer "`);
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			if (r.guide.auth.kind === "static-key") {
+				expect(r.guide.auth.secretRefs).toEqual({
+					Authorization: { secret: "api_key", prefix: "Bearer " },
+				});
+			}
+		}
+	});
+
+	it("an empty ref prefix parses (bare-key header)", () => {
+		const r = parseAuthBlock(`  kind: static-key
+  secretRefs:
+    x-api-key:
+      secret: api_key
+      prefix: ""`);
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			if (r.guide.auth.kind === "static-key") {
+				expect(r.guide.auth.secretRefs).toEqual({
+					"x-api-key": { secret: "api_key", prefix: "" },
+				});
+			}
+		}
 	});
 });
 
@@ -428,9 +500,10 @@ body
 describe("resolveSecretHeaders (store-backed injection)", () => {
 	const auth = {
 		kind: "static-key" as const,
-		secretRefs: { "x-api-key": "api_key", "x-optional": "rate_key" },
-		requires: ["api_key"],
-		optional: ["rate_key"],
+		secretRefs: {
+			"x-api-key": { secret: "api_key" },
+			"x-optional": { secret: "rate_key", optional: true },
+		},
 	};
 
 	it("resolves required + optional when both are provisioned", () => {
@@ -450,19 +523,17 @@ describe("resolveSecretHeaders (store-backed injection)", () => {
 		expect(res.absentOptional).toEqual(["rate_key"]);
 	});
 
-	it("headerPrefixes prepends to the header and surfaces the raw value", () => {
+	it("a ref prefix prepends to the header and surfaces the raw value", () => {
 		const prefixed = {
 			kind: "static-key" as const,
-			secretRefs: { Authorization: "api_key" },
-			headerPrefixes: { Authorization: "Bearer " },
-			requires: ["api_key"],
+			secretRefs: { Authorization: { secret: "api_key", prefix: "Bearer " } },
 		};
 		const res = resolveSecretHeaders(prefixed, "auth.test");
 		expect(res.headers["Authorization"]).toBe("Bearer S3CRET-VALUE");
 		expect(res.rawHeaderValues).toEqual(["S3CRET-VALUE"]);
 	});
 
-	it("absent headerPrefixes → verbatim value (existing behavior)", () => {
+	it("absent ref prefix → verbatim value (existing behavior)", () => {
 		const res = resolveSecretHeaders(auth, "auth.test");
 		expect(res.headers["x-api-key"]).toBe("S3CRET-VALUE");
 		// raw values still surfaced (identical when no prefix)
@@ -596,7 +667,10 @@ describe("secretQueryRefs-only parity (cache + SSRF)", () => {
 
 describe("authStatusLine footer", () => {
 	const base = {
-		secretRefs: { "x-api-key": "api_key", "x-rate": "rate_key" },
+		secretRefs: {
+			"x-api-key": { secret: "api_key" },
+			"x-rate": { secret: "rate_key", optional: true },
+		},
 	} as const;
 
 	it("no-auth (kind none) → undefined", () => {
@@ -612,9 +686,15 @@ describe("authStatusLine footer", () => {
 		).toBeUndefined();
 	});
 
-	it("requires present → ok", () => {
+	it("required refs present → ok", () => {
 		const line = authStatusLine(
-			{ kind: "static-key", ...base, requires: ["api_key"] },
+			{
+				kind: "static-key",
+				secretRefs: {
+					"x-api-key": { secret: "api_key" },
+					"x-rate": { secret: "rate_key" },
+				},
+			},
 			"auth.test",
 		);
 		expect(line).toContain("auth: ok");
@@ -622,39 +702,23 @@ describe("authStatusLine footer", () => {
 	});
 
 	it("required absent → nudge-provision", () => {
-		const line = authStatusLine(
-			{ kind: "static-key", ...base, requires: ["api_key"] },
-			"auth.missing",
-		);
+		const line = authStatusLine({ kind: "static-key", ...base }, "auth.missing");
 		expect(line).toContain("not provisioned");
 		expect(line).toContain("/api secrets auth.missing");
 	});
 
-	it("requires present + optional absent → optional-not-provisioned", () => {
+	it("required present + optional absent → optional-not-provisioned", () => {
 		const line = authStatusLine(
-			{
-				kind: "static-key",
-				...base,
-				requires: ["api_key"],
-				optional: ["rate_key"],
-			},
+			{ kind: "static-key", ...base },
 			"auth.partial", // has api_key, not rate_key
 		);
 		expect(line).toContain("optional");
 		expect(line).toContain("not provisioned");
 	});
 
-	it("requires + optional present → ok (optional)", () => {
+	it("required + optional present → ok (optional)", () => {
 		writeSecret("auth.test", "rate_key", "RATE");
-		const line = authStatusLine(
-			{
-				kind: "static-key",
-				...base,
-				requires: ["api_key"],
-				optional: ["rate_key"],
-			},
-			"auth.test",
-		);
+		const line = authStatusLine({ kind: "static-key", ...base }, "auth.test");
 		expect(line).toContain("auth: ok");
 		expect(line).toContain("optional provisioned");
 	});
@@ -665,8 +729,7 @@ describe("authStatusLine footer", () => {
 		const line = authStatusLine(
 			{
 				kind: "static-key",
-				secretQueryRefs: { apikey: "api_key" },
-				requires: ["api_key"],
+				secretQueryRefs: { apikey: { secret: "api_key" } },
 			},
 			"auth.test",
 		);
@@ -678,8 +741,7 @@ describe("authStatusLine footer", () => {
 		const line = authStatusLine(
 			{
 				kind: "static-key",
-				secretQueryRefs: { apikey: "api_key" },
-				requires: ["api_key"],
+				secretQueryRefs: { apikey: { secret: "api_key" } },
 			},
 			"auth.missing",
 		);
@@ -691,8 +753,7 @@ describe("authStatusLine footer", () => {
 		const line = authStatusLine(
 			{
 				kind: "static-key",
-				secretQueryRefs: { apikey: "api_key" },
-				optional: ["api_key"],
+				secretQueryRefs: { apikey: { secret: "api_key", optional: true } },
 			},
 			"auth.missing",
 		);
@@ -703,8 +764,7 @@ describe("authStatusLine footer", () => {
 		const line = authStatusLine(
 			{
 				kind: "static-key",
-				secretQueryRefs: { apikey: "api_key" },
-				optional: ["api_key"],
+				secretQueryRefs: { apikey: { secret: "api_key", optional: true } },
 			},
 			"auth.test",
 		);
@@ -716,9 +776,8 @@ describe("authStatusLine footer", () => {
 		const line = authStatusLine(
 			{
 				kind: "static-key",
-				secretRefs: { "x-api-key": "api_key" },
-				secretQueryRefs: { apikey: "api_key" },
-				requires: ["api_key"],
+				secretRefs: { "x-api-key": { secret: "api_key" } },
+				secretQueryRefs: { apikey: { secret: "api_key" } },
 			},
 			"auth.missing",
 		);
@@ -729,6 +788,22 @@ describe("authStatusLine footer", () => {
 		// Other provisioned domains surface as a names-only hint.
 		expect(line).toContain("provisioned domains:");
 		expect(line).toContain("auth.test");
+	});
+
+	// ── oauth2 footer states ──
+
+	it("oauth2 with no token → nudge /api oauth", () => {
+		const line = authStatusLine(
+			{
+				kind: "oauth2",
+				grant: "client_credentials",
+				tokenUrl: "https://api.example.com/oauth/token",
+				clientId: "c",
+			},
+			"auth.missing",
+		);
+		expect(line).toContain("oauth2");
+		expect(line).toContain("/api oauth auth.missing");
 	});
 });
 
@@ -789,11 +864,9 @@ apiHost: ${server.url}
 auth:
   kind: static-key
   secretRefs:
-    x-api-key: api_key
-  headerPrefixes:
-    x-api-key: "Bearer "
-  requires:
-    - api_key
+    x-api-key:
+      secret: api_key
+      prefix: "Bearer "
 operations:
   - name: boomBare
     via: restGet
@@ -852,9 +925,8 @@ apiHost: ${server.url}
 auth:
   kind: static-key
   secretRefs:
-    x-api-key: api_key
-  requires:
-    - api_key
+    x-api-key:
+      secret: api_key
 operations:
   - name: ping
     via: restGet
@@ -898,9 +970,8 @@ apiHost: ${server.url}
 auth:
   kind: static-key
   secretRefs:
-    x-api-key: api_key
-  requires:
-    - api_key
+    x-api-key:
+      secret: api_key
 operations:
   - name: ping
     via: restGet

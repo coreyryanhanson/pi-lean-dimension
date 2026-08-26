@@ -36,6 +36,7 @@ import { findGuidesByDomain } from "../core/guide-store.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
 import { serverMessage, isPlanGated } from "../core/status-hint.js";
 import { appendFooter, contentText } from "./utils.js";
+import type { SecretRef, StaticKeyAuth } from "../core/api-guide-types.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -228,6 +229,34 @@ interface ProbeAuthCtx {
 }
 
 /**
+ * Convert the probe's flat inline `auth` block (tool param — injection
+ * fields only) into a nested `StaticKeyAuth` for the shared resolvers.
+ * `headerPrefixes` fold inline onto each ref's `prefix`.
+ */
+function flatToStaticKeyAuth(
+	auth: NonNullable<ProbeOptions["auth"]>,
+): StaticKeyAuth {
+	const secretRefs: Record<string, SecretRef> = {};
+	for (const [header, secretName] of Object.entries(auth.secretRefs ?? {})) {
+		secretRefs[header] = {
+			secret: secretName,
+			...(auth.headerPrefixes?.[header] !== undefined
+				? { prefix: auth.headerPrefixes[header] }
+				: {}),
+		};
+	}
+	const secretQueryRefs: Record<string, SecretRef> = {};
+	for (const [param, secretName] of Object.entries(auth.secretQueryRefs ?? {})) {
+		secretQueryRefs[param] = { secret: secretName };
+	}
+	return {
+		kind: "static-key",
+		...(Object.keys(secretRefs).length > 0 ? { secretRefs } : {}),
+		...(Object.keys(secretQueryRefs).length > 0 ? { secretQueryRefs } : {}),
+	};
+}
+
+/**
  * Resolve an inline `auth` block against the secrets store. Probe semantics:
  * a store miss is NOT fail-closed (human-in-the-loop authoring tool) — the
  * missing name is reported and the call proceeds with the header/param
@@ -264,21 +293,9 @@ function resolveProbeAuth(
 			misconfiguredPrefixes,
 		};
 	}
-	const headerRes = resolveSecretHeaders(
-		{
-			kind: "static-key",
-			...(auth!.secretRefs ? { secretRefs: auth!.secretRefs } : {}),
-			...(auth!.headerPrefixes ? { headerPrefixes: auth!.headerPrefixes } : {}),
-		},
-		domain,
-	);
-	const queryRes = resolveSecretQueryParams(
-		{
-			kind: "static-key",
-			...(auth!.secretQueryRefs ? { secretQueryRefs: auth!.secretQueryRefs } : {}),
-		},
-		domain,
-	);
+	const staticKeyAuth = flatToStaticKeyAuth(auth!);
+	const headerRes = resolveSecretHeaders(staticKeyAuth, domain);
+	const queryRes = resolveSecretQueryParams(staticKeyAuth, domain);
 	return {
 		hasAuthBlock: true,
 		headers: headerRes.headers,
@@ -1030,11 +1047,23 @@ function listDomainSecrets(domain: string): {
 	if (matches.length === 0) return { domain, provisioned };
 	const declaredSet = new Set<string>();
 	for (const { guide } of matches) {
-		for (const n of [
-			...(guide.auth.requires ?? []),
-			...(guide.auth.optional ?? []),
-		]) {
-			declaredSet.add(n);
+		switch (guide.auth.kind) {
+			case "static-key":
+				for (const ref of Object.values(guide.auth.secretRefs ?? {}))
+					declaredSet.add(ref.secret);
+				for (const ref of Object.values(guide.auth.secretQueryRefs ?? {}))
+					declaredSet.add(ref.secret);
+				break;
+			case "oauth2":
+				for (const ref of Object.values(guide.auth.secretRefs ?? {}))
+					declaredSet.add(ref.secret);
+				break;
+			case "none":
+				break;
+			default: {
+				const _exhaustive: never = guide.auth;
+				throw new Error(`Unhandled auth kind: ${_exhaustive}`);
+			}
 		}
 	}
 	const declared = [...declaredSet].sort();

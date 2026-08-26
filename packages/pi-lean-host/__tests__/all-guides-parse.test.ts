@@ -51,28 +51,23 @@ describe("all bundled guides parse correctly", () => {
 			expect(result.guide.apiHost).toBeTruthy();
 			expect(result.guide.operations.length).toBeGreaterThan(0);
 
-			// Auth: the corpus is now allowed to ship `static-key` guides (the
-			// realized keyed-auth mode). `none` and `static-key` both parse.
-			expect(["none", "static-key"]).toContain(result.guide.auth.kind);
+			// Auth: the corpus ships `none`, `static-key`, and `oauth2` guides.
+			expect(["none", "static-key", "oauth2"]).toContain(result.guide.auth.kind);
 			const auth = result.guide.auth;
 			if (auth.kind === "static-key") {
 				// A keyed guide must declare a non-empty reference shape: header
-				// (secretRefs), query param (secretQueryRefs), or both — and every
-				// referenced secret name must be in requires ∪ optional.
+				// (secretRefs), query param (secretQueryRefs), or both. Every ref
+				// carries its own secret name (nested SecretRef — self-contained).
 				const headerRefs = auth.secretRefs ?? {};
 				const queryRefs = auth.secretQueryRefs ?? {};
 				expect(
 					Object.keys(headerRefs).length + Object.keys(queryRefs).length,
 				).toBeGreaterThan(0);
-				const declared = new Set([
-					...(auth.requires ?? []),
-					...(auth.optional ?? []),
-				]);
-				for (const secretName of [
+				for (const ref of [
 					...Object.values(headerRefs),
 					...Object.values(queryRefs),
 				]) {
-					expect(declared.has(secretName)).toBe(true);
+					expect(ref.secret.length).toBeGreaterThan(0);
 				}
 			}
 

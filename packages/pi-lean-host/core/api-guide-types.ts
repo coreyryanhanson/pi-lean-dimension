@@ -23,57 +23,98 @@ export const GATHER_ALL_MAX_FALLBACK = 1000;
  * The schema version of the guide recipe format. Metadata-only attribution:
  * it is surfaced on the parsed guide but NEVER gates/warns/alters parse
  * (see __tests__/schema-version.test.ts). Absent frontmatter defaults to the
- * semantic 0. Bumped to 1 at lockstep (a label change, not a break).
+ * semantic 0. Bumped to 1 at the v1 auth-type reshape (0.5.0) — a breaking
+ * TS-type + YAML-shape change to `AuthConfig`, not a parse-behavior break.
  */
-export const GUIDE_SCHEMA_VERSION = 0 as const;
+export const GUIDE_SCHEMA_VERSION = 1 as const;
 
-/** Auth strategies recognized by the schema (the seam). v1 realizes `none` and `static-key`; `oauth2` is rejected at parse. */
+/** Auth strategies recognized by the schema (the seam). v1 realizes `none`, `static-key`, and `oauth2`. */
 export const KNOWN_AUTH_KINDS: ReadonlySet<string> = new Set([
 	"none",
 	"static-key",
 	"oauth2",
 ]);
 
-// ═══════════════════════════════════════════════════════════════════
-// Auth
-// ═══════════════════════════════════════════════════════════════════
-
 export type AuthKind = "none" | "static-key" | "oauth2";
 
-export interface AuthConfig {
-	kind: AuthKind;
+/**
+ * A single secret reference — self-contained. Availability is a property of
+ * THIS ref (default: required, fail-closed when absent), not a separate
+ * roster. `prefix` folds the old top-level `headerPrefixes` inline. Shared by
+ * `StaticKeyAuth` and `OAuth2Auth` (for oauth2 the map key is a FORM FIELD
+ * NAME, not a header name — see `validateOAuth2`).
+ */
+export interface SecretRef {
+	/** Store name (provisioned via /api secrets <domain>). */
+	secret: string;
+	/** Prefix prepended to the stored value at resolution time (e.g. "Bearer "). */
+	prefix?: string;
+	/** Default false — absent → fail-closed before the request. */
+	optional?: boolean;
+}
+
+export interface NoneAuth {
+	kind: "none";
+	/** Extra headers merged into every request (e.g. `X-Api-Key: DEMO_KEY`). */
+	headers?: Record<string, string>;
+}
+
+export interface StaticKeyAuth {
+	kind: "static-key";
 	/** Extra headers merged into every request (e.g. `X-Api-Key: DEMO_KEY`). */
 	headers?: Record<string, string>;
 	/**
-	 * static-key only: maps request header name → secret store name. Values
-	 * are injected at fetch time from the secrets store; the value never
-	 * enters agent context. Every referenced name must also appear in
-	 * `requires` or `optional` (parser-enforced).
+	 * Maps request header name → secret ref. Values are injected at fetch
+	 * time from the secrets store; the value never enters agent context.
 	 */
-	secretRefs?: Record<string, string>;
+	secretRefs?: Record<string, SecretRef>;
 	/**
-	 * static-key only: maps request header name → prefix string prepended to
-	 * the stored secret value before it is sent. The store holds the raw
-	 * credential; the guide declares how it is presented (e.g.
-	 * `Authorization: "Bearer "`). Absent = verbatim value. Every key must
-	 * also appear in `secretRefs` (parser-enforced).
+	 * Maps query param name → secret ref. Values are injected below the
+	 * agent-supplied params map at fetch time (never into it) and redacted
+	 * from every surfaced URL. A param name colliding with any operation's
+	 * `params` map is a parse error — the agent must not be able to supply a
+	 * secretly-injected param.
 	 */
-	headerPrefixes?: Record<string, string>;
-	/**
-	 * static-key only: maps query param name → secret store name.
-	 * Values are injected below the agent-supplied params map at fetch time
-	 * (never into it) and redacted from every surfaced URL. A param name
-	 * colliding with any operation's `params` map is a parse error — the
-	 * agent must not be able to supply a secretly-injected param. Every
-	 * referenced name must also appear in `requires` or `optional`
-	 * (parser-enforced, same rule as `secretRefs`).
-	 */
-	secretQueryRefs?: Record<string, string>;
-	/** static-key: secret names whose absence fails the request closed before it is sent. */
-	requires?: string[];
-	/** static-key: secret names that add value when present but are not required. */
-	optional?: string[];
+	secretQueryRefs?: Record<string, SecretRef>;
 }
+
+export type OAuth2Grant = "client_credentials" | "authorization_code";
+export type OAuth2ParamStyle = "bearer-header" | "query";
+export type OAuth2TokenEndpointAuthMethod =
+	| "client_secret_basic"
+	| "client_secret_post"
+	| "none";
+
+export interface OAuth2Auth {
+	kind: "oauth2";
+	grant: OAuth2Grant;
+	/** Token endpoint (POST — the only non-GET host makes, auth plumbing). */
+	tokenUrl: string;
+	clientId: string;
+	/**
+	 * Reuses the nested `SecretRef` shape. For oauth2 the map key is a FORM
+	 * FIELD NAME (e.g. "client_secret"), not a header name. `client_secret`
+	 * is required for `client_credentials`, optional for `authorization_code`
+	 * (PKCE apps have no secret) — parser-enforced in `validateOAuth2`.
+	 */
+	secretRefs?: Record<string, SecretRef>;
+	/** Static scope list declared in the guide — no runtime picker. */
+	scopes?: string[];
+	/** Default bearer-header. `query` sends `?access_token=…` (RFC 6750 §2.3). */
+	paramStyle?: OAuth2ParamStyle;
+	/** How the client authenticates at the token endpoint. Default client_secret_post. */
+	tokenEndpointAuthMethod?: OAuth2TokenEndpointAuthMethod;
+	/** auth-code only (parser-enforced present iff grant === "authorization_code"). */
+	authorizeUrl?: string;
+	/** auth-code only. */
+	redirectUri?: string;
+	/** auth-code only (parser-enforced true). */
+	pkce?: boolean;
+	/** Optional revocation endpoint. */
+	revokeUrl?: string;
+}
+
+export type AuthConfig = NoneAuth | StaticKeyAuth | OAuth2Auth;
 
 // ═══════════════════════════════════════════════════════════════════
 // Pagination

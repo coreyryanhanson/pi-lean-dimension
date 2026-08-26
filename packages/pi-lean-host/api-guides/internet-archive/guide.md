@@ -1,6 +1,6 @@
 ---
 kind: api
-schemaVersion: 0
+schemaVersion: 1
 organization: archive.org
 description: Synthetic axis guide — nextLink + cursor pagination over one domain.
 domains:

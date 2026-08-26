@@ -335,11 +335,10 @@ describe("/api verify — auth precheck", () => {
 		const authBlock =
 			"auth:\n" +
 			"  kind: static-key\n" +
-			"  requires: [apiKey]\n" +
 			"  secretRefs:\n" +
-			"    Authorization: apiKey\n" +
-			"  headerPrefixes:\n" +
-			'    Authorization: "Bearer "';
+			"    Authorization:\n" +
+			"      secret: apiKey\n" +
+			'      prefix: "Bearer "';
 		setupGuide(recipe(opBlock(OP_HEALTH), authBlock));
 		const ctx = mockCtx();
 		await handleVerifySubcommand("verify.test", ctx);

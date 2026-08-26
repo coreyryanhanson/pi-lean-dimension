@@ -1512,21 +1512,27 @@ describe("auth dispatch", () => {
 		expect(headers["authorization"]).toBeUndefined();
 	});
 
-	it("unrecognised auth.kind (oauth2, unrealized) throws structured error", async () => {
+	it("oauth2 auth kind is accepted by checkAuth (no auth.kind throw)", async () => {
 		const guide = makeGuide({
 			apiHost: ctx.serverUrl,
-			auth: { kind: "oauth2" },
+			auth: {
+				kind: "oauth2",
+				grant: "client_credentials",
+				tokenUrl: "https://api.example.com/oauth/token",
+				clientId: "c",
+			},
 		});
 		const op = makeOp({ path: "/api/items" });
 
+		// checkAuth accepts oauth2 — token resolution happens in resolve-op,
+		// not here, so restGet proceeds to the transport (any error below is a
+		// transport error, never an auth.kind rejection).
 		try {
 			await restGet(ctx.serverUrl, op, {}, guide);
-			expect.fail("should have thrown");
 		} catch (e) {
-			expect(e).toBeInstanceOf(HelperError);
+			expect(e).not.toBeInstanceOf(HelperError);
 			if (e instanceof HelperError) {
-				expect(e.field).toBe("auth.kind");
-				expect(e.message).toContain("oauth2");
+				expect(e.field).not.toBe("auth.kind");
 			}
 		}
 	});

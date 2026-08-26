@@ -30,6 +30,7 @@ import {
 import type { ToolsetSpec } from "pi-tool-masking";
 import { handleHelpersSubcommand } from "./helpers-command.js";
 import { handleSecretsSubcommand } from "./secrets-command.js";
+import { handleOauthSubcommand } from "./oauth-command.js";
 import { handleVerifySubcommand } from "./verify-command.js";
 import { handleDeleteSubcommand } from "./delete-command.js";
 import { loadAllGuides } from "./guide-store.js";
@@ -190,6 +191,7 @@ function handleStatusSubcommand(
 		`  /api learn   enable all five tools (adds api-learn + api-probe + api-scaffold)`,
 		`  /api off     disable all API tools`,
 		`  /api verify  verify a guide's ops against its live API (stamps verified)`,
+		`  /api oauth   provision/inspect/revoke OAuth2 tokens (client_credentials)`,
 		`  /api delete  delete a guide directory (human-typed recovery gesture)`,
 	);
 
@@ -292,6 +294,13 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 					return;
 				}
 
+				case "oauth": {
+					// Peer of secrets/verify/delete — writes the token store, not
+					// toolset state, so the focus-mode guard does not apply.
+					await handleOauthSubcommand(rest, ctx);
+					return;
+				}
+
 				case "verify": {
 					// Peer of status/helpers/secrets — verifies a guide's ops and
 					// stamps verified: (writes guide.md, not toolset state), so the
@@ -322,6 +331,7 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 						`   /api status       detailed status (guides, helpers)`,
 						`   /api helpers      list local helpers`,
 						`   /api secrets      list/provision stored secrets (names only)`,
+						`   /api oauth        provision/inspect/revoke OAuth2 tokens`,
 						`   /api verify       verify a guide's ops against its live API (stamps verified)`,
 						`   /api delete       delete a guide directory (human-typed recovery gesture)`,
 						`   /api              show this status`,

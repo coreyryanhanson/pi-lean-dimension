@@ -1,6 +1,6 @@
 ---
 kind: api
-schemaVersion: 0
+schemaVersion: 1
 organization: archive.org
 description: Synthetic axis guide — transform-builtin (restGet) on the wayback CDX surface.
 domains:

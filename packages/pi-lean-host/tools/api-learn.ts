@@ -113,14 +113,15 @@ const SIBLING_NAMES = [
 const DESCRIPTION_MAX = 200;
 
 /** Commented static-key auth block — the issue-#5 auth-wiring teaching,
- * API-agnostic, kept after the worked example retired. */
+ * API-agnostic, kept after the worked example retired. Nested SecretRef
+ * shape (v1): each ref is self-contained (secret + optional prefix/optional). */
 const STATIC_KEY_BLOCK = `  # Keyed API? Use kind: static-key — values live in the secrets store (/api secrets), never in the recipe:
   #   kind: static-key
-  #   requires: [<secret-name>]
   #   secretRefs:
-  #     Authorization: <secret-name>   # header name → secret name (must match the name provisioned via /api secrets)
-  #   headerPrefixes:
-  #     Authorization: "Bearer "`;
+  #     Authorization:                # header name
+  #       secret: <secret-name>       # store name (must match /api secrets)
+  #       prefix: "Bearer "           # optional — prepended at fetch time
+  #       optional: false             # optional refs don't fail closed when absent`;
 
 /** Placeholder starter template — only `domains:` is real (the requested
  * domain). Every other field is a placeholder the agent fills (op blocks
@@ -176,15 +177,33 @@ responseShape:
 
 /** Save-summary auth line — names the header→secret mapping (names only,
  * never values: values live in the store). e.g.
- * `static-key · Authorization ← secret apiKey (Bearer )`. */
+ * `static-key · Authorization ← secret apiKey (Bearer )` or
+ * `oauth2 · grant client_credentials · clientId my_client`. */
 function authSummary(auth: AuthConfig): string {
 	const parts: string[] = [];
-	for (const [header, secretName] of Object.entries(auth.secretRefs ?? {})) {
-		const prefix = auth.headerPrefixes?.[header];
-		parts.push(`${header} ← secret ${secretName}${prefix ? ` (${prefix})` : ""}`);
-	}
-	for (const [param, secretName] of Object.entries(auth.secretQueryRefs ?? {})) {
-		parts.push(`?${param} ← secret ${secretName}`);
+	switch (auth.kind) {
+		case "static-key":
+			for (const [header, ref] of Object.entries(auth.secretRefs ?? {})) {
+				parts.push(
+					`${header} ← secret ${ref.secret}${ref.prefix ? ` (${ref.prefix})` : ""}`,
+				);
+			}
+			for (const [param, ref] of Object.entries(auth.secretQueryRefs ?? {})) {
+				parts.push(`?${param} ← secret ${ref.secret}`);
+			}
+			break;
+		case "oauth2":
+			parts.push(`grant ${auth.grant} · clientId ${auth.clientId}`);
+			for (const [field, ref] of Object.entries(auth.secretRefs ?? {})) {
+				parts.push(`${field} ← secret ${ref.secret}`);
+			}
+			break;
+		case "none":
+			break;
+		default: {
+			const _exhaustive: never = auth;
+			throw new Error(`Unhandled auth kind: ${_exhaustive}`);
+		}
 	}
 	return parts.length === 0
 		? `Auth: ${auth.kind}`
@@ -240,11 +259,11 @@ const AUTHORING_MANUAL = [
 	"",
 	"## Auth",
 	`  \`kind: static-key\` — keyed-header auth mode (values live in the secrets store, never in the recipe):`,
-	`  \`requires\` = fail-closed if unprovisioned; \`optional\` = proceeds unauthenticated if absent. Both are names only — values live in the secrets store, and each name must match exactly the one passed to /api secrets. Each \`requires\` / \`optional\` name must also appear as a secretRefs/secretQueryRefs value (parser-enforced).`,
+	`  \`kind: oauth2\` — OAuth2 (client_credentials / authorization_code); token minting via /api oauth <domain>.`,
 	"  static-key (keyed APIs):",
-	`    \`secretRefs\`      — { <header name>: <secret name> }  ← header → secret direction`,
-	`    \`headerPrefixes\`  — { <header>: "Bearer " }  ← scheme prefix; store holds the raw token`,
-	`    \`requires\`        — [<secret-name>]  ← fail-closed if unprovisioned (literal name, must match the store)`,
+	`    \`secretRefs\`      — { <header name>: { secret: <store name>, prefix?, optional? } }  ← self-contained ref`,
+	`    \`secretQueryRefs\` — { <query param>: { secret: <store name>, optional? } }  ← query-param injection`,
+	`    \`optional: true\` on a ref → proceeds unauthenticated if absent; default (required) → fail-closed. Values live in the secrets store; the store name must match /api secrets exactly.`,
 	"",
 	"## Executor semantics",
 	"  Pagination:",

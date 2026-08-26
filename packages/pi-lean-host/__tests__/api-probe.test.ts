@@ -1084,9 +1084,8 @@ apiHost: https://api.example.com/v2/api
 auth:
   kind: static-key
   secretQueryRefs:
-    apikey: api_key
-  requires:
-    - api_key
+    apikey:
+      secret: api_key
 responseShape:
   format: json
 operations:

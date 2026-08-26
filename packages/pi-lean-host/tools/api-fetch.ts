@@ -213,8 +213,9 @@ export const apiFetchTool = defineTool({
 			};
 		}
 
-		// Non-run outcomes: a session-disabled helper or a fail-closed missing
-		// `requires` secret. Both return before any request is made.
+		// Non-run outcomes: a session-disabled helper, a fail-closed missing
+		// `requires` secret, or an unmintable OAuth2 token. All return before
+		// any request is made.
 		if (!outcome.ok) {
 			if (outcome.reason === "helper_disabled") {
 				return {
@@ -231,6 +232,21 @@ export const apiFetchTool = defineTool({
 					],
 					details: {
 						error: "helper_disabled",
+						domain,
+						operation,
+					},
+				};
+			}
+			if (outcome.reason === "oauth_token_missing") {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `🔑 ${guide.shortName}: ${outcome.message}`,
+						},
+					],
+					details: {
+						error: "oauth_token_missing",
 						domain,
 						operation,
 					},

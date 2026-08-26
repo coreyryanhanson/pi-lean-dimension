@@ -328,18 +328,29 @@ disclaimer; host ships only the synthetic axis fixtures.
 
 ### Guide schema versioning
 
-`core/api-guide-types.ts` exports `GUIDE_SCHEMA_VERSION` (currently `0`,
-beta). `schemaVersion` is **breaking-change detection**: `api-learn` stamps it
+`core/api-guide-types.ts` exports `GUIDE_SCHEMA_VERSION` (currently `1`).
+`schemaVersion` is **breaking-change detection**: `api-learn` stamps it
 on save (each guide records its authoring vintage), absent-on-read defaults
 to `0` (the floor, not current), and a stale guide (`schemaVersion <
 current`) gets a **non-blocking `⚠` warning** in the `api-guide` catalog /
 detail / disambiguation and a note on `api-fetch`. **Never a gate** — the
 guide always loads and runs (proved by `__tests__/schema-version.test.ts`).
-At the lockstep release it bumps to `1` (the frozen-beta label change) with
-a CHANGELOG line.
+A hard-gate flip (stale → parse refusal) is the coordinated `0.5.0`
+decision, deferred until caritas re-stamps its corpus — see
+`docs/design/oauth2-flow-plan.md`.
+
+**v1 (0.5.0) — the auth-type reshape:** `AuthConfig` became the
+`NoneAuth | StaticKeyAuth | OAuth2Auth` discriminated union with nested
+`SecretRef` entries (`{ secret, prefix?, optional? }`). The old top-level
+`requires` / `optional` / `headerPrefixes` fields are gone — availability
+and prefix now live on each ref. `oauth2` is realized (client_credentials
+runtime + `/api oauth`; the auth-code interactive flow is Phase 2).
 
 **Bump rule (post-v1):** do not bump unless a guide that used to parse now
 fails to parse. Adding an optional field, a new enum value, or relaxing a
 constraint is a non-event; removing/renaming a field, deleting a
 `via`/`pagination.style` value, or changing a parse-enforced constraint's
-meaning — those bump. Each v2+ bump is one CHANGELOG line.
+meaning — those bump. **A breaking TS-type or YAML-shape change to
+`AuthConfig` bumps even when parse behavior relaxes** (the v1 union refactor
+is the precedent: it changed how every static-key guide authors its secrets
+without changing what parses). Each v2+ bump is one CHANGELOG line.

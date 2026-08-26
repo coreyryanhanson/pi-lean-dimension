@@ -1,14 +1,26 @@
 /**
- * Static-key auth — store-backed secret resolution + metadata-only footer.
+ * Auth — store-backed secret resolution + OAuth2 token resolution + the
+ * metadata-only auth footer.
  *
- * Both `api-fetch` (injection + fail-closed) and the `api-guide`/`api-fetch`
- * footers share this module. It reads the secrets store and exposes names
- * only — secret values never leave `resolveSecretHeaders`' resolved header
+ * Shared by `api-fetch` (injection + fail-closed), `api-guide`/`api-fetch`
+ * footers, and `/api oauth`. Reads the secrets store and the OAuth2 token
+ * store; exposes names only — secret values never leave the resolved header
  * map (which only the fetch pipeline consumes, never agent context).
+ *
+ * Import direction: this module imports `oauth-store.ts` (the footer and
+ * token resolution must read the token store); `oauth-store.ts` imports
+ * nothing from here, so the edge stays one-way and no cycle can form.
  */
 
-import type { AuthConfig, ApiGuide } from "./api-guide-types.js";
+import type {
+	ApiGuide,
+	AuthConfig,
+	OAuth2Auth,
+	StaticKeyAuth,
+} from "./api-guide-types.js";
 import { readSecret, provisionedDomainsSuffix } from "./secrets-store.js";
+import { readToken, writeToken, deleteToken } from "./oauth-store.js";
+import type { OAuthToken } from "./oauth-store.js";
 
 /**
  * The canonical secret-store key for a guide: its primary browsable domain.
@@ -31,29 +43,28 @@ export interface SecretResolution {
 	 * audit — a server may echo the bare token, not just the prefixed form.
 	 */
 	rawHeaderValues: string[];
-	/** secret names referenced by `requires` that are absent from the store. */
+	/** secret names referenced by required refs that are absent from the store. */
 	absentRequired: string[];
-	/** secret names referenced by `optional` that are absent from the store. */
+	/** secret names referenced by optional refs that are absent from the store. */
 	absentOptional: string[];
 }
 
-/** Resolve store-secret headers for a `static-key` guide (no-op otherwise). */
+/** Resolve store-secret headers for a `static-key` guide. */
 export function resolveSecretHeaders(
-	auth: AuthConfig,
+	auth: StaticKeyAuth,
 	domain: string,
 ): SecretResolution {
 	const headers: Record<string, string> = {};
 	const rawHeaderValues: string[] = [];
 	const absentRequired: string[] = [];
 	const absentOptional: string[] = [];
-	const requires = auth.requires ?? [];
-	for (const [headerName, secretName] of Object.entries(auth.secretRefs ?? {})) {
-		const value = readSecret(domain, secretName);
+	for (const [headerName, ref] of Object.entries(auth.secretRefs ?? {})) {
+		const value = readSecret(domain, ref.secret);
 		if (value === null) {
-			if (requires.includes(secretName)) absentRequired.push(secretName);
-			else absentOptional.push(secretName);
+			if (ref.optional) absentOptional.push(ref.secret);
+			else absentRequired.push(ref.secret);
 		} else {
-			headers[headerName] = (auth.headerPrefixes?.[headerName] ?? "") + value;
+			headers[headerName] = (ref.prefix ?? "") + value;
 			rawHeaderValues.push(value);
 		}
 	}
@@ -64,33 +75,30 @@ export function resolveSecretHeaders(
 export interface QuerySecretResolution {
 	/** paramName → resolved value, injected below the agent params map. */
 	queryParams: Record<string, string>;
-	/** secret names referenced by `requires` that are absent from the store. */
+	/** secret names referenced by required refs that are absent from the store. */
 	absentRequired: string[];
-	/** secret names referenced by `optional` that are absent from the store. */
+	/** secret names referenced by optional refs that are absent from the store. */
 	absentOptional: string[];
 }
 
 /**
  * Resolve store-secret query params for a `static-key` guide. Mirrors
- * `resolveSecretHeaders`: reads the store, splits absents by requires vs
- * optional. The values are injected below the agent-supplied params map by
- * the fetch pipeline and never enter agent context.
+ * `resolveSecretHeaders`: reads the store, splits absents by ref.optional.
+ * The values are injected below the agent-supplied params map by the fetch
+ * pipeline and never enter agent context.
  */
 export function resolveSecretQueryParams(
-	auth: AuthConfig,
+	auth: StaticKeyAuth,
 	domain: string,
 ): QuerySecretResolution {
 	const queryParams: Record<string, string> = {};
 	const absentRequired: string[] = [];
 	const absentOptional: string[] = [];
-	const requires = auth.requires ?? [];
-	for (const [paramName, secretName] of Object.entries(
-		auth.secretQueryRefs ?? {},
-	)) {
-		const value = readSecret(domain, secretName);
+	for (const [paramName, ref] of Object.entries(auth.secretQueryRefs ?? {})) {
+		const value = readSecret(domain, ref.secret);
 		if (value === null) {
-			if (requires.includes(secretName)) absentRequired.push(secretName);
-			else absentOptional.push(secretName);
+			if (ref.optional) absentOptional.push(ref.secret);
+			else absentRequired.push(ref.secret);
 		} else {
 			queryParams[paramName] = value;
 		}
@@ -100,60 +108,82 @@ export function resolveSecretQueryParams(
 
 /**
  * Metadata-only auth status footer line, shared by `api-guide` and `api-fetch`.
- * Five states: no-auth (→ undefined) / ok / nudge-provision (required absent) /
- * ok-optional (optionals provisioned) / optional-not-provisioned.
- * Covers BOTH `secretRefs` (header) and `secretQueryRefs` (query) ref maps.
- * Never renders a secret value — names only.
+ * Five static-key states (no-auth → undefined / ok / nudge-provision /
+ * ok-optional / optional-not-provisioned) plus the oauth2 states (ok /
+ * expired-but-refreshable / missing → nudge /api oauth). Never renders a
+ * secret value ��� names only.
  */
 export function authStatusLine(
 	auth: AuthConfig,
 	domain: string,
 ): string | undefined {
-	if (auth.kind !== "static-key") return undefined;
-	// Nothing to report when neither ref map has an entry (empty maps are valid
-	// = no injection). Length-based, matching the pre-query-ref "no footer"
-	// semantics for an empty `secretRefs`, while still covering query-only guides.
-	if (
-		Object.keys(auth.secretRefs ?? {}).length === 0 &&
-		Object.keys(auth.secretQueryRefs ?? {}).length === 0
-	)
-		return undefined;
-	const headerRes = resolveSecretHeaders(auth, domain);
-	const queryRes = resolveSecretQueryParams(auth, domain);
-	// Dedupe across the two ref maps: a secret injected into both a header
-	// and a query param must be named once, not twice.
-	const absentRequired = [
-		...new Set([...headerRes.absentRequired, ...queryRes.absentRequired]),
-	];
-	if (absentRequired.length > 0) {
-		return (
-			`🔑 auth: requires ${absentRequired.join(", ")} — not provisioned. ` +
-			`Run /api secrets ${domain}.` +
-			provisionedDomainsSuffix(domain)
-		);
-	}
-	// The optional dimension only exists for optional names actually referenced
-	// by a ref (an `optional` name with no ref is meaningless).
-	const refValues = new Set([
-		...Object.values(auth.secretRefs ?? {}),
-		...Object.values(auth.secretQueryRefs ?? {}),
-	]);
-	const referencedOptional = (auth.optional ?? []).filter((n) =>
-		refValues.has(n),
-	);
-	if (referencedOptional.length > 0) {
-		const absentOptional = [
-			...new Set([...headerRes.absentOptional, ...queryRes.absentOptional]),
-		];
-		if (absentOptional.length > 0) {
-			return (
-				`🔑 auth: ok (optional ${absentOptional.join(", ")} not ` +
-				`provisioned — unauthenticated; provision with /api secrets ${domain} for higher limits)`
-			);
+	switch (auth.kind) {
+		case "none":
+			return undefined;
+		case "static-key": {
+			// Nothing to report when neither ref map has an entry (empty maps
+			// are valid = no injection).
+			if (
+				Object.keys(auth.secretRefs ?? {}).length === 0 &&
+				Object.keys(auth.secretQueryRefs ?? {}).length === 0
+			)
+				return undefined;
+			const headerRes = resolveSecretHeaders(auth, domain);
+			const queryRes = resolveSecretQueryParams(auth, domain);
+			// Dedupe across the two ref maps: a secret injected into both a
+			// header and a query param must be named once, not twice.
+			const absentRequired = [
+				...new Set([...headerRes.absentRequired, ...queryRes.absentRequired]),
+			];
+			if (absentRequired.length > 0) {
+				return (
+					`🔑 auth: requires ${absentRequired.join(", ")} — not provisioned. ` +
+					`Run /api secrets ${domain}.` +
+					provisionedDomainsSuffix(domain)
+				);
+			}
+			// The optional dimension only exists for refs actually marked
+			// optional (a ref with optional: true).
+			const referencedOptional = [
+				...Object.entries(auth.secretRefs ?? {}),
+				...Object.entries(auth.secretQueryRefs ?? {}),
+			]
+				.filter(([, r]) => r.optional)
+				.map(([, r]) => r.secret);
+			if (referencedOptional.length > 0) {
+				const absentOptional = [
+					...new Set([...headerRes.absentOptional, ...queryRes.absentOptional]),
+				];
+				if (absentOptional.length > 0) {
+					return (
+						`🔑 auth: ok (optional ${absentOptional.join(", ")} not ` +
+						`provisioned — unauthenticated; provision with /api secrets ${domain} for higher limits)`
+					);
+				}
+				return "🔑 auth: ok (optional provisioned)";
+			}
+			return "🔑 auth: ok";
 		}
-		return "🔑 auth: ok (optional provisioned)";
+		case "oauth2": {
+			const token = readToken(domain);
+			if (!token) {
+				return `🔑 auth: oauth2 — no token. Run /api oauth ${domain}.`;
+			}
+			if (isTokenExpired(token)) {
+				return (
+					`🔑 auth: oauth2 — token expired` +
+					(token.refreshToken
+						? `, refreshable. Run /api oauth ${domain} --refresh.`
+						: `. Run /api oauth ${domain} to re-mint.`)
+				);
+			}
+			return "🔑 auth: ok (oauth2)";
+		}
+		default: {
+			const _exhaustive: never = auth;
+			throw new Error(`Unhandled auth kind: ${_exhaustive}`);
+		}
 	}
-	return "🔑 auth: ok";
 }
 
 /**
@@ -183,4 +213,300 @@ export function scrubSecretValues(
 		if (v && v.length > 0) text = text.split(v).join("***");
 	}
 	return text;
+}
+
+// ═════════════════════════════════════════════════��═════════════════
+// OAuth2 token resolution (client_credentials + lazy refresh)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Thrown when an OAuth2 token can't be produced without human action (no
+ * cached token, no client_secret to mint, or an auth-code guide with no
+ * interactive flow). Callers fail closed and nudge `/api oauth <domain>`.
+ */
+export class OAuthTokenMissingError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "OAuthTokenMissingError";
+	}
+}
+
+/** Resolved OAuth2 token injection, shaped to drop straight into AuthOpts. */
+export interface AccessTokenResult {
+	authHeaders?: Record<string, string>;
+	secretHeaderNames?: Set<string>;
+	secretQueryParams?: Record<string, string>;
+	secretQueryParamNames?: Set<string>;
+	secretValues: string[];
+}
+
+/** Refresh the access token one round trip before real expiry. */
+const EXPIRY_SKEW_MS = 60_000;
+
+/** True when a cached token should be refreshed/re-minted (skewed early). */
+export function isTokenExpired(
+	token: OAuthToken,
+	now: number = Date.now(),
+): boolean {
+	if (token.expiresAt === undefined) {
+		// ponytail: no expires_in → treat as fresh; a provider that omits it
+		// will 401 and the next call re-mints. Add a TTL heuristic if a real
+		// recipe's short TTL makes this hurt.
+		return false;
+	}
+	return now >= token.expiresAt - EXPIRY_SKEW_MS;
+}
+
+/**
+ * Per-domain in-process lock keyed by the canonical store domain, so
+ * concurrent `api-fetch` calls for the same domain serialize on one
+ * read-check-refresh-write sequence. Without it, two parallel calls that both
+ * see an expired token could race a refresh and double-spend a rotated
+ * refresh token.
+ */
+const tokenLocks = new Map<string, Promise<AccessTokenResult>>();
+
+/**
+ * Resolve an access token for an oauth2 guide: cached → lazy refresh →
+ * client-credentials mint. Reads the token store fresh on every call (no
+ * closure cache) so a refresh on op N is visible to op N+1 during a long
+ * `/api verify` run. Fail-closed: throws `OAuthTokenMissingError` when no
+ * token exists and none can be minted.
+ */
+export async function resolveAccessToken(
+	guide: ApiGuide,
+	domain: string,
+): Promise<AccessTokenResult> {
+	const auth = guide.auth;
+	if (auth.kind !== "oauth2") {
+		throw new Error(
+			`resolveAccessToken called for non-oauth2 guide (${auth.kind})`,
+		);
+	}
+	const inFlight = tokenLocks.get(domain);
+	if (inFlight) return inFlight;
+	const p = resolveTokenUnlocked(auth, domain);
+	tokenLocks.set(domain, p);
+	try {
+		return await p;
+	} finally {
+		tokenLocks.delete(domain);
+	}
+}
+
+async function resolveTokenUnlocked(
+	auth: OAuth2Auth,
+	domain: string,
+): Promise<AccessTokenResult> {
+	let token = readToken(domain);
+	if (token && !isTokenExpired(token)) return toAccessTokenResult(auth, token);
+	if (token?.refreshToken) {
+		try {
+			token = await refreshAccessToken(auth, domain, token.refreshToken);
+			writeToken(domain, token);
+			return toAccessTokenResult(auth, token);
+		} catch {
+			// Refresh failed (rotated/revoked refresh token, endpoint down) —
+			// fall through to re-mint; the mint surfaces the real failure.
+		}
+	}
+	if (auth.grant === "client_credentials") {
+		token = await mintClientCredentialsToken(auth, domain);
+		writeToken(domain, token);
+		return toAccessTokenResult(auth, token);
+	}
+	// authorization_code: no interactive mint in Phase 1 — fail closed with
+	// a nudge. Phase 2 wires /api oauth to the interactive flow.
+	throw new OAuthTokenMissingError(
+		`No usable OAuth2 token for '${domain}' (grant: authorization_code). ` +
+			`Run /api oauth ${domain} to start the interactive flow.`,
+	);
+}
+
+/** Map a token set onto the AuthOpts shape (bearer-header or query style). */
+function toAccessTokenResult(
+	auth: OAuth2Auth,
+	token: OAuthToken,
+): AccessTokenResult {
+	const style = auth.paramStyle ?? "bearer-header";
+	if (style === "query") {
+		// RFC 6750 §2.3 — the query-injected param name is `access_token`.
+		return {
+			secretQueryParams: { access_token: token.accessToken },
+			secretQueryParamNames: new Set(["access_token"]),
+			secretValues: [token.accessToken],
+		};
+	}
+	return {
+		authHeaders: { authorization: `Bearer ${token.accessToken}` },
+		secretHeaderNames: new Set(["authorization"]),
+		secretValues: [token.accessToken],
+	};
+}
+
+/**
+ * The client secret for an oauth2 guide, resolved from the secrets store via
+ * its `secretRefs` map (map key "client_secret" — a form field name, not a
+ * header name). Null when the guide declares no client_secret ref (PKCE
+ * auth-code apps) or the store lacks it.
+ */
+function resolveClientSecret(
+	auth: OAuth2Auth,
+	domain: string,
+): { secret: string; refName: string } | null {
+	const ref = auth.secretRefs?.["client_secret"];
+	if (!ref) return null;
+	const value = readSecret(domain, ref.secret);
+	if (value === null) return null;
+	return { secret: value, refName: ref.secret };
+}
+
+/**
+ * One POST to an OAuth2 endpoint (token/refresh/revoke) — the first non-GET
+ * requests host makes, kept OUT of `transport.ts` (GET-only by contract) in
+ * a small separate helper. `secretValues` are scrubbed from any error body
+ * so a server echoing a credential can't leak it into agent context.
+ *
+ * Returns the parsed JSON body, or `{}` for an empty/non-JSON body (valid
+ * for RFC 7009 revocation, which returns 200 OK with no body). Callers that
+ * need a token validate `access_token` themselves via `tokenFromResponse`.
+ */
+async function oauthPost(
+	url: string,
+	form: Record<string, string>,
+	headers: Record<string, string>,
+	secretValues: string[],
+): Promise<Record<string, unknown>> {
+	const res = await fetch(url, {
+		method: "POST",
+		headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
+		body: new URLSearchParams(form).toString(),
+	});
+	const text = await res.text();
+	if (!res.ok) {
+		throw new Error(
+			`OAuth2 endpoint ${res.status}: ${scrubSecretValues(text.slice(0, 300), secretValues)}`,
+		);
+	}
+	try {
+		const data = JSON.parse(text);
+		if (data && typeof data === "object" && !Array.isArray(data)) {
+			return data as Record<string, unknown>;
+		}
+	} catch {
+		// empty / non-JSON body — valid for revocation (RFC 7009)
+	}
+	return {};
+}
+
+function tokenFromResponse(data: Record<string, unknown>): OAuthToken {
+	const at = data["access_token"];
+	if (typeof at !== "string") {
+		throw new Error("OAuth2 token endpoint returned no access_token");
+	}
+	const token: OAuthToken = {
+		accessToken: at,
+	};
+	if (typeof data["refresh_token"] === "string") {
+		token.refreshToken = data["refresh_token"];
+	}
+	const expiresIn = data["expires_in"];
+	if (typeof expiresIn === "number" && Number.isFinite(expiresIn)) {
+		token.expiresAt = Date.now() + expiresIn * 1000;
+	}
+	if (typeof data["scope"] === "string") token.scope = data["scope"];
+	return token;
+}
+
+/** Client-credentials mint: POST grant_type=client_credentials → token. */
+async function mintClientCredentialsToken(
+	auth: OAuth2Auth,
+	domain: string,
+): Promise<OAuthToken> {
+	const clientSecret = resolveClientSecret(auth, domain);
+	if (!clientSecret) {
+		const refName = auth.secretRefs?.["client_secret"]?.secret ?? "client_secret";
+		throw new OAuthTokenMissingError(
+			`OAuth2 client_credentials needs the client secret '${refName}' provisioned ` +
+				`for '${domain}'. Run /api secrets ${domain} then /api oauth ${domain}.`,
+		);
+	}
+	const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
+	const form: Record<string, string> = {
+		grant_type: "client_credentials",
+		client_id: auth.clientId,
+	};
+	const headers: Record<string, string> = {};
+	if (method === "client_secret_basic") {
+		headers["authorization"] =
+			"Basic " +
+			Buffer.from(`${auth.clientId}:${clientSecret.secret}`).toString("base64");
+	} else if (method === "client_secret_post") {
+		form["client_secret"] = clientSecret.secret;
+	}
+	if (auth.scopes && auth.scopes.length > 0) {
+		form["scope"] = auth.scopes.join(" ");
+	}
+	const data = await oauthPost(auth.tokenUrl, form, headers, [
+		clientSecret.secret,
+	]);
+	return tokenFromResponse(data);
+}
+
+/** Lazy refresh: POST grant_type=refresh_token → fresh token set. */
+async function refreshAccessToken(
+	auth: OAuth2Auth,
+	domain: string,
+	refreshToken: string,
+): Promise<OAuthToken> {
+	const clientSecret = resolveClientSecret(auth, domain);
+	const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
+	const form: Record<string, string> = {
+		grant_type: "refresh_token",
+		refresh_token: refreshToken,
+		client_id: auth.clientId,
+	};
+	const headers: Record<string, string> = {};
+	if (clientSecret && method === "client_secret_basic") {
+		headers["authorization"] =
+			"Basic " +
+			Buffer.from(`${auth.clientId}:${clientSecret.secret}`).toString("base64");
+	} else if (clientSecret && method === "client_secret_post") {
+		form["client_secret"] = clientSecret.secret;
+	}
+	const data = await oauthPost(auth.tokenUrl, form, headers, [
+		refreshToken,
+		...(clientSecret ? [clientSecret.secret] : []),
+	]);
+	return tokenFromResponse(data);
+}
+
+/**
+ * Best-effort revocation: POST the access token to the guide's declared
+ * `revokeUrl` (if any), then clear the local token store regardless.
+ */
+export async function revokeAccessToken(
+	auth: OAuth2Auth,
+	domain: string,
+): Promise<void> {
+	const token = readToken(domain);
+	if (token && auth.revokeUrl) {
+		try {
+			const clientSecret = resolveClientSecret(auth, domain);
+			const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
+			const form: Record<string, string> = { token: token.accessToken };
+			const headers: Record<string, string> = {};
+			if (clientSecret && method === "client_secret_basic") {
+				headers["authorization"] =
+					"Basic " +
+					Buffer.from(`${auth.clientId}:${clientSecret.secret}`).toString("base64");
+			} else if (clientSecret && method === "client_secret_post") {
+				form["client_secret"] = clientSecret.secret;
+			}
+			await oauthPost(auth.revokeUrl, form, headers, [token.accessToken]);
+		} catch {
+			// best-effort — the local store is cleared regardless
+		}
+	}
+	deleteToken(domain);
 }

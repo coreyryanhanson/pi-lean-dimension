@@ -521,7 +521,7 @@ body
 		expect(err.field).toBe("auth.name");
 		expect(err.found).toBe("unknown key(s): name, secret");
 		expect(err.expected).toContain("secretRefs");
-		expect(err.expected).toContain("requires");
+		expect(err.expected).toContain("secretQueryRefs");
 	});
 
 	it("unknown auth key (requiers:) → expected lists the known keys", () => {
@@ -543,9 +543,7 @@ body
 `;
 		const err = expectErr(raw);
 		expect(err.field).toBe("auth.requiers");
-		expect(err.expected).toContain(
-			"kind, headers, secretRefs, secretQueryRefs, requires, optional, headerPrefixes",
-		);
+		expect(err.expected).toContain("kind, headers, secretRefs, secretQueryRefs");
 	});
 
 	it("paginate op with no pagination → ParseError", () => {

@@ -279,6 +279,13 @@ export async function handleVerifySubcommand(
 					// remaining fan-out runs would skip identically, so stop here.
 					break;
 				}
+				if (outcome.reason === "oauth_token_missing") {
+					// Unmintable OAuth2 token — same nudge for every op, so fail once
+					// (the Phase-2 precheck will fail-fast before the loop).
+					failed++;
+					report.push(`  ✗ ${opTag(op.name, run.tag)} — ${outcome.message}`);
+					continue;
+				}
 				// auth_required_not_provisioned — unreachable after the precheck
 				// (auth is per-guide constant); defensive.
 				failed++;

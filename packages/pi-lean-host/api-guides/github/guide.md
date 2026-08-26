@@ -1,6 +1,6 @@
 ---
 kind: api
-schemaVersion: 0
+schemaVersion: 1
 domains:
   - github.com
 shortName: GitHub
@@ -9,9 +9,9 @@ apiHost: https://api.github.com
 auth:
   kind: static-key
   secretRefs:
-    Authorization: api_key
-  optional:
-    - api_key
+    Authorization:
+      secret: api_key
+      optional: true
 responseShape:
   format: json
   charset: utf-8
@@ -48,11 +48,11 @@ injection + fail-closed-before-request) and the `page` pagination style,
 plus `exec-restGet`, `exec-paginate`, and `transport`. There is **no live
 endpoint** — exercised only against mocked transport.
 
-`auth.kind: static-key` with `secretRefs: { Authorization: api_key }` and
-`optional: [api_key]` — a missing key proceeds unauthenticated; the
-request is only ever fail-closed when a *required* secret is absent (not
-exercised here — this guide marks the key optional to keep the fixture
-runnable without provisioning).
+`auth.kind: static-key` with `secretRefs: { Authorization: { secret: api_key, optional: true } }`
+— a missing key proceeds unauthenticated; the request is only ever
+fail-closed when a *required* secret is absent (not exercised here — this
+guide marks the key optional to keep the fixture runnable without
+provisioning).
 
 ## Operations
 

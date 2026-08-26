@@ -134,15 +134,31 @@ function listAll(ctx: ExtensionCommandContext): void {
 
 /**
  * Declared secret store-names for a domain, from every registered guide's
- * `auth.secretRefs` and `auth.secretQueryRefs` (values). Empty for guides
- * without static-key auth.
+ * `auth.secretRefs` and `auth.secretQueryRefs` (ref.secret values). For
+ * oauth2 the `secretRefs` map holds the `client_secret` ref (form-field key
+ * "client_secret"). Empty for guides without keyed/oauth auth.
  */
 function declaredSecretNames(domain: string): string[] {
 	const names = new Set<string>();
 	for (const { guide } of findGuidesByDomain(domain)) {
-		if (guide.auth.kind !== "static-key") continue;
-		for (const n of Object.values(guide.auth.secretRefs ?? {})) names.add(n);
-		for (const n of Object.values(guide.auth.secretQueryRefs ?? {})) names.add(n);
+		switch (guide.auth.kind) {
+			case "static-key":
+				for (const ref of Object.values(guide.auth.secretRefs ?? {}))
+					names.add(ref.secret);
+				for (const ref of Object.values(guide.auth.secretQueryRefs ?? {}))
+					names.add(ref.secret);
+				break;
+			case "oauth2":
+				for (const ref of Object.values(guide.auth.secretRefs ?? {}))
+					names.add(ref.secret);
+				break;
+			case "none":
+				break;
+			default: {
+				const _exhaustive: never = guide.auth;
+				throw new Error(`Unhandled auth kind: ${_exhaustive}`);
+			}
+		}
 	}
 	return [...names].sort((a, b) => a.localeCompare(b));
 }
@@ -155,12 +171,18 @@ function declaredSecretNames(domain: string): string[] {
  */
 function declaredPrefixHint(domain: string, name: string): string | undefined {
 	for (const { guide } of findGuidesByDomain(domain)) {
-		if (guide.auth.kind !== "static-key") continue;
-		for (const [headerName, secretName] of Object.entries(
-			guide.auth.secretRefs ?? {},
-		)) {
-			if (secretName === name && guide.auth.headerPrefixes?.[headerName]) {
-				return guide.auth.headerPrefixes[headerName];
+		switch (guide.auth.kind) {
+			case "static-key":
+				for (const ref of Object.values(guide.auth.secretRefs ?? {})) {
+					if (ref.secret === name && ref.prefix) return ref.prefix;
+				}
+				break;
+			case "oauth2":
+			case "none":
+				break;
+			default: {
+				const _exhaustive: never = guide.auth;
+				throw new Error(`Unhandled auth kind: ${_exhaustive}`);
 			}
 		}
 	}

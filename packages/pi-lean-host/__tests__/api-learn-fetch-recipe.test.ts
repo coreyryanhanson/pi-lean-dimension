@@ -149,7 +149,7 @@ describe("api-learn fetch-recipe", () => {
 		const draft = readFileSync(stagedPath("solo"), "utf-8");
 		expect(draft).toBe(raw);
 		expect(draft).toContain("getSolo");
-		expect(draft).toContain("schemaVersion: 0");
+		expect(draft).toContain("schemaVersion: 1");
 	});
 
 	it("1 guide with dirName ≠ routing domain surfaces the dirName (self-keyed identity)", async () => {
@@ -244,7 +244,7 @@ describe("api-learn save path (dir)", () => {
 		expect(text).toContain("Guide saved");
 		const saved = readFileSync(join(tmpGuidesDir, "save", "guide.md"), "utf-8");
 		expect(saved).toContain("getSave");
-		expect(saved).toMatch(/^schemaVersion: 0$/m);
+		expect(saved).toMatch(/^schemaVersion: 1$/m);
 	});
 
 	it("slug collision: cmc_full / cmc-full → second save refused with rename-shortName advice", async () => {

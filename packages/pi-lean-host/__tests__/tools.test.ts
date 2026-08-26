@@ -720,7 +720,7 @@ describe("api-learn", () => {
 			expect(text).toContain("joinUrl` strips a leading `/");
 			expect(text).toContain("pagination.base` seeds the page param");
 			expect(text).toContain("page-size param is a real knob");
-			expect(text).toContain("requires` = fail-closed if unprovisioned");
+			expect(text).toContain("optional: true` on a ref");
 			// Guide-prose (agent-instructions) ability is taught, not lost.
 			expect(text).toContain("Guide prose");
 			expect(text).toContain("Guide notes");
@@ -774,7 +774,7 @@ describe("api-learn", () => {
 	it("save summary names the auth header→secret mapping, never values", async () => {
 		setUserGuidesDir(tmpGuidesDir);
 		invalidateCache();
-		const recipe = `---\nkind: api\ndomains: [authmap.example]\nshortName: AuthMap\napiHost: ${ctx.serverUrl}\nauth:\n  kind: static-key\n  secretRefs:\n    Authorization: apiKey\n    X-CMC-Pro-Key: cmc_key\n  headerPrefixes:\n    Authorization: "Bearer "\n    X-CMC-Pro-Key: ""\n  requires: [apiKey, cmc_key]\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		const recipe = `---\nkind: api\ndomains: [authmap.example]\nshortName: AuthMap\napiHost: ${ctx.serverUrl}\nauth:\n  kind: static-key\n  secretRefs:\n    Authorization:\n      secret: apiKey\n      prefix: "Bearer "\n    X-CMC-Pro-Key:\n      secret: cmc_key\n      prefix: ""\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
 		const text = contentText(await callLearn("authmap.example", recipe));
 		expect(text).toContain("Auth: static-key");
 		expect(text).toContain("Authorization ← secret apiKey (Bearer )");
@@ -1104,9 +1104,9 @@ operations:
 		expect(text).toContain(stagedPath("example.com"));
 		const example = readFileSync(stagedPath("example.com"), "utf-8");
 		expect(example).toContain("kind: static-key");
-		expect(example).toContain("requires: [<secret-name>]");
+		expect(example).toContain("secret: <secret-name>");
 		expect(example).toContain("secretRefs:");
-		expect(example).toContain("headerPrefixes:");
+		expect(example).toContain('prefix: "Bearer "');
 	});
 
 	// Write path — api-learn stamps schemaVersion on save.
@@ -1119,7 +1119,7 @@ operations:
 			join(tmpGuidesDir, "stampabsent", "guide.md"),
 			"utf-8",
 		);
-		expect(raw).toMatch(/^schemaVersion: 0$/m);
+		expect(raw).toMatch(/^schemaVersion: 1$/m);
 		// Prose body untouched.
 		expect(raw).toContain("Prose body.");
 	});
@@ -1133,7 +1133,7 @@ operations:
 			join(tmpGuidesDir, "stampreplace", "guide.md"),
 			"utf-8",
 		);
-		expect(raw).toMatch(/^schemaVersion: 0$/m);
+		expect(raw).toMatch(/^schemaVersion: 1$/m);
 		expect(raw).not.toMatch(/^schemaVersion: 5$/m);
 	});
 
@@ -1147,7 +1147,7 @@ operations:
 			"utf-8",
 		);
 		// Frontmatter got the stamp...
-		expect(raw).toMatch(/^schemaVersion: 0$/m);
+		expect(raw).toMatch(/^schemaVersion: 1$/m);
 		// ...and the prose line is untouched (still schemaVersion: 5).
 		expect(raw).toContain(
 			"The schemaVersion: 5 in this prose must stay untouched.",
@@ -1170,7 +1170,7 @@ operations:
 		const idxShort = raw.indexOf("shortName:");
 		const idxApi = raw.indexOf("apiHost:");
 		const idxOps = raw.indexOf("operations:");
-		const idxSV = raw.indexOf("schemaVersion: 0");
+		const idxSV = raw.indexOf("schemaVersion: 1");
 		expect(idxDomains).toBeLessThan(idxShort);
 		expect(idxShort).toBeLessThan(idxApi);
 		expect(idxApi).toBeLessThan(idxOps);
