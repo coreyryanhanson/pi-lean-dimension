@@ -54,10 +54,17 @@ function run(cmd, options = {}) {
 }
 
 function getVersion() {
-	const pkg = JSON.parse(
-		readFileSync("packages/pi-lean-portal/package.json", "utf-8"),
-	);
-	return pkg.version;
+	try {
+		const pkg = JSON.parse(
+			readFileSync("packages/pi-lean-portal/package.json", "utf-8"),
+		);
+		return pkg.version;
+	} catch (e) {
+		console.error(
+			`Error reading packages/pi-lean-portal/package.json: ${e.message}`,
+		);
+		process.exit(1);
+	}
 }
 
 function compareVersions(a, b) {
@@ -171,13 +178,13 @@ if (status?.trim()) {
 console.log("  Working directory clean\n");
 
 console.log("Checking [Unreleased] section...");
-if (!hasUnreleasedEntries()) {
+if (hasUnreleasedEntries()) {
+	console.log("  The [Unreleased] section has entries\n");
+} else {
 	console.log("  Warning: the [Unreleased] section is empty.");
 	console.log(
 		"  Proceeding — this is valid for a no-user-visible-change lockstep bump.\n",
 	);
-} else {
-	console.log("  The [Unreleased] section has entries\n");
 }
 
 console.log("Running test suite...");
@@ -199,9 +206,9 @@ console.log();
 
 console.log("Publishing to npm...\n");
 
-console.log("  Publishing portal + search (targeted workspaces)...");
+console.log("  Publishing portal + search + host (targeted workspaces)...");
 run(
-	"npm publish -w packages/pi-lean-portal -w packages/pi-lean-search --access public",
+	"npm publish -w packages/pi-lean-portal -w packages/pi-lean-search -w packages/pi-lean-host --access public",
 );
 console.log();
 

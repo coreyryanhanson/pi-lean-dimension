@@ -24,9 +24,8 @@ let _registered = false;
 
 /**
  * Build a snapshot of host's guide projections.
- * Recipe fields (apiHost, operations, auth, pagination, responseShape) are
- * stripped by projectToGuide(); only the presentation slice + kind remain.
- * Self-gates on the /api toggle state.
+ * Recipe fields are stripped by projectToGuide(); only the presentation
+ * slice + kind remain. Self-gates on the /api toggle state.
  */
 function buildProjection(): Record<string, Guide> {
 	if (!getApiToggleState()) return {};

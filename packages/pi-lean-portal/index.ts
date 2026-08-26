@@ -19,6 +19,7 @@ import initBrowserToggle from "./browser-toggle.js";
 import { updateFooterStatus, getLastCtx, setLastCtx } from "./tools/utils.js";
 import { deleteSessionKey, resetTaskIds } from "./core/shared/task-id.js";
 import { resetToggleModuleState } from "./browser-toggle.js";
+import { registerGuideProvider } from "./core/guides.js";
 
 // ─── Tool definitions ────────────────────────────────────────────
 
@@ -229,6 +230,11 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(browserInspectTool);
 	pi.registerTool(webGuideTool);
 	pi.registerTool(webLearnTool);
+
+	// --- Expose guide-provider registry for peer packages ----------
+	(globalThis as Record<string, unknown>)[
+		"__piLeanPortalRegisterGuideProvider"
+	] = registerGuideProvider;
 
 	// --- Register commands ------------------------------------------
 	initBrowserToggle(pi);

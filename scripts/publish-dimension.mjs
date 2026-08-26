@@ -24,6 +24,7 @@ const DRY_RUN = process.argv.includes("--dry-run");
 const PACKAGE_DIR = join("packages", "pi-lean-dimension");
 const PORTAL_DIR = join("packages", "pi-lean-portal");
 const SEARCH_DIR = join("packages", "pi-lean-search");
+const HOST_DIR = join("packages", "pi-lean-host");
 
 const PKG = JSON.parse(
 	readFileSync(join(PACKAGE_DIR, "package.json"), "utf-8"),
@@ -92,6 +93,9 @@ try {
 	const searchName = JSON.parse(
 		readFileSync(join(SEARCH_DIR, "package.json"), "utf-8"),
 	).name;
+	const hostName = JSON.parse(
+		readFileSync(join(HOST_DIR, "package.json"), "utf-8"),
+	).name;
 
 	const nodeModules = join(TMP, "node_modules");
 	mkdirSync(nodeModules, { recursive: true });
@@ -101,6 +105,9 @@ try {
 
 	cpSync(SEARCH_DIR, join(nodeModules, searchName), { recursive: true });
 	console.log(`  ✓ ${searchName} copied from workspace`);
+
+	cpSync(HOST_DIR, join(nodeModules, hostName), { recursive: true });
+	console.log(`  ✓ ${hostName} copied from workspace`);
 
 	// 3. Install transitive deps (playwright, node-html-parser, turndown, etc.)
 	//    that the bundled packages need at runtime.

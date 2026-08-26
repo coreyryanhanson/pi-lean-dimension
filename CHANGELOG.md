@@ -84,22 +84,27 @@
   `/api learn`.
 - **Static-key auth and per-domain secrets store** — `auth.kind:
   static-key` realizes store-backed `secretRefs` (header injection),
-  `secretQueryRefs` (query-param injection), and `requires`/`optional`
-  secret sets (parser-enforced to coincide with the refs). `api-fetch`
-  resolves and injects values in code — the value never enters agent
-  context; a missing `requires` secret **fails closed before the
-  request**. Secrets persist at
+  `secretQueryRefs` (query-param injection), `requires`/`optional`
+  secret sets (parser-enforced to coincide with the refs), and an
+  optional `headerPrefixes` map (`headerName -> prefix`) prepended to
+  the resolved secret value at fetch time, so the store holds the raw
+  credential while the guide declares how it is presented (e.g.
+  `Authorization: "Bearer "`) — without it, the token-scheme prefix
+  was smuggled into every user's secret store. `api-fetch` resolves
+  and injects values in code — the value never enters agent context; a
+  missing `requires` secret **fails closed before the request**.
+  Secrets persist at
   `~/.pi/agent/pi-lean-host/secrets/<domain>.json` (mode `0600`,
   lazy-mkdir-on-write-only), provisioned transcript-safely via
   `/api secrets` (names only, never values; headless hosts get direct
-  file-write instructions). An output-channel audit scrubs known secret
-  values from 401 bodies and `details.headers`, redacts query-param
-  secrets to `?param=***` on every surfaced URL, and forces any
-  auth-bearing call through the SSRF-guarded redirect loop with
-  injected secrets stripped on cross-domain hops. `oauth2` is a
-  declared-but-unrealized seam (rejected at parse); an OS-keychain
-  at-rest backend is deferred (the `0600` file stays the honest
-  default).
+  file-write instructions). An output-channel audit scrubs both the
+  prefixed and raw forms of a secret value from 401 bodies and
+  `details.headers`, redacts query-param secrets to `?param=***` on
+  every surfaced URL, and forces any auth-bearing call through the
+  SSRF-guarded redirect loop with injected secrets stripped on
+  cross-domain hops. `oauth2` is a declared-but-unrealized seam
+  (rejected at parse); an OS-keychain at-rest backend is deferred (the
+  `0600` file stays the honest default).
 - **Local user helpers** — a `helper.ts` alongside a guide runs
   in-process via `import()` under a load/call guard that disables the
   helper for the session on any in-frame throw (pi keeps running). The
@@ -128,8 +133,15 @@
   `pi-lean-portal`/`pi-lean-search` (enforced by a boundary test); a
   runtime feature-detect registers a recipe-stripped projection with
   portal's guide-source registry when co-installed, re-attempted on
-  `session_start`. The projection is inert until portal ships its
-  receiving global (planned for the 0.5.0 lockstep track).
+  `session_start`. Portal's receiving side ships in this same release:
+  peer api-kind projections are namespaced (`api:<name>`) so a
+  same-named user web guide can't clobber them, a guide declaring only
+  the apex domain (e.g. `coingecko.com`) surfaces on `www.`/subdomain
+  navigations, the guide footer groups API guides before site guides
+  and routes each to `api-guide({domain, guide: "<shortName>"})`
+  instead of `web-guide`, and `web-guide guide=` lists the available
+  guides grouped under an `API guides:` section. A domain can have
+  both a web guide and one or more API guides, all discoverable.
 - **Synthetic axis-guide fixtures** — `api-guides/<domain>/` holds a
   minimal coverage set (no `verified:` date, no live endpoints) that
   keeps every guide-driven framework axis exercised via mocked

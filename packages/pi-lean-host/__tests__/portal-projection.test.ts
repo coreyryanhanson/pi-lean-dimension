@@ -18,7 +18,10 @@ import {
 	_resetToggleStateForTest,
 	_setToggleStateForTest,
 } from "../core/api-toggle.js";
-import { setUserGuidesDir } from "../core/guide-store.js";
+import {
+	setUserGuidesDir,
+	_resetLoadWarningsForTest,
+} from "../core/guide-store.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Fixture helpers
@@ -67,6 +70,7 @@ beforeEach(() => {
 	capturedProvider = null;
 	_resetToggleStateForTest();
 	_resetPortalProjectionForTest();
+	_resetLoadWarningsForTest();
 
 	// Simulate portal's global registry.
 	(globalThis as Record<string, unknown>)[
@@ -102,6 +106,24 @@ describe("registerPortalProjection — global probe", () => {
 
 		registerPortalProjection();
 		expect(capturedProvider).toBeNull();
+	});
+
+	it("session_start retry registers when portal loads after host", () => {
+		// Host loads first — portal global not set yet.
+		delete (globalThis as Record<string, unknown>)[
+			"__piLeanPortalRegisterGuideProvider"
+		];
+		registerPortalProjection();
+		expect(capturedProvider).toBeNull();
+
+		// Portal loads, sets its global; session_start retries.
+		(globalThis as Record<string, unknown>)[
+			"__piLeanPortalRegisterGuideProvider"
+		] = (fn: () => Record<string, unknown>) => {
+			capturedProvider = fn;
+		};
+		registerPortalProjection();
+		expect(capturedProvider).not.toBeNull();
 	});
 
 	it("is idempotent — second call does not re-register", () => {
@@ -169,7 +191,12 @@ describe("projection shape", () => {
 				expect(guide).not.toHaveProperty("auth");
 				expect(guide).not.toHaveProperty("pagination");
 				expect(guide).not.toHaveProperty("responseShape");
-				expect(guide).not.toHaveProperty("verify");
+				expect(guide).not.toHaveProperty("schemaVersion");
+				expect(guide).not.toHaveProperty("verified");
+				expect(guide).not.toHaveProperty("docs");
+				expect(guide).not.toHaveProperty("organization");
+				expect(guide).not.toHaveProperty("description");
+				expect(guide).not.toHaveProperty("gatherAllMax");
 
 				// kind set to "api"
 				expect(guide.kind).toBe("api");
