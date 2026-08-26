@@ -19,12 +19,12 @@ An npm-workspaces monorepo containing four packages:
 
 - **`pi-lean-portal`** — Interactive web browsing (owns `/web` command). **12 tools + 1 command.**
 - **`pi-lean-search`** — SearXNG search tool (`web-search`), wired into portal's `/web` toggle. **1 tool + 1 command** (`/searxng-status`).
-- **`pi-lean-host`** — Declarative HTTP API client (`api-guide`, `api-fetch`, `api-learn`, `/api` namespace). **3 tools + 1 command.**
+- **`pi-lean-host`** — Declarative HTTP API client (`api-guide`, `api-fetch`, `api-learn`, `api-probe`, `api-scaffold`, `/api` namespace). **5 tools + 1 command.**
 - **`pi-lean-dimension`** — Umbrella meta-package that bundles portal + search + host (codeless manifest).
 
 The MiniWoB++ evaluation harness was dissolved out of the workspaces and lives at `bench/miniwob/` — it is research tooling, not a pi extension.
 
-With search + host installed, the suite totals **16 tools + 3 commands** (portal + search + host). Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool + declarative HTTP API helpers. Portal entrypoint: `packages/pi-lean-portal/index.ts`. Host entrypoint: `packages/pi-lean-host/index.ts`.
+With search + host installed, the suite totals **18 tools + 3 commands** (portal 12 + search 1 + host 5). Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool + declarative HTTP API helpers (`pi-lean-host/core/resolve-op.ts` is the single shared guide-resolution → helper → transform → auth → dispatch sequence used by both `api-fetch` and `/api verify`). Portal entrypoint: `packages/pi-lean-portal/index.ts`. Host entrypoint: `packages/pi-lean-host/index.ts`. Search entrypoint: `packages/pi-lean-search/index.ts`.
 
 ## Developer Commands
 
@@ -38,7 +38,7 @@ npm run setup:miniwob                               # one-time clone of MiniWoB+
 npx vitest run packages/pi-lean-portal/__tests__/router-dispatch.test.ts  # single test file (fast, ~1s)
 npx vitest run packages/pi-lean-portal/__tests__/cookie-persistence.test.ts  # Chromium persistence
 npx vitest run packages/pi-lean-portal/__tests__/firefox.test.ts  # Firefox contract tests
-npx vitest run bench/miniwob/suites/                # run all MiniWoB suites (chromium, firefox, chromium-py, firefox-py, adapter-smoke, user-backends, inspect-csp-smoke, inspect-eval-smoke)
+npx vitest run bench/miniwob/suites/                # run all MiniWoB suites (see bench/AGENTS.md for the file list + preflight gate)
 npm run test:watch                                 # vitest in watch mode
 npm run publish:dry                                # dry-run publish (portal+search --dry-run + dimension --dry-run) — inspect tarballs
 npm run publish                                    # full publish (portal+search npm publish + dimension publish)
@@ -48,65 +48,23 @@ There is no build step (`noEmit: true` in tsconfig). The extension is loaded dir
 
 ## Directory Layout
 
+Each subtree with its own `AGENTS.md` owns its internals — don't
+enumerate them here. Pointers below are for locating the child file.
+
 ```
 pi-lean-dimension/                       (monorepo root)
-├── package.json                         (name: pi-lean-portal-workspace, private: true, workspaces: ["packages/*"])
+├── package.json                         (name: pi-lean-portal-workspace, private, workspaces: ["packages/*"])
 ├── tsconfig.base.json
 ├── vitest.config.ts
-├── scripts/
-│   ├── sync-versions.js                 (lockstep version bump)
-│   ├── release.mjs                      (full release pipeline)
-│   ├── publish-dimension.mjs            (umbrella meta-package publish)
-│   └── run-py-bridge-tests.mjs          (Python bridge unit test runner)
+├── scripts/                             sync-versions.js, release.mjs, publish-dimension.mjs, run-py-bridge-tests.mjs
 ├── AGENTS.md                            (this file — monorepo-level truth)
-├── README.md                            (monorepo overview with install matrix)
-├── CHANGELOG.md
-├── LICENSE
-├── bench/                            ← MiniWoB++ evaluation harness
-│   ├── README.md                      (bench architecture and public API)
-│   └── miniwob/                       130-task harness (adapter, solvers, suites, scripts)
+├── README.md                            (install matrix), CHANGELOG.md, LICENSE
+├── bench/                               MiniWoB++ harness — see bench/AGENTS.md (not a workspace pkg; excluded from test:ci)
 └── packages/
-    ├── pi-lean-portal/                  ← THE BROWSER + /web owner
-    │   ├── package.json                 (name: pi-lean-portal, published)
-    │   ├── index.ts                     Entry: imports & registers tool definitions + lifecycle
-    │   ├── browser-toggle.ts            /web on|off|learn|status — three-state toggle + subcommands
-    │   ├── browser-cookies.ts           /web cookies subcommand
-    │   ├── browser-profile.ts           /web profile subcommand
-    │   ├── browser-status.ts            /web status subcommand
-    │   ├── backends/                    Plugin implementations
-    │   │   ├── playwright-base/         Shared PlaywrightPluginBase (Node base class)
-    │   │   ├── chromium/index.ts        Chromium Plugin (Node/Playwright)
-    │   │   ├── firefox/index.ts         Firefox Plugin (Node/Playwright)
-    │   │   ├── chromium-py/bridge.py    Chromium-Py Bridge (Python/Playwright)
-    │   │   ├── firefox-py/bridge.py     Firefox-Py Bridge (Python/Playwright)
-    │   │   ├── python-adapter.ts        JSON-RPC bridge for subprocess plugins
-    │   │   └── python-base/             Shared Python bridge library
-    │   ├── core/                        Framework: shared across all plugins
-    │   │   ├── plugin-api.ts            BrowserPlugin interface + result types
-    │   │   ├── plugin-registry.ts       Registration, validation, strategy resolution
-    │   │   ├── plugin-config.ts         Pipeline config loading + types
-    │   │   ├── router.ts                Dispatch, session lifecycle, truncation
-    │   │   ├── guides.ts                Guide types, builtin guides, file loader
-    │   │   ├── fetch-backend.ts         Stateless HTTP → Markdown
-    │   │   └── shared/                  nav-settle, paths, task-id, accessibility-tree, etc.
-    │   ├── tools/                       Tool definitions — one file per tool (12 files) + index.ts + utils.ts
-    │   ├── __tests__/                   Test files + helpers/
-    │   ├── AGENTS.md                    (portal internals — additive to this file)
-    │   └── README.md                    (portal-specific docs)
-    ├── pi-lean-search/                  ← SearXNG search leaf
-    │   ├── package.json                 (name: pi-lean-search, published)
-    │   ├── index.ts                     Entry: tool registration, health probe, /searxng-status command
-    │   ├── web-search-tool.ts           defineTool for web-search with execute + TUI rendering
-    │   ├── search-config.ts             Settings reader for searxng.url
-    │   ├── verify-ship-manifest.ts      Ship-manifest test helper
-    │   ├── ship-manifest.test.ts        Manifest coverage test
-    │   ├── __tests__/                   Test files + helpers/
-    │   ├── AGENTS.md                    (stub — points here)
-    │   └── README.md                    Package docs
-    └── pi-lean-dimension/               ← Umbrella meta-package (codeless)
-        ├── package.json                 (name: pi-lean-dimension, bundledDependencies)
-        ├── AGENTS.md                    (stub — points here)
-        └── README.md                    Package docs
+    ├── pi-lean-portal/                  Browser + /web owner — entry index.ts, see packages/pi-lean-portal/AGENTS.md
+    ├── pi-lean-search/                  SearXNG leaf — entry index.ts, see packages/pi-lean-search/AGENTS.md
+    ├── pi-lean-host/                    HTTP API client — entry index.ts, see packages/pi-lean-host/AGENTS.md
+    └── pi-lean-dimension/               Codeless umbrella meta-package — see packages/pi-lean-dimension/AGENTS.md
 ```
 
 ## Architecture (suite-level overview)
@@ -117,13 +75,13 @@ Portal dispatches through a `PluginRegistry` + typed `BrowserPlugin` interface; 
 
 > For the `BrowserPlugin` method list, router dispatch, the status bar `browser` slot, profile/cookie persistence, guides, key-tools table, engine parity, snapshot cache, nav-settle, bot-detection tiers, `browser-inspect` internals, the `backends/` vs `core/` boundary, and the full constraints & debt list, see [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md). The search-owned `search` status bar slot is documented in [`packages/pi-lean-search/AGENTS.md`](packages/pi-lean-search/AGENTS.md).
 
-### Registered Tools (16 total with search + host)
+### Registered Tools (18 total with search + host)
 
 **Portal (12):** web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
 
 **Search (1):** web-search
 
-**Host (3):** api-guide, api-fetch, api-learn
+**Host (5):** api-guide, api-fetch, api-learn, api-probe, api-scaffold
 
 ### Registered Commands
 
@@ -131,7 +89,7 @@ Portal dispatches through a `PluginRegistry` + typed `BrowserPlugin` interface; 
 
 **Search:** `/searxng-status` — test the full SearXNG search pipeline and update the status bar glyph.
 
-**Host:** `/api on|off|learn|status|helpers` — `/api on` (API tools enabled), `/api off` (all disabled), `/api learn` (API tools + api-learn enabled for guide authoring), `/api status` (show active guides and helpers), `/api helpers [domain]` (list/view helper source).
+**Host:** `/api on|off|learn|status|helpers|secrets|verify|delete` — `/api on` (API tools enabled), `/api off` (all disabled), `/api learn` (API tools + api-learn + api-probe + api-scaffold for guide authoring), `/api status` (active guides + helpers), `/api helpers [domain]` (list/view helper source), `/api secrets [domain [name]]` (provision/list/delete per-domain secret store, names only never values), `/api verify <domain> [guide] [--force]` (run every runnable op live, stamp `verified: today` only on all-pass), `/api delete <domain> [guide]` (`rm -rf` guide dir + invalidate guide-store cache). `status`/`helpers`/`secrets`/`verify`/`delete` and bare `/api` are read-only or always-available — the focus-mode guard doesn't apply to them.
 
 Toggle state is persisted via `pi.appendEntry("web-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`. Three-field schema: `{browserToolsEnabled, learnToolsEnabled, defaultProfile}`.
 
@@ -148,82 +106,27 @@ The toggle also manages a `SIBLING_TOOL_NAMES` set populated with `"web-search"`
 - **Portal structural tests** (`pi-lean-portal`): framework internals (router dispatch, registry, config loading, snapshot cache, nav-settle, storage state, accessibility parsing, url safety, plugin contract validation, browser toggle, fetch backend, python adapter). These are mocked unit tests — no real browser or MiniWoB content required.
 - **Python bridge unit tests** (`pi-lean-portal/backends/python-base/tests/`): pure-logic pytest tests for the shared `pi_browser_bridge` library (accessibility, bot-detection, JSON-RPC transport, chromium-py/firefox-py routing, `PlaywrightBridge` stealth-quirk flags). Use fakes/mocks; the `playwright` import is lazily guarded, so they need only `pytest>=9.0` — no Playwright wheel, no browser binaries. Run via `npm run test:py-bridge`; wired into the `structural` CI job.
 - **MiniWoB behavioral tests** (`bench/miniwob/suites/`): behavioral evaluation against real browser engines (MiniWoB tasks, browser interaction pipeline verification). These require a live browser and MiniWoB++ content.
-- **Host recipe-validity tests** (`api-guides/<domain>/*.test.ts`): per-recipe endpoint coverage and helper transform tests co-located with their guide. Transform tests run in bare CI; live endpoint tests opt in via `HOST_INTEGRATION=1`. Excluded from the npm tarball.
+- **Host structural tests** (`pi-lean-host/__tests__/`): guide parsing, transport, auth, resolve-op, secrets, verify-stamp, scaffold, status hint, render, host-only boundary — mocked unit tests, no live HTTP.
+- **Host recipe-validity tests** (`pi-lean-host/api-guides/<domain>/*.test.ts`): per-recipe endpoint coverage and helper transform tests co-located with their guide. Transform tests run in bare CI; live endpoint tests opt in via `HOST_INTEGRATION=1`. Excluded from the npm tarball.
 - **Per-backend contract tests** (in `pi-lean-portal`): verify each backend (chromium, firefox, chromium-py, firefox-py, etc.) against the `BrowserPlugin` interface contract. Require their respective browser engine.
 
 ### Test file summary
 
 | Category | Location | Files (~) | Tests (~) | Requires browser? |
 |----------|----------|-----------|-----------|-------------------|
-| Portal structural | `pi-lean-portal/__tests__/` | 22 | 700 | No |
+| Portal structural | `pi-lean-portal/__tests__/` | 30 | ~590 | No |
 | Python bridge unit | `pi-lean-portal/backends/python-base/tests/` | 6 | 248 | No (pytest only) |
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 8 | varies | Per-backend (auto-skip) |
 | MiniWoB behavioral | `bench/miniwob/suites/` | 8 | 130 tasks × 4 + user-backends + smoke* | Chromium + Firefox + Python + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 29 | No |
-| Host recipe-validity | `api-guides/<domain>/*.test.ts` | 2 | ~30 | No (live: `HOST_INTEGRATION=1`) |
+| Host structural | `pi-lean-host/__tests__/` | 32 | ~700 | No |
+| Host recipe-validity | `pi-lean-host/api-guides/<domain>/*.test.ts` | 6 | ~23 | No (live: `HOST_INTEGRATION=1`) |
 
-Per-file detail for the portal-owned test lists (structural, python bridge, per-backend contract, shared test utilities) lives in [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md) ("Testing (portal detail)"). MiniWoB suite detail is in the MiniWoB Integration section below.
+Per-file detail for the portal-owned test lists (structural, python bridge, per-backend contract, shared test utilities) lives in [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md) ("Testing (portal detail)"). Host-owned test detail lives in [`packages/pi-lean-host/AGENTS.md`](packages/pi-lean-host/AGENTS.md). MiniWoB suite detail (preflight gate, prerequisites, env overrides, suite files, coverage ceiling) lives in [`bench/AGENTS.md`](bench/AGENTS.md).
 
 ### MiniWoB Integration
 
-Behavioral MiniWoB++ evaluation lives under `bench/miniwob/` and uses a
-hand-rolled MiniWoB++ driver (no BrowserGym dependency).
-
-Shipped suite files under `bench/miniwob/suites/` drive
-all 130 [MiniWoB++](https://miniwob.farama.org/) tasks through each
-backend. The shared helper at `miniwob-suite-helper.ts` owns content
-availability gates and the MiniWoB static server lifecycle; each
-per-backend file supplies only the browser-availability probe and
-plugin factory:
-
-- **`miniwob-trivial.test.ts`** — Chromium (Node)
-- **`miniwob-firefox.test.ts`** — Firefox (Node)
-- **`miniwob-chromium-py.test.ts`** — Chromium-Py (Python bridge)
-- **`miniwob-firefox-py.test.ts`** — Firefox-Py (Python bridge)
-
-Plus the supporting suites: **`miniwob-user-backends.test.ts`** (discovers user-managed Python backends — no-op in bare CI; registers 130 tasks × discovered backends when installed), **`adapter-smoke.test.ts`** (end-to-end `runMiniwobTask` via real Chromium + `plugin.evaluate` episode lifecycle), **`inspect-csp-smoke.test.ts`** (`browser-inspect` CSP/eval-boundary smoke), and **`inspect-eval-smoke.test.ts`** (`browser-inspect` eval-path smoke).
-
-- **13 tasks run** with trivial solvers — 3 confident (assert reward > 0)
-  and 10 best-effort (pipeline smoke tests).
-- **82 element tasks** without a registered solver → `it.skip` with reason
-  `needs goal-aware solver`.
-- **35 non-element tasks** (coord/drag/hover/select) → `it.skip` with
-  the missing-tool reason.
-- **Public API:** `registerMiniwobSuite` from `bench/miniwob/solvers/register-suite.ts` lets
-  user-owned parity test files register custom backends without editing
-  shipped code.
-
-**One-time setup:**
-
-```bash
-# Clone MiniWoB++ at the pinned commit (idempotent — no-op if exists)
-npm run setup:miniwob
-
-# Run the MiniWoB suite (auto-skips when prereqs absent)
-npm run test:miniwob
-```
-
-The setup script (`bench/miniwob/scripts/setup-miniwob.mjs`)
-defaults to `/tmp/miniwob-plusplus/miniwob/html`. Override at test time:
-
-```bash
-export MINIWOB_HTML_ROOT=/path/to/miniwob/html  # path on disk
-export MINIWOB_URL=http://…                      # already-running server
-```
-
-**Auto-skip gates:** Each per-backend suite file independently
-auto-skips when its browser prerequisites are absent or MiniWoB++
-content is unreachable. This keeps `npm test` and
-`npm run test:ci` green in bare CI without path-filtering logic.
-
-**What MiniWoB does NOT cover:** canvas/coordinate tasks (no tool),
-drag-and-drop (no tool), hover/slider/select (no tool), and any
-framework/structural concern (router dispatch, plugin registry, config
-loading, snapshot cache, etc.). Those remain covered by the existing
-portal structural tests.
-
-See [`docs/decisions/miniwob-and-host-setup.md`](docs/decisions/miniwob-and-host-setup.md) for the
-BrowserGym removal and host/MiniWoB setup decision record.
+Behavioral MiniWoB++ evaluation lives under `bench/` — **see [`bench/AGENTS.md`](bench/AGENTS.md)** for commands, the preflight gate (don't bypass), prerequisites, env overrides, suite files, the `registerMiniwobSuite` extension point, and the coverage ceiling. It is research tooling, not a workspace package: excluded from `npm run test:ci` and runs only under `npm run test:miniwob`. The BrowserGym-removal / host setup decision record is [`docs/decisions/miniwob-and-host-setup.md`](docs/decisions/miniwob-and-host-setup.md).
 
 ## CI Pipeline
 
@@ -234,12 +137,12 @@ split into three jobs, two gated by inputs on
 run only hits structural; push/PR always runs both
 `structural` + `miniwob`):
 
-**`structural` job (fast, no browser):**
+**`structural` job (fast, no browser):** runs on every PR/push and on manual dispatch.
 
 1. **Checkout** the repository
 2. **Setup Node.js 22** with npm caching
 3. **Install dependencies** via `npm ci`
-4. **Run structural tests** via `npm run test:ci`
+4. **Run structural tests** via `npm run test:ci` (excludes `**/chromium*.test.ts`, `**/firefox*.test.ts`, `**/bench/**`)
 5. **Setup Python 3.12** + install `pytest>=9.0`
 6. **Run Python bridge unit tests** via `npm run test:py-bridge` (248 pure-logic pytest tests under `packages/pi-lean-portal/backends/python-base/tests/` — no Playwright wheel or browser binaries required)
 
@@ -263,10 +166,7 @@ run only hits structural; push/PR always runs both
 7. **Upload test artifacts on failure** (vitest output, Playwright
    traces)
 
-**Auto-skip gates:** Each per-backend suite file independently
-auto-skips when its browser prerequisites are absent or MiniWoB++
-content is unreachable. This keeps `npm test` and
-`npm run test:ci` green in bare CI without path-filtering logic.
+**Auto-skip gates:** each suite file auto-skips when its browser prereqs are absent — see [`bench/AGENTS.md`](bench/AGENTS.md). This keeps `npm test` / `npm run test:ci` green in bare CI without path-filtering logic.
 
 **`contributed` job (opt-in, Camoufox user-backends validation):**
 
