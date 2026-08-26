@@ -62,7 +62,7 @@ export function setStagingRoot(dir: string): void {
 // ═══════════════════════════════════════════════════════════════════
 
 /** Compact authoring manual, prepended to every scaffold result. */
-const AUTHORING_MANUAL = [
+const SCAFFOLD_MANUAL = [
 	"# verify.json authoring manual",
 	"",
 	'1. "__FILL_ME__" means "replace with a real value." The sentinel is treated as unsupplied; the op skips until you replace it.',
@@ -367,7 +367,7 @@ export const apiScaffoldTool = defineTool({
 				{
 					type: "text",
 					text:
-						AUTHORING_MANUAL +
+						SCAFFOLD_MANUAL +
 						"\n\n" +
 						`🛠 Scaffolded '${guide.shortName}' (${dirName}) into ${stagedDir}\n` +
 						written.map((p) => `  ${p}`).join("\n") +
