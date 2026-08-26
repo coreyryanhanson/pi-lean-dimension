@@ -18,7 +18,10 @@ import {
 	_resetToggleStateForTest,
 	_setToggleStateForTest,
 } from "../core/api-toggle.js";
-import { setUserGuidesDir } from "../core/guide-store.js";
+import {
+	setUserGuidesDir,
+	_resetLoadWarningsForTest,
+} from "../core/guide-store.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Fixture helpers
@@ -67,6 +70,7 @@ beforeEach(() => {
 	capturedProvider = null;
 	_resetToggleStateForTest();
 	_resetPortalProjectionForTest();
+	_resetLoadWarningsForTest();
 
 	// Simulate portal's global registry.
 	(globalThis as Record<string, unknown>)[
