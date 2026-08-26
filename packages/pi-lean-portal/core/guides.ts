@@ -300,13 +300,31 @@ let _testGuideOverrides: Record<string, Guide> | null = null;
  * User-authored guides override builtin guides on name collision.
  */
 export function getGuideContent(): Record<string, Guide> {
-	// Merge: peer-provider output > builtin, user > peer.
-	const peer = collectProviderGuides();
+	// Merge: peer-provider output > builtin, user > peer. Peer api-kind
+	// projections are namespaced (api:<name>) so a user web guide of the
+	// same name can't clobber them — a domain can have both a web guide
+	// and one or more api guides, and they must all stay discoverable.
+	const peer = namespaceApiGuides(collectProviderGuides());
 	const base = { ...BUILTIN_GUIDES, ...peer, ...loadUserGuides() };
 	if (_testGuideOverrides) {
 		return { ...base, ..._testGuideOverrides };
 	}
 	return base;
+}
+
+/**
+ * Prefix peer-provided api-kind guide keys with "api:" so they share no
+ * key with a same-named user web guide. Web-kind peer entries pass through
+ * unchanged.
+ */
+function namespaceApiGuides(
+	guides: Record<string, Guide>,
+): Record<string, Guide> {
+	const out: Record<string, Guide> = {};
+	for (const [name, guide] of Object.entries(guides)) {
+		out[guide.kind === "api" ? `api:${name}` : name] = guide;
+	}
+	return out;
 }
 
 /**
@@ -516,11 +534,15 @@ export function formatGuideFooter(guides: ApplicableGuide[]): string {
 			lines.push("  Site:");
 			addedSiteHeader = true;
 		}
-		// api-kind guides route to host's api-guide({domain}) — the full op
-		// list + auth — not web-guide, which only sees the stripped projection.
+		// api-kind guides route to host's api-guide({domain, guide}) — the full
+		// op list + auth — not web-guide, which only sees the stripped
+		// projection. Always include the guide selector (shortName): with
+		// multiple api guides per domain, {domain} alone returns a
+		// disambiguation menu; the selector jumps straight to the specific
+		// guide (and is a no-op direct hit when there's only one).
 		const invocation =
 			g.kind === "api"
-				? `api-guide({domain: "${g.domain ?? g.name}"})`
+				? `api-guide({domain: "${g.domain ?? g.name}", guide: "${g.shortName}"})`
 				: `web-guide guide="${g.name}"`;
 		lines.push(`  • ${g.icon} ${g.shortName} — ${g.reason} (${invocation})`);
 	}

@@ -88,8 +88,8 @@ describe("registerGuideProvider", () => {
 		}));
 
 		const content = getGuideContent();
-		expect(content["test-api"]).toBeDefined();
-		expect(content["test-api"]!.kind).toBe("api");
+		expect(content["api:test-api"]).toBeDefined();
+		expect(content["api:test-api"]!.kind).toBe("api");
 	});
 
 	it("supports multiple providers — output is merged", () => {
@@ -101,8 +101,8 @@ describe("registerGuideProvider", () => {
 		}));
 
 		const content = getGuideContent();
-		expect(content["api-a"]).toBeDefined();
-		expect(content["api-b"]).toBeDefined();
+		expect(content["api:api-a"]).toBeDefined();
+		expect(content["api:api-b"]).toBeDefined();
 	});
 
 	it("a throwing provider does not block the store", () => {
@@ -114,7 +114,7 @@ describe("registerGuideProvider", () => {
 		}));
 
 		const content = getGuideContent();
-		expect(content["good-api"]).toBeDefined();
+		expect(content["api:good-api"]).toBeDefined();
 	});
 
 	it("_clearGuideProviders removes all registered providers", () => {
@@ -124,7 +124,7 @@ describe("registerGuideProvider", () => {
 		_clearGuideProviders();
 
 		const content = getGuideContent();
-		expect(content["test-api"]).toBeUndefined();
+		expect(content["api:test-api"]).toBeUndefined();
 	});
 });
 
@@ -133,8 +133,8 @@ describe("registerGuideProvider", () => {
 // ═══════════════════════════════════════════════════════════════════
 
 describe("precedence", () => {
-	it("peer-provided guide does NOT override a user guide (same name)", () => {
-		// Set up with test overrides simulating a user-authored guide
+	it("a same-named user web guide and peer api guide BOTH survive (namespaced)", () => {
+		// Set up with test overrides simulating a user-authored web guide
 		_setGuideContentForTest({
 			"overlap-guide": webGuideFixture("overlap-guide", "user.example.com"),
 		});
@@ -144,14 +144,20 @@ describe("precedence", () => {
 		}));
 
 		const content = getGuideContent();
+		// The user web guide keeps the bare key.
 		expect(content["overlap-guide"]).toBeDefined();
-		// The user guide wins — no kind set (it's a web guide)
 		expect(content["overlap-guide"]!.kind).toBeUndefined();
 		expect(content["overlap-guide"]!.domains).toEqual(["user.example.com"]);
+		// The peer api projection survives under the api: namespace — it is
+		// NOT clobbered by the same-named web guide.
+		expect(content["api:overlap-guide"]).toBeDefined();
+		expect(content["api:overlap-guide"]!.kind).toBe("api");
+		expect(content["api:overlap-guide"]!.domains).toEqual(["peer.example.com"]);
 	});
 
-	it("peer-provided guide overrides a builtin guide of the same name", () => {
-		// "bot-detection" is a builtin pattern guide
+	it("an api-kind peer guide does NOT clobber a builtin guide of the same name", () => {
+		// "bot-detection" is a builtin pattern guide; an api-kind peer guide
+		// sharing its name is a different guide and must not overwrite it.
 		registerGuideProvider(() => ({
 			"bot-detection": {
 				...apiGuideFixture("bot-api", "bot.example.com"),
@@ -160,9 +166,11 @@ describe("precedence", () => {
 		}));
 
 		const content = getGuideContent();
+		// Builtin survives unchanged (no kind — it's a web guide).
 		expect(content["bot-detection"]).toBeDefined();
-		// Peer provider wins over builtin
-		expect(content["bot-detection"]!.kind).toBe("api");
+		expect(content["bot-detection"]!.kind).toBeUndefined();
+		// The api-kind peer guide lives under the api: namespace.
+		expect(content["api:bot-detection"]!.kind).toBe("api");
 	});
 
 	it("user-authored guide still wins over builtin (unchanged existing behavior)", () => {
@@ -252,10 +260,10 @@ describe("kind propagation in resolveApplicableGuides", () => {
 			false,
 		);
 		const names = result.map((g) => g.name);
-		expect(names).toContain("same-api");
+		expect(names).toContain("api:same-api");
 		expect(names).toContain("same-web");
 		// API guide sorts first (host-first ordering).
-		expect(names.indexOf("same-api")).toBeLessThan(names.indexOf("same-web"));
+		expect(names.indexOf("api:same-api")).toBeLessThan(names.indexOf("same-web"));
 	});
 });
 
@@ -352,7 +360,7 @@ describe("formatGuideList — API section", () => {
 
 		const text = formatGuideList();
 		expect(text).toContain("API guides:");
-		expect(text).toContain("test-api");
+		expect(text).toContain("api:test-api");
 	});
 
 	it("does NOT show API guides header when no API guides exist", () => {
@@ -392,8 +400,8 @@ describe("formatGuideFooter — API subheader", () => {
 		const footer = formatGuideFooter(guides);
 		expect(footer).toContain("API:");
 		expect(footer).toContain("BOE API");
-		// api-kind guides route to api-guide({domain}), not web-guide.
-		expect(footer).toContain('api-guide({domain: "boe.es"})');
+		// api-kind guides route to api-guide({domain, guide}), not web-guide.
+		expect(footer).toContain('api-guide({domain: "boe.es", guide: "BOE API"})');
 		expect(footer).not.toContain('web-guide guide="boe-api"');
 	});
 
@@ -409,7 +417,9 @@ describe("formatGuideFooter — API subheader", () => {
 			},
 		];
 		const footer = formatGuideFooter(guides);
-		expect(footer).toContain('api-guide({domain: "orphan-api"})');
+		expect(footer).toContain(
+			'api-guide({domain: "orphan-api", guide: "Orphan API"})',
+		);
 	});
 
 	it("web-kind site guides still route to web-guide", () => {
@@ -426,6 +436,52 @@ describe("formatGuideFooter — API subheader", () => {
 		const footer = formatGuideFooter(guides);
 		expect(footer).toContain('web-guide guide="reddit"');
 		expect(footer).not.toContain("api-guide");
+	});
+
+	it("multiple api guides on one domain each route to a distinct api-guide({domain, guide})", () => {
+		const guides: ApplicableGuide[] = [
+			{
+				name: "api:internet-archive",
+				icon: "📖",
+				shortName: "Internet Archive",
+				reason: "API guide for archive.org",
+				category: "site",
+				kind: "api",
+				domain: "archive.org",
+			},
+			{
+				name: "api:wayback-availability",
+				icon: "📖",
+				shortName: "Wayback Availability",
+				reason: "API guide for archive.org",
+				category: "site",
+				kind: "api",
+				domain: "archive.org",
+			},
+			{
+				name: "api:wayback-cdx-server",
+				icon: "📖",
+				shortName: "Wayback CDX Server",
+				reason: "API guide for archive.org",
+				category: "site",
+				kind: "api",
+				domain: "archive.org",
+			},
+		];
+
+		const footer = formatGuideFooter(guides);
+		// Each line carries its own guide selector — no disambiguation menu
+		// round-trip, and no two lines share an invocation.
+		expect(footer).toContain(
+			'api-guide({domain: "archive.org", guide: "Internet Archive"})',
+		);
+		expect(footer).toContain(
+			'api-guide({domain: "archive.org", guide: "Wayback Availability"})',
+		);
+		expect(footer).toContain(
+			'api-guide({domain: "archive.org", guide: "Wayback CDX Server"})',
+		);
+		expect(footer).not.toContain('api-guide({domain: "archive.org"})');
 	});
 
 	it("shows API: then Site: when both api and web site guides are present (host-first order)", () => {
@@ -488,7 +544,7 @@ describe("buildDomainMap with providers", () => {
 		}));
 
 		const map = buildDomainMap();
-		expect(map["api.example.com"]).toContain("test-api");
+		expect(map["api.example.com"]).toContain("api:test-api");
 	});
 
 	it("a domain can hold both an API guide and a web guide", () => {
@@ -501,7 +557,7 @@ describe("buildDomainMap with providers", () => {
 
 		const map = buildDomainMap();
 		expect(map["example.com"]).toEqual(
-			expect.arrayContaining(["peer-api", "user-web"]),
+			expect.arrayContaining(["api:peer-api", "user-web"]),
 		);
 	});
 });
