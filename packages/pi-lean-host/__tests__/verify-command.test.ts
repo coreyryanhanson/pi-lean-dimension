@@ -369,20 +369,15 @@ function oauthAuthBlock(
 		"  kind: oauth2",
 		`  grant: ${grant}`,
 		"  tokenUrl: https://verify.test/oauth/token",
-		"  clientId: client",
+		"  clientId: { secret: client }",
 	];
 	if (grant === "authorization_code") {
 		lines.push(
 			"  authorizeUrl: https://verify.test/oauth/authorize",
 			"  redirectUri: http://localhost:9999/callback",
-			"  pkce: true",
 		);
 	} else {
-		lines.push(
-			"  secretRefs:",
-			"    client_secret:",
-			"      secret: client_secret",
-		);
+		lines.push("  clientSecret: { secret: client_secret }");
 	}
 	return lines.join("\n");
 }
@@ -429,7 +424,7 @@ describe("/api verify — oauth2 auth precheck", () => {
 
 	it("proceeds when a client_credentials guide can mint (client secret provisioned)", async () => {
 		setupGuide(recipe(opBlock(OP_HEALTH), oauthAuthBlock("client_credentials")));
-		writeSecret("verify.test", "client", "MY_CLIENT"); // clientId is a store NAME
+		writeSecret("verify.test", "client", "MY_CLIENT"); // clientId is a store ref
 		writeSecret("verify.test", "client_secret", "S3CRET");
 		vi.stubGlobal(
 			"fetch",

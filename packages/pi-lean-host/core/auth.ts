@@ -330,61 +330,61 @@ function toAccessTokenResult(
 	token: OAuthToken,
 	domain: string,
 ): AccessTokenResult {
-	// apiHeaders (e.g. Twitch's Client-Id) merge onto the same header map —
-	// resolved from the secrets store, fail-closed when a required one is
-	// missing (same store-read semantics as a static-key secret).
-	const apiHeaders: Record<string, string> = {};
-	const apiValues: string[] = [];
-	for (const [headerName, ref] of Object.entries(auth.apiHeaders ?? {})) {
+	// secretRefs (e.g. Twitch's Client-Id) merge onto the same header map —
+	// SAME semantics as static-key: resolved from the secrets store,
+	// fail-closed when a required one is missing.
+	const resolvedHeaders: Record<string, string> = {};
+	const resolvedValues: string[] = [];
+	for (const [headerName, ref] of Object.entries(auth.secretRefs ?? {})) {
 		const value = readSecret(domain, ref.secret);
 		if (value === null) {
 			if (ref.optional) continue;
 			throw new OAuthTokenMissingError(
-				`OAuth2 api header '${headerName}' needs the secret '${ref.secret}' provisioned ` +
+				`OAuth2 request header '${headerName}' needs the secret '${ref.secret}' provisioned ` +
 					`for '${domain}'. Run /api secrets ${domain} then /api oauth ${domain}.`,
 			);
 		}
-		apiHeaders[headerName] = (ref.prefix ?? "") + value;
-		apiValues.push(value);
+		resolvedHeaders[headerName] = (ref.prefix ?? "") + value;
+		resolvedValues.push(value);
 	}
 	const style = auth.paramStyle ?? "bearer-header";
 	if (style === "query") {
 		// RFC 6750 §2.3 — the query-injected param name is `access_token`.
 		return {
-			...(Object.keys(apiHeaders).length > 0
+			...(Object.keys(resolvedHeaders).length > 0
 				? {
-						authHeaders: apiHeaders,
+						authHeaders: resolvedHeaders,
 						// Strip them on cross-domain redirect hops, same as bearer style.
 						secretHeaderNames: new Set(
-							Object.keys(apiHeaders).map((h) => h.toLowerCase()),
+							Object.keys(resolvedHeaders).map((h) => h.toLowerCase()),
 						),
 					}
 				: {}),
 			secretQueryParams: { access_token: token.accessToken },
 			secretQueryParamNames: new Set(["access_token"]),
-			secretValues: [token.accessToken, ...apiValues],
+			secretValues: [token.accessToken, ...resolvedValues],
 		};
 	}
 	return {
 		authHeaders: {
 			authorization: `Bearer ${token.accessToken}`,
-			...apiHeaders,
+			...resolvedHeaders,
 		},
 		secretHeaderNames: new Set([
 			"authorization",
-			...Object.keys(apiHeaders).map((h) => h.toLowerCase()),
+			...Object.keys(resolvedHeaders).map((h) => h.toLowerCase()),
 		]),
-		secretValues: [token.accessToken, ...apiValues],
+		secretValues: [token.accessToken, ...resolvedValues],
 	};
 }
 
 /**
- * The client credentials for an oauth2 guide: client_id resolved from the
- * secrets store by the guide's `clientId` store NAME (never a literal — a
- * shippable guide must not bake in one app's registration), and the client
- * secret via its `secretRefs` map entry. Null secret when the guide declares
- * no client_secret ref (PKCE auth-code apps) or the store lacks it.
- * Throws `OAuthTokenMissingError` when the client_id store name is absent —
+ * The client credentials for an oauth2 guide: resolved from the secrets
+ * store via the guide's named `clientId` / `clientSecret` SecretRefs
+ * (store-resolved values appear ONLY as `SecretRef.secret` — a shippable
+ * guide bakes in no per-user registration). Null secret when the guide
+ * declares no `clientSecret` (PKCE auth-code apps) or the store lacks it.
+ * Throws `OAuthTokenMissingError` when the client id's store name is absent —
  * the token endpoint cannot be called without it.
  */
 export function resolveClientCredentials(
@@ -394,14 +394,14 @@ export function resolveClientCredentials(
 	clientId: string;
 	clientSecret: { secret: string; refName: string } | null;
 } {
-	const clientId = readSecret(domain, auth.clientId);
+	const clientId = readSecret(domain, auth.clientId.secret);
 	if (clientId === null) {
 		throw new OAuthTokenMissingError(
-			`OAuth2 needs the client id '${auth.clientId}' provisioned ` +
+			`OAuth2 needs the client id '${auth.clientId.secret}' provisioned ` +
 				`for '${domain}'. Run /api secrets ${domain} then /api oauth ${domain}.`,
 		);
 	}
-	const ref = auth.secretRefs?.["client_secret"];
+	const ref = auth.clientSecret;
 	const clientSecret = ref ? readSecret(domain, ref.secret) : null;
 	return {
 		clientId,
@@ -422,11 +422,10 @@ export function hasUsableTokenPath(auth: OAuth2Auth, domain: string): boolean {
 	if (token && !isTokenExpired(token)) return true;
 	if (token?.refreshToken) return true;
 	if (auth.grant === "client_credentials") {
-		const ref = auth.secretRefs?.["client_secret"];
 		return (
-			readSecret(domain, auth.clientId) !== null &&
-			!!ref &&
-			readSecret(domain, ref.secret) !== null
+			readSecret(domain, auth.clientId.secret) !== null &&
+			auth.clientSecret !== undefined &&
+			readSecret(domain, auth.clientSecret.secret) !== null
 		);
 	}
 	return false;
@@ -553,7 +552,7 @@ async function mintClientCredentialsToken(
 ): Promise<OAuthToken> {
 	const { clientId, clientSecret } = resolveClientCredentials(auth, domain);
 	if (!clientSecret) {
-		const refName = auth.secretRefs?.["client_secret"]?.secret ?? "client_secret";
+		const refName = auth.clientSecret?.secret ?? "client_secret";
 		throw new OAuthTokenMissingError(
 			`OAuth2 client_credentials needs the client secret '${refName}' provisioned ` +
 				`for '${domain}'. Run /api secrets ${domain} then /api oauth ${domain}.`,

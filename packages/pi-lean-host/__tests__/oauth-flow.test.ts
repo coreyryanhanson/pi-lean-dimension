@@ -48,12 +48,11 @@ function makeAuthCodeAuth(overrides: Partial<OAuth2Auth> = {}): OAuth2Auth {
 		kind: "oauth2",
 		grant: "authorization_code",
 		tokenUrl: TOKEN_URL,
-		// Store NAME semantics — resolved per-user from the secrets store.
-		clientId: "client_id",
-		secretRefs: { client_secret: { secret: "client_secret" } },
+		// Store-ref semantics — resolved per-user from the secrets store.
+		clientId: { secret: "client_id" },
+		clientSecret: { secret: "client_secret" },
 		authorizeUrl: AUTHORIZE_URL,
 		redirectUri: REDIRECT_URI,
-		pkce: true,
 		...overrides,
 	};
 }

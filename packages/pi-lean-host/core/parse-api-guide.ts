@@ -116,14 +116,13 @@ const AUTH_ALLOWLISTS: Record<AuthKind, ReadonlySet<string>> = {
 		"grant",
 		"tokenUrl",
 		"clientId",
+		"clientSecret",
 		"secretRefs",
-		"apiHeaders",
 		"scopes",
 		"paramStyle",
 		"tokenEndpointAuthMethod",
 		"authorizeUrl",
 		"redirectUri",
-		"pkce",
 		"revokeUrl",
 	]),
 };
@@ -690,74 +689,90 @@ function parseSecretRefs(
 	}
 	const out: Record<string, SecretRef> = {};
 	for (const [name, v] of Object.entries(raw)) {
-		if (v === null || typeof v !== "object" || Array.isArray(v)) {
-			return fail(
-				file,
-				`${field}.${name}`,
-				"a mapping with secret: <store name>",
-				describeFound(v),
-				{ snippet: snippetFor(fm, "auth") },
-			);
-		}
-		const ref = v as Record<string, unknown>;
-		const unknownRefKeys = Object.keys(ref).filter(
-			(k) => !["secret", "prefix", "optional"].includes(k),
-		);
-		if (unknownRefKeys.length > 0) {
-			return fail(
-				file,
-				`${field}.${name}`,
-				"a mapping with only secret/prefix/optional keys",
-				`unknown key(s): ${unknownRefKeys.join(", ")}`,
-				{ snippet: snippetFor(fm, "auth") },
-			);
-		}
-		const secret = ref["secret"];
-		if (typeof secret !== "string" || secret.length === 0) {
-			return fail(
-				file,
-				`${field}.${name}.secret`,
-				"a non-empty store name",
-				describeFound(secret),
-				{ snippet: snippetFor(fm, "auth") },
-			);
-		}
-		let prefix: string | undefined;
-		if (ref["prefix"] !== undefined) {
-			if (
-				typeof ref["prefix"] !== "string" ||
-				/^\{[a-zA-Z0-9_]+\}$/.test(ref["prefix"])
-			) {
-				return fail(
-					file,
-					`${field}.${name}.prefix`,
-					"a string prefix (empty allowed; not a bare {placeholder})",
-					describeFound(ref["prefix"]),
-					{ snippet: snippetFor(fm, "auth") },
-				);
-			}
-			prefix = ref["prefix"];
-		}
-		let optional: boolean | undefined;
-		if (ref["optional"] !== undefined) {
-			if (typeof ref["optional"] !== "boolean") {
-				return fail(
-					file,
-					`${field}.${name}.optional`,
-					"a boolean",
-					describeFound(ref["optional"]),
-					{ snippet: snippetFor(fm, "auth") },
-				);
-			}
-			optional = ref["optional"];
-		}
-		out[name] = {
-			secret,
-			...(prefix === undefined ? {} : { prefix }),
-			...(optional === undefined ? {} : { optional }),
-		};
+		const r = parseSecretRefValue(v, file, fm, `${field}.${name}`);
+		if (isParseErr(r)) return r;
+		out[name] = r;
 	}
 	return out;
+}
+
+/**
+ * Parse a single self-contained `SecretRef` value ({ secret, prefix?,
+ * optional? }). Used per-entry by `parseSecretRefs` and directly for the
+ * oauth2 named `clientId` / `clientSecret` fields.
+ */
+function parseSecretRefValue(
+	raw: unknown,
+	file: string | undefined,
+	fm: string,
+	field: string,
+): SecretRef | ParseApiGuideResult {
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+		return fail(
+			file,
+			field,
+			"a mapping with secret: <store name>",
+			describeFound(raw),
+			{ snippet: snippetFor(fm, "auth") },
+		);
+	}
+	const ref = raw as Record<string, unknown>;
+	const unknownRefKeys = Object.keys(ref).filter(
+		(k) => !["secret", "prefix", "optional"].includes(k),
+	);
+	if (unknownRefKeys.length > 0) {
+		return fail(
+			file,
+			field,
+			"a mapping with only secret/prefix/optional keys",
+			`unknown key(s): ${unknownRefKeys.join(", ")}`,
+			{ snippet: snippetFor(fm, "auth") },
+		);
+	}
+	const secret = ref["secret"];
+	if (typeof secret !== "string" || secret.length === 0) {
+		return fail(
+			file,
+			`${field}.secret`,
+			"a non-empty store name",
+			describeFound(secret),
+			{ snippet: snippetFor(fm, "auth") },
+		);
+	}
+	let prefix: string | undefined;
+	if (ref["prefix"] !== undefined) {
+		if (
+			typeof ref["prefix"] !== "string" ||
+			/^\{[a-zA-Z0-9_]+\}$/.test(ref["prefix"])
+		) {
+			return fail(
+				file,
+				`${field}.prefix`,
+				"a string prefix (empty allowed; not a bare {placeholder})",
+				describeFound(ref["prefix"]),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		prefix = ref["prefix"];
+	}
+	let optional: boolean | undefined;
+	if (ref["optional"] !== undefined) {
+		if (typeof ref["optional"] !== "boolean") {
+			return fail(
+				file,
+				`${field}.optional`,
+				"a boolean",
+				describeFound(ref["optional"]),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		optional = ref["optional"];
+	}
+	return {
+		secret,
+		...(prefix === undefined ? {} : { prefix }),
+		...(optional === undefined ? {} : { optional }),
+	};
 }
 
 function validateStaticKeyAuth(
@@ -823,30 +838,60 @@ function validateOAuth2Auth(
 		invalidFix: "Include the scheme, e.g. https://api.example.com/oauth/token",
 	});
 	if (typeof tokenUrl !== "string") return tokenUrl;
-	const clientId = a["clientId"];
-	if (typeof clientId !== "string" || clientId.length === 0) {
+	if (a["clientId"] === undefined) {
 		return fail(
 			file,
 			"auth.clientId",
-			"a non-empty string (the SECRETS-STORE NAME holding the client id, e.g. client_id — never a literal)",
-			describeFound(clientId),
+			"a secret ref ({ secret: <store name> })",
+			"missing",
 			{
 				snippet: snippetFor(fm, "auth"),
-				fix: "Set clientId to the store name provisioned via /api secrets <domain> (e.g. clientId: client_id) — a shippable guide must not bake in one app's client id.",
+				fix: "Add clientId: { secret: client_id } — the store name provisioned via /api secrets <domain>. A shippable guide must not bake in one app's client id.",
 			},
 		);
+	}
+	const clientId = parseSecretRefValue(a["clientId"], file, fm, "auth.clientId");
+	if (isParseErr(clientId)) return clientId;
+	if (clientId.prefix !== undefined || clientId.optional !== undefined) {
+		return fail(
+			file,
+			"auth.clientId",
+			"a ref with only { secret } — prefix/optional are meaningless on the client id (it is always required and always used verbatim)",
+			JSON.stringify(clientId),
+			{
+				snippet: snippetFor(fm, "auth"),
+				fix: "Remove prefix/optional from clientId — keep clientId: { secret: <store name> }.",
+			},
+		);
+	}
+	let clientSecret: SecretRef | undefined;
+	if (a["clientSecret"] !== undefined) {
+		const cs = parseSecretRefValue(
+			a["clientSecret"],
+			file,
+			fm,
+			"auth.clientSecret",
+		);
+		if (isParseErr(cs)) return cs;
+		if (cs.optional !== undefined && grant === "client_credentials") {
+			return fail(
+				file,
+				"auth.clientSecret.optional",
+				"absent for grant: client_credentials (clientSecret is parser-required there; optional can never fire)",
+				"optional: true",
+				{
+					snippet: snippetFor(fm, "auth"),
+					fix: "Remove optional from clientSecret — keep clientSecret: { secret: <store name> }.",
+				},
+			);
+		}
+		clientSecret = cs;
 	}
 	let secretRefs: Record<string, SecretRef> | undefined;
 	if (a["secretRefs"] !== undefined) {
 		const sr = parseSecretRefs(a["secretRefs"], file, fm, "auth.secretRefs");
 		if (isParseErr(sr)) return sr;
 		secretRefs = sr;
-	}
-	let apiHeaders: Record<string, SecretRef> | undefined;
-	if (a["apiHeaders"] !== undefined) {
-		const ah = parseSecretRefs(a["apiHeaders"], file, fm, "auth.apiHeaders");
-		if (isParseErr(ah)) return ah;
-		apiHeaders = ah;
 	}
 	let scopes: string[] | undefined;
 	if (a["scopes"] !== undefined) {
@@ -914,15 +959,6 @@ function validateOAuth2Auth(
 		}
 		redirectUri = a["redirectUri"];
 	}
-	let pkce: boolean | undefined;
-	if (a["pkce"] !== undefined) {
-		if (typeof a["pkce"] !== "boolean") {
-			return fail(file, "auth.pkce", "a boolean", describeFound(a["pkce"]), {
-				snippet: snippetFor(fm, "auth"),
-			});
-		}
-		pkce = a["pkce"];
-	}
 	let revokeUrl: string | undefined;
 	if (a["revokeUrl"] !== undefined) {
 		const rv = requireHttpUrl(a["revokeUrl"], "auth.revokeUrl", file, fm);
@@ -930,47 +966,48 @@ function validateOAuth2Auth(
 		revokeUrl = rv;
 	}
 
+	// tokenEndpointAuthMethod: none sends no client credentials (PKCE public
+	// clients) — a declared clientSecret alongside it is a contradiction.
+	if (tokenEndpointAuthMethod === "none" && clientSecret !== undefined) {
+		return fail(
+			file,
+			"auth.clientSecret",
+			"absent when tokenEndpointAuthMethod: none",
+			"present",
+			{
+				snippet: snippetFor(fm, "auth"),
+				fix: "Remove clientSecret — tokenEndpointAuthMethod: none sends no client credentials (PKCE public clients have no secret).",
+			},
+		);
+	}
+
 	// Grant-specific invariants.
 	if (grant === "client_credentials") {
-		if (!secretRefs || !secretRefs["client_secret"]) {
+		if (clientSecret === undefined) {
 			return fail(
 				file,
-				"auth.secretRefs.client_secret",
-				"a client_secret entry for grant: client_credentials",
+				"auth.clientSecret",
+				"a clientSecret ref for grant: client_credentials",
 				"missing",
 				{
-					fix: "Add `client_secret: { secret: <store name> }` under auth.secretRefs — the client secret is provisioned via /api secrets <domain>.",
+					snippet: snippetFor(fm, "auth"),
+					fix: "Add clientSecret: { secret: client_secret } — the store name provisioned via /api secrets <domain>.",
 				},
 			);
 		}
-		if (
-			authorizeUrl !== undefined ||
-			redirectUri !== undefined ||
-			pkce !== undefined
-		) {
+		if (authorizeUrl !== undefined || redirectUri !== undefined) {
 			return fail(
 				file,
 				"auth.authorizeUrl",
 				"absent for grant: client_credentials",
-				"authorizeUrl/redirectUri/pkce present",
+				"authorizeUrl/redirectUri present",
 				{
-					fix: "Remove authorizeUrl/redirectUri/pkce — client_credentials is server-to-server with no browser flow.",
+					fix: "Remove authorizeUrl/redirectUri — client_credentials is server-to-server with no browser flow.",
 				},
 			);
 		}
 	}
 	if (grant === "authorization_code") {
-		if (pkce !== true) {
-			return fail(
-				file,
-				"auth.pkce",
-				"true for grant: authorization_code",
-				describeFound(pkce),
-				{
-					fix: "Set pkce: true — PKCE is required for the auth-code flow.",
-				},
-			);
-		}
 		if (authorizeUrl === undefined) {
 			return fail(
 				file,
@@ -995,16 +1032,20 @@ function validateOAuth2Auth(
 		}
 	}
 
-	const result: OAuth2Auth = { kind: "oauth2", grant, tokenUrl, clientId };
+	const result: OAuth2Auth = {
+		kind: "oauth2",
+		grant,
+		tokenUrl,
+		clientId,
+		...(clientSecret === undefined ? {} : { clientSecret }),
+	};
 	if (secretRefs !== undefined) result.secretRefs = secretRefs;
-	if (apiHeaders !== undefined) result.apiHeaders = apiHeaders;
 	if (scopes !== undefined) result.scopes = scopes;
 	if (paramStyle !== undefined) result.paramStyle = paramStyle;
 	if (tokenEndpointAuthMethod !== undefined)
 		result.tokenEndpointAuthMethod = tokenEndpointAuthMethod;
 	if (authorizeUrl !== undefined) result.authorizeUrl = authorizeUrl;
 	if (redirectUri !== undefined) result.redirectUri = redirectUri;
-	if (pkce !== undefined) result.pkce = pkce;
 	if (revokeUrl !== undefined) result.revokeUrl = revokeUrl;
 	return result;
 }

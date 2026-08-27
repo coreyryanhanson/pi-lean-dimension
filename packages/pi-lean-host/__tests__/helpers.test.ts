@@ -1519,7 +1519,7 @@ describe("auth dispatch", () => {
 				kind: "oauth2",
 				grant: "client_credentials",
 				tokenUrl: "https://api.example.com/oauth/token",
-				clientId: "c",
+				clientId: { secret: "c" },
 			},
 		});
 		const op = makeOp({ path: "/api/items" });

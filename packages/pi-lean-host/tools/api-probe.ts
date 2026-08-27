@@ -1102,11 +1102,11 @@ function listDomainSecrets(domain: string): {
 					declaredSet.add(ref.secret);
 				break;
 			case "oauth2":
-				// clientId is a store NAME too — surface it in declared-vs-stored gaps.
-				declaredSet.add(guide.auth.clientId);
+				// clientId/clientSecret are SecretRefs too — surface their store
+				// names in declared-vs-stored gaps.
+				for (const ref of [guide.auth.clientId, guide.auth.clientSecret])
+					if (ref) declaredSet.add(ref.secret);
 				for (const ref of Object.values(guide.auth.secretRefs ?? {}))
-					declaredSet.add(ref.secret);
-				for (const ref of Object.values(guide.auth.apiHeaders ?? {}))
 					declaredSet.add(ref.secret);
 				break;
 			case "none":

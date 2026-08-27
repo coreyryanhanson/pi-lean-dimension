@@ -46,9 +46,9 @@ function makeOAuthGuide(
 		kind: "oauth2" as const,
 		grant: "client_credentials" as const,
 		tokenUrl: "https://token.example.com/oauth/token",
-		// Store NAME semantics — resolved per-user from the secrets store.
-		clientId: "client_id",
-		secretRefs: { client_secret: { secret: "client_secret" } },
+		// Store-NAME semantics — resolved per-user from the secrets store.
+		clientId: { secret: "client_id" },
+		clientSecret: { secret: "client_secret" },
 		...overrides,
 	};
 	return {
@@ -102,8 +102,8 @@ function tokenResponse(body: unknown, status = 200): Response {
 let tmpSecrets: string;
 let tmpOAuth: string;
 
-/** Provision both oauth2 credentials for a domain (client_id is a store
- *  name now — minting reads it like any other secret). */
+/** Provision both oauth2 credentials for a domain (clientId/clientSecret
+ *  are store refs — minting reads them like any other secret). */
 function provisionCreds(domain: string): void {
 	writeSecret(domain, "client_id", "MY_CLIENT");
 	writeSecret(domain, "client_secret", "S3CRET");
@@ -243,7 +243,6 @@ describe("resolveAccessToken (client_credentials)", () => {
 			grant: "authorization_code",
 			authorizeUrl: "https://api.example.com/oauth/authorize",
 			redirectUri: "http://localhost:9999/callback",
-			pkce: true,
 		});
 		await expect(
 			resolveAccessToken(guide, "oauth.authcode"),
@@ -282,10 +281,10 @@ describe("resolveAccessToken (client_credentials)", () => {
 		expect(res.secretValues).toEqual(["QT"]);
 	});
 
-	it("apiHeaders merge alongside the Bearer token and scrub with it", async () => {
+	it("secretRefs merge alongside the Bearer token and scrub with it", async () => {
 		provisionCreds("oauth.headers");
 		const guide = makeOAuthGuide("https://api.example.com", {
-			apiHeaders: { "Client-Id": { secret: "client_id" } },
+			secretRefs: { "Client-Id": { secret: "client_id" } },
 		});
 		stubTokenEndpoint(() =>
 			tokenResponse({ access_token: "HDR-TOKEN", expires_in: 3600 }),

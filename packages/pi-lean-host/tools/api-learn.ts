@@ -193,12 +193,13 @@ function authSummary(auth: AuthConfig): string {
 			}
 			break;
 		case "oauth2":
-			// clientId is a store NAME (resolved per-user), never a literal.
-			parts.push(`grant ${auth.grant} · clientId ← secret ${auth.clientId}`);
-			for (const [field, ref] of Object.entries(auth.secretRefs ?? {})) {
-				parts.push(`${field} ← secret ${ref.secret}`);
-			}
-			for (const [header, ref] of Object.entries(auth.apiHeaders ?? {})) {
+			parts.push(
+				`grant ${auth.grant} · clientId ← secret ${auth.clientId.secret}` +
+					(auth.clientSecret
+						? ` · clientSecret ← secret ${auth.clientSecret.secret}`
+						: ""),
+			);
+			for (const [header, ref] of Object.entries(auth.secretRefs ?? {})) {
 				parts.push(
 					`${header} ← secret ${ref.secret}${ref.prefix ? ` (${ref.prefix})` : ""}`,
 				);
@@ -266,9 +267,9 @@ const AUTHORING_MANUAL = [
 	"## Auth",
 	`  \`kind: static-key\` — keyed-header auth mode (values live in the secrets store, never in the recipe):`,
 	`  \`kind: oauth2\` — OAuth2 (client_credentials / authorization_code); token minting via /api oauth <domain>. ALL oauth2 credentials are store names, never literals — a shippable guide must not bake in one app's registration:`,
-	`    \`clientId\`        — the SECRETS-STORE NAME holding the client id (e.g. clientId: client_id)`,
-	`    \`secretRefs\`      — { client_secret: { secret: <store name> } } — token-endpoint form fields`,
-	`    \`apiHeaders\`      — { <request header>: { secret: <store name> } } — headers merged alongside the Bearer token (e.g. Twitch's Client-Id)`,
+	`    \`clientId\`        — { secret: <store name> } — the client id's secrets-store name (e.g. clientId: { secret: client_id })`,
+	`    \`clientSecret\`    — { secret: <store name> } — parser-required for client_credentials; absent for authorization_code (PKCE public clients)`,
+	`    \`secretRefs\`      — { <request header>: { secret: <store name>, prefix?, optional? } } — headers merged alongside the Bearer token (e.g. Twitch's Client-Id)`,
 	"  static-key (keyed APIs):",
 	`    \`secretRefs\`      — { <header name>: { secret: <store name>, prefix?, optional? } }  ← self-contained ref`,
 	`    \`secretQueryRefs\` — { <query param>: { secret: <store name>, optional? } }  ← query-param injection`,

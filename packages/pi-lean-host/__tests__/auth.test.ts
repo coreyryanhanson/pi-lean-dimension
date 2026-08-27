@@ -350,14 +350,12 @@ body
 		}
 	});
 
-	it("oauth2 client_credentials parses with a client_secret ref", () => {
+	it("oauth2 client_credentials parses with named clientId/clientSecret refs", () => {
 		const r = parseAuthBlock(`  kind: oauth2
   grant: client_credentials
   tokenUrl: https://api.example.com/oauth/token
-  clientId: my_client
-  secretRefs:
-    client_secret:
-      secret: client_secret
+  clientId: { secret: my_client }
+  clientSecret: { secret: client_secret }
   scopes: [read]
   paramStyle: bearer-header
   tokenEndpointAuthMethod: client_secret_post`);
@@ -367,77 +365,128 @@ body
 			if (r.guide.auth.kind === "oauth2") {
 				expect(r.guide.auth.grant).toBe("client_credentials");
 				expect(r.guide.auth.tokenUrl).toBe("https://api.example.com/oauth/token");
-				expect(r.guide.auth.secretRefs).toEqual({
-					client_secret: { secret: "client_secret" },
+				expect(r.guide.auth.clientId).toEqual({ secret: "my_client" });
+				expect(r.guide.auth.clientSecret).toEqual({
+					secret: "client_secret",
 				});
-			}
-		}
-	});
-
-	it("oauth2 client_credentials without a client_secret ref → ParseError", () => {
-		const r = parseAuthBlock(`  kind: oauth2
-  grant: client_credentials
-  tokenUrl: https://api.example.com/oauth/token
-  clientId: my_client`);
-		expect(r.ok).toBe(false);
-		if (!r.ok) {
-			expect(r.error.field).toBe("auth.secretRefs.client_secret");
-			expect(r.error.fix).toContain("client_secret");
-		}
-	});
-
-	it("oauth2 client_credentials with authorizeUrl/redirectUri/pkce → ParseError", () => {
-		const r = parseAuthBlock(`  kind: oauth2
-  grant: client_credentials
-  tokenUrl: https://api.example.com/oauth/token
-  clientId: my_client
-  secretRefs:
-    client_secret:
-      secret: client_secret
-  authorizeUrl: https://api.example.com/oauth/authorize
-  pkce: true`);
-		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.error.field).toBe("auth.authorizeUrl");
-	});
-
-	it("oauth2 authorization_code requires pkce + authorizeUrl + redirectUri; client_secret optional", () => {
-		const r = parseAuthBlock(`  kind: oauth2
-  grant: authorization_code
-  tokenUrl: https://api.example.com/oauth/token
-  clientId: my_client
-  authorizeUrl: https://api.example.com/oauth/authorize
-  redirectUri: http://localhost:9999/callback
-  pkce: true`);
-		expect(r.ok).toBe(true);
-		if (r.ok) {
-			expect(r.guide.auth.kind).toBe("oauth2");
-			if (r.guide.auth.kind === "oauth2") {
-				expect(r.guide.auth.grant).toBe("authorization_code");
-				expect(r.guide.auth.pkce).toBe(true);
 				expect(r.guide.auth.secretRefs).toBeUndefined();
 			}
 		}
 	});
 
-	it("oauth2 authorization_code without pkce: true → ParseError", () => {
+	it("oauth2 client_credentials without clientSecret → ParseError teaching the named ref", () => {
+		const r = parseAuthBlock(`  kind: oauth2
+  grant: client_credentials
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: { secret: my_client }`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.clientSecret");
+			expect(r.error.fix).toContain("clientSecret: { secret: client_secret }");
+		}
+	});
+
+	it("oauth2 client_credentials with authorizeUrl/redirectUri → ParseError", () => {
+		const r = parseAuthBlock(`  kind: oauth2
+  grant: client_credentials
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: { secret: my_client }
+  clientSecret: { secret: client_secret }
+  authorizeUrl: https://api.example.com/oauth/authorize`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error.field).toBe("auth.authorizeUrl");
+	});
+
+	it("oauth2 authorization_code requires authorizeUrl + redirectUri; clientSecret optional (PKCE implicit)", () => {
 		const r = parseAuthBlock(`  kind: oauth2
   grant: authorization_code
   tokenUrl: https://api.example.com/oauth/token
-  clientId: my_client
+  clientId: { secret: my_client }
   authorizeUrl: https://api.example.com/oauth/authorize
   redirectUri: http://localhost:9999/callback`);
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.guide.auth.kind).toBe("oauth2");
+			if (r.guide.auth.kind === "oauth2") {
+				expect(r.guide.auth.grant).toBe("authorization_code");
+				expect(r.guide.auth.clientSecret).toBeUndefined();
+				expect(r.guide.auth.secretRefs).toBeUndefined();
+			}
+		}
+	});
+
+	it("pkce is deleted — the key is rejected by the allowlist (PKCE implicit)", () => {
+		const r = parseAuthBlock(`  kind: oauth2
+  grant: authorization_code
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: { secret: my_client }
+  authorizeUrl: https://api.example.com/oauth/authorize
+  redirectUri: http://localhost:9999/callback
+  pkce: true`);
 		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.error.field).toBe("auth.pkce");
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.pkce");
+			expect(r.error.found).toContain("unknown key");
+		}
+	});
+
+	it("clientId as a bare store-name string → ParseError (store values appear only as SecretRef.secret)", () => {
+		const r = parseAuthBlock(`  kind: oauth2
+  grant: client_credentials
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: my_client
+  clientSecret: { secret: client_secret }`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.clientId");
+			expect(r.error.expected).toContain("secret: <store name>");
+		}
+	});
+
+	it("prefix/optional on clientId → ParseError (semantically impossible ref flags)", () => {
+		for (const flag of ["prefix: 'Bearer '", "optional: true"]) {
+			const r = parseAuthBlock(`  kind: oauth2
+  grant: client_credentials
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: { secret: my_client, ${flag} }
+  clientSecret: { secret: client_secret }`);
+			expect(r.ok).toBe(false);
+			if (!r.ok) expect(r.error.field).toBe("auth.clientId");
+		}
+	});
+
+	it("optional on clientSecret under client_credentials → ParseError (field is parser-required)", () => {
+		const r = parseAuthBlock(`  kind: oauth2
+  grant: client_credentials
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: { secret: my_client }
+  clientSecret: { secret: client_secret, optional: true }`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error.field).toBe("auth.clientSecret.optional");
+	});
+
+	it("tokenEndpointAuthMethod: none with clientSecret → ParseError", () => {
+		const r = parseAuthBlock(`  kind: oauth2
+  grant: authorization_code
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: { secret: my_client }
+  clientSecret: { secret: client_secret }
+  authorizeUrl: https://api.example.com/oauth/authorize
+  redirectUri: http://localhost:9999/callback
+  tokenEndpointAuthMethod: none`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.clientSecret");
+			expect(r.error.expected).toContain("none");
+		}
 	});
 
 	it("oauth2 with an unknown kind-only key → ParseError (per-variant allowlist)", () => {
 		const r = parseAuthBlock(`  kind: oauth2
   grant: client_credentials
   tokenUrl: https://api.example.com/oauth/token
-  clientId: my_client
-  secretRefs:
-    client_secret:
-      secret: client_secret
+  clientId: { secret: my_client }
+  clientSecret: { secret: client_secret }
   headers:
     X-Foo: bar`);
 		expect(r.ok).toBe(false);
@@ -798,7 +847,7 @@ describe("authStatusLine footer", () => {
 				kind: "oauth2",
 				grant: "client_credentials",
 				tokenUrl: "https://api.example.com/oauth/token",
-				clientId: "c",
+				clientId: { secret: "c" },
 			},
 			"auth.missing",
 		);

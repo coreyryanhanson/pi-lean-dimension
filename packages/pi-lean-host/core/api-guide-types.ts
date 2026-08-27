@@ -41,8 +41,8 @@ export type AuthKind = "none" | "static-key" | "oauth2";
  * A single secret reference — self-contained. Availability is a property of
  * THIS ref (default: required, fail-closed when absent), not a separate
  * roster. `prefix` folds the old top-level `headerPrefixes` inline. Shared by
- * `StaticKeyAuth` and `OAuth2Auth` (for oauth2 the map key is a FORM FIELD
- * NAME, not a header name — see `validateOAuth2`).
+ * `StaticKeyAuth` and `OAuth2Auth` with the SAME semantics (map key = request
+ * header name).
  */
 export interface SecretRef {
 	/** Store name (provisioned via /api secrets <domain>). */
@@ -91,26 +91,27 @@ export interface OAuth2Auth {
 	/** Token endpoint (POST — the only non-GET host makes, auth plumbing). */
 	tokenUrl: string;
 	/**
-	 * The SECRETS-STORE NAME holding the OAuth client id (e.g. `client_id`) —
-	 * resolved per-user at runtime, never a literal. A shippable recipe must
-	 * not bake in one registration's client id: every user registers their own
-	 * app (own quota), provisioning via /api secrets <domain>.
+	 * Client auth at the token endpoint is exactly two named scalars plus a
+	 * placement method (`tokenEndpointAuthMethod`) — never an open-ended form
+	 * map. Client authentication happens at the token endpoint; request-header
+	 * decoration is uniformly `secretRefs` (same semantics as static-key).
+	 * Store-resolved values appear ONLY as `SecretRef.secret` — a shippable
+	 * recipe bakes in no per-user credentials (each user registers their own
+	 * app → own quota, provisioned via /api secrets <domain>).
 	 */
-	clientId: string;
+	clientId: SecretRef;
 	/**
-	 * Reuses the nested `SecretRef` shape. For oauth2 the map key is a FORM
-	 * FIELD NAME (e.g. "client_secret"), not a header name. `client_secret`
-	 * is required for `client_credentials`, optional for `authorization_code`
-	 * (PKCE apps have no secret) — parser-enforced in `validateOAuth2`.
+	 * Parser-required for `client_credentials`; absent for `authorization_code`
+	 * (PKCE public clients have no secret) — enforced in `validateOAuth2Auth`.
+	 */
+	clientSecret?: SecretRef;
+	/**
+	 * Request header name → ref — SAME semantics as static-key (merged
+	 * alongside the Bearer token, stripped on cross-domain redirect hops,
+	 * scrubbed from output). E.g. Twitch's `Client-Id`. Values resolve from
+	 * the secrets store — per-user, never shipped in the guide.
 	 */
 	secretRefs?: Record<string, SecretRef>;
-	/**
-	 * API-request header name → store ref, merged alongside the Bearer token
-	 * on every request (e.g. Twitch's `Client-Id`). Distinct from `secretRefs`
-	 * (token-endpoint form fields). Values resolve from the secrets store —
-	 * per-user, never shipped in the guide.
-	 */
-	apiHeaders?: Record<string, SecretRef>;
 	/** Static scope list declared in the guide — no runtime picker. */
 	scopes?: string[];
 	/** Default bearer-header. `query` sends `?access_token=…` (RFC 6750 §2.3). */
@@ -121,8 +122,6 @@ export interface OAuth2Auth {
 	authorizeUrl?: string;
 	/** auth-code only. */
 	redirectUri?: string;
-	/** auth-code only (parser-enforced true). */
-	pkce?: boolean;
 	/** Optional revocation endpoint. */
 	revokeUrl?: string;
 }
