@@ -9,7 +9,7 @@
 
 | Candidate | Phase | Grant | Why |
 |-----------|-------|-------|-----|
-| **Reddit** | 1 | `client_credentials` | Clean confidential-client grant, well-documented token URL, `read` scope. App-only tokens never get a refresh token → exercises the "expired & no refresh → re-mint" branch. |
+| **Twitch** | 1 | `client_credentials` | Clean confidential-client grant, free account (no premium gate), public non-sensitive data, well-documented token URL. App tokens can't be refreshed → exercises the "expired & no refresh → re-mint" branch. Replaces Spotify (premium-gated) and beats Discord (private chat data). |
 | **Mastodon** | 2 | `authorization_code` + PKCE | Open source / community (the "not a soulless corp" pick), rich public read-only surface, PKCE officially supported (4.3+). |
 | **OpenStreetMap** | 2 | `authorization_code` + PKCE | Cleanest, most unambiguous PKCE + headless docs of the bunch; the `urn:ietf:wg:oauth:2.0:oob` manual-code path maps exactly onto our headless fallback. |
 
@@ -18,37 +18,48 @@ Bluesky has its own dedicated note: [`oauth2-bluesky-followup.md`](./oauth2-blue
 
 ---
 
-## Reddit — Phase 1 (client credentials)
+## Twitch — Phase 1 (client credentials)
+
+> Replaces Spotify (Phase 1): Spotify's Web API now requires an active
+> **premium subscription on the app owner** (verified live — 403 "Active
+> premium subscription required for the owner of the app"), which gates even
+> client-credentials / public data. Twitch has no such gate and serves public
+> (non-sensitive) data, so it took the slot. Discord was rejected as the
+> alternative — its API is private chat content (messages, channels, guilds),
+> a poor fit for a public read-only recipe.
 
 **Spec / reference links**
 
-- OAuth2 wiki (reddit-archive, authoritative): <https://github.com/reddit-archive/reddit/wiki/oauth2>
-- redditdev wiki — OAuth2 guide: <https://www.reddit.com/r/redditdev/wiki/oauth2/>
-- redditdev wiki — OAuth2 explanation: <https://www.reddit.com/r/redditdev/wiki/oauth2/explanation/>
-- Scopes reference: <https://www.reddit.com/api/v1/scopes>
-- Endpoint→scope matrix: <https://www.reddit.com/dev/api/oauth>
-- App registration (create a confidential "web app"): <https://www.reddit.com/prefs/apps>
+- Getting OAuth tokens — client-credentials flow: <https://dev.twitch.tv/docs/authentication/getting-tokens-oauth/#client-credentials-grant-flow>
+- Refreshing access tokens ("You cannot refresh app access tokens"): <https://dev.twitch.tv/docs/authentication/refresh-tokens/>
+- App registration (Developer dashboard): <https://dev.twitch.tv/dashboard>
+- API reference: <https://dev.twitch.tv/docs/api/reference>
 
 **Endpoints**
 
-- Token URL: `https://www.reddit.com/api/v1/access_token`
-- Authorize URL: `https://www.reddit.com/api/v1/authorize`
-- Authenticated API base: `https://oauth.reddit.com` (not `www.reddit.com`)
+- Token URL: `https://id.twitch.tv/oauth2/token`
+- Authorize URL: `https://id.twitch.tv/oauth2/authorize`
+- API base: `https://api.twitch.tv/helix`
 
 **Build-relevant facts**
 
-- Client-credentials request: POST form `grant_type=client_credentials` to the
-  token URL, **HTTP Basic auth** (`client_id` : `client_secret`) →
-  `tokenEndpointAuthMethod: client_secret_basic`.
-- Token response: `{ access_token, token_type: "bearer", expires_in, scope }`.
-- **App-only tokens never receive a refresh_token** — on expiry, re-mint via
-  client_credentials (no `refreshToken` in the store).
-- Requires a **confidential** app type (web app with a secret) for
-  `client_credentials` — fits the `client_secret`-in-secrets-store model.
-  Reddit's `installed_client` grant is Reddit-specific; not used.
-- **Requires a unique User-Agent header** (their API policy) — guide-level
-  `headers` entry.
-- Read-only scope: `read` (plus `identity`, `history`, etc. as needed).
+- Client-credentials request: POST x-www-form-urlencoded `client_id`,
+  `client_secret`, `grant_type=client_credentials` — all in the form body →
+  `tokenEndpointAuthMethod: client_secret_post`.
+- Token response: `{ access_token, expires_in, token_type: "bearer" }`.
+- **App access tokens cannot be refreshed** (Twitch docs: "You cannot refresh
+  app access tokens"). On expiry (the `expires_in` value), re-mint via
+  client_credentials — no `refreshToken` in the store. Exercises the
+  "expired & no refresh → re-mint" branch.
+- App tokens access **non-sensitive data only** (streams, games, users,
+  search, top games, clips, videos metadata) — no user permission needed.
+- **Helix requires a `Client-Id` header on every request** (plus
+  `Authorization: Bearer`). The oauth2 auth block has no literal-`headers`
+  field today — wrinkle to resolve at build time (add `headers` to
+  `OAuth2Auth`, or verify at test time).
+- Free account, no premium gate, no custom User-Agent requirement.
+- Corp — acceptable for Phase 1 (functional; the "less soulless" bar was
+  applied to the Phase 2 picks).
 
 ---
 
@@ -131,13 +142,22 @@ Bluesky has its own dedicated note: [`oauth2-bluesky-followup.md`](./oauth2-blue
 
 ## Evaluated, not selected (one-liners)
 
-- **Spotify** — both grants, canonical shape, good data; dropped for being a
-  corp (the "less soulless" bar). Docs: <https://developer.spotify.com/documentation/web-api/tutorials/client-credentials-flow>
+- **Reddit** — dropped: stopped issuing new app keys (the reason the Phase 1
+  client-credentials candidate moved on). Docs: <https://github.com/reddit-archive/reddit/wiki/oauth2>
+- **Spotify** — dropped: Web API requires an active **premium subscription on
+  the app owner** (verified live, 403), gating even client-credentials /
+  public data. Docs: <https://developer.spotify.com/documentation/web-api/tutorials/client-credentials-flow>
+- **Discord** — client credentials (Basic) but the API is **private chat
+  content** (messages, channels, guilds); rejected as privacy-invasive for a
+  public read-only recipe. Docs: <https://docs.discord.com/developers/topics/oauth2>
+- **PeerTube** — **does not fit**: its OAuth2 is exclusively the `password`
+  grant (ROPC — the deprecated grant we never build); the OpenAPI spec
+  declares `flows: password` only, no `client_credentials`. Tokens are
+  user-scoped (username/password, role admin/moderator/user). Docs: <https://docs.joinpeertube.org/api/rest-getting-started>
+  See [`oauth2-peertube-login-followup.md`](./oauth2-peertube-login-followup.md) for the deferred `/api login` backlog item.
 - **GitHub** — auth-code + PKCE, the plan's original named example, already
   has a static-key guide; viable fallback. Docs: <https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps>
-- **Twitch** — both grants (`client_secret_post`); docs: <https://dev.twitch.tv/docs/authentication/getting-tokens-oauth/>
 - **Zoom** — both grants; docs: <https://developers.zoom.us/docs/integrations/oauth/>
-- **Discord** — client credentials (Basic); docs: <https://docs.discord.com/developers/topics/oauth2>
 - **Microsoft Graph** — client credentials (app-only) but complex (tenant,
   `.default` scope); docs: <https://learn.microsoft.com/en-us/graph/auth-v2-service>
 - **GitLab** — auth-code + PKCE but open-core corp; no client-credentials

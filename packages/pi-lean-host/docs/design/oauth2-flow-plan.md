@@ -23,29 +23,20 @@
 > `0.4.0` is the last preview release. All prior versions are unofficial,
 > so this is the cheapest moment to lay the v1 foundation cleanly.
 
-> **Phase 1 status (landed).** The union refactor + client_credentials
-> runtime shipped: `AuthConfig` is now the discriminated union with nested
-> `SecretRef`, `oauth2` parses (both grants), `resolveAccessToken` mints /
-> refreshes lazily (per-domain lock + skew buffer), `/api oauth` provisions
-> tokens, and `GUIDE_SCHEMA_VERSION` is bumped to `1`. **Deferred by
-> decision:** the hard-gate flip (`isStaleSchema` stays a non-blocking ⚠
-> warning) — it lands with the coordinated `0.5.0` step alongside caritas
-> re-stamping. The auth-code interactive flow (`oauth-flow.ts`) is Phase 2.
-
-> **Phase 2 status (landed).** The interactive auth-code + PKCE half shipped:
-> `core/oauth-flow.ts` (PKCE pair gen, `buildAuthorizeUrl`, loopback
-> `startCallbackServer` bound to `127.0.0.1`, `mintAuthCodeToken`
-> orchestration), `/api oauth` routes `authorization_code` guides through the
-> flow (`--code <code>` completes a headless manual-code flow, `--refresh`
-> refreshes via the stored refresh token), the `/api verify` precheck gained
-> an oauth2 arm (fail-fast via `hasUsableTokenPath`), and `exchangeAuthCode` /
-> `forceRefreshToken` landed in `auth.ts`. **Deferred by decision:** the
-> `api-probe` inline-oauth2 block (mint-on-demand vs pre-provisioned token) is
-> pushed to Phase 3 — it is not in the exit criteria and only becomes
-> meaningful when the axis guide + recipes land; the injection-fields-only
-> model stays for now. Headless completion is via `--code` (a pasted code),
-> not a `ctx.ui.input()` prompt — `ctx.ui.input()` requires `hasUI`, and
-> `--code` works headless and interactive alike.
+> **Phase 1 status (landed).** Union refactor + nested `SecretRef` +
+> client_credentials runtime shipped; `GUIDE_SCHEMA_VERSION` bumped to `1`.
+> **Deferred by decision:** the hard-gate flip (`isStaleSchema` stays a
+> non-blocking ⚠ warning) — lands with the coordinated `0.5.0` step alongside
+> caritas re-stamping.
+>
+> **Phase 2 status (landed).** `core/oauth-flow.ts` (PKCE pair gen, loopback
+> listener bound to `127.0.0.1`, `mintAuthCodeToken`), `/api oauth` routes
+> `authorization_code` guides through the flow, `/api verify` gained an
+> oauth2 precheck arm, and probe gained inline `auth.useTokenStore` —
+> store-read only, no mint-on-demand (YAGNI; absent/expired tokens surface a
+> note and the call proceeds unauthenticated). Headless completion is the
+> `--code <code>` flag, not a `ctx.ui.input()` prompt (which requires
+> `hasUI`).
 
 ## Current state (the seams already in place)
 
@@ -230,15 +221,20 @@ interface StaticKeyAuth {
   secretQueryRefs?: Record<string, SecretRef>;      // query param name → ref
 }
 
+// Final shape (amended by Phase 2.5 — see below for the two wobbles it
+// fixes): client auth at the token endpoint is two named SecretRefs plus a
+// placement method, never an open-ended form map. Store-resolved values
+// appear ONLY as SecretRef.secret — a shippable recipe bakes in no per-user
+// credentials (each user registers their own app → own quota).
 interface OAuth2Auth {
   kind: "oauth2";
   grant: "client_credentials" | "authorization_code";
   tokenUrl: string;
-  clientId: string;
-  // Reuses the same nested SecretRef shape as static-key. For oauth2 the
-  // map key is a FORM FIELD NAME (e.g. "client_secret"), not a header name —
-  // validateOAuth2 documents this. Future-proofs for private_key_jwt / mTLS
-  // which need more than one secret ref (signing key + cert).
+  clientId: SecretRef;                       // required for both grants (the authorize URL needs it too)
+  clientSecret?: SecretRef;                  // parser-required for client_credentials; absent for PKCE public clients
+  // Request header name → ref — SAME semantics as static-key (merged
+  // alongside the Bearer token, stripped on cross-domain redirect hops,
+  // scrubbed from output).
   secretRefs?: Record<string, SecretRef>;
   scopes?: string[];
   paramStyle?: "bearer-header" | "query";   // default bearer-header
@@ -246,7 +242,7 @@ interface OAuth2Auth {
   // auth-code-only (parser-enforced present iff grant === "authorization_code"):
   authorizeUrl?: string;
   redirectUri?: string;
-  pkce?: boolean;                            // parser-enforced true for auth-code
+  pkce?: boolean;                            // parser-enforced true for auth-code; none ⇒ clientSecret absent
   revokeUrl?: string;                        // optional revocation endpoint
 }
 
@@ -274,15 +270,13 @@ auth:                              auth:
 ```
 
 ```yaml
-# oauth2 client_credentials
+# oauth2 client_credentials (final shape — Phase 2.5)
 auth:
   kind: oauth2
   grant: client_credentials
   tokenUrl: https://api.example.com/oauth/token
-  clientId: my_client_id
-  secretRefs:
-    client_secret:
-      secret: client_secret
+  clientId: { secret: client_id }
+  clientSecret: { secret: client_secret }
   scopes: [read]
   paramStyle: bearer-header
   tokenEndpointAuthMethod: client_secret_post
@@ -309,7 +303,10 @@ Three shape decisions baked in:
   need an auth-block **rewrite** (not just a restamp) — accepted, this is
   the right moment. The same nested shape is reused on the oauth2 variant
   (future-proofs for `private_key_jwt` / mTLS, which need >1 secret ref);
-  there the map key is a form-field name, not a header name.
+  there the map key is a form-field name, not a header name. *(Superseded by
+  Phase 2.5: the oauth2 form-field map is replaced by named
+  `clientId`/`clientSecret` refs, and request-header decoration is uniformly
+  `secretRefs`.)*
 - **`tokenEndpointAuthMethod` is declared.** RFC 6749 §2.3.1 / RFC 7591:
   clients authenticate at the token endpoint via `client_secret_basic`,
   `client_secret_post`, `private_key_jwt`, `none`, etc. Hardcoding one (the
@@ -548,6 +545,83 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
 - **Tests** — mocked transport + a mocked loopback callback for the
   auth-code exchange; assert PKCE verifier/challenge wiring, state check,
   token-store stamp, headless manual-code path.
+
+### Phase 2.5 — Auth schema final shape (pre-freeze)
+
+The Twitch live-verification pass (see
+[`oauth2-flow-research.md`](./oauth2-flow-research.md)) exposed two shape
+wobbles in the landed oauth2 variant. Both are fixed here, before the
+`0.5.0` freeze: churn is free (this plan squashes as one PR), and the bump
+rule makes post-freeze **additions** non-events — but a shipped speculative
+shape can never be removed without another bump. Lock the shape now; keep
+only what known providers need.
+
+Two wobbles:
+
+1. **`secretRefs` means two different things depending on kind.** On
+   `static-key` its keys are request header names; on `oauth2` they are
+   token-endpoint form-field names — so the *same concept* ("inject this
+   store secret into this request header") is `secretRefs` on static-key but
+   got a brand-new name (`apiHeaders`) on oauth2. An author who knows one
+   kind must re-learn the other.
+2. **`clientId: string` breaks the schema's own invariant.** Everywhere
+   else, store-resolved values appear only as `SecretRef.secret`; `clientId`
+   was a bare string silently interpreted as a store NAME (only the parse
+   error's `fix` text polices it) — `clientId: abc123` parses and fails at
+   runtime.
+
+The fix:
+
+- **`apiHeaders` is deleted.** The oauth2 variant's `secretRefs` takes over
+  with the *same* semantics as static-key: request header name →
+  `SecretRef`, merged alongside the Bearer token, stripped on cross-domain
+  redirect hops, scrubbed. Request decoration is now uniform across kinds
+  (`secretRefs` headers, `secretQueryRefs` params, `headers` literals).
+- **The oauth2 form-field map is deleted.** Client authentication at the
+  token endpoint is never an open-ended map — for every grant in scope it is
+  exactly two named scalars plus a placement method: `clientId: SecretRef`
+  and `clientSecret?: SecretRef` (parser-required for `client_credentials`;
+  optional/absent for `authorization_code` — PKCE public clients have no
+  secret), with `tokenEndpointAuthMethod: none` ⇒ `clientSecret` absent
+  enforced at parse. The map's "future-proofing" argument doesn't hold:
+  `private_key_jwt` needs a *computed* signed assertion (a signing-key ref +
+  alg field when it ever lands) and mTLS is TLS-layer — neither fits a raw
+  store-value form map. And since post-freeze optional-field additions are
+  non-events, omitting the map now is free while shipping it would be
+  unremovable without another bump.
+- **Invariant restored:** store-resolved values appear only as
+  `SecretRef.secret` — `clientId: { secret: client_id }` cannot parse as a
+  literal by accident.
+
+`validateOAuth2` changes: the client_credentials "must contain a
+`client_secret` entry" map inspection becomes a `clientSecret` field check;
+`none` + `clientSecret` present is a parse error (was silently ignored).
+
+```yaml
+# Twitch — every line is one rule; no map-key semantics to look up
+auth:
+  kind: oauth2
+  grant: client_credentials
+  tokenUrl: https://id.twitch.tv/oauth2/token
+  clientId: { secret: client_id }
+  clientSecret: { secret: client_secret }
+  tokenEndpointAuthMethod: client_secret_post
+  secretRefs:                 # identical meaning to static-key
+    Client-Id:
+      secret: client_id
+```
+
+Deliberately omitted (additive post-freeze, non-events when a recipe needs
+them): oauth2 `secretQueryRefs`, oauth2 literal `headers`.
+
+Touch list (mechanical): `core/api-guide-types.ts` (shape),
+`core/parse-api-guide.ts` (`validateOAuth2` field checks + allowlist swap),
+`core/auth.ts` (`resolveClientCredentials` reads the two named refs;
+`toAccessTokenResult`'s apiHeaders merge path becomes the `secretRefs`
+path), `core/oauth-flow.ts` (unchanged — `buildAuthorizeUrl` already takes
+the resolved value), the declared-names walks in `core/secrets-command.ts` +
+`tools/api-probe.ts`, `authSummary` + template in `tools/api-learn.ts`, the
+live Twitch guide, and the oauth/oauth-flow test fixtures.
 
 ### Phase 3 — Axis coverage + caritas recipes
 
