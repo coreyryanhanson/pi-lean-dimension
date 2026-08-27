@@ -36,7 +36,9 @@
 > store-read only, no mint-on-demand (YAGNI; absent/expired tokens surface a
 > note and the call proceeds unauthenticated). Headless completion is the
 > `--code <code>` flag, not a `ctx.ui.input()` prompt (which requires
-> `hasUI`).
+> `hasUI`). **Superseded:** the loopback listener and interactive callback
+> capture described here are **deleted** by Phase 2.6 — the headless
+> paste-the-URL path becomes the only auth-code path.
 
 ## Current state (the seams already in place)
 
@@ -110,9 +112,9 @@ client needs; the rest are deferred.
 
 ### Defer (one-liners in the guide, rejected or ignored at parse)
 
-- **Device flow (RFC 8628)** — covered behaviorally by the manual-code
-  headless fallback of the auth-code flow; don't build the full device
-  endpoint dance until a recipe needs it.
+- **Device flow (RFC 8628)** — the auth-code flow is paste-based (Phase 2.6);
+  its remaining delta over RFC 8628 is nil, so there is nothing left to
+  cover behaviorally.
 - **Implicit / `token` response** — deprecated; never build.
 - **Resource Owner Password Credentials** — deprecated; never build.
 - **Multiple accounts per domain** — one token set per domain (v1). Matches
@@ -131,13 +133,13 @@ client needs; the rest are deferred.
 The user consents in **their own browser** at the provider, logging in with
 their own credentials. Routing that through portal's driven browser would
 flow the user's provider password through agent context — a hard no. So the
-auth-code flow is: host generates the authorize URL (with a PKCE challenge),
-spins up a **loopback HTTP listener** to capture the
-`http://localhost:<port>/callback?code=…` redirect, opens/prints the
-authorize URL for the user, and exchanges the captured code for tokens. No
-static portal import, host-only boundary stays green. (Opening the user's
-default browser is best-effort via `ctx.ui` / a printed clickable URL;
-headless just prints the URL + a manual code-paste prompt.)
+auth-code flow is (headless-only since Phase 2.6): host generates the
+authorize URL (with a PKCE challenge), prints it for the user, and the user
+pastes back the redirect URL (or bare code) their browser lands on at
+`http://localhost/callback`; host parses, validates `state`, and exchanges
+the code for tokens. No static portal import, host-only boundary stays
+green. Nothing listens on any port, so the flow works unchanged whether
+pi runs on the user's machine, in a container, or inside a VM.
 
 Portal **is** used for the *research/authoring* step below — but that's a
 one-off human+agent task, not a runtime dependency of shipped code.
@@ -222,10 +224,11 @@ interface StaticKeyAuth {
 }
 
 // Final shape (amended by Phase 2.5 — see below for the two wobbles it
-// fixes): client auth at the token endpoint is two named SecretRefs plus a
-// placement method, never an open-ended form map. Store-resolved values
-// appear ONLY as SecretRef.secret — a shippable recipe bakes in no per-user
-// credentials (each user registers their own app → own quota).
+// fixes plus the two review amendments): client auth at the token endpoint
+// is two named SecretRefs plus a placement method, never an open-ended form
+// map. Store-resolved values appear ONLY as SecretRef.secret — a shippable
+// recipe bakes in no per-user credentials (each user registers their own
+// app → own quota).
 interface OAuth2Auth {
   kind: "oauth2";
   grant: "client_credentials" | "authorization_code";
@@ -241,8 +244,13 @@ interface OAuth2Auth {
   tokenEndpointAuthMethod?: "client_secret_basic" | "client_secret_post" | "none";
   // auth-code-only (parser-enforced present iff grant === "authorization_code"):
   authorizeUrl?: string;
-  redirectUri?: string;
-  pkce?: boolean;                            // parser-enforced true for auth-code; none ⇒ clientSecret absent
+  // redirectUri deleted (Phase 2.6): the redirect URI is a fact of the
+  // USER's app registration (per-user, like clientId), not the provider's
+  // API. The runtime owns the redirect end-to-end via the documented
+  // convention `http://localhost/callback`; see Phase 2.6.
+  // pkce deleted (review amendment): authorization_code is implicitly PKCE.
+  // A field whose only legal value was true is authoring ceremony; an opt-out,
+  // if ever needed, is a relaxing non-event post-freeze.
   revokeUrl?: string;                        // optional revocation endpoint
 }
 
@@ -501,6 +509,11 @@ No browser, no loopback server, no PKCE. The minimum viable OAuth2.
 
 ### Phase 2 — Authorization Code with PKCE (the interactive half)
 
+> *(Land-history section. Phase 2.6 deletes the loopback listener and the
+> interactive callback capture described below — the paste path becomes the
+> only auth-code path. Kept verbatim as history; read Phase 2.6 for current
+> truth.)*
+
 - **`core/oauth-flow.ts`** (new) — the interactive dance, host-only:
   - Generate `code_verifier` + `code_challenge` (S256).
   - Spin up a loopback `http.createServer` on an ephemeral port, bound
@@ -593,9 +606,43 @@ The fix:
   `SecretRef.secret` — `clientId: { secret: client_id }` cannot parse as a
   literal by accident.
 
+Two review amendments (from the reviewer/oracle pass over this shape —
+both folded in pre-freeze while the delta is free):
+
+- **`pkce` is deleted — PKCE is implicit.** The parser required
+  `pkce: true` on every auth-code guide, making it a mandatory author line
+  whose only legal value is `true`: pure ceremony (one line per guide plus a
+  parser check) carrying zero information. `grant: authorization_code` is
+  always PKCE — mandatory in OAuth 2.1 practice anyway. If a no-PKCE
+  provider ever appears, an opt-out is a *relaxing* post-freeze addition — a
+  non-event under the bump rule. Cutting it now is free; shipping
+  mandatory-true forever is not.
+- **Semantically impossible ref flags are parse errors.** `prefix` and
+  `optional` on `clientId` are rejected (an optional client id that
+  fail-closes anyway is a dead flag implying behavior it doesn't have), as
+  is `optional: true` on `clientSecret` under `grant: client_credentials`
+  (the field is parser-required there; `optional` can never fire).
+
 `validateOAuth2` changes: the client_credentials "must contain a
 `client_secret` entry" map inspection becomes a `clientSecret` field check;
-`none` + `clientSecret` present is a parse error (was silently ignored).
+`none` + `clientSecret` present is a parse error (was silently ignored);
+plus the two review amendments above — `grant: authorization_code` ⇒
+`authorizeUrl` + `redirectUri` with PKCE implicit (no `pkce` field), and
+the impossible-ref-flag rejections (`prefix`/`optional` on `clientId`,
+`optional` on `clientSecret` for `client_credentials`). *(Phase 2.6 later
+cuts `redirectUri` from this invariant — see below.)*
+
+**Parse-error fix texts are part of the touch list, not an afterthought.**
+The live parse errors still teach the pre-2.5 shape — e.g. the
+client-credentials failure says "Add `client_secret: { secret: <store name>}`
+under auth.secretRefs" and the clientId failure says "Set clientId to the
+store name (e.g. `clientId: client_id`)" (`parse-api-guide.ts:822-836`).
+Under 2.5 both must teach `clientSecret: { secret: … }` /
+`clientId: { secret: … }` and drop the form-field map references. The parse
+error is the author's primary teacher — wrong fix text is direct author
+debt. Same sweep covers the `SecretRef` docstring in `api-guide-types.ts`
+("for oauth2 the map key is a FORM FIELD NAME" — stale once the map is
+gone).
 
 ```yaml
 # Twitch — every line is one rule; no map-key semantics to look up
@@ -612,16 +659,120 @@ auth:
 ```
 
 Deliberately omitted (additive post-freeze, non-events when a recipe needs
-them): oauth2 `secretQueryRefs`, oauth2 literal `headers`.
+them): oauth2 `secretQueryRefs`, oauth2 literal `headers`, and static
+extra token-endpoint params. The likeliest first need is Auth0's machine
+apps, which require a static `audience` form param on the token POST — not
+a secret, not a named ref. The sanctioned future fix is
+`tokenEndpointParams?: Record<string, string>` (**literal values only**;
+secrets belong in refs, so this must never become the form map's return).
+Name it here so nobody "solves" it by resurrecting the deleted map.
 
-Touch list (mechanical): `core/api-guide-types.ts` (shape),
-`core/parse-api-guide.ts` (`validateOAuth2` field checks + allowlist swap),
+Related forward note for a future ROPC implementer (`grant: "password"` —
+see [`oauth2-peertube-login-followup.md`](./oauth2-peertube-login-followup.md)):
+token-endpoint credentials (username/password) must be **named optional
+fields** (e.g. `username?: SecretRef`) or prompt-sourced — never a
+`secretRefs` overload, which after 2.5 means request headers and would
+re-create wobble #1.
+
+Touch list (mechanical): `core/api-guide-types.ts` (shape + stale
+`SecretRef` docstring),
+`core/parse-api-guide.ts` (`validateOAuth2` field checks + allowlist swap +
+the parse-error fix-text sweep — see above),
 `core/auth.ts` (`resolveClientCredentials` reads the two named refs;
 `toAccessTokenResult`'s apiHeaders merge path becomes the `secretRefs`
-path), `core/oauth-flow.ts` (unchanged — `buildAuthorizeUrl` already takes
-the resolved value), the declared-names walks in `core/secrets-command.ts` +
+path), `core/oauth-flow.ts` (listener + interactive path deleted per
+Phase 2.6 — `buildAuthorizeUrl` and the code exchange survive unchanged;
+see the Phase 2.6 touch list), the declared-names walks in `core/secrets-command.ts` +
 `tools/api-probe.ts`, `authSummary` + template in `tools/api-learn.ts`, the
 live Twitch guide, and the oauth/oauth-flow test fixtures.
+
+### Phase 2.6 — Headless-only auth-code flow (pre-freeze runtime
+
+simplification)
+
+The landed Phase 2 auth-code flow has two paths: an interactive one (pi
+spins up a loopback HTTP listener on an ephemeral port, the provider
+redirects the user's browser into it, pi captures the `code` automatically)
+and a headless one (pi prints the authorize URL; the user pastes the code
+back). Decision, pre-freeze while churn is free: **rip out the interactive
+path — the loopback listener and everything attached to it — and make the
+paste path the only path.**
+
+Why: the interactive path's entire delta over the paste path is **one saved
+copy-paste**. Security properties are identical (the user consents in their
+own browser either way; pi never sees provider credentials), the token
+result is identical, and the error surface is actually *better* on the
+paste path (below). Against that one copy-paste it costs a per-run HTTP
+server, ephemeral port selection, NAT/port-forwarding caveats in the
+environments pi users actually deploy in (VMs, containers, servers),
+timeout and cleanup logic, and their tests. A non-deterministic agent with
+filesystem access is already the unusual trust situation — a local listener
+that auto-completes consent is not the tier worth that machinery. The
+paste flow is what every CLI OAuth tool uses, and it works unchanged
+whether pi runs on the user's machine, in a container, or inside a VM —
+there is no inbound-network dependency at all.
+
+The flow after the cut:
+
+1. `/api oauth <domain>` prints the authorize URL (PKCE challenge, state,
+   `redirect_uri=http://localhost/callback` per the convention below) and
+   prompts for the result.
+2. The user opens the URL, logs in / consents at the provider in their own
+   browser. The provider redirects to `http://localhost/callback?…` — a
+   dead page (nothing is listening, by design) — and the full redirect URL
+   sits in the browser's address bar.
+3. The user pastes that URL (or just the bare code) into pi's prompt.
+4. Pi parses it, validates `state`, exchanges the code (+ PKCE verifier) at
+   `tokenUrl`, stamps the token store.
+
+**Paste parsing accepts the full redirect URL or a bare code, and the full
+URL is the documented default** because it is what users instinctively
+copy from the address bar, and it carries information a bare code cannot:
+
+- **`state` validation becomes possible.** A bare-code paste skips the
+  state check (pi never sees it); a full-URL paste carries it, so the
+  check that the interactive path performed is preserved for free.
+- **Provider error surfacing.** Failures arrive as
+  `?error=access_denied&error_description=…`; pi can show the provider's
+  actual reason instead of a generic "exchange failed".
+- Tolerant parsing: extract via `URLSearchParams`-style query handling;
+  accept with or without the full host, with or without the other params.
+
+**`redirectUri` is deleted from the schema (amendment #3).** The redirect
+URI is a fact of the *user's* app registration at the provider — which
+URIs they whitelisted for their own client — not a fact of the provider's
+API. It sits in the same per-user bucket as `clientId`/`clientSecret`
+("a shippable recipe bakes in no per-user registration facts"), and the
+landed interactive flow ignored the declared value anyway (risk #2 from the
+author-pain review: authors copied the declared value, registered it,
+and the runtime bound a different port). The schema carries zero per-user
+registration facts; one documented convention replaces the field for all
+guides:
+
+> Register `http://localhost/callback` for your OAuth app (RFC 8252 §7.3 —
+> loopback, variable port). After consenting, copy the redirect URL from
+> your browser's address bar and paste it back into pi.
+
+One docs line, uniform across every auth-code guide — versus a mandatory
+per-guide field that the interactive runtime silently bypassed and the
+headless path only needed for self-consistency between two
+runtime-composed requests. Cutting it now is free; a provider that
+demands an exact fixed-port loopback URI was already incompatible with
+the dynamic-port listener model. `validateOAuth2`'s auth-code invariant
+becomes `grant: authorization_code` ⇒ `authorizeUrl` (that one is a real
+per-provider fact and stays).
+
+Touch list (mechanical): `core/oauth-flow.ts` (delete `startCallbackServer`
+/ loopback capture; keep PKCE pair gen, `buildAuthorizeUrl`, the code
+exchange, and `mintAuthCodeToken`), `core/oauth-command.ts` (the paste
+prompt becomes the primary — and only — completion path; `--code` remains
+for non-interactive scripting), the `redirectUri` removals in
+`core/api-guide-types.ts` + `core/parse-api-guide.ts` (`validateOAuth2`
+invariant drops to `authorizeUrl` only, allowlist drops the field, the
+Phase 2.5 fix-text sweep covers the new messages), and
+`__tests__/oauth-flow.test.ts` (loopback-callback + listener-lifecycle
+tests replaced by paste-parse tests: bare code, full URL with state,
+`?error=` surfacing, tolerant no-host input).
 
 ### Phase 3 — Axis coverage + caritas recipes
 
@@ -677,17 +828,15 @@ live Twitch guide, and the oauth/oauth-flow test fixtures.
 - **`client_secret` lives in the secrets store**, not the token store —
   it's a raw credential provisioned once via `/api secrets <domain>`,
   exactly like a static key. The oauth2 variant references it through its
-  `secretRefs` map (e.g. `client_secret: { secret: client_secret }`),
-  reusing the same nested `SecretRef` shape as static-key. Only the minted
-  tokens live in the token store.
-- **Auth-code `client_secret` is optional with no ref entry.** A PKCE
-  auth-code app has no client secret, so its guide simply omits the
-  `client_secret` entry from `secretRefs` (and omits it from any list — there
-  is no `optional` list anymore). This sidesteps the old `checkDeclared`
-  rule that rejected an `optional` name not referenced by any ref: there is
-  no list to diverge from. `validateOAuth2` enforces `grant: authorization_code`
-  ⇒ `pkce: true` + `authorizeUrl` + `redirectUri`; `client_secret` in
-  `secretRefs` is allowed but not required.
+  named `clientSecret: { secret: client_secret }` ref (final Phase 2.5
+  shape — the pre-2.5 "via its `secretRefs` map" wording is superseded).
+  Only the minted tokens live in the token store.
+- **Auth-code `client_secret` is optional.** A PKCE auth-code app has no
+  client secret, so its guide simply omits the `clientSecret` field.
+  `validateOAuth2` enforces `grant: authorization_code`
+  ⇒ `authorizeUrl` (PKCE implicit per Phase 2.5; `redirectUri` cut per
+  Phase 2.6 — the runtime convention replaces it); `clientSecret` is
+  allowed but not required.
 - **Refresh is lazy and on-demand**, inside `resolveAccessToken` at fetch
   time. No background worker, no expiry timer. The first call after expiry
   pays one extra round trip; every subsequent call is cached. `resolveAccessToken`
@@ -730,9 +879,9 @@ live Twitch guide, and the oauth/oauth-flow test fixtures.
   contract. The "general mutations / write gate" deferral stands; OAuth2's
   POSTs are auth plumbing, not user ops.
 - **Host-only boundary holds.** `oauth-flow.ts` must not statically import
-  `pi-lean-portal`. The loopback listener + user's-own-browser model keeps
-  it host-only by construction. `__tests__/host-only-boundary.test.ts` stays
-  green.
+  `pi-lean-portal`. The print-URL + paste-back model keeps it host-only by
+  construction — and with no listener, there is no inbound network surface
+  at all. `__tests__/host-only-boundary.test.ts` stays green.
 
 ## Deferred (explicitly out of scope for this plan)
 
@@ -752,7 +901,8 @@ live Twitch guide, and the oauth/oauth-flow test fixtures.
   `resolveOpForExecution` path; Bearer tokens are injected, scrubbed, and
   refreshed lazily.
 - `/api oauth <domain>` provisions tokens (client-credentials: pure HTTP;
-  auth-code: loopback + user browser), headless-safe, not focus-guarded.
+  auth-code: print-URL + paste-back — headless-only per Phase 2.6, works
+  across VM/container boundaries), headless-safe, not focus-guarded.
 - A synthetic OAuth2 axis guide + co-located mocked test land in host;
   `axis-coverage.test.ts` and `all-guides-parse.test.ts` matrices updated;
   escape-valve doc table updated.
