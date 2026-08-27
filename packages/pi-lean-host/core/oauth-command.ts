@@ -13,6 +13,12 @@
  * - `oauth <domain> --revoke`  — revoke at the provider's revokeUrl (if declared) and clear the store.
  * - `oauth <domain> --code <code>` — complete an authorization-code flow with
  *   the pasted redirect URL (or bare code) from a previous authorize step.
+ * - `oauth` (bare)             — list token-store domains with status metadata.
+ *
+ * Tokens can outlive their guide (deleted via /api delete, or minted while
+ * testing), so bare listing, `--status`, and `--revoke` also work guide-less
+ * (keyed by the literal domain; revoke is then local-only — no revokeUrl
+ * without a guide). Minting/refreshing still requires the guide.
  *
  * Always-available / not focus-guarded — a peer of `secrets`/`verify`/`delete`
  * (writes the token store, not toolset state). The client secret lives in the
@@ -34,7 +40,14 @@ import {
 	revokeAccessToken,
 	OAuthTokenMissingError,
 } from "./auth.js";
-import { readToken, deleteToken, getOAuthDir } from "./oauth-store.js";
+import {
+	readToken,
+	deleteToken,
+	deletePendingFlow,
+	listTokenDomains,
+	getOAuthDir,
+} from "./oauth-store.js";
+import type { OAuthToken } from "./oauth-store.js";
 import { mintAuthCodeToken } from "./oauth-flow.js";
 import type { ApiGuide } from "./api-guide-types.js";
 
@@ -51,10 +64,24 @@ function helpText(): string {
 		"  /api oauth <domain> --revoke  revoke at the guide's revokeUrl (if declared) and clear the store",
 		"  /api oauth <domain> --code <code>  complete an auth-code flow with the pasted",
 		"                                redirect URL (or bare code)",
+		"  /api oauth                    list token-store domains (guide-independent);",
+		"                                --status/--revoke on orphaned tokens use the literal domain",
 		"",
 		`Tokens are stored per-domain as JSON (0600) at ${getOAuthDir()}/<domain>.json.`,
 		"The client secret lives in the secrets store (/api secrets <domain>), never here.",
 	].join("\n");
+}
+
+function tokenState(token: OAuthToken): string {
+	return isTokenExpired(token)
+		? `expired${token.refreshToken ? " (refreshable)" : ""}`
+		: "valid";
+}
+
+function tokenExpiry(token: OAuthToken): string {
+	return token.expiresAt === undefined
+		? "unknown"
+		: new Date(token.expiresAt).toISOString();
 }
 
 /**
@@ -96,16 +123,63 @@ export async function handleOauthSubcommand(
 	const selector = tokens[1];
 
 	if (!domain) {
-		ctx.ui.notify(
-			"Usage: /api oauth <domain> [--status | --refresh | --revoke | --code <code>] — see /api oauth --help.",
-			"warning",
-		);
+		// Bare `/api oauth` — list the token store (guide-independent).
+		const domains = listTokenDomains();
+		if (domains.length === 0) {
+			ctx.ui.notify(
+				"🔑 OAuth2 token store is empty. Provision a token with /api oauth <domain> (needs an oauth2 guide) — see /api oauth --help.",
+				"info",
+			);
+			return;
+		}
+		const lines = ["🔑 OAuth2 token store:"];
+		for (const d of domains) {
+			const t = readToken(d);
+			lines.push(
+				t
+					? `  ${d} — ${tokenState(t)}, expires ${tokenExpiry(t)}`
+					: `  ${d} — unreadable`,
+			);
+		}
+		ctx.ui.notify(lines.join("\n"), "info");
 		return;
 	}
 
 	// Resolve the guide by domain; only oauth2 guides are token-provisionable.
 	const allMatches = findGuidesByDomain(domain);
 	if (allMatches.length === 0) {
+		// Guide-less fallback: tokens can outlive their guide, so --status /
+		// --revoke work on the literal domain. Minting/refreshing still needs
+		// the guide's tokenUrl + grant.
+		if (statusFlag) {
+			const token = readToken(domain);
+			ctx.ui.notify(
+				token
+					? [
+							`🔑 OAuth2 for '${domain}' (no guide)`,
+							`  State: ${tokenState(token)}`,
+							`  Expires: ${tokenExpiry(token)}`,
+							...(token.refreshToken ? ["  Refresh token: present"] : []),
+							...(token.scope ? [`  Scope: ${token.scope}`] : []),
+						].join("\n")
+					: `🔑 OAuth2 for '${domain}': no token.`,
+				"info",
+			);
+			return;
+		}
+		if (revokeFlag) {
+			if (!readToken(domain)) {
+				ctx.ui.notify(`🔑 OAuth2 for '${domain}': no token.`, "info");
+				return;
+			}
+			deletePendingFlow(domain);
+			deleteToken(domain);
+			ctx.ui.notify(
+				`🔑 OAuth2 token for '${domain}' cleared locally — no guide, so provider-side revocation was not attempted.`,
+				"info",
+			);
+			return;
+		}
 		ctx.ui.notify(
 			`No API guide for '${domain}'. ` +
 				`Call api-guide({}) to list available guides, or api-learn({domain: "${domain}"}) to author one.`,
@@ -168,6 +242,7 @@ export async function handleOauthSubcommand(
 
 	if (revokeFlag) {
 		await revokeAccessToken(auth, storeDomain);
+		deletePendingFlow(storeDomain);
 		ctx.ui.notify(
 			`🔑 OAuth2 token for '${storeDomain}' revoked and cleared.`,
 			"info",
@@ -184,17 +259,10 @@ export async function handleOauthSubcommand(
 			);
 			return;
 		}
-		const state = isTokenExpired(token)
-			? `expired${token.refreshToken ? " (refreshable)" : ""}`
-			: "valid";
-		const expiry =
-			token.expiresAt === undefined
-				? "unknown"
-				: new Date(token.expiresAt).toISOString();
 		const lines = [
 			`🔑 OAuth2 for '${storeDomain}' (grant ${auth.grant})`,
-			`  State: ${state}`,
-			`  Expires: ${expiry}`,
+			`  State: ${tokenState(token)}`,
+			`  Expires: ${tokenExpiry(token)}`,
 		];
 		if (token.refreshToken) lines.push(`  Refresh token: present`);
 		if (token.scope) lines.push(`  Scope: ${token.scope}`);
@@ -210,7 +278,7 @@ export async function handleOauthSubcommand(
 	try {
 		if (auth.grant === "authorization_code") {
 			await mintAuthCodeToken(auth, storeDomain, ctx, {
-				...(codeArg !== undefined ? { code: codeArg } : {}),
+				...(codeArg === undefined ? {} : { code: codeArg }),
 				...(refreshFlag ? { refresh: true } : {}),
 			});
 		} else {

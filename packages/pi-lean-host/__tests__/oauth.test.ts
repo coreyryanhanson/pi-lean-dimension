@@ -29,9 +29,16 @@ import {
 	isTokenExpired,
 	OAuthTokenMissingError,
 } from "../core/auth.js";
-import { readToken, writeToken, setOAuthDir } from "../core/oauth-store.js";
+import {
+	readToken,
+	writeToken,
+	setOAuthDir,
+	writePendingFlow,
+	readPendingFlow,
+} from "../core/oauth-store.js";
 import { writeSecret, setSecretsDir } from "../core/secrets-store.js";
 import { resolveOpForExecution } from "../core/resolve-op.js";
+import { handleOauthSubcommand } from "../core/oauth-command.js";
 import type { ApiGuide, Operation } from "../core/api-guide-types.js";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -388,5 +395,58 @@ describe("resolveOpForExecution oauth2 arm", () => {
 			expect(msg).toContain("Unexpected HTTP 401");
 			expect(msg).not.toContain("SCRUB-ME");
 		}
+	});
+});
+
+// ═════════════════════════════════════════════════════════════
+// /api oauth guide-less paths (orphaned tokens outlive their guide)
+// ═════════════════════════════════════════════════════════════
+
+describe("handleOauthSubcommand guide-less paths", () => {
+	const ORPHAN = "guideless.invalid"; // no guide claims this domain
+	function mockNotify() {
+		const notify = vi.fn();
+		const ctx = {
+			ui: { notify },
+		} as unknown as Parameters<typeof handleOauthSubcommand>[1];
+		const out = () => notify.mock.calls.map((c) => String(c[0])).join("\n");
+		return { ctx, out };
+	}
+
+	it("bare listing shows token-store domains", async () => {
+		writeToken(ORPHAN, { accessToken: "T", expiresAt: Date.now() + 3_600_000 });
+		const { ctx, out } = mockNotify();
+		await handleOauthSubcommand("", ctx);
+		expect(out()).toContain("token store");
+		expect(out()).toContain(ORPHAN);
+	});
+
+	it("--status works without a guide", async () => {
+		writeToken(ORPHAN, { accessToken: "T", expiresAt: Date.now() + 3_600_000 });
+		const { ctx, out } = mockNotify();
+		await handleOauthSubcommand(`${ORPHAN} --status`, ctx);
+		expect(out()).toContain("no guide");
+		expect(out()).toContain("State: valid");
+	});
+
+	it("--revoke clears the token + pending flow locally, no guide needed", async () => {
+		writeToken(ORPHAN, { accessToken: "T", expiresAt: Date.now() + 3_600_000 });
+		writePendingFlow(ORPHAN, {
+			verifier: "v",
+			state: "s",
+			redirectUri: "http://localhost/callback",
+		});
+		const { ctx, out } = mockNotify();
+		await handleOauthSubcommand(`${ORPHAN} --revoke`, ctx);
+		expect(out()).toContain("cleared locally");
+		expect(readToken(ORPHAN)).toBeNull();
+		expect(readPendingFlow(ORPHAN)).toBeNull();
+	});
+
+	it("--revoke with no token says so (no guide error)", async () => {
+		const { ctx, out } = mockNotify();
+		await handleOauthSubcommand("never-provisioned.invalid --revoke", ctx);
+		expect(out()).toContain("no token");
+		expect(out()).not.toContain("No API guide");
 	});
 });

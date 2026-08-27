@@ -51,6 +51,16 @@
 > `ctx.hasUI` users get an inline paste prompt, `--code` remains the
 > headless/scripting completion. The pending flow survives a failed paste
 > or exchange so the user can retry without re-authorizing.
+>
+> **Post-plan addendum (landed): guide-less `/api oauth` paths.** The plan
+> required a saved oauth2 guide for every `/api oauth` invocation, but tokens
+> can outlive their guide (deleted via `/api delete`, or minted while
+> testing) — orphaned credentials with no supported removal path. Bare
+> `/api oauth` now lists token-store domains with status metadata;
+> `--status` and `--revoke` also work guide-less, keyed by the literal
+> domain (revoke is then local-only — no `revokeUrl` without a guide — and
+> also clears any leftover pending flow). Minting/refreshing still requires
+> the guide's `tokenUrl` + grant.
 
 ## Current state (the seams already in place)
 

@@ -259,7 +259,8 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   token store + pending auth-code flow — 0600 file backend, swappable
   `TokenStore` interface, kept free of any `auth.ts` import),
   `oauth-command.ts` (`/api oauth` — mint / `--status` / `--refresh` /
-  `--revoke` / `--code <code>`), `oauth-flow.ts` (headless paste-based
+  `--revoke` / `--code <code>` / bare listing; `--status` + `--revoke` also
+  work guide-less on orphaned tokens — local-only clear, no `revokeUrl`), `oauth-flow.ts` (headless paste-based
   auth-code + PKCE dance: PKCE pair gen, `buildAuthorizeUrl`,
   `parsePastedRedirect` (full redirect URL / bare code, state check,
   `?error=` surfacing), `mintAuthCodeToken` orchestration, the
