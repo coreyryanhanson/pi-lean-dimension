@@ -269,7 +269,7 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   auth-code + PKCE dance: PKCE pair gen, `buildAuthorizeUrl`,
   `parsePastedRedirect` (full redirect URL / bare code, state check,
   `?error=` surfacing), `mintAuthCodeToken` orchestration, the
-  `http://localhost/callback` redirect convention (RFC 8252 §7.3) —
+  `http://127.0.0.1/callback` redirect convention (RFC 8252 §7.3) —
   host-only, no portal import, no listener, no inbound network surface),
   `transport.ts` (shared fetch pipeline: UA, charset, 429-retry, ETag cache —
   the sanctioned way to reach even WAF'd hosts), `path-template.ts`,
@@ -372,7 +372,7 @@ decision, deferred until caritas re-stamps its corpus — see
 and prefix now live on each ref. `oauth2` is realized (client_credentials
 runtime + `/api oauth`; the auth-code flow is headless paste-based —
 authorize URL printed, user consents in their own browser and pastes the
-redirect URL back, `redirect_uri` is the `http://localhost/callback`
+redirect URL back, `redirect_uri` is the `http://127.0.0.1/callback`
 convention, RFC 8252 §7.3).
 
 **Bump rule (post-v1):** do not bump unless a guide that used to parse now

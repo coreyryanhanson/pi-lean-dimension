@@ -150,7 +150,7 @@ export function listTokenDomains(): string[] {
  * completion step can exchange with the SAME verifier (the code exchange
  * fails if the verifier doesn't match the challenge sent in the authorize
  * URL) and validate the pasted `state`. `redirectUri` is always the runtime
- * convention `http://localhost/callback` (RFC 8252 §7.3) — kept on the
+ * convention `http://127.0.0.1/callback` (RFC 8252 §7.3) — kept on the
  * record so the exchange body echoes exactly what the authorize URL sent.
  * Written by the authorize step, consumed once at completion. Ephemeral
  * scratch — lives on the file dir even if a keychain token backend is

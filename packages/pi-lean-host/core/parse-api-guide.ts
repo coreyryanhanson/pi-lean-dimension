@@ -1001,7 +1001,7 @@ function validateOAuth2Auth(
 				"a URL for grant: authorization_code",
 				"missing",
 				{
-					fix: "Add authorizeUrl — the provider's authorization endpoint. The redirect URI is the runtime convention http://localhost/callback (RFC 8252 §7.3); register it on your OAuth app.",
+					fix: "Add authorizeUrl — the provider's authorization endpoint. The redirect URI is the runtime convention http://127.0.0.1/callback (RFC 8252 §7.3); register it on your OAuth app.",
 				},
 			);
 		}

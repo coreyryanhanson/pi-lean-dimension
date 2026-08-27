@@ -3,7 +3,7 @@
  *
  * - `oauth <domain>`           — mint a token and stamp the token store.
  *   client_credentials: pure HTTP. authorization_code: print the authorize URL
- *   (redirect_uri = http://localhost/callback, RFC 8252 §7.3), the user
+ *   (redirect_uri = http://127.0.0.1/callback, RFC 8252 §7.3), the user
  *   consents in their own browser and pastes the redirect URL back — inline
  *   prompt (TUI) or `--code <redirect-url-or-code>` (headless/scripting).
  * - `oauth <domain> --status`  — metadata-only token state (no network).

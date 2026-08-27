@@ -415,7 +415,7 @@ body
 	});
 
 	it("pkce and redirectUri are deleted — rejected by the allowlist (PKCE implicit, redirect is the runtime convention)", () => {
-		for (const key of ["pkce: true", "redirectUri: http://localhost/callback"]) {
+		for (const key of ["pkce: true", "redirectUri: http://127.0.0.1/callback"]) {
 			const r = parseAuthBlock(`  kind: oauth2
   grant: authorization_code
   tokenUrl: https://api.example.com/oauth/token

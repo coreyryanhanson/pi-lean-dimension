@@ -434,7 +434,7 @@ describe("handleOauthSubcommand guide-less paths", () => {
 		writePendingFlow(ORPHAN, {
 			verifier: "v",
 			state: "s",
-			redirectUri: "http://localhost/callback",
+			redirectUri: "http://127.0.0.1/callback",
 		});
 		const { ctx, out } = mockNotify();
 		await handleOauthSubcommand(`${ORPHAN} --revoke`, ctx);

@@ -98,6 +98,43 @@ Bluesky has its own dedicated note: [`oauth2-bluesky-followup.md`](./oauth2-blue
 - The `scope` param on OAuth endpoints must be a **subset** of the `scopes`
   registered with the app.
 
+**Live probe findings (post-mint-on-demand, verified against mastodon.social)**
+
+- **App tokens ≠ user tokens — the decisive finding.** Mastodon's public
+  timeline `/api/v1/timelines/public` now returns `422 {"error":"This method
+  requires an authenticated user"}` even *with* a valid client-credentials
+  (app) token. Mastodon distinguishes app tokens from user tokens, and the
+  bulk of the API (timelines, bookmarks, …) only accepts user tokens. The
+  mint itself works: the probe POSTed `client_key`+`client_secret` to
+  `/oauth/token`, received a token (`scope: read`), stamped the token
+  store, and injected it — the 422 is a provider-side grant restriction,
+  not a probe defect.
+- **Practical read access is therefore:** (a) unauthenticated public
+  endpoints (`/api/v1/instance` → 200 verified, plus trends / accounts /
+  public statuses), and (b) user-scoped endpoints via a **user token**.
+- **The dev-app page's "Your access token" field** is a ready-made
+  user-scoped token issued at app registration (scoped to the creator's own
+  account). Not needed for client-credentials — but it is the cheapest path
+  to user-gated read endpoints. Recommended guide shape: a **static-key**
+  guide (`Authorization: Bearer {access_token}`, `optional: true`) — public
+  endpoints work unauthenticated when the secret is absent, user endpoints
+  light up once provisioned. Client-credentials on Mastodon buys almost
+  nothing beyond proving the app registration works.
+- **Store naming wrinkle resolved:** the dev page labels the OAuth
+  `client_id` as "Your client key" — so the secrets store holds
+  `client_key`/`client_secret` and the guide refs `clientId: { secret:
+  client_key }`. No separate `client_id` entry is needed.
+- Public-timeline unauthenticated access was shut down (2024 policy change):
+  same 422 without any token.
+- **Rate limits do NOT improve with a token.** Docs (rate-limits page) and
+  live headers agree: 300 req/5 min per **account** and 300 req/5 min per
+  **IP** — same number either way (`/api/v1/instance` returned
+  `X-RateLimit-Limit: 300` unauthenticated and with the app token, even the
+  same reset window). A token's only rate-limit benefit is bucket
+  isolation: on a shared IP, other users' traffic no longer eats your
+  quota. Special-case carve-outs: media upload 30/30 min, status delete /
+  unreblog 30/30 min, account creation 5/30 min.
+
 ---
 
 ## OpenStreetMap — Phase 2 (authorization code + PKCE)
@@ -137,6 +174,22 @@ Bluesky has its own dedicated note: [`oauth2-bluesky-followup.md`](./oauth2-blue
   limits; the documented 429 rate limiting is about changeset *uploads*
   (writes); read requests need no auth at all. OSM is selected for the
   clean interactive-flow exercise, not rate-limit or data richness.
+- **Live PKCE verification (probe, post-2.6):** full flow ran end-to-end —
+  `/api oauth openstreetmap.org` printed the authorize URL (PKCE challenge,
+  `redirect_uri=http://127.0.0.1/callback`), user consented + pasted the
+  redirect back, token store stamped (`scope: read_prefs`), and the probe
+  returned 200 with user details via `useTokenStore` on
+  `GET /api/0.6/user/details.json` (⚠ the endpoint is `/user/details`, not
+  `/user` — both 404). Public control (`/permissions.json`) works
+  unauthenticated as expected.
+- **Redirect-URI rule (live-verified — drove the convention amendment):**
+  all redirect URIs must use https except URLs starting with
+  `http://127.0.0.1` (plus the special `urn:ietf:wg:oauth:2.0:oob`).
+  `http://localhost/callback` cannot be registered — OSM only accepts the
+  `127.0.0.1` spelling, which is why the runtime convention was amended
+  from `localhost` to the RFC 8252 §7.3-recommended IP literal (see the
+  plan doc's Phase 2.6 addendum). Register `http://127.0.0.1/callback` on
+  the OSM app before running the flow.
 
 ---
 

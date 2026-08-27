@@ -5,7 +5,7 @@
  * their own credentials. Routing that through portal's driven browser would
  * flow the user's provider password through agent context — a hard no. So
  * this module: generates the PKCE pair, builds the authorize URL
- * (`redirect_uri = http://localhost/callback`, the RFC 8252 §7.3 loopback
+ * (`redirect_uri = http://127.0.0.1/callback`, the RFC 8252 §7.3 loopback
  * convention — nothing listens there, by design), persists the pending flow,
  * and surfaces the URL. The user pastes back the address-bar redirect URL
  * (or bare code); pi validates `state`, exchanges the code, and stamps the
@@ -36,12 +36,15 @@ import type { OAuthToken } from "./oauth-store.js";
 
 /**
  * The redirect-URI convention for every auth-code guide (RFC 8252 §7.3 —
- * loopback, variable port). The redirect URI is a fact of the USER's app
+ * loopback, variable port). The IP literal 127.0.0.1 is used rather than
+ * `localhost`: RFC 8252 §7.3 recommends it, and some providers (OSM) accept
+ * only `http://127.0.0.1*` as a non-https redirect. The redirect URI is a
+ * fact of the USER's app
  * registration, not the provider's API, so the schema carries no field;
  * the runtime owns the redirect end-to-end through this one convention.
  * Nothing listens on the port — the user copies the address-bar URL.
  */
-export const REDIRECT_URI = "http://localhost/callback";
+export const REDIRECT_URI = "http://127.0.0.1/callback";
 
 function base64url(buf: Buffer): string {
 	return buf.toString("base64url");
@@ -105,7 +108,7 @@ export interface PastedAuthResult {
 /**
  * Parse the user's pasted authorization result. Tolerant by design — accepts
  * the full redirect URL from the browser's address bar (documented default),
- * a host-less `localhost/callback?code=…&state=…`, a bare `code=…&state=…`
+ * a host-less `127.0.0.1/callback?code=…&state=…`, a bare `code=…&state=…`
  * query, or just the bare code (which skips the state check — pi never sees
  * it). A provider rejection (`?error=…`) surfaces the provider's actual
  * reason instead of a generic "exchange failed".
@@ -211,7 +214,7 @@ export async function mintAuthCodeToken(
 
 /**
  * The primary — and only — authorize path. Generates the PKCE pair + state,
- * builds the authorize URL with the `http://localhost/callback` convention,
+ * builds the authorize URL with the `http://127.0.0.1/callback` convention,
  * persists the pending flow (the verifier MUST survive so the later exchange
  * matches the challenge sent in the authorize URL), prints the URL, and
  * either prompts for the paste (TUI) or throws awaiting `--code` (headless).

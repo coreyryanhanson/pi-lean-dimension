@@ -4,7 +4,7 @@
  *
  * Covers the Phase-2.6 headless-only flow:
  *  - PKCE pair generation + authorize-URL construction (redirect_uri is the
- *    http://localhost/callback convention).
+ *    http://127.0.0.1/callback convention).
  *  - parsePastedRedirect: bare code, full address-bar URL (state surfaced),
  *    host-less / bare-query inputs, provider `?error=` surfacing, no-code
  *    and empty-input failures.
@@ -129,7 +129,7 @@ describe("PKCE pair + authorize URL", () => {
 describe("parsePastedRedirect", () => {
 	it("accepts the full redirect URL (documented default) with state", () => {
 		const r = parsePastedRedirect(
-			`http://localhost/callback?code=CB&state=${generateState()}`,
+			`http://127.0.0.1/callback?code=CB&state=${generateState()}`,
 		);
 		expect(r.code).toBe("CB");
 		expect(r.state).toBeDefined();
@@ -154,7 +154,7 @@ describe("parsePastedRedirect", () => {
 
 	it("tolerates surrounding whitespace and other params", () => {
 		const r = parsePastedRedirect(
-			"  http://localhost/callback?foo=1&code=CB&bar=2&state=ST  ",
+			"  http://127.0.0.1/callback?foo=1&code=CB&bar=2&state=ST  ",
 		);
 		expect(r.code).toBe("CB");
 		expect(r.state).toBe("ST");
@@ -163,7 +163,7 @@ describe("parsePastedRedirect", () => {
 	it("surfaces the provider's error + description", () => {
 		expect(() =>
 			parsePastedRedirect(
-				"http://localhost/callback?error=access_denied&error_description=User+cancelled",
+				"http://127.0.0.1/callback?error=access_denied&error_description=User+cancelled",
 			),
 		).toThrow("access_denied — User cancelled");
 	});
@@ -243,7 +243,7 @@ describe("mintAuthCodeToken", () => {
 		expect(pending).not.toBeNull();
 		expect(pending?.redirectUri).toBe(REDIRECT_URI);
 		const text = ctx.ui.notify.mock.calls.map((c: unknown[]) => c[0]).join("\n");
-		expect(text).toContain("localhost/callback"); // registration convention
+		expect(text).toContain("127.0.0.1/callback"); // registration convention
 		const url = text.match(/https?:\/\/\S*code_challenge=\S+/)?.[0];
 		expect(url).toContain("code_challenge=");
 		expect(url).toContain("redirect_uri=" + encodeURIComponent(REDIRECT_URI));
@@ -270,14 +270,14 @@ describe("mintAuthCodeToken", () => {
 		expect(pending).not.toBeNull();
 
 		// Mismatched state → rejected, pending flow survives for a retry.
-		const pasted = `http://localhost/callback?code=X&state=WRONG-${pending?.state}`;
+		const pasted = `http://127.0.0.1/callback?code=X&state=WRONG-${pending?.state}`;
 		await expect(
 			mintAuthCodeToken(auth, "oauth.state", headlessCtx(), { code: pasted }),
 		).rejects.toThrow("state mismatch");
 		expect(readPendingFlow("oauth.state")).not.toBeNull();
 
 		// Matching state → completes.
-		const good = `http://localhost/callback?code=GOOD&state=${pending?.state}`;
+		const good = `http://127.0.0.1/callback?code=GOOD&state=${pending?.state}`;
 		const token = await mintAuthCodeToken(auth, "oauth.state", headlessCtx(), {
 			code: good,
 		});
@@ -295,7 +295,7 @@ describe("mintAuthCodeToken", () => {
 		await expect(
 			mintAuthCodeToken(auth, "oauth.denied", headlessCtx(), {
 				code:
-					"http://localhost/callback?error=access_denied&error_description=Nope",
+					"http://127.0.0.1/callback?error=access_denied&error_description=Nope",
 			}),
 		).rejects.toThrow("access_denied — Nope");
 		// The pending flow survives a failed paste — the user can retry.
@@ -363,7 +363,7 @@ describe("mintAuthCodeToken", () => {
 					// The pending flow is written BEFORE the prompt so the paste
 					// can be validated against the generated state.
 					pending = readPendingFlow("oauth.prompt");
-					return `http://localhost/callback?code=CB&state=${pending?.state}`;
+					return `http://127.0.0.1/callback?code=CB&state=${pending?.state}`;
 				},
 			},
 		} as any;
