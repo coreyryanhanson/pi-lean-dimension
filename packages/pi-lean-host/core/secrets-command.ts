@@ -149,7 +149,12 @@ function declaredSecretNames(domain: string): string[] {
 					names.add(ref.secret);
 				break;
 			case "oauth2":
+				// The clientId field is a store NAME (resolved per-user) — declare
+				// it so assisted provisioning prompts for it alongside client_secret.
+				names.add(guide.auth.clientId);
 				for (const ref of Object.values(guide.auth.secretRefs ?? {}))
+					names.add(ref.secret);
+				for (const ref of Object.values(guide.auth.apiHeaders ?? {}))
 					names.add(ref.secret);
 				break;
 			case "none":

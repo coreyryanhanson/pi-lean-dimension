@@ -48,7 +48,8 @@ function makeAuthCodeAuth(overrides: Partial<OAuth2Auth> = {}): OAuth2Auth {
 		kind: "oauth2",
 		grant: "authorization_code",
 		tokenUrl: TOKEN_URL,
-		clientId: "my_client",
+		// Store NAME semantics — resolved per-user from the secrets store.
+		clientId: "client_id",
 		secretRefs: { client_secret: { secret: "client_secret" } },
 		authorizeUrl: AUTHORIZE_URL,
 		redirectUri: REDIRECT_URI,
@@ -137,12 +138,13 @@ describe("PKCE pair + authorize URL", () => {
 
 	it("builds the authorize URL with code + PKCE + state", () => {
 		const auth = makeAuthCodeAuth({ scopes: ["read", "read:statuses"] });
+		// clientId is a store NAME — the caller passes the resolved value.
 		const url = new URL(
-			buildAuthorizeUrl(auth, REDIRECT_URI, "CHALLENGE", "STATE"),
+			buildAuthorizeUrl(auth, REDIRECT_URI, "CHALLENGE", "STATE", "MY_CLIENT"),
 		);
 		expect(url.origin + url.pathname).toBe(AUTHORIZE_URL);
 		expect(url.searchParams.get("response_type")).toBe("code");
-		expect(url.searchParams.get("client_id")).toBe("my_client");
+		expect(url.searchParams.get("client_id")).toBe("MY_CLIENT");
 		expect(url.searchParams.get("redirect_uri")).toBe(REDIRECT_URI);
 		expect(url.searchParams.get("scope")).toBe("read read:statuses");
 		expect(url.searchParams.get("state")).toBe("STATE");
@@ -220,6 +222,7 @@ describe("startCallbackServer", () => {
 
 describe("exchangeAuthCode", () => {
 	it("POSTs grant_type=authorization_code with code + verifier + redirect_uri", async () => {
+		writeSecret("oauth.exchange", "client_id", "MY_CLIENT");
 		writeSecret("oauth.exchange", "client_secret", "S3CRET");
 		const auth = makeAuthCodeAuth();
 		stubTokenEndpoint((url, init) => {
@@ -260,6 +263,7 @@ describe("mintAuthCodeToken", () => {
 
 	it("headless: prints the URL, persists the pending flow, and --code completes it", async () => {
 		const auth = makeAuthCodeAuth();
+		writeSecret("oauth.manual", "client_id", "MY_CLIENT");
 		const ctx = headlessCtx();
 		stubTokenEndpoint(() =>
 			tokenResponse({
@@ -301,6 +305,7 @@ describe("mintAuthCodeToken", () => {
 
 	it("--refresh forces a refresh via the stored refresh token (no re-consent)", async () => {
 		const auth = makeAuthCodeAuth();
+		writeSecret("oauth.force", "client_id", "MY_CLIENT");
 		writeSecret("oauth.force", "client_secret", "S3CRET");
 		writeToken("oauth.force", {
 			accessToken: "OLD",
@@ -326,6 +331,7 @@ describe("mintAuthCodeToken", () => {
 
 	it("--refresh with no refresh token falls through to the interactive flow", async () => {
 		const auth = makeAuthCodeAuth();
+		writeSecret("oauth.norefresh", "client_id", "MY_CLIENT");
 		const ctx = headlessCtx();
 		await expect(
 			mintAuthCodeToken(auth, "oauth.norefresh", ctx, { refresh: true }),
@@ -336,6 +342,7 @@ describe("mintAuthCodeToken", () => {
 
 	it("interactive: loopback listener captures the callback and exchanges the code", async () => {
 		const auth = makeAuthCodeAuth();
+		writeSecret("oauth.loop", "client_id", "MY_CLIENT");
 		writeSecret("oauth.loop", "client_secret", "S3CRET");
 		const ctx = { hasUI: true, ui: { notify: vi.fn() } } as any;
 		stubTokenEndpoint((_url, init) => {
@@ -370,6 +377,7 @@ describe("mintAuthCodeToken", () => {
 
 	it("interactive: a loopback timeout is recoverable via --code (pending flow persisted)", async () => {
 		const auth = makeAuthCodeAuth();
+		writeSecret("oauth.timeout", "client_id", "MY_CLIENT");
 		const ctx = { hasUI: true, ui: { notify: vi.fn() } } as any;
 		// No callback hit — the short budget times out, the pending flow stays
 		// (so a TUI user whose browser can't reach the loopback isn't stuck),

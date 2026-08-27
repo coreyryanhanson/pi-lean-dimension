@@ -137,7 +137,6 @@ export async function resolveOpForExecution(
 	//    missing required secret / unmintable token fails closed BEFORE any
 	//    request. Values never leave this scope — only header/param and
 	//    secret NAMES ever surface to the caller.
-	const authFooter = authStatusLine(guide.auth, storeDomain);
 	let authOpts: AuthOpts = {};
 	switch (guide.auth.kind) {
 		case "none":
@@ -200,6 +199,11 @@ export async function resolveOpForExecution(
 			throw new Error(`Unhandled auth kind: ${_exhaustive}`);
 		}
 	}
+
+	// Post-resolution footer: an oauth2 auto-mint inside the switch writes the
+	// token store, so the footer must be computed AFTER resolution to report
+	// the post-mint state (not the stale pre-mint "no token").
+	const authFooter = authStatusLine(guide.auth, storeDomain);
 
 	// 4. Execute via the declared executor.
 	if (op.via === "restGet") {

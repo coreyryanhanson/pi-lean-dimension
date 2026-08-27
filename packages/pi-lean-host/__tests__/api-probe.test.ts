@@ -32,6 +32,7 @@ import {
 	setSecretsDir,
 	getSecretsDir,
 } from "../core/secrets-store.js";
+import { writeToken, setOAuthDir, getOAuthDir } from "../core/oauth-store.js";
 import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
 import {
 	_setToggleStateForTest,
@@ -526,6 +527,125 @@ describe("probe redirect handling (live localhost)", () => {
 				server.close();
 				server.closeAllConnections?.();
 				setSecretsDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+	});
+
+	// OAuth2 store-read injection (Phase 2): useTokenStore reads the token
+	// store — the value never enters the transcript; miss/expiry nudge /api oauth.
+	describe("probe useTokenStore (oauth2 bearer injection)", () => {
+		it("injects Authorization: Bearer from the token store; value never surfaces", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-ok-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			writeToken("example.com", {
+				accessToken: "tok_secret_value",
+				expiresAt: Date.now() + 600_000,
+			});
+			let seenAuth: string | undefined;
+			const server = http.createServer((req, res) => {
+				seenAuth = req.headers.authorization;
+				// Echo the header back so the scrub path is exercised too.
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ auth: req.headers.authorization ?? null }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: { useTokenStore: true },
+					},
+				);
+				expect(seenAuth).toBe("Bearer tok_secret_value");
+				expect(result.ok).toBe(true);
+				// Output-channel audit: echoed token scrubbed from the raw slice.
+				expect(result.raw).not.toContain("tok_secret_value");
+				expect(result.note ?? "").not.toContain("tok_secret_value");
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("a missing token proceeds unauthenticated and nudges /api oauth", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-miss-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			let sawAuthHeader = false;
+			const server = http.createServer((req, res) => {
+				sawAuthHeader = req.headers.authorization !== undefined;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: { useTokenStore: true },
+					},
+				);
+				// Probe misses are never fail-closed: request went out, no header.
+				expect(sawAuthHeader).toBe(false);
+				expect(result.ok).toBe(true);
+				expect(result.note ?? "").toContain(
+					'no cached token for "example.com"; run /api oauth example.com to mint one',
+				);
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("an expired token is not injected; the note nudges --refresh", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-exp-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			writeToken("example.com", {
+				accessToken: "tok_stale",
+				expiresAt: Date.now() - 1_000,
+			});
+			let sawAuthHeader = false;
+			const server = http.createServer((req, res) => {
+				sawAuthHeader = req.headers.authorization !== undefined;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: { useTokenStore: true },
+					},
+				);
+				// A stale token is not sent (a 401 from it would mislead the author).
+				expect(sawAuthHeader).toBe(false);
+				expect(result.note ?? "").toContain(
+					'token for "example.com" is expired; run /api oauth example.com --refresh',
+				);
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
 				rmSync(tmp, { recursive: true, force: true });
 			}
 		});

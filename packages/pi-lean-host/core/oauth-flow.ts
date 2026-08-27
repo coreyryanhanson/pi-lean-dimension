@@ -31,6 +31,7 @@ import type { OAuth2Auth } from "./api-guide-types.js";
 import {
 	exchangeAuthCode,
 	forceRefreshToken,
+	resolveClientCredentials,
 	OAuthTokenMissingError,
 } from "./auth.js";
 import {
@@ -87,6 +88,9 @@ export function buildAuthorizeUrl(
 	redirectUri: string,
 	challenge: string,
 	state: string,
+	/** The client id VALUE — resolved from the secrets store by the caller
+	 *  (`clientId` is a store name, not a literal). */
+	clientIdValue: string,
 ): string {
 	const base = auth.authorizeUrl;
 	if (!base) {
@@ -99,7 +103,7 @@ export function buildAuthorizeUrl(
 		throw new Error(`oauth2 authorizeUrl is not a valid URL: ${base}`);
 	}
 	url.searchParams.set("response_type", "code");
-	url.searchParams.set("client_id", auth.clientId);
+	url.searchParams.set("client_id", clientIdValue);
 	url.searchParams.set("redirect_uri", redirectUri);
 	if (auth.scopes && auth.scopes.length > 0) {
 		url.searchParams.set("scope", auth.scopes.join(" "));
@@ -243,7 +247,13 @@ async function runLoopbackFlow(
 	const redirectUri = `http://localhost:${cb.port}/callback`;
 	const { verifier, challenge } = generatePkcePair();
 	const state = generateState();
-	const authorizeUrl = buildAuthorizeUrl(auth, redirectUri, challenge, state);
+	const authorizeUrl = buildAuthorizeUrl(
+		auth,
+		redirectUri,
+		challenge,
+		state,
+		resolveClientCredentials(auth, storeDomain).clientId,
+	);
 	writePendingFlow(storeDomain, { verifier, state, redirectUri });
 	try {
 		ctx.ui.notify(
@@ -287,7 +297,13 @@ async function runManualCodeFlow(
 	const redirectUri = auth.redirectUri!; // parser-enforced for auth-code
 	const { verifier, challenge } = generatePkcePair();
 	const state = generateState();
-	const authorizeUrl = buildAuthorizeUrl(auth, redirectUri, challenge, state);
+	const authorizeUrl = buildAuthorizeUrl(
+		auth,
+		redirectUri,
+		challenge,
+		state,
+		resolveClientCredentials(auth, storeDomain).clientId,
+	);
 	writePendingFlow(storeDomain, { verifier, state, redirectUri });
 	ctx.ui.notify(
 		`🔑 Open this URL in your browser, authorize, then run:\n` +

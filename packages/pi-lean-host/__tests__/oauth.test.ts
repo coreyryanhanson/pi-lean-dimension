@@ -46,7 +46,8 @@ function makeOAuthGuide(
 		kind: "oauth2" as const,
 		grant: "client_credentials" as const,
 		tokenUrl: "https://token.example.com/oauth/token",
-		clientId: "my_client",
+		// Store NAME semantics — resolved per-user from the secrets store.
+		clientId: "client_id",
 		secretRefs: { client_secret: { secret: "client_secret" } },
 		...overrides,
 	};
@@ -101,6 +102,13 @@ function tokenResponse(body: unknown, status = 200): Response {
 let tmpSecrets: string;
 let tmpOAuth: string;
 
+/** Provision both oauth2 credentials for a domain (client_id is a store
+ *  name now — minting reads it like any other secret). */
+function provisionCreds(domain: string): void {
+	writeSecret(domain, "client_id", "MY_CLIENT");
+	writeSecret(domain, "client_secret", "S3CRET");
+}
+
 beforeAll(() => {
 	tmpSecrets = mkdtempSync(join(tmpdir(), "host-oauth-secrets-"));
 	tmpOAuth = mkdtempSync(join(tmpdir(), "host-oauth-tokens-"));
@@ -120,12 +128,12 @@ afterAll(() => {
 
 describe("resolveAccessToken (client_credentials)", () => {
 	it("mints a token via the token endpoint and returns the Bearer header", async () => {
-		writeSecret("oauth.test", "client_secret", "S3CRET");
+		provisionCreds("oauth.test");
 		const guide = makeOAuthGuide("https://api.example.com");
 		stubTokenEndpoint((url, init) => {
 			expect(url).toBe("https://token.example.com/oauth/token");
 			expect(String(init.body)).toContain("grant_type=client_credentials");
-			expect(String(init.body)).toContain("client_id=my_client");
+			expect(String(init.body)).toContain("client_id=MY_CLIENT");
 			expect(String(init.body)).toContain("client_secret=S3CRET");
 			return tokenResponse({
 				access_token: "AT-1",
@@ -160,7 +168,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 	});
 
 	it("expired token with a refresh token → refresh (grant_type=refresh_token)", async () => {
-		writeSecret("oauth.refresh", "client_secret", "S3CRET");
+		provisionCreds("oauth.refresh");
 		const guide = makeOAuthGuide("https://api.example.com");
 		writeToken("oauth.refresh", {
 			accessToken: "OLD",
@@ -185,7 +193,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 	});
 
 	it("expired token without a refresh token → re-mint (client_credentials)", async () => {
-		writeSecret("oauth.remint", "client_secret", "S3CRET");
+		provisionCreds("oauth.remint");
 		const guide = makeOAuthGuide("https://api.example.com");
 		writeToken("oauth.remint", {
 			accessToken: "OLD",
@@ -213,9 +221,18 @@ describe("resolveAccessToken (client_credentials)", () => {
 		expect(isTokenExpired({ accessToken: "x" })).toBe(false);
 	});
 
-	it("fail-closed: no client_secret provisioned → OAuthTokenMissingError", async () => {
+	it("fail-closed: no client_id provisioned → OAuthTokenMissingError", async () => {
 		const guide = makeOAuthGuide("https://api.example.com");
+		// oauth.noclientid has neither credential in the secrets store.
+		await expect(
+			resolveAccessToken(guide, "oauth.noclientid"),
+		).rejects.toBeInstanceOf(OAuthTokenMissingError);
+	});
+
+	it("fail-closed: client_id provisioned but no client_secret → OAuthTokenMissingError", async () => {
+		writeSecret("oauth.missing", "client_id", "MY_CLIENT");
 		// oauth.missing has no client_secret in the secrets store.
+		const guide = makeOAuthGuide("https://api.example.com");
 		await expect(
 			resolveAccessToken(guide, "oauth.missing"),
 		).rejects.toBeInstanceOf(OAuthTokenMissingError);
@@ -234,7 +251,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 	});
 
 	it("client_secret_basic sends the credentials in the Authorization header", async () => {
-		writeSecret("oauth.basic", "client_secret", "S3CRET");
+		provisionCreds("oauth.basic");
 		const guide = makeOAuthGuide("https://api.example.com", {
 			tokenEndpointAuthMethod: "client_secret_basic",
 		});
@@ -242,7 +259,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 			const headers = init.headers as Record<string, string>;
 			const auth = headers["authorization"] ?? headers["Authorization"];
 			expect(auth).toBe(
-				"Basic " + Buffer.from("my_client:S3CRET").toString("base64"),
+				"Basic " + Buffer.from("MY_CLIENT:S3CRET").toString("base64"),
 			);
 			expect(String(init.body)).not.toContain("client_secret");
 			return tokenResponse({ access_token: "BASIC", expires_in: 3600 });
@@ -252,7 +269,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 	});
 
 	it("query style returns the token as a redactable query param", async () => {
-		writeSecret("oauth.query", "client_secret", "S3CRET");
+		provisionCreds("oauth.query");
 		const guide = makeOAuthGuide("https://api.example.com", {
 			paramStyle: "query",
 		});
@@ -265,8 +282,27 @@ describe("resolveAccessToken (client_credentials)", () => {
 		expect(res.secretValues).toEqual(["QT"]);
 	});
 
+	it("apiHeaders merge alongside the Bearer token and scrub with it", async () => {
+		provisionCreds("oauth.headers");
+		const guide = makeOAuthGuide("https://api.example.com", {
+			apiHeaders: { "Client-Id": { secret: "client_id" } },
+		});
+		stubTokenEndpoint(() =>
+			tokenResponse({ access_token: "HDR-TOKEN", expires_in: 3600 }),
+		);
+		const res = await resolveAccessToken(guide, "oauth.headers");
+		expect(res.authHeaders).toEqual({
+			authorization: "Bearer HDR-TOKEN",
+			"Client-Id": "MY_CLIENT",
+		});
+		expect(res.secretHeaderNames).toEqual(
+			new Set(["authorization", "client-id"]),
+		);
+		expect(res.secretValues).toEqual(["HDR-TOKEN", "MY_CLIENT"]);
+	});
+
 	it("revokeAccessToken clears the store (best-effort revoke POST)", async () => {
-		writeSecret("oauth.revoke", "client_secret", "S3CRET");
+		provisionCreds("oauth.revoke");
 		const guide = makeOAuthGuide("https://api.example.com", {
 			revokeUrl: "https://token.example.com/oauth/revoke",
 		});
@@ -320,7 +356,7 @@ describe("resolveOpForExecution oauth2 arm", () => {
 	});
 
 	it("injects the Bearer token into the API request", async () => {
-		writeSecret("oauth.e2e", "client_secret", "S3CRET");
+		provisionCreds("oauth.e2e");
 		const guide = makeOAuthGuide(server.url, { domains: ["oauth.e2e"] });
 		guide.operations = [makeOp("/api/ok")];
 		stubTokenEndpoint(() =>
@@ -337,7 +373,7 @@ describe("resolveOpForExecution oauth2 arm", () => {
 	});
 
 	it("scrubs the access token from a 401 body", async () => {
-		writeSecret("oauth.e2e401", "client_secret", "S3CRET");
+		provisionCreds("oauth.e2e401");
 		const guide = makeOAuthGuide(server.url, { domains: ["oauth.e2e401"] });
 		guide.operations = [makeOp("/api/401")];
 		stubTokenEndpoint(() =>

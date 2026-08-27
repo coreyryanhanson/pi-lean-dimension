@@ -117,6 +117,7 @@ const AUTH_ALLOWLISTS: Record<AuthKind, ReadonlySet<string>> = {
 		"tokenUrl",
 		"clientId",
 		"secretRefs",
+		"apiHeaders",
 		"scopes",
 		"paramStyle",
 		"tokenEndpointAuthMethod",
@@ -649,7 +650,7 @@ function validateAuth(
 				if (isParseErr(hr)) return hr;
 				headers = hr;
 			}
-			return { kind: "none", ...(headers !== undefined ? { headers } : {}) };
+			return { kind: "none", ...(headers === undefined ? {} : { headers }) };
 		}
 		case "static-key": {
 			return validateStaticKeyAuth(a, file, fm);
@@ -752,8 +753,8 @@ function parseSecretRefs(
 		}
 		out[name] = {
 			secret,
-			...(prefix !== undefined ? { prefix } : {}),
-			...(optional !== undefined ? { optional } : {}),
+			...(prefix === undefined ? {} : { prefix }),
+			...(optional === undefined ? {} : { optional }),
 		};
 	}
 	return out;
@@ -827,9 +828,12 @@ function validateOAuth2Auth(
 		return fail(
 			file,
 			"auth.clientId",
-			"a non-empty string",
+			"a non-empty string (the SECRETS-STORE NAME holding the client id, e.g. client_id — never a literal)",
 			describeFound(clientId),
-			{ snippet: snippetFor(fm, "auth") },
+			{
+				snippet: snippetFor(fm, "auth"),
+				fix: "Set clientId to the store name provisioned via /api secrets <domain> (e.g. clientId: client_id) — a shippable guide must not bake in one app's client id.",
+			},
 		);
 	}
 	let secretRefs: Record<string, SecretRef> | undefined;
@@ -837,6 +841,12 @@ function validateOAuth2Auth(
 		const sr = parseSecretRefs(a["secretRefs"], file, fm, "auth.secretRefs");
 		if (isParseErr(sr)) return sr;
 		secretRefs = sr;
+	}
+	let apiHeaders: Record<string, SecretRef> | undefined;
+	if (a["apiHeaders"] !== undefined) {
+		const ah = parseSecretRefs(a["apiHeaders"], file, fm, "auth.apiHeaders");
+		if (isParseErr(ah)) return ah;
+		apiHeaders = ah;
 	}
 	let scopes: string[] | undefined;
 	if (a["scopes"] !== undefined) {
@@ -987,6 +997,7 @@ function validateOAuth2Auth(
 
 	const result: OAuth2Auth = { kind: "oauth2", grant, tokenUrl, clientId };
 	if (secretRefs !== undefined) result.secretRefs = secretRefs;
+	if (apiHeaders !== undefined) result.apiHeaders = apiHeaders;
 	if (scopes !== undefined) result.scopes = scopes;
 	if (paramStyle !== undefined) result.paramStyle = paramStyle;
 	if (tokenEndpointAuthMethod !== undefined)

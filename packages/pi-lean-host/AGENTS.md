@@ -166,16 +166,17 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   in `paginate` only. Agent-supplied `restGet` URLs are **not** guarded (the
   agent has bash).
 - **Static-key auth** (`core/auth.ts` + schema): `auth.kind: static-key`
-  realizes `secretRefs` (`Record<headerName, secretName>`), `headerPrefixes`
-  (`Record<headerName, prefix>` — store holds the raw credential; the guide
-  declares the scheme prefix e.g. `Authorization: "Bearer "`, applied at
-  resolution time; every key must be a `secretRefs` header, parser-enforced),
-  `secretQueryRefs` (`Record<paramName, secretName>`), `requires: string[]`,
-  `optional: string[]`.
-  - **Parser-enforced invariants**: ref values and `requires ∪ optional`
-    must coincide (every ref targets a declared secret and vice versa); a
-    name in both is an error; a `secretQueryRefs` param colliding with any
-    op's `params` map is an error; `oauth2` is rejected at parse.
+  realizes `secretRefs` (nested `Record<headerName, SecretRef>` where each
+  `SecretRef` is `{ secret, prefix?, optional? }` — store holds the raw
+  credential; the ref declares the scheme prefix e.g. `Authorization:
+  "Bearer "`, applied at resolution time, and its own availability),
+  `secretQueryRefs` (`Record<paramName, SecretRef>`), plus literal
+  `headers`.
+  - **Parser-enforced invariants**: every `secretRefs` value targets a name
+    the secrets store would accept; a `secretQueryRefs` param colliding with
+    any op's `params` map is an error. (`oauth2` parses — see the
+    `GUIDE_SCHEMA_VERSION` section below; `validateOAuth2Auth` enforces its
+    grant invariants.)
   - **Injection**: `api-fetch` resolves store secrets via
     `resolveSecretHeaders()` / `resolveSecretQueryParams()` and injects them
     in code — the value never enters agent context. A missing `requires`
@@ -205,15 +206,19 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
     Shared `authStatusLine()` footer renders five metadata-only states on
     both `api-guide` and `api-fetch` (no-auth / ok / nudge-provision /
     ok-optional / optional-not-provisioned).
-  - **`api-probe` extras**: inline `auth` block (injection fields only) for
-    probing auth-gated endpoints; learn-gated `listSecrets: true` lists
+  - **`api-probe` extras**: inline `auth` block (injection fields only:
+    `secretRefs` / `secretQueryRefs` / `headerPrefixes` / `useTokenStore`)
+    for probing auth-gated endpoints; `useTokenStore: true` reads the cached
+    OAuth2 access token for the resolved domain from the token store and
+    injects `Authorization: Bearer <token>` (absent/expired → a note nudging
+    `/api oauth <domain>`, call proceeds unauthenticated — never fail-closed);
+    learn-gated `listSecrets: true` lists
     provisioned secret names (names only) to close the authoring bootstrap
     gap. A bare `listSecrets` call (no `domain`, no `apiHost`) lists
     **provisioned-but-guideless** (unscoped) store domains first — the orphan
     view for authoring bootstrap + post-flip migration cleanup — then the
     per-domain view.
-  - **Deferred by design** (don't add): `oauth2` stays a
-    declared-but-unrealized seam (rejected at parse); general mutations /
+  - **Deferred by design** (don't add): general mutations /
     write gate stay out (transport is GET-only); cookie-login (jar +
     `api-login`) is deferred in full; an OS-keychain at-rest backend
     (`@napi-rs/keyring`) is an additive store-backend upgrade, daemon-gated
@@ -357,7 +362,7 @@ decision, deferred until caritas re-stamps its corpus — see
 `SecretRef` entries (`{ secret, prefix?, optional? }`). The old top-level
 `requires` / `optional` / `headerPrefixes` fields are gone — availability
 and prefix now live on each ref. `oauth2` is realized (client_credentials
-runtime + `/api oauth`; the auth-code interactive flow ships in
+runtime + `/api oauth`; the auth-code interactive flow lives in
 `oauth-flow.ts` — loopback listener + user's own browser, or a printed
 URL + `--code` headless).
 

@@ -90,6 +90,12 @@ export interface OAuth2Auth {
 	grant: OAuth2Grant;
 	/** Token endpoint (POST — the only non-GET host makes, auth plumbing). */
 	tokenUrl: string;
+	/**
+	 * The SECRETS-STORE NAME holding the OAuth client id (e.g. `client_id`) —
+	 * resolved per-user at runtime, never a literal. A shippable recipe must
+	 * not bake in one registration's client id: every user registers their own
+	 * app (own quota), provisioning via /api secrets <domain>.
+	 */
 	clientId: string;
 	/**
 	 * Reuses the nested `SecretRef` shape. For oauth2 the map key is a FORM
@@ -98,6 +104,13 @@ export interface OAuth2Auth {
 	 * (PKCE apps have no secret) — parser-enforced in `validateOAuth2`.
 	 */
 	secretRefs?: Record<string, SecretRef>;
+	/**
+	 * API-request header name → store ref, merged alongside the Bearer token
+	 * on every request (e.g. Twitch's `Client-Id`). Distinct from `secretRefs`
+	 * (token-endpoint form fields). Values resolve from the secrets store —
+	 * per-user, never shipped in the guide.
+	 */
+	apiHeaders?: Record<string, SecretRef>;
 	/** Static scope list declared in the guide — no runtime picker. */
 	scopes?: string[];
 	/** Default bearer-header. `query` sends `?access_token=…` (RFC 6750 §2.3). */

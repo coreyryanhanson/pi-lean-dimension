@@ -32,6 +32,7 @@ import {
 	scrubSecretValues,
 } from "../core/auth.js";
 import { listDomains, listNames } from "../core/secrets-store.js";
+import { readToken } from "../core/oauth-store.js";
 import { findGuidesByDomain } from "../core/guide-store.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
 import { serverMessage, isPlanGated } from "../core/status-hint.js";
@@ -94,6 +95,15 @@ export interface ProbeOptions {
 		 * is API knowledge. Keys must be present in `secretRefs`.
 		 */
 		headerPrefixes?: Record<string, string>;
+		/**
+		 * Read the OAuth2 access token from the token store (the domain the
+		 * probe resolved) and inject `Authorization: Bearer <token>` — values
+		 * never enter the transcript. Bearer-header only (ponytail: query
+		 * paramStyle waits for a recipe that needs it). No/expired token →
+		 * the note nudges `/api oauth <domain>` and the probe proceeds
+		 * unauthenticated (probe misses are never fail-closed).
+		 */
+		useTokenStore?: boolean;
 	};
 	/** Domain for secrets-store lookups; defaults to apiHost's hostname (or its provisioned parent domain). */
 	domain?: string;
@@ -226,6 +236,9 @@ interface ProbeAuthCtx {
 	/** headerPrefixes declared but no secretRefs to apply them to — the
 	 *  prefixes would be silently dropped. Surfaced as a note, not an error. */
 	misconfiguredPrefixes: boolean;
+	/** useTokenStore declared but no usable token (absent or expired) — the
+	 *  nudge text, composed into the 401/403 note. Empty when fine/unused. */
+	tokenNote: string;
 }
 
 /**
@@ -240,9 +253,9 @@ function flatToStaticKeyAuth(
 	for (const [header, secretName] of Object.entries(auth.secretRefs ?? {})) {
 		secretRefs[header] = {
 			secret: secretName,
-			...(auth.headerPrefixes?.[header] !== undefined
-				? { prefix: auth.headerPrefixes[header] }
-				: {}),
+			...(auth.headerPrefixes?.[header] === undefined
+				? {}
+				: { prefix: auth.headerPrefixes[header] }),
 		};
 	}
 	const secretQueryRefs: Record<string, SecretRef> = {};
@@ -281,7 +294,8 @@ function resolveProbeAuth(
 		!!auth &&
 		(Object.keys(auth.secretRefs ?? {}).length > 0 ||
 			Object.keys(auth.secretQueryRefs ?? {}).length > 0);
-	if (!hasRefs) {
+	const useTokenStore = !!auth?.useTokenStore;
+	if (!hasRefs && !useTokenStore) {
 		return {
 			hasAuthBlock: false,
 			headers: {},
@@ -291,21 +305,37 @@ function resolveProbeAuth(
 			secretValues: [],
 			missingNames: [],
 			misconfiguredPrefixes,
+			tokenNote: "",
 		};
 	}
 	const staticKeyAuth = flatToStaticKeyAuth(auth!);
 	const headerRes = resolveSecretHeaders(staticKeyAuth, domain);
 	const queryRes = resolveSecretQueryParams(staticKeyAuth, domain);
+	// OAuth2 store-read injection: the token rides the same ctx as secret
+	// headers (scrub + redirect-strip cover it). Store-read only — minting is
+	// `/api oauth`'s job; the probe never POSTs. Bearer-header only (ponytail:
+	// query paramStyle injection waits for a recipe that needs it).
+	let tokenNote = "";
+	const tokenHeader: Record<string, string> = {};
+	if (useTokenStore) {
+		const token = readToken(domain);
+		if (!token) {
+			tokenNote = `no cached token for "${domain}"; run /api oauth ${domain} to mint one`;
+		} else if (token.expiresAt !== undefined && token.expiresAt <= Date.now()) {
+			tokenNote = `token for "${domain}" is expired; run /api oauth ${domain} --refresh`;
+		} else {
+			tokenHeader["authorization"] = `Bearer ${token.accessToken}`;
+		}
+	}
+	const headers = { ...headerRes.headers, ...tokenHeader };
 	return {
 		hasAuthBlock: true,
-		headers: headerRes.headers,
+		headers,
 		queryParams: queryRes.queryParams,
-		secretHeaderNames: new Set(
-			Object.keys(headerRes.headers).map((h) => h.toLowerCase()),
-		),
+		secretHeaderNames: new Set(Object.keys(headers).map((h) => h.toLowerCase())),
 		secretQueryParamNames: new Set(Object.keys(queryRes.queryParams)),
 		secretValues: [
-			...Object.values(headerRes.headers),
+			...Object.values(headers),
 			...headerRes.rawHeaderValues,
 			...Object.values(queryRes.queryParams),
 		],
@@ -316,6 +346,7 @@ function resolveProbeAuth(
 			...queryRes.absentOptional,
 		],
 		misconfiguredPrefixes,
+		tokenNote,
 	};
 }
 
@@ -338,6 +369,15 @@ function missNote(authCtx: ProbeAuthCtx, domain: string): string {
 			? ` — provisioned domains: ${others.join(", ")}; pass domain: <one> to use its secret`
 			: "";
 	return `secret "${authCtx.missingNames[0]}" not found in store for domain "${domain}"${tail}`;
+}
+
+/** missNote + the token-store note, joined — the one miss renderer used at
+ *  every note site, so a useTokenStore nudge rides along wherever a secret
+ *  miss would. */
+function authMissNote(authCtx: ProbeAuthCtx, domain: string): string {
+	return [missNote(authCtx, domain), authCtx.tokenNote]
+		.filter(Boolean)
+		.join(" — ");
 }
 
 /** Resolve the secrets-store domain for a probe: the apiHost hostname when it
@@ -437,7 +477,7 @@ async function walkBackward(
 	},
 	start: number,
 ): Promise<ProbeResult | null> {
-	const miss = missNote(ctx.authCtx, ctx.domain);
+	const miss = authMissNote(ctx.authCtx, ctx.domain);
 	const floor = Math.max(start - MAX_VERSION_WALK, 1);
 	for (let k = start - 1; k >= floor; k--) {
 		const tried = await fetchOne(
@@ -475,7 +515,7 @@ function withVersion(apiHost: string, k: number): string {
 
 /** The gate-excluded 404 note (bare / non-integer / subdomain version hosts). */
 function walkSkipNote(authCtx: ProbeAuthCtx, domain: string): string {
-	const miss = missNote(authCtx, domain);
+	const miss = authMissNote(authCtx, domain);
 	return `${miss ? miss + " — " : ""}404 — no version walk (apiHost has no /vN prefix)`;
 }
 
@@ -517,7 +557,7 @@ async function fetchOne(
 		// (gated endpoint, or bad/missing credentials), distinct from other
 		// 4xx/5xx statuses. The name is deliberate: it covers 403 too.
 		const isAuthError = res.status === 401 || res.status === 403;
-		const miss = missNote(authCtx, domain);
+		const miss = authMissNote(authCtx, domain);
 		let note: string;
 		if (!authCtx.hasAuthBlock) {
 			// No auth injected — a 401/403 means the endpoint is gated and the
@@ -585,7 +625,7 @@ async function fetchOne(
 	}
 
 	const shape = summarize(data);
-	const miss = missNote(authCtx, domain);
+	const miss = authMissNote(authCtx, domain);
 	const draft = emitDraft(path, params, shape, prefix);
 	let note: string | undefined = miss;
 	if (authCtx.misconfiguredPrefixes) {
@@ -774,10 +814,16 @@ export const apiProbeTool = defineTool({
 					secretRefs: Type.Optional(Type.Record(Type.String(), Type.String())),
 					secretQueryRefs: Type.Optional(Type.Record(Type.String(), Type.String())),
 					headerPrefixes: Type.Optional(Type.Record(Type.String(), Type.String())),
+					useTokenStore: Type.Optional(
+						Type.Boolean({
+							description:
+								"Inject the OAuth2 access token from the token store as 'Authorization: Bearer <token>' (mint it first via /api oauth <domain>). Values never enter the transcript; absent/expired token → the note nudges /api oauth and the probe proceeds unauthenticated.",
+						}),
+					),
 				},
 				{
 					description:
-						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Accepts only secretRefs, secretQueryRefs, and headerPrefixes. Values resolve from the secrets store and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
+						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Accepts only secretRefs, secretQueryRefs, headerPrefixes, and useTokenStore. Values resolve from the secrets/token stores and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
 					// Tight: unknown keys (e.g. a stray `domain`) are rejected before execute runs.
 					// The description above names the allowed fields explicitly — keep it in
 					// sync when adding/renaming a field here, or the prose lies to agents.
@@ -813,6 +859,7 @@ export const apiProbeTool = defineTool({
 				secretRefs?: Record<string, string>;
 				secretQueryRefs?: Record<string, string>;
 				headerPrefixes?: Record<string, string>;
+				useTokenStore?: boolean;
 			};
 			domain?: string;
 			listSecrets?: boolean;
@@ -1055,7 +1102,11 @@ function listDomainSecrets(domain: string): {
 					declaredSet.add(ref.secret);
 				break;
 			case "oauth2":
+				// clientId is a store NAME too — surface it in declared-vs-stored gaps.
+				declaredSet.add(guide.auth.clientId);
 				for (const ref of Object.values(guide.auth.secretRefs ?? {}))
+					declaredSet.add(ref.secret);
+				for (const ref of Object.values(guide.auth.apiHeaders ?? {}))
 					declaredSet.add(ref.secret);
 				break;
 			case "none":

@@ -299,12 +299,13 @@ async function resolveTokenUnlocked(
 	domain: string,
 ): Promise<AccessTokenResult> {
 	let token = readToken(domain);
-	if (token && !isTokenExpired(token)) return toAccessTokenResult(auth, token);
+	if (token && !isTokenExpired(token))
+		return toAccessTokenResult(auth, token, domain);
 	if (token?.refreshToken) {
 		try {
 			token = await refreshAccessToken(auth, domain, token.refreshToken);
 			writeToken(domain, token);
-			return toAccessTokenResult(auth, token);
+			return toAccessTokenResult(auth, token, domain);
 		} catch {
 			// Refresh failed (rotated/revoked refresh token, endpoint down) —
 			// fall through to re-mint; the mint surfaces the real failure.
@@ -313,7 +314,7 @@ async function resolveTokenUnlocked(
 	if (auth.grant === "client_credentials") {
 		token = await mintClientCredentialsToken(auth, domain);
 		writeToken(domain, token);
-		return toAccessTokenResult(auth, token);
+		return toAccessTokenResult(auth, token, domain);
 	}
 	// authorization_code: no interactive mint in Phase 1 — fail closed with
 	// a nudge. Phase 2 wires /api oauth to the interactive flow.
@@ -327,38 +328,87 @@ async function resolveTokenUnlocked(
 function toAccessTokenResult(
 	auth: OAuth2Auth,
 	token: OAuthToken,
+	domain: string,
 ): AccessTokenResult {
+	// apiHeaders (e.g. Twitch's Client-Id) merge onto the same header map —
+	// resolved from the secrets store, fail-closed when a required one is
+	// missing (same store-read semantics as a static-key secret).
+	const apiHeaders: Record<string, string> = {};
+	const apiValues: string[] = [];
+	for (const [headerName, ref] of Object.entries(auth.apiHeaders ?? {})) {
+		const value = readSecret(domain, ref.secret);
+		if (value === null) {
+			if (ref.optional) continue;
+			throw new OAuthTokenMissingError(
+				`OAuth2 api header '${headerName}' needs the secret '${ref.secret}' provisioned ` +
+					`for '${domain}'. Run /api secrets ${domain} then /api oauth ${domain}.`,
+			);
+		}
+		apiHeaders[headerName] = (ref.prefix ?? "") + value;
+		apiValues.push(value);
+	}
 	const style = auth.paramStyle ?? "bearer-header";
 	if (style === "query") {
 		// RFC 6750 §2.3 — the query-injected param name is `access_token`.
 		return {
+			...(Object.keys(apiHeaders).length > 0
+				? {
+						authHeaders: apiHeaders,
+						// Strip them on cross-domain redirect hops, same as bearer style.
+						secretHeaderNames: new Set(
+							Object.keys(apiHeaders).map((h) => h.toLowerCase()),
+						),
+					}
+				: {}),
 			secretQueryParams: { access_token: token.accessToken },
 			secretQueryParamNames: new Set(["access_token"]),
-			secretValues: [token.accessToken],
+			secretValues: [token.accessToken, ...apiValues],
 		};
 	}
 	return {
-		authHeaders: { authorization: `Bearer ${token.accessToken}` },
-		secretHeaderNames: new Set(["authorization"]),
-		secretValues: [token.accessToken],
+		authHeaders: {
+			authorization: `Bearer ${token.accessToken}`,
+			...apiHeaders,
+		},
+		secretHeaderNames: new Set([
+			"authorization",
+			...Object.keys(apiHeaders).map((h) => h.toLowerCase()),
+		]),
+		secretValues: [token.accessToken, ...apiValues],
 	};
 }
 
 /**
- * The client secret for an oauth2 guide, resolved from the secrets store via
- * its `secretRefs` map (map key "client_secret" — a form field name, not a
- * header name). Null when the guide declares no client_secret ref (PKCE
- * auth-code apps) or the store lacks it.
+ * The client credentials for an oauth2 guide: client_id resolved from the
+ * secrets store by the guide's `clientId` store NAME (never a literal — a
+ * shippable guide must not bake in one app's registration), and the client
+ * secret via its `secretRefs` map entry. Null secret when the guide declares
+ * no client_secret ref (PKCE auth-code apps) or the store lacks it.
+ * Throws `OAuthTokenMissingError` when the client_id store name is absent —
+ * the token endpoint cannot be called without it.
  */
-function resolveClientSecret(
+export function resolveClientCredentials(
 	auth: OAuth2Auth,
 	domain: string,
-): { secret: string; refName: string } | null {
+): {
+	clientId: string;
+	clientSecret: { secret: string; refName: string } | null;
+} {
+	const clientId = readSecret(domain, auth.clientId);
+	if (clientId === null) {
+		throw new OAuthTokenMissingError(
+			`OAuth2 needs the client id '${auth.clientId}' provisioned ` +
+				`for '${domain}'. Run /api secrets ${domain} then /api oauth ${domain}.`,
+		);
+	}
 	const ref = auth.secretRefs?.["client_secret"];
-	if (!ref) return null;
-	const value = readSecret(domain, ref.secret);
-	if (value === null) return null;
-	return { secret: value, refName: ref.secret };
+	const clientSecret = ref ? readSecret(domain, ref.secret) : null;
+	return {
+		clientId,
+		...(clientSecret !== null && ref
+			? { clientSecret: { secret: clientSecret, refName: ref.secret } }
+			: { clientSecret: null }),
+	};
 }
 
 /**
@@ -373,7 +423,11 @@ export function hasUsableTokenPath(auth: OAuth2Auth, domain: string): boolean {
 	if (token?.refreshToken) return true;
 	if (auth.grant === "client_credentials") {
 		const ref = auth.secretRefs?.["client_secret"];
-		return !!ref && readSecret(domain, ref.secret) !== null;
+		return (
+			readSecret(domain, auth.clientId) !== null &&
+			!!ref &&
+			readSecret(domain, ref.secret) !== null
+		);
 	}
 	return false;
 }
@@ -391,20 +445,20 @@ export async function exchangeAuthCode(
 	redirectUri: string,
 	verifier: string,
 ): Promise<OAuthToken> {
-	const clientSecret = resolveClientSecret(auth, domain);
+	const { clientId, clientSecret } = resolveClientCredentials(auth, domain);
 	const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
 	const form: Record<string, string> = {
 		grant_type: "authorization_code",
 		code,
 		redirect_uri: redirectUri,
-		client_id: auth.clientId,
+		client_id: clientId,
 		code_verifier: verifier,
 	};
 	const headers: Record<string, string> = {};
 	if (clientSecret && method === "client_secret_basic") {
 		headers["authorization"] =
 			"Basic " +
-			Buffer.from(`${auth.clientId}:${clientSecret.secret}`).toString("base64");
+			Buffer.from(`${clientId}:${clientSecret.secret}`).toString("base64");
 	} else if (clientSecret && method === "client_secret_post") {
 		form["client_secret"] = clientSecret.secret;
 	}
@@ -497,7 +551,7 @@ async function mintClientCredentialsToken(
 	auth: OAuth2Auth,
 	domain: string,
 ): Promise<OAuthToken> {
-	const clientSecret = resolveClientSecret(auth, domain);
+	const { clientId, clientSecret } = resolveClientCredentials(auth, domain);
 	if (!clientSecret) {
 		const refName = auth.secretRefs?.["client_secret"]?.secret ?? "client_secret";
 		throw new OAuthTokenMissingError(
@@ -508,13 +562,13 @@ async function mintClientCredentialsToken(
 	const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
 	const form: Record<string, string> = {
 		grant_type: "client_credentials",
-		client_id: auth.clientId,
+		client_id: clientId,
 	};
 	const headers: Record<string, string> = {};
 	if (method === "client_secret_basic") {
 		headers["authorization"] =
 			"Basic " +
-			Buffer.from(`${auth.clientId}:${clientSecret.secret}`).toString("base64");
+			Buffer.from(`${clientId}:${clientSecret.secret}`).toString("base64");
 	} else if (method === "client_secret_post") {
 		form["client_secret"] = clientSecret.secret;
 	}
@@ -533,18 +587,18 @@ async function refreshAccessToken(
 	domain: string,
 	refreshToken: string,
 ): Promise<OAuthToken> {
-	const clientSecret = resolveClientSecret(auth, domain);
+	const { clientId, clientSecret } = resolveClientCredentials(auth, domain);
 	const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
 	const form: Record<string, string> = {
 		grant_type: "refresh_token",
 		refresh_token: refreshToken,
-		client_id: auth.clientId,
+		client_id: clientId,
 	};
 	const headers: Record<string, string> = {};
 	if (clientSecret && method === "client_secret_basic") {
 		headers["authorization"] =
 			"Basic " +
-			Buffer.from(`${auth.clientId}:${clientSecret.secret}`).toString("base64");
+			Buffer.from(`${clientId}:${clientSecret.secret}`).toString("base64");
 	} else if (clientSecret && method === "client_secret_post") {
 		form["client_secret"] = clientSecret.secret;
 	}
@@ -566,14 +620,14 @@ export async function revokeAccessToken(
 	const token = readToken(domain);
 	if (token && auth.revokeUrl) {
 		try {
-			const clientSecret = resolveClientSecret(auth, domain);
+			const { clientId, clientSecret } = resolveClientCredentials(auth, domain);
 			const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
 			const form: Record<string, string> = { token: token.accessToken };
 			const headers: Record<string, string> = {};
 			if (clientSecret && method === "client_secret_basic") {
 				headers["authorization"] =
 					"Basic " +
-					Buffer.from(`${auth.clientId}:${clientSecret.secret}`).toString("base64");
+					Buffer.from(`${clientId}:${clientSecret.secret}`).toString("base64");
 			} else if (clientSecret && method === "client_secret_post") {
 				form["client_secret"] = clientSecret.secret;
 			}

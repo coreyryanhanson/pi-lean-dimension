@@ -429,6 +429,7 @@ describe("/api verify — oauth2 auth precheck", () => {
 
 	it("proceeds when a client_credentials guide can mint (client secret provisioned)", async () => {
 		setupGuide(recipe(opBlock(OP_HEALTH), oauthAuthBlock("client_credentials")));
+		writeSecret("verify.test", "client", "MY_CLIENT"); // clientId is a store NAME
 		writeSecret("verify.test", "client_secret", "S3CRET");
 		vi.stubGlobal(
 			"fetch",
