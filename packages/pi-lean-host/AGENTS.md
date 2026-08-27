@@ -259,10 +259,12 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   token store + pending auth-code flow — 0600 file backend, swappable
   `TokenStore` interface, kept free of any `auth.ts` import),
   `oauth-command.ts` (`/api oauth` — mint / `--status` / `--refresh` /
-  `--revoke` / `--code <code>`), `oauth-flow.ts` (interactive auth-code +
-  PKCE dance: PKCE pair gen, `buildAuthorizeUrl`, loopback
-  `startCallbackServer` bound to `127.0.0.1`, `mintAuthCodeToken`
-  orchestration — host-only, no portal import),
+  `--revoke` / `--code <code>`), `oauth-flow.ts` (headless paste-based
+  auth-code + PKCE dance: PKCE pair gen, `buildAuthorizeUrl`,
+  `parsePastedRedirect` (full redirect URL / bare code, state check,
+  `?error=` surfacing), `mintAuthCodeToken` orchestration, the
+  `http://localhost/callback` redirect convention (RFC 8252 §7.3) —
+  host-only, no portal import, no listener, no inbound network surface),
   `transport.ts` (shared fetch pipeline: UA, charset, 429-retry, ETag cache —
   the sanctioned way to reach even WAF'd hosts), `path-template.ts`,
   `ssrf-guard.ts`, `status-hint.ts` (shared 403 classifier — `serverMessage`
@@ -293,8 +295,8 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `secrets-store`, `secrets-command`, `auth` (static-key schema/injection/
   output-channel audit/SSRF/footer structural tests), `oauth`
   (client_credentials mint/cache/refresh/scrub), `oauth-flow` (auth-code +
-  PKCE: loopback callback capture, state check, headless `--code` completion,
-  interactive end-to-end), `query-secrets`
+  PKCE: paste-parse (full URL with state / bare code / `?error=`),
+  headless `--code` completion, interactive inline prompt, --refresh), `query-secrets`
   (query-param-secret injection, output-channel redaction, api-probe inline
   auth / `listSecrets`), `portal-projection`, `render-result`,
   `response-spill`, `host-only-boundary`, `axis-units` (nextLink/XML/cursor/
@@ -362,9 +364,10 @@ decision, deferred until caritas re-stamps its corpus — see
 `SecretRef` entries (`{ secret, prefix?, optional? }`). The old top-level
 `requires` / `optional` / `headerPrefixes` fields are gone — availability
 and prefix now live on each ref. `oauth2` is realized (client_credentials
-runtime + `/api oauth`; the auth-code interactive flow lives in
-`oauth-flow.ts` — loopback listener + user's own browser, or a printed
-URL + `--code` headless).
+runtime + `/api oauth`; the auth-code flow is headless paste-based —
+authorize URL printed, user consents in their own browser and pastes the
+redirect URL back, `redirect_uri` is the `http://localhost/callback`
+convention, RFC 8252 §7.3).
 
 **Bump rule (post-v1):** do not bump unless a guide that used to parse now
 fails to parse. Adding an optional field, a new enum value, or relaxing a

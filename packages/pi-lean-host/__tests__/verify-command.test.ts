@@ -372,10 +372,7 @@ function oauthAuthBlock(
 		"  clientId: { secret: client }",
 	];
 	if (grant === "authorization_code") {
-		lines.push(
-			"  authorizeUrl: https://verify.test/oauth/authorize",
-			"  redirectUri: http://localhost:9999/callback",
-		);
+		lines.push("  authorizeUrl: https://verify.test/oauth/authorize");
 	} else {
 		lines.push("  clientSecret: { secret: client_secret }");
 	}

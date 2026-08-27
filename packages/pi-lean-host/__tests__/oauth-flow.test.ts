@@ -1,33 +1,34 @@
 /**
- * OAuth2 authorization-code + PKCE flow tests — mocked transport + a real
- * loopback callback listener.
+ * OAuth2 authorization-code + PKCE flow tests — mocked transport, headless
+ * paste-based flow (no listener, no inbound network).
  *
- * Covers the Phase-2 interactive half:
- *  - PKCE pair generation + authorize-URL construction.
- *  - startCallbackServer: code capture (matching state), state-mismatch
- *    ignore, error param, timeout.
+ * Covers the Phase-2.6 headless-only flow:
+ *  - PKCE pair generation + authorize-URL construction (redirect_uri is the
+ *    http://localhost/callback convention).
+ *  - parsePastedRedirect: bare code, full address-bar URL (state surfaced),
+ *    host-less / bare-query inputs, provider `?error=` surfacing, no-code
+ *    and empty-input failures.
  *  - exchangeAuthCode: the token POST body (code + verifier + redirect_uri).
- *  - mintAuthCodeToken orchestration: headless pending-flow + --code
- *    completion, --code with no pending flow fail-closed, --refresh via the
- *    stored refresh token, and the interactive loopback end-to-end (real
- *    listener + browser-style callback hit).
+ *  - mintAuthCodeToken orchestration: pending-flow + --code completion (bare
+ *    code and full URL with state), state-mismatch rejection (pending flow
+ *    survives), --code with no pending flow fail-closed, --refresh via the
+ *    stored refresh token.
  *
- * The token POST goes through global `fetch` (stubbed); the loopback
- * callback is hit with a real node:http request so the fetch stub never
- * intercepts it.
+ * The token POST goes through global `fetch` (stubbed).
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { createHash } from "node:crypto";
-import { request } from "node:http";
 import { rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	generatePkcePair,
+	generateState,
 	buildAuthorizeUrl,
-	startCallbackServer,
+	parsePastedRedirect,
 	mintAuthCodeToken,
+	REDIRECT_URI,
 } from "../core/oauth-flow.js";
 import { exchangeAuthCode, OAuthTokenMissingError } from "../core/auth.js";
 import {
@@ -41,7 +42,6 @@ import type { OAuth2Auth } from "../core/api-guide-types.js";
 
 const TOKEN_URL = "https://token.example.com/oauth/token";
 const AUTHORIZE_URL = "https://api.example.com/oauth/authorize";
-const REDIRECT_URI = "http://localhost:9999/callback";
 
 function makeAuthCodeAuth(overrides: Partial<OAuth2Auth> = {}): OAuth2Auth {
 	return {
@@ -52,7 +52,6 @@ function makeAuthCodeAuth(overrides: Partial<OAuth2Auth> = {}): OAuth2Auth {
 		clientId: { secret: "client_id" },
 		clientSecret: { secret: "client_secret" },
 		authorizeUrl: AUTHORIZE_URL,
-		redirectUri: REDIRECT_URI,
 		...overrides,
 	};
 }
@@ -76,35 +75,6 @@ function tokenResponse(body: unknown, status = 200): Response {
 	});
 }
 
-/** Hit the loopback callback with a real HTTP request (never the fetch stub). */
-function hitCallback(port: number, query: string): Promise<number> {
-	return new Promise((resolve, reject) => {
-		const req = request(
-			{ host: "127.0.0.1", port, path: `/callback?${query}` },
-			(res) => {
-				res.resume();
-				res.on("end", () => resolve(res.statusCode ?? 0));
-			},
-		);
-		req.on("error", reject);
-		req.end();
-	});
-}
-
-/** Poll the notify mock until an authorize URL appears in its messages. */
-async function waitForAuthorizeUrl(
-	notify: ReturnType<typeof vi.fn>,
-): Promise<string> {
-	const deadline = Date.now() + 5000;
-	while (Date.now() < deadline) {
-		const text = notify.mock.calls.map((c) => c[0]).join("\n");
-		const m = text.match(/https?:\/\/[^\s]+/);
-		if (m) return m[0];
-		await new Promise((r) => setTimeout(r, 10));
-	}
-	throw new Error("no authorize URL surfaced by the flow");
-}
-
 let tmpSecrets: string;
 let tmpOAuth: string;
 
@@ -121,7 +91,7 @@ afterAll(() => {
 	rmSync(tmpOAuth, { recursive: true, force: true });
 });
 
-// ═══════════════════════════════════════════════════��═══════════════
+// ═══════════════════════════════════════════════════════════════════
 // PKCE + authorize URL
 // ═══════════════════════════════════════════════════════════════════
 
@@ -153,65 +123,57 @@ describe("PKCE pair + authorize URL", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// startCallbackServer — loopback listener
+// parsePastedRedirect — the paste is the only completion input
 // ═══════════════════════════════════════════════════════════════════
 
-describe("startCallbackServer", () => {
-	it("captures the code when the callback carries a matching state", async () => {
-		const cb = await startCallbackServer();
-		try {
-			const codePromise = cb.waitForCode("EXPECTED", 2000);
-			const status = await hitCallback(cb.port, "code=CB&state=EXPECTED");
-			expect(status).toBe(200);
-			await expect(codePromise).resolves.toBe("CB");
-		} finally {
-			cb.close();
-		}
+describe("parsePastedRedirect", () => {
+	it("accepts the full redirect URL (documented default) with state", () => {
+		const r = parsePastedRedirect(
+			`http://localhost/callback?code=CB&state=${generateState()}`,
+		);
+		expect(r.code).toBe("CB");
+		expect(r.state).toBeDefined();
 	});
 
-	it("ignores a state mismatch, then resolves on the matching callback", async () => {
-		const cb = await startCallbackServer();
-		try {
-			const codePromise = cb.waitForCode("EXPECTED", 2000);
-			await hitCallback(cb.port, "code=WRONG&state=OTHER");
-			// Still pending after the mismatched callback.
-			let settled = false;
-			codePromise.then(
-				() => (settled = true),
-				() => (settled = true),
-			);
-			await new Promise((r) => setTimeout(r, 50));
-			expect(settled).toBe(false);
-			await hitCallback(cb.port, "code=GOOD&state=EXPECTED");
-			await expect(codePromise).resolves.toBe("GOOD");
-		} finally {
-			cb.close();
-		}
+	it("accepts a host-less redirect URL", () => {
+		const r = parsePastedRedirect("localhost/callback?code=CB&state=ST");
+		expect(r.code).toBe("CB");
+		expect(r.state).toBe("ST");
 	});
 
-	it("rejects on an error param", async () => {
-		const cb = await startCallbackServer();
-		try {
-			const codePromise = cb.waitForCode("EXPECTED", 2000);
-			// Attach the rejection handler before the callback fires so the
-			// rejection is never observed as unhandled.
-			const assertion = expect(codePromise).rejects.toThrow("access_denied");
-			await hitCallback(cb.port, "error=access_denied&state=EXPECTED");
-			await assertion;
-		} finally {
-			cb.close();
-		}
+	it("accepts a bare query string", () => {
+		expect(parsePastedRedirect("code=CB&state=ST")).toEqual({
+			code: "CB",
+			state: "ST",
+		});
 	});
 
-	it("times out when no callback arrives", async () => {
-		const cb = await startCallbackServer();
-		try {
-			await expect(cb.waitForCode("EXPECTED", 50)).rejects.toThrow(
-				"Timed out waiting",
-			);
-		} finally {
-			cb.close();
-		}
+	it("accepts a bare code (state check skipped — pi never sees it)", () => {
+		expect(parsePastedRedirect("CB-RAW-VALUE")).toEqual({ code: "CB-RAW-VALUE" });
+	});
+
+	it("tolerates surrounding whitespace and other params", () => {
+		const r = parsePastedRedirect(
+			"  http://localhost/callback?foo=1&code=CB&bar=2&state=ST  ",
+		);
+		expect(r.code).toBe("CB");
+		expect(r.state).toBe("ST");
+	});
+
+	it("surfaces the provider's error + description", () => {
+		expect(() =>
+			parsePastedRedirect(
+				"http://localhost/callback?error=access_denied&error_description=User+cancelled",
+			),
+		).toThrow("access_denied — User cancelled");
+	});
+
+	it("rejects a query with no code", () => {
+		expect(() => parsePastedRedirect("state=ST")).toThrow("no `code`");
+	});
+
+	it("rejects an empty paste", () => {
+		expect(() => parsePastedRedirect("   ")).toThrow("empty");
 	});
 });
 
@@ -260,7 +222,7 @@ describe("mintAuthCodeToken", () => {
 		return { hasUI: false, ui: { notify: vi.fn() } } as any;
 	}
 
-	it("headless: prints the URL, persists the pending flow, and --code completes it", async () => {
+	it("headless: prints the URL with the redirect convention, persists the pending flow, and --code completes it", async () => {
 		const auth = makeAuthCodeAuth();
 		writeSecret("oauth.manual", "client_id", "MY_CLIENT");
 		const ctx = headlessCtx();
@@ -272,15 +234,17 @@ describe("mintAuthCodeToken", () => {
 			}),
 		);
 
+		// The headless nudge teaches the --code completion path.
 		await expect(
 			mintAuthCodeToken(auth, "oauth.manual", ctx, {}),
-		).rejects.toBeInstanceOf(OAuthTokenMissingError);
+		).rejects.toThrow(/--code/);
 		// Pending flow persisted with the verifier that produced the challenge.
 		const pending = readPendingFlow("oauth.manual");
 		expect(pending).not.toBeNull();
+		expect(pending?.redirectUri).toBe(REDIRECT_URI);
 		const text = ctx.ui.notify.mock.calls.map((c: unknown[]) => c[0]).join("\n");
-		expect(text).toContain("--code <code>");
-		const url = text.match(/https?:\/\/[^\s]+/)?.[0];
+		expect(text).toContain("localhost/callback"); // registration convention
+		const url = text.match(/https?:\/\/\S*code_challenge=\S+/)?.[0];
 		expect(url).toContain("code_challenge=");
 		expect(url).toContain("redirect_uri=" + encodeURIComponent(REDIRECT_URI));
 
@@ -291,6 +255,51 @@ describe("mintAuthCodeToken", () => {
 		expect(token.accessToken).toBe("MANUAL");
 		expect(readToken("oauth.manual")?.accessToken).toBe("MANUAL");
 		expect(readPendingFlow("oauth.manual")).toBeNull();
+	});
+
+	it("--code accepts the full redirect URL and validates the state", async () => {
+		const auth = makeAuthCodeAuth();
+		writeSecret("oauth.state", "client_id", "MY_CLIENT");
+		stubTokenEndpoint(() =>
+			tokenResponse({ access_token: "STATEFUL", expires_in: 3600 }),
+		);
+		await expect(
+			mintAuthCodeToken(auth, "oauth.state", headlessCtx(), {}),
+		).rejects.toBeInstanceOf(OAuthTokenMissingError);
+		const pending = readPendingFlow("oauth.state");
+		expect(pending).not.toBeNull();
+
+		// Mismatched state → rejected, pending flow survives for a retry.
+		const pasted = `http://localhost/callback?code=X&state=WRONG-${pending?.state}`;
+		await expect(
+			mintAuthCodeToken(auth, "oauth.state", headlessCtx(), { code: pasted }),
+		).rejects.toThrow("state mismatch");
+		expect(readPendingFlow("oauth.state")).not.toBeNull();
+
+		// Matching state → completes.
+		const good = `http://localhost/callback?code=GOOD&state=${pending?.state}`;
+		const token = await mintAuthCodeToken(auth, "oauth.state", headlessCtx(), {
+			code: good,
+		});
+		expect(token.accessToken).toBe("STATEFUL");
+		expect(readToken("oauth.state")?.accessToken).toBe("STATEFUL");
+		expect(readPendingFlow("oauth.state")).toBeNull();
+	});
+
+	it("--code surfaces a provider ?error= paste", async () => {
+		const auth = makeAuthCodeAuth();
+		writeSecret("oauth.denied", "client_id", "MY_CLIENT");
+		await expect(
+			mintAuthCodeToken(auth, "oauth.denied", headlessCtx(), {}),
+		).rejects.toBeInstanceOf(OAuthTokenMissingError);
+		await expect(
+			mintAuthCodeToken(auth, "oauth.denied", headlessCtx(), {
+				code:
+					"http://localhost/callback?error=access_denied&error_description=Nope",
+			}),
+		).rejects.toThrow("access_denied — Nope");
+		// The pending flow survives a failed paste — the user can retry.
+		expect(readPendingFlow("oauth.denied")).not.toBeNull();
 	});
 
 	it("--code with no pending flow fails closed", async () => {
@@ -328,77 +337,40 @@ describe("mintAuthCodeToken", () => {
 		expect(readToken("oauth.force")?.refreshToken).toBe("RT-2");
 	});
 
-	it("--refresh with no refresh token falls through to the interactive flow", async () => {
+	it("--refresh with no refresh token falls through to a fresh authorize URL", async () => {
 		const auth = makeAuthCodeAuth();
 		writeSecret("oauth.norefresh", "client_id", "MY_CLIENT");
 		const ctx = headlessCtx();
 		await expect(
 			mintAuthCodeToken(auth, "oauth.norefresh", ctx, { refresh: true }),
 		).rejects.toBeInstanceOf(OAuthTokenMissingError);
-		// Fell through to the headless manual-code path → pending flow written.
+		// Fell through to the authorize path → pending flow written.
 		expect(readPendingFlow("oauth.norefresh")).not.toBeNull();
 	});
 
-	it("interactive: loopback listener captures the callback and exchanges the code", async () => {
+	it("interactive (hasUI): prompts for the paste and completes inline", async () => {
 		const auth = makeAuthCodeAuth();
-		writeSecret("oauth.loop", "client_id", "MY_CLIENT");
-		writeSecret("oauth.loop", "client_secret", "S3CRET");
-		const ctx = { hasUI: true, ui: { notify: vi.fn() } } as any;
-		stubTokenEndpoint((_url, init) => {
-			const body = String(init.body);
-			expect(body).toContain("grant_type=authorization_code");
-			expect(body).toContain("code_verifier=");
-			return tokenResponse({
-				access_token: "LOOP",
-				refresh_token: "RT",
-				expires_in: 3600,
-			});
-		});
-
-		const promise = mintAuthCodeToken(auth, "oauth.loop", ctx, {});
-		const url = await waitForAuthorizeUrl(ctx.ui.notify);
-		const u = new URL(url);
-		// The loopback port lives in the redirect_uri query param (the
-		// authorize URL itself carries no port).
-		const redirectUri = u.searchParams.get("redirect_uri")!;
-		expect(redirectUri).toMatch(/^http:\/\/localhost:\d+\/callback$/);
-		const port = Number(new URL(redirectUri).port);
-		const state = u.searchParams.get("state");
-
-		const status = await hitCallback(port, `code=CB-CODE&state=${state}`);
-		expect(status).toBe(200);
-		const token = await promise;
-		expect(token.accessToken).toBe("LOOP");
-		expect(readToken("oauth.loop")?.accessToken).toBe("LOOP");
-		// A successful loopback clears the pending flow it wrote up front.
-		expect(readPendingFlow("oauth.loop")).toBeNull();
-	});
-
-	it("interactive: a loopback timeout is recoverable via --code (pending flow persisted)", async () => {
-		const auth = makeAuthCodeAuth();
-		writeSecret("oauth.timeout", "client_id", "MY_CLIENT");
-		const ctx = { hasUI: true, ui: { notify: vi.fn() } } as any;
-		// No callback hit — the short budget times out, the pending flow stays
-		// (so a TUI user whose browser can't reach the loopback isn't stuck),
-		// and the failure is a recoverable nudge, not a raw error.
-		await expect(
-			mintAuthCodeToken(auth, "oauth.timeout", ctx, { timeoutMs: 50 }),
-		).rejects.toBeInstanceOf(OAuthTokenMissingError);
-		expect(readPendingFlow("oauth.timeout")).not.toBeNull();
-
-		// --code completes the recovered flow with the persisted verifier.
+		writeSecret("oauth.prompt", "client_id", "MY_CLIENT");
 		stubTokenEndpoint(() =>
-			tokenResponse({
-				access_token: "RECOVERED",
-				refresh_token: "RT",
-				expires_in: 3600,
-			}),
+			tokenResponse({ access_token: "PROMPTED", expires_in: 3600 }),
 		);
-		const token = await mintAuthCodeToken(auth, "oauth.timeout", ctx, {
-			code: "PASTED",
-		});
-		expect(token.accessToken).toBe("RECOVERED");
-		expect(readToken("oauth.timeout")?.accessToken).toBe("RECOVERED");
-		expect(readPendingFlow("oauth.timeout")).toBeNull();
+		let pending: ReturnType<typeof readPendingFlow>;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				notify: vi.fn(),
+				input: async () => {
+					// The pending flow is written BEFORE the prompt so the paste
+					// can be validated against the generated state.
+					pending = readPendingFlow("oauth.prompt");
+					return `http://localhost/callback?code=CB&state=${pending?.state}`;
+				},
+			},
+		} as any;
+
+		const token = await mintAuthCodeToken(auth, "oauth.prompt", ctx, {});
+		expect(token.accessToken).toBe("PROMPTED");
+		expect(readToken("oauth.prompt")?.accessToken).toBe("PROMPTED");
+		expect(readPendingFlow("oauth.prompt")).toBeNull();
 	});
 });

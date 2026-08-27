@@ -2,15 +2,17 @@
  * `/api oauth <domain>` — provision / inspect / revoke OAuth2 tokens.
  *
  * - `oauth <domain>`           — mint a token and stamp the token store.
- *   client_credentials: pure HTTP. authorization_code: loopback listener +
- *   the user's own browser (interactive) or a printed URL + `--code` (headless).
+ *   client_credentials: pure HTTP. authorization_code: print the authorize URL
+ *   (redirect_uri = http://localhost/callback, RFC 8252 §7.3), the user
+ *   consents in their own browser and pastes the redirect URL back — inline
+ *   prompt (TUI) or `--code <redirect-url-or-code>` (headless/scripting).
  * - `oauth <domain> --status`  — metadata-only token state (no network).
  * - `oauth <domain> --refresh` — force a fresh token (client_credentials:
- *   re-mint; authorization_code: refresh via the stored refresh token, or the
- *   interactive flow when there is none).
+ *   re-mint; authorization_code: refresh via the stored refresh token, or a
+ *   fresh authorize URL when there is none).
  * - `oauth <domain> --revoke`  — revoke at the provider's revokeUrl (if declared) and clear the store.
- * - `oauth <domain> --code <code>` — complete a headless authorization-code flow
- *   with a manually pasted code.
+ * - `oauth <domain> --code <code>` — complete an authorization-code flow with
+ *   the pasted redirect URL (or bare code) from a previous authorize step.
  *
  * Always-available / not focus-guarded — a peer of `secrets`/`verify`/`delete`
  * (writes the token store, not toolset state). The client secret lives in the
@@ -42,12 +44,13 @@ function helpText(): string {
 		"Usage: /api oauth <domain> [--status | --refresh | --revoke | --code <code>]",
 		"  /api oauth <domain>          mint a token and stamp the token store",
 		"                               (client_credentials: pure HTTP; authorization_code:",
-		"                                loopback listener + your own browser)",
+		"                                authorize URL + paste the redirect URL back)",
 		"  /api oauth <domain> --status metadata-only token state (no network)",
 		"  /api oauth <domain> --refresh force a fresh token (auth-code: refresh via the",
-		"                                stored refresh token, or the interactive flow)",
+		"                                stored refresh token, or a fresh authorize URL)",
 		"  /api oauth <domain> --revoke  revoke at the guide's revokeUrl (if declared) and clear the store",
-		"  /api oauth <domain> --code <code>  complete a headless auth-code flow with a pasted code",
+		"  /api oauth <domain> --code <code>  complete an auth-code flow with the pasted",
+		"                                redirect URL (or bare code)",
 		"",
 		`Tokens are stored per-domain as JSON (0600) at ${getOAuthDir()}/<domain>.json.`,
 		"The client secret lives in the secrets store (/api secrets <domain>), never here.",
@@ -201,9 +204,9 @@ export async function handleOauthSubcommand(
 
 	// Mint (or refresh) a token. The token store is read fresh inside
 	// resolveAccessToken, so a re-mint here is visible to the next api-fetch
-	// call. authorization_code guides route through the interactive flow
-	// (loopback + user's own browser, or a printed URL + --code);
-	// client_credentials stays pure HTTP.
+	// call. authorization_code guides route through the paste flow (print the
+	// authorize URL, user consents in their own browser, pastes the redirect
+	// URL back); client_credentials stays pure HTTP.
 	try {
 		if (auth.grant === "authorization_code") {
 			await mintAuthCodeToken(auth, storeDomain, ctx, {
@@ -220,7 +223,7 @@ export async function handleOauthSubcommand(
 			return;
 		}
 		ctx.ui.notify(
-			`�� OAuth2 provisioning failed for '${storeDomain}': ` +
+			`⚡ OAuth2 provisioning failed for '${storeDomain}': ` +
 				`${err instanceof Error ? err.message : String(err)}`,
 			"warning",
 		);

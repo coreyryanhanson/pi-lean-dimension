@@ -120,8 +120,6 @@ export interface OAuth2Auth {
 	tokenEndpointAuthMethod?: OAuth2TokenEndpointAuthMethod;
 	/** auth-code only (parser-enforced present iff grant === "authorization_code"). */
 	authorizeUrl?: string;
-	/** auth-code only. */
-	redirectUri?: string;
 	/** Optional revocation endpoint. */
 	revokeUrl?: string;
 }

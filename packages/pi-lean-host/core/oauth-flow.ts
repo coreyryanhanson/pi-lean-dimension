@@ -1,31 +1,23 @@
 /**
- * OAuth2 authorization-code + PKCE interactive flow — host-only.
+ * OAuth2 authorization-code + PKCE flow — headless paste-based, host-only.
  *
  * The user consents in THEIR OWN browser at the provider, logging in with
  * their own credentials. Routing that through portal's driven browser would
  * flow the user's provider password through agent context — a hard no. So
- * this module: generates the PKCE pair, spins up a loopback HTTP listener
- * bound to 127.0.0.1 to capture the `?code=…` redirect, surfaces the
- * authorize URL for the user, exchanges the captured code, and stamps the
- * token store. No static portal import — the host-only boundary holds.
- *
- * Two completion paths:
- *  - Interactive (`ctx.hasUI`): loopback listener + user's own browser. The
- *    authorize URL is printed; the browser redirects to
- *    `http://localhost:<port>/callback` and the listener captures the code.
- *  - Headless / manual-code: print the authorize URL (redirect_uri =
- *    `auth.redirectUri`, e.g. OSM's `urn:ietf:wg:oauth:2.0:oob`) and persist
- *    the PKCE verifier as a pending flow; the user completes auth and runs
- *    `/api oauth <domain> --code <code>` to exchange it. The verifier MUST
- *    survive between the two invocations — the exchange fails if it doesn't
- *    match the challenge sent in the authorize URL.
+ * this module: generates the PKCE pair, builds the authorize URL
+ * (`redirect_uri = http://localhost/callback`, the RFC 8252 §7.3 loopback
+ * convention — nothing listens there, by design), persists the pending flow,
+ * and surfaces the URL. The user pastes back the address-bar redirect URL
+ * (or bare code); pi validates `state`, exchanges the code, and stamps the
+ * token store. No listener, no inbound network surface — the flow works
+ * unchanged whether pi runs on the user's machine, in a container, or inside
+ * a VM. No static portal import — the host-only boundary holds.
  *
  * Import direction: oauth-flow → auth (exchange/refresh) → oauth-store; the
  * store imports nothing from here, so no cycle can form.
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import { createServer } from "node:http";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { OAuth2Auth } from "./api-guide-types.js";
 import {
@@ -42,24 +34,14 @@ import {
 } from "./oauth-store.js";
 import type { OAuthToken } from "./oauth-store.js";
 
-/** How long the loopback listener waits for the browser callback. */
-export const CALLBACK_TIMEOUT_MS = 10 * 60_000;
-
 /**
- * Thrown by `waitForCode` when the browser callback doesn't arrive in time.
- * Distinct from the `error`-param rejection so the loopback flow can turn a
- * timeout into a recoverable `--code` nudge (the verifier is still valid).
+ * The redirect-URI convention for every auth-code guide (RFC 8252 §7.3 —
+ * loopback, variable port). The redirect URI is a fact of the USER's app
+ * registration, not the provider's API, so the schema carries no field;
+ * the runtime owns the redirect end-to-end through this one convention.
+ * Nothing listens on the port — the user copies the address-bar URL.
  */
-class CallbackTimeoutError extends Error {
-	constructor() {
-		super("Timed out waiting for the OAuth2 authorization callback");
-		this.name = "CallbackTimeoutError";
-	}
-}
-
-/** The page served to the browser after a callback lands. */
-const CALLBACK_HTML =
-	"<!doctype html><html><body><p>OAuth2 authorization received — you can close this window.</p></body></html>";
+export const REDIRECT_URI = "http://localhost/callback";
 
 function base64url(buf: Buffer): string {
 	return buf.toString("base64url");
@@ -72,16 +54,16 @@ export function generatePkcePair(): { verifier: string; challenge: string } {
 	return { verifier, challenge };
 }
 
-/** Random `state` value for the authorize URL + callback check. */
+/** Random `state` value for the authorize URL + paste check. */
 export function generateState(): string {
 	return base64url(randomBytes(16));
 }
 
 /**
  * Build the provider's authorize URL (response_type=code + PKCE + state).
- * `redirectUri` is the exact URI the provider will redirect to — the
- * loopback path passes the dynamic `http://localhost:<port>/callback`, the
- * manual-code path passes `auth.redirectUri`.
+ * `redirectUri` is the URI sent as `redirect_uri` — the paste flow always
+ * passes the `REDIRECT_URI` convention; it is a parameter so tests can pin
+ * the wiring.
  */
 export function buildAuthorizeUrl(
 	auth: OAuth2Auth,
@@ -114,97 +96,98 @@ export function buildAuthorizeUrl(
 	return url.toString();
 }
 
+/** A successfully parsed paste: the code plus the state (if the URL had one). */
+export interface PastedAuthResult {
+	code: string;
+	state?: string;
+}
+
 /**
- * A loopback callback listener bound explicitly to `127.0.0.1` on an
- * ephemeral port — a bare `listen(port)` defaults to `0.0.0.0` on some
- * platforms and would expose the listener to the network. Every request gets
- * a "close this window" HTML response. `waitForCode` resolves the code once
- * a callback carrying a matching `state` + `code` arrives, rejects on an
- * `error` param, and rejects on timeout. The request handler is attached at
- * creation (not inside `waitForCode`) so a callback racing the wait setup is
- * never dropped.
+ * Parse the user's pasted authorization result. Tolerant by design — accepts
+ * the full redirect URL from the browser's address bar (documented default),
+ * a host-less `localhost/callback?code=…&state=…`, a bare `code=…&state=…`
+ * query, or just the bare code (which skips the state check — pi never sees
+ * it). A provider rejection (`?error=…`) surfaces the provider's actual
+ * reason instead of a generic "exchange failed".
  */
-export async function startCallbackServer(): Promise<{
-	port: number;
-	waitForCode(state: string, timeoutMs: number): Promise<string>;
-	close(): void;
-}> {
-	const server = createServer();
-	await new Promise<void>((resolve, reject) => {
-		server.once("error", reject);
-		server.listen(0, "127.0.0.1", resolve);
-	});
-	const address = server.address();
-	const port =
-		typeof address === "object" && address !== null ? address.port : 0;
-
-	let active: {
-		state: string;
-		resolve: (c: string) => void;
-		reject: (e: Error) => void;
-	} | null = null;
-	let timer: NodeJS.Timeout | null = null;
-
-	server.on("request", (req, res) => {
-		res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-		res.end(CALLBACK_HTML);
-		const cur = active;
-		if (!cur) return; // no active wait yet — ignore (favicon, stray GET)
-		let url: URL;
-		try {
-			url = new URL(req.url ?? "/", "http://localhost");
-		} catch {
-			return; // malformed request path — already answered with the HTML
-		}
-		if (url.searchParams.get("state") !== cur.state) return; // state mismatch
-		const error = url.searchParams.get("error");
+export function parsePastedRedirect(input: string): PastedAuthResult {
+	const trimmed = input.trim();
+	if (!trimmed) {
+		throw new Error("Pasted OAuth2 authorization result is empty.");
+	}
+	if (trimmed.includes("=")) {
+		// Query-ish: after a "?" if present, else the whole string.
+		const qs = trimmed.includes("?")
+			? trimmed.slice(trimmed.indexOf("?") + 1)
+			: trimmed;
+		const params = new URLSearchParams(qs);
+		const error = params.get("error");
 		if (error) {
-			if (timer) clearTimeout(timer);
-			server.close();
-			cur.reject(new Error(`OAuth2 authorization error: ${error}`));
-			return;
+			const desc = params.get("error_description");
+			throw new Error(
+				`OAuth2 authorization error: ${error}${desc ? ` — ${desc}` : ""}`,
+			);
 		}
-		const code = url.searchParams.get("code");
-		if (code) {
-			if (timer) clearTimeout(timer);
-			server.close();
-			cur.resolve(code);
+		const code = params.get("code");
+		if (!code) {
+			throw new Error(
+				"Pasted value carries no `code` parameter — paste the full redirect URL from the browser's address bar (or just the code).",
+			);
 		}
-	});
+		const state = params.get("state");
+		return state ? { code, state } : { code };
+	}
+	return { code: trimmed };
+}
 
-	return {
-		port,
-		close: () => server.close(),
-		waitForCode(state, timeoutMs) {
-			return new Promise((resolve, reject) => {
-				active = { state, resolve, reject };
-				timer = setTimeout(() => {
-					server.close();
-					reject(new CallbackTimeoutError());
-				}, timeoutMs);
-			});
-		},
-	};
+/** Validate a paste against the pending flow's state and return the code. */
+function validatePasted(pasted: string, state: string): string {
+	const parsed = parsePastedRedirect(pasted);
+	if (parsed.state !== undefined && parsed.state !== state) {
+		throw new Error(
+			"OAuth2 state mismatch — the pasted URL doesn't match the authorize URL pi generated. " +
+				"Re-run /api oauth <domain> and paste the fresh result.",
+		);
+	}
+	return parsed.code;
+}
+
+/** Exchange the code and stamp the token store. */
+async function exchangeAndStamp(
+	auth: OAuth2Auth,
+	storeDomain: string,
+	code: string,
+	verifier: string,
+): Promise<OAuthToken> {
+	const token = await exchangeAuthCode(
+		auth,
+		storeDomain,
+		code,
+		REDIRECT_URI,
+		verifier,
+	);
+	writeToken(storeDomain, token);
+	return token;
 }
 
 /** Options for `mintAuthCodeToken`. */
 export interface AuthCodeMintOptions {
-	/** Manual authorization code (the `--code` escape valve). */
+	/** Pasted redirect URL (or bare code) — the `--code` escape valve. */
 	code?: string;
 	/** Force a refresh via the stored refresh token (no re-consent). */
 	refresh?: boolean;
-	/** Loopback wait budget (test seam / tuning; default CALLBACK_TIMEOUT_MS). */
-	timeoutMs?: number;
 }
 
 /**
  * Mint (or refresh) a token for an authorization_code guide. Order:
- * 1. `--code` → complete a pending manual-code flow.
+ * 1. `--code` → parse the pasted redirect URL / code and complete the
+ *    pending flow (headless scripting; interactive users get an inline
+ *    prompt instead).
  * 2. `--refresh` → force a refresh via the stored refresh token; falls back
- *    to the interactive flow when there is no refresh token.
- * 3. Interactive (`ctx.hasUI`) → loopback listener + user's own browser.
- *    Headless → print the authorize URL, persist the pending flow, and
- *    throw `OAuthTokenMissingError` (awaiting `--code`).
+ *    to a fresh authorize flow when there is no refresh token.
+ * 3. Otherwise → print the authorize URL, persist the pending flow, and
+ *    either prompt for the paste (`ctx.hasUI`) or throw
+ *    `OAuthTokenMissingError` (headless — awaiting `--code`).
  */
 export async function mintAuthCodeToken(
 	auth: OAuth2Auth,
@@ -213,114 +196,68 @@ export async function mintAuthCodeToken(
 	opts: AuthCodeMintOptions = {},
 ): Promise<OAuthToken> {
 	if (opts.code !== undefined) {
-		return completeManualCode(auth, storeDomain, opts.code);
+		return completePastedCode(auth, storeDomain, opts.code);
 	}
 	if (opts.refresh) {
 		try {
 			return await forceRefreshToken(auth, storeDomain);
 		} catch (err) {
 			if (!(err instanceof OAuthTokenMissingError)) throw err;
-			// no refresh token → fall through to the interactive flow
+			// no refresh token → fall through to a fresh authorize flow
 		}
 	}
-	if (ctx.hasUI) {
-		return runLoopbackFlow(auth, storeDomain, ctx, opts.timeoutMs);
-	}
-	return runManualCodeFlow(auth, storeDomain, ctx);
+	return startAuthCodeFlow(auth, storeDomain, ctx);
 }
 
 /**
- * Interactive path: loopback listener captures the browser callback. The
- * pending flow is persisted up front so a loopback timeout is recoverable
- * via `--code` (the verifier must match the challenge in the printed URL) —
- * a TUI user whose browser can't reach the loopback (different machine) is
- * otherwise stuck: re-running always goes to loopback, and `--code` with no
- * pending flow fails. Deleted on success.
+ * The primary — and only — authorize path. Generates the PKCE pair + state,
+ * builds the authorize URL with the `http://localhost/callback` convention,
+ * persists the pending flow (the verifier MUST survive so the later exchange
+ * matches the challenge sent in the authorize URL), prints the URL, and
+ * either prompts for the paste (TUI) or throws awaiting `--code` (headless).
  */
-async function runLoopbackFlow(
+async function startAuthCodeFlow(
 	auth: OAuth2Auth,
 	storeDomain: string,
 	ctx: ExtensionCommandContext,
-	timeoutMs: number = CALLBACK_TIMEOUT_MS,
 ): Promise<OAuthToken> {
-	const cb = await startCallbackServer();
-	const redirectUri = `http://localhost:${cb.port}/callback`;
 	const { verifier, challenge } = generatePkcePair();
 	const state = generateState();
 	const authorizeUrl = buildAuthorizeUrl(
 		auth,
-		redirectUri,
+		REDIRECT_URI,
 		challenge,
 		state,
 		resolveClientCredentials(auth, storeDomain).clientId,
 	);
-	writePendingFlow(storeDomain, { verifier, state, redirectUri });
-	try {
-		ctx.ui.notify(
-			`🔑 Authorize '${storeDomain}' in your browser (log in with your own credentials — the agent never sees them):\n\n` +
-				`${authorizeUrl}\n\nWaiting for the callback…`,
-			"info",
-		);
-		let code: string;
-		try {
-			code = await cb.waitForCode(state, timeoutMs);
-		} catch (err) {
-			if (err instanceof CallbackTimeoutError) {
-				throw new OAuthTokenMissingError(
-					`Timed out waiting for the OAuth2 authorization callback for '${storeDomain}'. ` +
-						`Open the URL above again and run /api oauth ${storeDomain} --code <code> to complete manually.`,
-				);
-			}
-			throw err;
-		}
-		const token = await exchangeAuthCode(
-			auth,
-			storeDomain,
-			code,
-			redirectUri,
-			verifier,
-		);
-		writeToken(storeDomain, token);
-		deletePendingFlow(storeDomain);
-		return token;
-	} finally {
-		cb.close();
-	}
-}
-
-/** Headless path: print the URL, persist the pending flow, await `--code`. */
-async function runManualCodeFlow(
-	auth: OAuth2Auth,
-	storeDomain: string,
-	ctx: ExtensionCommandContext,
-): Promise<never> {
-	const redirectUri = auth.redirectUri!; // parser-enforced for auth-code
-	const { verifier, challenge } = generatePkcePair();
-	const state = generateState();
-	const authorizeUrl = buildAuthorizeUrl(
-		auth,
-		redirectUri,
-		challenge,
-		state,
-		resolveClientCredentials(auth, storeDomain).clientId,
-	);
-	writePendingFlow(storeDomain, { verifier, state, redirectUri });
+	writePendingFlow(storeDomain, { verifier, state, redirectUri: REDIRECT_URI });
 	ctx.ui.notify(
-		`🔑 Open this URL in your browser, authorize, then run:\n` +
-			`  /api oauth ${storeDomain} --code <code>\n\n${authorizeUrl}`,
+		`🔑 Open this URL in YOUR browser and authorize (log in with your own credentials — the agent never sees them). ` +
+			`Your OAuth app needs '${REDIRECT_URI}' registered (RFC 8252 §7.3 — loopback, any port). ` +
+			`After consenting, copy the redirect URL from the browser's address bar.\n\n${authorizeUrl}`,
 		"info",
 	);
+	if (ctx.hasUI) {
+		const pasted = await ctx.ui.input(
+			`Paste the redirect URL (or just the code) for '${storeDomain}'`,
+			"paste the address-bar URL after consenting",
+		);
+		// Cancelled → fall through to the --code nudge (pending flow survives).
+		if (pasted !== undefined) {
+			return completePastedCode(auth, storeDomain, pasted);
+		}
+	}
 	throw new OAuthTokenMissingError(
-		`Awaiting a manual OAuth2 authorization code for '${storeDomain}'. ` +
-			`Open the URL above, then run /api oauth ${storeDomain} --code <code>.`,
+		`Awaiting the OAuth2 authorization result for '${storeDomain}'. ` +
+			`Open the URL above, authorize, then paste the redirect URL: /api oauth ${storeDomain} --code <redirect-url-or-code>.`,
 	);
 }
 
-/** `--code` completion: exchange the pasted code with the persisted verifier. */
-async function completeManualCode(
+/** `--code` (or interactive-prompt) completion: parse, validate state, exchange. */
+async function completePastedCode(
 	auth: OAuth2Auth,
 	storeDomain: string,
-	code: string,
+	pasted: string,
 ): Promise<OAuthToken> {
 	const pending = readPendingFlow(storeDomain);
 	if (!pending) {
@@ -329,17 +266,13 @@ async function completeManualCode(
 				`Run /api oauth ${storeDomain} first to get the authorize URL.`,
 		);
 	}
-	try {
-		const token = await exchangeAuthCode(
-			auth,
-			storeDomain,
-			code,
-			pending.redirectUri,
-			pending.verifier,
-		);
-		writeToken(storeDomain, token);
-		return token;
-	} finally {
-		deletePendingFlow(storeDomain);
-	}
+	const code = validatePasted(pasted, pending.state);
+	const token = await exchangeAndStamp(
+		auth,
+		storeDomain,
+		code,
+		pending.verifier,
+	);
+	deletePendingFlow(storeDomain);
+	return token;
 }

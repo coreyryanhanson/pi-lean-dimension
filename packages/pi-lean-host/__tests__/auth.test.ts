@@ -386,7 +386,7 @@ body
 		}
 	});
 
-	it("oauth2 client_credentials with authorizeUrl/redirectUri → ParseError", () => {
+	it("oauth2 client_credentials with authorizeUrl → ParseError", () => {
 		const r = parseAuthBlock(`  kind: oauth2
   grant: client_credentials
   tokenUrl: https://api.example.com/oauth/token
@@ -397,13 +397,12 @@ body
 		if (!r.ok) expect(r.error.field).toBe("auth.authorizeUrl");
 	});
 
-	it("oauth2 authorization_code requires authorizeUrl + redirectUri; clientSecret optional (PKCE implicit)", () => {
+	it("oauth2 authorization_code requires authorizeUrl only (redirectUri is the runtime convention); clientSecret optional (PKCE implicit)", () => {
 		const r = parseAuthBlock(`  kind: oauth2
   grant: authorization_code
   tokenUrl: https://api.example.com/oauth/token
   clientId: { secret: my_client }
-  authorizeUrl: https://api.example.com/oauth/authorize
-  redirectUri: http://localhost:9999/callback`);
+  authorizeUrl: https://api.example.com/oauth/authorize`);
 		expect(r.ok).toBe(true);
 		if (r.ok) {
 			expect(r.guide.auth.kind).toBe("oauth2");
@@ -415,18 +414,18 @@ body
 		}
 	});
 
-	it("pkce is deleted — the key is rejected by the allowlist (PKCE implicit)", () => {
-		const r = parseAuthBlock(`  kind: oauth2
+	it("pkce and redirectUri are deleted — rejected by the allowlist (PKCE implicit, redirect is the runtime convention)", () => {
+		for (const key of ["pkce: true", "redirectUri: http://localhost/callback"]) {
+			const r = parseAuthBlock(`  kind: oauth2
   grant: authorization_code
   tokenUrl: https://api.example.com/oauth/token
   clientId: { secret: my_client }
   authorizeUrl: https://api.example.com/oauth/authorize
-  redirectUri: http://localhost:9999/callback
-  pkce: true`);
-		expect(r.ok).toBe(false);
-		if (!r.ok) {
-			expect(r.error.field).toBe("auth.pkce");
-			expect(r.error.found).toContain("unknown key");
+  ${key}`);
+			expect(r.ok).toBe(false);
+			if (!r.ok) {
+				expect(r.error.found).toContain("unknown key");
+			}
 		}
 	});
 
@@ -472,7 +471,6 @@ body
   clientId: { secret: my_client }
   clientSecret: { secret: client_secret }
   authorizeUrl: https://api.example.com/oauth/authorize
-  redirectUri: http://localhost:9999/callback
   tokenEndpointAuthMethod: none`);
 		expect(r.ok).toBe(false);
 		if (!r.ok) {

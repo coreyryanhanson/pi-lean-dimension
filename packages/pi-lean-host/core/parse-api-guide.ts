@@ -122,7 +122,6 @@ const AUTH_ALLOWLISTS: Record<AuthKind, ReadonlySet<string>> = {
 		"paramStyle",
 		"tokenEndpointAuthMethod",
 		"authorizeUrl",
-		"redirectUri",
 		"revokeUrl",
 	]),
 };
@@ -946,19 +945,6 @@ function validateOAuth2Auth(
 		if (typeof au !== "string") return au;
 		authorizeUrl = au;
 	}
-	let redirectUri: string | undefined;
-	if (a["redirectUri"] !== undefined) {
-		if (typeof a["redirectUri"] !== "string" || a["redirectUri"].length === 0) {
-			return fail(
-				file,
-				"auth.redirectUri",
-				"a non-empty string",
-				describeFound(a["redirectUri"]),
-				{ snippet: snippetFor(fm, "auth") },
-			);
-		}
-		redirectUri = a["redirectUri"];
-	}
 	let revokeUrl: string | undefined;
 	if (a["revokeUrl"] !== undefined) {
 		const rv = requireHttpUrl(a["revokeUrl"], "auth.revokeUrl", file, fm);
@@ -995,14 +981,14 @@ function validateOAuth2Auth(
 				},
 			);
 		}
-		if (authorizeUrl !== undefined || redirectUri !== undefined) {
+		if (authorizeUrl !== undefined) {
 			return fail(
 				file,
 				"auth.authorizeUrl",
 				"absent for grant: client_credentials",
-				"authorizeUrl/redirectUri present",
+				"authorizeUrl present",
 				{
-					fix: "Remove authorizeUrl/redirectUri — client_credentials is server-to-server with no browser flow.",
+					fix: "Remove authorizeUrl — client_credentials is server-to-server with no browser flow.",
 				},
 			);
 		}
@@ -1015,18 +1001,7 @@ function validateOAuth2Auth(
 				"a URL for grant: authorization_code",
 				"missing",
 				{
-					fix: "Add authorizeUrl — the provider's authorization endpoint.",
-				},
-			);
-		}
-		if (redirectUri === undefined) {
-			return fail(
-				file,
-				"auth.redirectUri",
-				"a redirect URI for grant: authorization_code",
-				"missing",
-				{
-					fix: "Add redirectUri — the loopback callback URI (e.g. http://localhost:<port>/callback).",
+					fix: "Add authorizeUrl — the provider's authorization endpoint. The redirect URI is the runtime convention http://localhost/callback (RFC 8252 §7.3); register it on your OAuth app.",
 				},
 			);
 		}
@@ -1045,7 +1020,6 @@ function validateOAuth2Auth(
 	if (tokenEndpointAuthMethod !== undefined)
 		result.tokenEndpointAuthMethod = tokenEndpointAuthMethod;
 	if (authorizeUrl !== undefined) result.authorizeUrl = authorizeUrl;
-	if (redirectUri !== undefined) result.redirectUri = redirectUri;
 	if (revokeUrl !== undefined) result.revokeUrl = revokeUrl;
 	return result;
 }

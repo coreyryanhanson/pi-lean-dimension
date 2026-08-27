@@ -242,7 +242,6 @@ describe("resolveAccessToken (client_credentials)", () => {
 		const guide = makeOAuthGuide("https://api.example.com", {
 			grant: "authorization_code",
 			authorizeUrl: "https://api.example.com/oauth/authorize",
-			redirectUri: "http://localhost:9999/callback",
 		});
 		await expect(
 			resolveAccessToken(guide, "oauth.authcode"),
