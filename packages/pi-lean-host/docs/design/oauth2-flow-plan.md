@@ -32,6 +32,21 @@
 > warning) — it lands with the coordinated `0.5.0` step alongside caritas
 > re-stamping. The auth-code interactive flow (`oauth-flow.ts`) is Phase 2.
 
+> **Phase 2 status (landed).** The interactive auth-code + PKCE half shipped:
+> `core/oauth-flow.ts` (PKCE pair gen, `buildAuthorizeUrl`, loopback
+> `startCallbackServer` bound to `127.0.0.1`, `mintAuthCodeToken`
+> orchestration), `/api oauth` routes `authorization_code` guides through the
+> flow (`--code <code>` completes a headless manual-code flow, `--refresh`
+> refreshes via the stored refresh token), the `/api verify` precheck gained
+> an oauth2 arm (fail-fast via `hasUsableTokenPath`), and `exchangeAuthCode` /
+> `forceRefreshToken` landed in `auth.ts`. **Deferred by decision:** the
+> `api-probe` inline-oauth2 block (mint-on-demand vs pre-provisioned token) is
+> pushed to Phase 3 — it is not in the exit criteria and only becomes
+> meaningful when the axis guide + recipes land; the injection-fields-only
+> model stays for now. Headless completion is via `--code` (a pasted code),
+> not a `ctx.ui.input()` prompt — `ctx.ui.input()` requires `hasUI`, and
+> `--code` works headless and interactive alike.
+
 ## Current state (the seams already in place)
 
 The framework was built with OAuth2 in mind — most of the load-bearing seams

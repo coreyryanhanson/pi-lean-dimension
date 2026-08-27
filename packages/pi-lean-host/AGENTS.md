@@ -247,7 +247,17 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `verified:` stamp, `--force`, `verify.json` sidecar),
   `verify-stamp` logic lives in `parse-api-guide.ts` (`stampFrontmatterField`),
   `delete-command.ts` (`/api delete` — `rm -rf` + `invalidateCache()`),
-  `auth.ts` (static-key secret resolution + shared auth-status footer),
+  `auth.ts` (static-key secret resolution + shared auth-status footer +
+  OAuth2 token resolution: `resolveAccessToken` mint/refresh + per-domain
+  lock + skew buffer, `exchangeAuthCode`, `forceRefreshToken`,
+  `hasUsableTokenPath`, `revokeAccessToken`), `oauth-store.ts` (per-domain
+  token store + pending auth-code flow — 0600 file backend, swappable
+  `TokenStore` interface, kept free of any `auth.ts` import),
+  `oauth-command.ts` (`/api oauth` — mint / `--status` / `--refresh` /
+  `--revoke` / `--code <code>`), `oauth-flow.ts` (interactive auth-code +
+  PKCE dance: PKCE pair gen, `buildAuthorizeUrl`, loopback
+  `startCallbackServer` bound to `127.0.0.1`, `mintAuthCodeToken`
+  orchestration — host-only, no portal import),
   `transport.ts` (shared fetch pipeline: UA, charset, 429-retry, ETag cache —
   the sanctioned way to reach even WAF'd hosts), `path-template.ts`,
   `ssrf-guard.ts`, `status-hint.ts` (shared 403 classifier — `serverMessage`
@@ -276,7 +286,10 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `api-toggle`, `api-scaffold`, `api-learn-multi-file` (multi-file staging,
   mirror-save, deletion gate, guide↔helper validation),
   `secrets-store`, `secrets-command`, `auth` (static-key schema/injection/
-  output-channel audit/SSRF/footer structural tests), `query-secrets`
+  output-channel audit/SSRF/footer structural tests), `oauth`
+  (client_credentials mint/cache/refresh/scrub), `oauth-flow` (auth-code +
+  PKCE: loopback callback capture, state check, headless `--code` completion,
+  interactive end-to-end), `query-secrets`
   (query-param-secret injection, output-channel redaction, api-probe inline
   auth / `listSecrets`), `portal-projection`, `render-result`,
   `response-spill`, `host-only-boundary`, `axis-units` (nextLink/XML/cursor/
@@ -344,7 +357,9 @@ decision, deferred until caritas re-stamps its corpus — see
 `SecretRef` entries (`{ secret, prefix?, optional? }`). The old top-level
 `requires` / `optional` / `headerPrefixes` fields are gone — availability
 and prefix now live on each ref. `oauth2` is realized (client_credentials
-runtime + `/api oauth`; the auth-code interactive flow is Phase 2).
+runtime + `/api oauth`; the auth-code interactive flow ships in
+`oauth-flow.ts` — loopback listener + user's own browser, or a printed
+URL + `--code` headless).
 
 **Bump rule (post-v1):** do not bump unless a guide that used to parse now
 fails to parse. Adding an optional field, a new enum value, or relaxing a

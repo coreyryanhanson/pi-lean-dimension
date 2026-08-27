@@ -191,7 +191,7 @@ function handleStatusSubcommand(
 		`  /api learn   enable all five tools (adds api-learn + api-probe + api-scaffold)`,
 		`  /api off     disable all API tools`,
 		`  /api verify  verify a guide's ops against its live API (stamps verified)`,
-		`  /api oauth   provision/inspect/revoke OAuth2 tokens (client_credentials)`,
+		`  /api oauth   provision/inspect/revoke OAuth2 tokens (client_credentials + auth-code/PKCE)`,
 		`  /api delete  delete a guide directory (human-typed recovery gesture)`,
 	);
 
@@ -331,7 +331,7 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 						`   /api status       detailed status (guides, helpers)`,
 						`   /api helpers      list local helpers`,
 						`   /api secrets      list/provision stored secrets (names only)`,
-						`   /api oauth        provision/inspect/revoke OAuth2 tokens`,
+						`   /api oauth        provision/inspect/revoke OAuth2 tokens (client_credentials + auth-code/PKCE)`,
 						`   /api verify       verify a guide's ops against its live API (stamps verified)`,
 						`   /api delete       delete a guide directory (human-typed recovery gesture)`,
 						`   /api              show this status`,

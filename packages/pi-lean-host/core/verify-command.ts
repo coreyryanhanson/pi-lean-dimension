@@ -53,6 +53,7 @@ import {
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
 	canonicalStoreDomain,
+	hasUsableTokenPath,
 } from "./auth.js";
 import { resolveOpForExecution, type ResolveOpResult } from "./resolve-op.js";
 import {
@@ -175,24 +176,49 @@ export async function handleVerifySubcommand(
 		return;
 	}
 
-	// Auth precheck (fail-fast): resolve the same secrets api-fetch does. If
-	// any `requires` secret is unprovisioned, short-circuit with ONE message —
-	// do not run N ops that all fail identically.
-	if (guide.auth.kind === "static-key") {
-		const headerRes = resolveSecretHeaders(guide.auth, storeDomain);
-		const queryRes = resolveSecretQueryParams(guide.auth, storeDomain);
-		const missingRequired = [
-			...headerRes.absentRequired,
-			...queryRes.absentRequired,
-		];
-		if (missingRequired.length > 0) {
-			ctx.ui.notify(
-				`🔑 ${guide.shortName} requires a secret not yet provisioned: ` +
-					`${missingRequired.join(", ")}.\n` +
-					`Run /api secrets ${storeDomain} to provision it, then re-run /api verify.`,
-				"warning",
-			);
-			return;
+	// Auth precheck (fail-fast): resolve the same secrets/token api-fetch does.
+	// If a required secret is unprovisioned or no OAuth2 token is mintable,
+	// short-circuit with ONE message — do not run N ops that all fail
+	// identically.
+	switch (guide.auth.kind) {
+		case "static-key": {
+			const headerRes = resolveSecretHeaders(guide.auth, storeDomain);
+			const queryRes = resolveSecretQueryParams(guide.auth, storeDomain);
+			const missingRequired = [
+				...headerRes.absentRequired,
+				...queryRes.absentRequired,
+			];
+			if (missingRequired.length > 0) {
+				ctx.ui.notify(
+					`🔑 ${guide.shortName} requires a secret not yet provisioned: ` +
+						`${missingRequired.join(", ")}.\n` +
+						`Run /api secrets ${storeDomain} to provision it, then re-run /api verify.`,
+					"warning",
+				);
+				return;
+			}
+			break;
+		}
+		case "oauth2": {
+			if (!hasUsableTokenPath(guide.auth, storeDomain)) {
+				const hint =
+					guide.auth.grant === "authorization_code"
+						? `Run /api oauth ${storeDomain} to start the interactive flow`
+						: `Provision the client secret via /api secrets ${storeDomain}, then run /api oauth ${storeDomain}`;
+				ctx.ui.notify(
+					`🔑 ${guide.shortName} has no usable OAuth2 token for '${storeDomain}'.\n` +
+						`${hint}, then re-run /api verify.`,
+					"warning",
+				);
+				return;
+			}
+			break;
+		}
+		case "none":
+			break;
+		default: {
+			const _exhaustive: never = guide.auth;
+			throw new Error(`Unhandled auth kind: ${_exhaustive}`);
 		}
 	}
 

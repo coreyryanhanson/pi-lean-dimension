@@ -362,6 +362,80 @@ function resolveClientSecret(
 }
 
 /**
+ * True when a token can be produced without human interaction: a cached
+ * fresh token, a refreshable one, or (client_credentials) a provisioned
+ * client secret to mint from. Used by the `/api verify` precheck to
+ * fail-fast instead of surfacing N identical token-missing failures.
+ */
+export function hasUsableTokenPath(auth: OAuth2Auth, domain: string): boolean {
+	const token = readToken(domain);
+	if (token && !isTokenExpired(token)) return true;
+	if (token?.refreshToken) return true;
+	if (auth.grant === "client_credentials") {
+		const ref = auth.secretRefs?.["client_secret"];
+		return !!ref && readSecret(domain, ref.secret) !== null;
+	}
+	return false;
+}
+
+/**
+ * Exchange an authorization code for a token set (PKCE verifier in the
+ * body). `redirectUri` must be the SAME URI sent in the authorize step.
+ * The client secret (when the guide declares one) rides per
+ * `tokenEndpointAuthMethod`; PKCE public clients send none.
+ */
+export async function exchangeAuthCode(
+	auth: OAuth2Auth,
+	domain: string,
+	code: string,
+	redirectUri: string,
+	verifier: string,
+): Promise<OAuthToken> {
+	const clientSecret = resolveClientSecret(auth, domain);
+	const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
+	const form: Record<string, string> = {
+		grant_type: "authorization_code",
+		code,
+		redirect_uri: redirectUri,
+		client_id: auth.clientId,
+		code_verifier: verifier,
+	};
+	const headers: Record<string, string> = {};
+	if (clientSecret && method === "client_secret_basic") {
+		headers["authorization"] =
+			"Basic " +
+			Buffer.from(`${auth.clientId}:${clientSecret.secret}`).toString("base64");
+	} else if (clientSecret && method === "client_secret_post") {
+		form["client_secret"] = clientSecret.secret;
+	}
+	const data = await oauthPost(auth.tokenUrl, form, headers, [
+		code,
+		...(clientSecret ? [clientSecret.secret] : []),
+	]);
+	return tokenFromResponse(data);
+}
+
+/**
+ * Force a fresh token for an auth-code guide by refreshing via the stored
+ * refresh token (no re-consent). Throws `OAuthTokenMissingError` when there
+ * is no refresh token — the caller falls back to the interactive flow.
+ */
+export async function forceRefreshToken(
+	auth: OAuth2Auth,
+	domain: string,
+): Promise<OAuthToken> {
+	const token = readToken(domain);
+	if (!token?.refreshToken) {
+		throw new OAuthTokenMissingError(
+			`No refresh token for '${domain}' — run /api oauth ${domain} to start the interactive flow.`,
+		);
+	}
+	const fresh = await refreshAccessToken(auth, domain, token.refreshToken);
+	writeToken(domain, fresh);
+	return fresh;
+}
+
+/**
  * One POST to an OAuth2 endpoint (token/refresh/revoke) — the first non-GET
  * requests host makes, kept OUT of `transport.ts` (GET-only by contract) in
  * a small separate helper. `secretValues` are scrubbed from any error body

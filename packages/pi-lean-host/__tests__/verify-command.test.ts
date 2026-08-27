@@ -38,7 +38,8 @@ import {
 	invalidateCache,
 	findGuidesByDomain,
 } from "../core/guide-store.js";
-import { setSecretsDir } from "../core/secrets-store.js";
+import { setSecretsDir, writeSecret } from "../core/secrets-store.js";
+import { setOAuthDir, writeToken } from "../core/oauth-store.js";
 import { handleVerifySubcommand } from "../core/verify-command.js";
 import { TODAY } from "../core/parse-api-guide.js";
 import { resetDisabledHelpers } from "../core/local-helpers.js";
@@ -163,12 +164,15 @@ const FIXTURE_TRANSFORM_THROWS = `export function transform() {
 
 let tmpGuidesDir: string;
 let tmpSecretsDir: string;
+let tmpOAuthDir: string;
 
 beforeEach(() => {
 	tmpGuidesDir = mkdtempSync(join(tmpdir(), "host-verify-"));
 	tmpSecretsDir = mkdtempSync(join(tmpdir(), "host-verify-secrets-"));
+	tmpOAuthDir = mkdtempSync(join(tmpdir(), "host-verify-oauth-"));
 	setUserGuidesDir(tmpGuidesDir);
 	setSecretsDir(tmpSecretsDir);
+	setOAuthDir(tmpOAuthDir);
 	invalidateCache();
 	resetDisabledHelpers();
 	vi.mocked(fetchUrl).mockReset();
@@ -193,6 +197,7 @@ beforeEach(() => {
 afterEach(() => {
 	rmSync(tmpGuidesDir, { recursive: true, force: true });
 	rmSync(tmpSecretsDir, { recursive: true, force: true });
+	rmSync(tmpOAuthDir, { recursive: true, force: true });
 });
 
 function setupGuide(
@@ -348,6 +353,104 @@ describe("/api verify — auth precheck", () => {
 		expect(text).toContain("Run /api secrets verify.test");
 		expect(vi.mocked(fetchUrl)).not.toHaveBeenCalled();
 		expect(readGuide()).toContain("verified: 2026-07-17");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// OAuth2 auth precheck
+// ═══════════════════════════════════════════════════════════════════
+
+/** A valid oauth2 auth block for the verify.test domain. */
+function oauthAuthBlock(
+	grant: "authorization_code" | "client_credentials",
+): string {
+	const lines = [
+		"auth:",
+		"  kind: oauth2",
+		`  grant: ${grant}`,
+		"  tokenUrl: https://verify.test/oauth/token",
+		"  clientId: client",
+	];
+	if (grant === "authorization_code") {
+		lines.push(
+			"  authorizeUrl: https://verify.test/oauth/authorize",
+			"  redirectUri: http://localhost:9999/callback",
+			"  pkce: true",
+		);
+	} else {
+		lines.push(
+			"  secretRefs:",
+			"    client_secret:",
+			"      secret: client_secret",
+		);
+	}
+	return lines.join("\n");
+}
+
+describe("/api verify — oauth2 auth precheck", () => {
+	it("fail-fasts on an authorization_code guide with no token (no HTTP)", async () => {
+		setupGuide(recipe(opBlock(OP_HEALTH), oauthAuthBlock("authorization_code")));
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("no usable OAuth2 token");
+		expect(text).toContain(
+			"Run /api oauth verify.test to start the interactive flow",
+		);
+		expect(vi.mocked(fetchUrl)).not.toHaveBeenCalled();
+		expect(readGuide()).toContain("verified: 2026-07-17");
+	});
+
+	it("proceeds when an authorization_code guide has a valid cached token", async () => {
+		setupGuide(recipe(opBlock(OP_HEALTH), oauthAuthBlock("authorization_code")));
+		writeToken("verify.test", {
+			accessToken: "VALID",
+			expiresAt: Date.now() + 300_000,
+		});
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("✅ All runnable ops passed");
+	});
+
+	it("fail-fasts on a client_credentials guide with no client secret", async () => {
+		setupGuide(recipe(opBlock(OP_HEALTH), oauthAuthBlock("client_credentials")));
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("no usable OAuth2 token");
+		expect(text).toContain("run /api oauth verify.test");
+		expect(vi.mocked(fetchUrl)).not.toHaveBeenCalled();
+		expect(readGuide()).toContain("verified: 2026-07-17");
+	});
+
+	it("proceeds when a client_credentials guide can mint (client secret provisioned)", async () => {
+		setupGuide(recipe(opBlock(OP_HEALTH), oauthAuthBlock("client_credentials")));
+		writeSecret("verify.test", "client_secret", "S3CRET");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(
+				async () =>
+					new Response(
+						JSON.stringify({ access_token: "MINTED", expires_in: 3600 }),
+						{
+							status: 200,
+							headers: { "content-type": "application/json" },
+						},
+					),
+			),
+		);
+		try {
+			const ctx = mockCtx();
+			await handleVerifySubcommand("verify.test", ctx);
+			const text = notifyText(ctx);
+			expect(text).toContain("✅ All runnable ops passed");
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 });
 

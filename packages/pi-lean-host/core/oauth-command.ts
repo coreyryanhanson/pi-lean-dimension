@@ -1,17 +1,20 @@
 /**
  * `/api oauth <domain>` — provision / inspect / revoke OAuth2 tokens.
  *
- * - `oauth <domain>`           — mint a client-credentials token and stamp the token store.
+ * - `oauth <domain>`           — mint a token and stamp the token store.
+ *   client_credentials: pure HTTP. authorization_code: loopback listener +
+ *   the user's own browser (interactive) or a printed URL + `--code` (headless).
  * - `oauth <domain> --status`  — metadata-only token state (no network).
- * - `oauth <domain> --refresh` — force a fresh token (delete + re-mint).
+ * - `oauth <domain> --refresh` — force a fresh token (client_credentials:
+ *   re-mint; authorization_code: refresh via the stored refresh token, or the
+ *   interactive flow when there is none).
  * - `oauth <domain> --revoke`  — revoke at the provider's revokeUrl (if declared) and clear the store.
+ * - `oauth <domain> --code <code>` — complete a headless authorization-code flow
+ *   with a manually pasted code.
  *
  * Always-available / not focus-guarded — a peer of `secrets`/`verify`/`delete`
  * (writes the token store, not toolset state). The client secret lives in the
- * secrets store; only minted tokens land here. The interactive auth-code flow
- * (loopback listener + user's own browser) is Phase 2 — for now an
- * authorization_code guide without a token nudges to the not-yet interactive
- * flow.
+ * secrets store; only minted tokens land here.
  */
 
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -30,16 +33,21 @@ import {
 	OAuthTokenMissingError,
 } from "./auth.js";
 import { readToken, deleteToken, getOAuthDir } from "./oauth-store.js";
+import { mintAuthCodeToken } from "./oauth-flow.js";
 import type { ApiGuide } from "./api-guide-types.js";
 
 /** Full usage + storage docs, surfaced by `--help`. */
 function helpText(): string {
 	return [
-		"Usage: /api oauth <domain> [--status | --refresh | --revoke]",
-		"  /api oauth <domain>          mint a client-credentials token and stamp the token store",
+		"Usage: /api oauth <domain> [--status | --refresh | --revoke | --code <code>]",
+		"  /api oauth <domain>          mint a token and stamp the token store",
+		"                               (client_credentials: pure HTTP; authorization_code:",
+		"                                loopback listener + your own browser)",
 		"  /api oauth <domain> --status metadata-only token state (no network)",
-		"  /api oauth <domain> --refresh force a fresh token (re-mint)",
+		"  /api oauth <domain> --refresh force a fresh token (auth-code: refresh via the",
+		"                                stored refresh token, or the interactive flow)",
 		"  /api oauth <domain> --revoke  revoke at the guide's revokeUrl (if declared) and clear the store",
+		"  /api oauth <domain> --code <code>  complete a headless auth-code flow with a pasted code",
 		"",
 		`Tokens are stored per-domain as JSON (0600) at ${getOAuthDir()}/<domain>.json.`,
 		"The client secret lives in the secrets store (/api secrets <domain>), never here.",
@@ -67,15 +75,26 @@ export async function handleOauthSubcommand(
 	const statusFlag = parts.includes("--status");
 	const refreshFlag = parts.includes("--refresh");
 	const revokeFlag = parts.includes("--revoke");
+	const codeIdx = parts.indexOf("--code");
+	const codeArg = codeIdx >= 0 ? parts[codeIdx + 1] : undefined;
+	if (parts.includes("--code") && codeArg === undefined) {
+		ctx.ui.notify(
+			"Usage: /api oauth <domain> --code <code> — the code is missing.",
+			"warning",
+		);
+		return;
+	}
 	const tokens = parts.filter(
-		(p) => !["--status", "--refresh", "--revoke"].includes(p),
+		(p) =>
+			p !== codeArg &&
+			!["--status", "--refresh", "--revoke", "--code"].includes(p),
 	);
 	const domain = tokens[0];
 	const selector = tokens[1];
 
 	if (!domain) {
 		ctx.ui.notify(
-			"Usage: /api oauth <domain> [--status | --refresh | --revoke] — see /api oauth --help.",
+			"Usage: /api oauth <domain> [--status | --refresh | --revoke | --code <code>] — see /api oauth --help.",
 			"warning",
 		);
 		return;
@@ -180,19 +199,28 @@ export async function handleOauthSubcommand(
 		return;
 	}
 
-	// Mint (or, with --refresh, delete-then-re-mint). The token store is read
-	// fresh inside resolveAccessToken, so a re-mint here is visible to the
-	// next api-fetch call.
-	if (refreshFlag) deleteToken(storeDomain);
+	// Mint (or refresh) a token. The token store is read fresh inside
+	// resolveAccessToken, so a re-mint here is visible to the next api-fetch
+	// call. authorization_code guides route through the interactive flow
+	// (loopback + user's own browser, or a printed URL + --code);
+	// client_credentials stays pure HTTP.
 	try {
-		await resolveAccessToken(guide, storeDomain);
+		if (auth.grant === "authorization_code") {
+			await mintAuthCodeToken(auth, storeDomain, ctx, {
+				...(codeArg !== undefined ? { code: codeArg } : {}),
+				...(refreshFlag ? { refresh: true } : {}),
+			});
+		} else {
+			if (refreshFlag) deleteToken(storeDomain);
+			await resolveAccessToken(guide, storeDomain);
+		}
 	} catch (err) {
 		if (err instanceof OAuthTokenMissingError) {
 			ctx.ui.notify(`🔑 ${err.message}`, "warning");
 			return;
 		}
 		ctx.ui.notify(
-			`🔑 OAuth2 provisioning failed for '${storeDomain}': ` +
+			`�� OAuth2 provisioning failed for '${storeDomain}': ` +
 				`${err instanceof Error ? err.message : String(err)}`,
 			"warning",
 		);

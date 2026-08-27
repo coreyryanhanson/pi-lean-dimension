@@ -139,3 +139,66 @@ export function deleteToken(domain: string): void {
 export function listTokenDomains(): string[] {
 	return _store.listDomains();
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Pending auth-code flow (manual-code handoff)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * A pending manual-code authorization-code flow — the PKCE verifier + state
+ * + redirect_uri generated at the authorize step, persisted so the later
+ * `--code` completion step can exchange with the SAME verifier (the code
+ * exchange fails if the verifier doesn't match the challenge sent in the
+ * authorize URL). Written by the headless path, consumed once by `--code`.
+ * Ephemeral scratch — lives on the file dir even if a keychain token backend
+ * is swapped in.
+ */
+export interface PendingAuthCodeFlow {
+	verifier: string;
+	state: string;
+	redirectUri: string;
+}
+
+function pendingPath(domain: string): string {
+	assertSafeDomain(domain);
+	return join(_dir, `${domain}.pending.json`);
+}
+
+export function writePendingFlow(
+	domain: string,
+	flow: PendingAuthCodeFlow,
+): void {
+	const p = pendingPath(domain);
+	if (!existsSync(_dir)) mkdirSync(_dir, { recursive: true });
+	writeFileSync(p, JSON.stringify(flow, null, 2) + "\n", { mode: 0o600 });
+	try {
+		chmodSync(p, 0o600); // guard against umask overriding the mode
+	} catch {
+		// best-effort; file was already written
+	}
+}
+
+export function readPendingFlow(domain: string): PendingAuthCodeFlow | null {
+	const p = pendingPath(domain);
+	if (!existsSync(p)) return null;
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(p, "utf-8"));
+		if (
+			parsed &&
+			typeof parsed === "object" &&
+			!Array.isArray(parsed) &&
+			typeof (parsed as PendingAuthCodeFlow).verifier === "string" &&
+			typeof (parsed as PendingAuthCodeFlow).redirectUri === "string"
+		) {
+			return parsed as PendingAuthCodeFlow;
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+export function deletePendingFlow(domain: string): void {
+	const p = pendingPath(domain);
+	if (existsSync(p)) rmSync(p, { force: true });
+}
