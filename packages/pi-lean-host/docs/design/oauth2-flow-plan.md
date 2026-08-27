@@ -43,7 +43,7 @@
 > **Phase 2.6 status (landed).** The loopback listener and interactive
 > callback capture are deleted; the paste path is the only auth-code path.
 > `redirectUri` is deleted from the schema — the runtime convention
-> `http://localhost/callback` (RFC 8252 §7.3) replaces it (one docs line,
+> `http://127.0.0.1/callback` (RFC 8252 §7.3) replaces it (one docs line,
 > uniform across every auth-code guide). Paste parsing accepts the full
 > address-bar redirect URL (documented default — enables `state` validation
 >
@@ -75,7 +75,16 @@
 > fed to `resolveAccessToken`, so cache/refresh/lock/stamp is shared code).
 > Failures ride the note — never fail-closed. auth-code is deliberately not
 > inlined (needs the interactive paste dance): its bootstrap stays
-> draft-guide + `/api oauth`.
+> draft-guide + `/api oauth`. **Superseded for auth-code by Phase 2.7**
+> (below): the interactive grant gains its own guide-less bootstrap.
+
+> **Phase 2.7 status (DRAFT — scoped, not landed).** Decisions confirmed in
+> review: bootstrap is its own subcommand, `/api oauth init <domain>` (the
+> plain command never state-forks into a wizard); client-credentials arm
+> included; headless flags surface kept. Sequencing: before Phase 3. The
+> section in the phased plan below remains a proposal — nothing implemented.
+> Until it lands, auth-code bootstrap remains: author a minimal draft guide
+> via `api-learn`, then `/api oauth <domain>`.
 
 ## Current state (the seams already in place)
 
@@ -173,7 +182,7 @@ flow the user's provider password through agent context — a hard no. So the
 auth-code flow is (headless-only since Phase 2.6): host generates the
 authorize URL (with a PKCE challenge), prints it for the user, and the user
 pastes back the redirect URL (or bare code) their browser lands on at
-`http://localhost/callback`; host parses, validates `state`, and exchanges
+`http://127.0.0.1/callback`; host parses, validates `state`, and exchanges
 the code for tokens. No static portal import, host-only boundary stays
 green. Nothing listens on any port, so the flow works unchanged whether
 pi runs on the user's machine, in a container, or inside a VM.
@@ -284,7 +293,7 @@ interface OAuth2Auth {
   // redirectUri deleted (Phase 2.6): the redirect URI is a fact of the
   // USER's app registration (per-user, like clientId), not the provider's
   // API. The runtime owns the redirect end-to-end via the documented
-  // convention `http://localhost/callback`; see Phase 2.6.
+  // convention `http://127.0.0.1/callback`; see Phase 2.6.
   // pkce deleted (review amendment): authorization_code is implicitly PKCE.
   // A field whose only legal value was true is authoring ceremony; an opt-out,
   // if ever needed, is a relaxing non-event post-freeze.
@@ -752,10 +761,10 @@ there is no inbound-network dependency at all.
 The flow after the cut:
 
 1. `/api oauth <domain>` prints the authorize URL (PKCE challenge, state,
-   `redirect_uri=http://localhost/callback` per the convention below) and
+   `redirect_uri=http://127.0.0.1/callback` per the convention below) and
    prompts for the result.
 2. The user opens the URL, logs in / consents at the provider in their own
-   browser. The provider redirects to `http://localhost/callback?…` — a
+   browser. The provider redirects to `http://127.0.0.1/callback?…` — a
    dead page (nothing is listening, by design) — and the full redirect URL
    sits in the browser's address bar.
 3. The user pastes that URL (or just the bare code) into pi's prompt.
@@ -786,7 +795,7 @@ and the runtime bound a different port). The schema carries zero per-user
 registration facts; one documented convention replaces the field for all
 guides:
 
-> Register `http://localhost/callback` for your OAuth app (RFC 8252 §7.3 —
+> Register `http://127.0.0.1/callback` for your OAuth app (RFC 8252 §7.3 —
 > loopback, variable port). After consenting, copy the redirect URL from
 > your browser's address bar and paste it back into pi.
 
@@ -799,6 +808,20 @@ the dynamic-port listener model. `validateOAuth2`'s auth-code invariant
 becomes `grant: authorization_code` ⇒ `authorizeUrl` (that one is a real
 per-provider fact and stays).
 
+**Post-plan addendum (landed): convention literal amended to `127.0.0.1`.**
+Live testing against OSM exposed that the loopback *spelling* is not
+universal: OSM rejects every non-https redirect URI except those starting
+with `http://127.0.0.1` (wiki + openstreetmap-website#3613), so the
+originally-chosen `http://localhost/callback` cannot even be registered
+there. `REDIRECT_URI` now sends `http://127.0.0.1/callback` — RFC 8252
+§7.3 itself recommends the loopback IP literal over `localhost`, the
+paste parser is host-agnostic (any spelling the provider redirects to
+parses), and https was rejected as the fix because a dead-port https
+redirect yields a scary cert-error page while the http literal stays a
+mundane dead page. No settings knob: the convention change dissolves the
+only known conflict; a per-domain override sidecar is the upgrade path if
+a provider ever demands a different registered URI.
+
 Touch list (mechanical): `core/oauth-flow.ts` (delete `startCallbackServer`
 / loopback capture; keep PKCE pair gen, `buildAuthorizeUrl`, the code
 exchange, and `mintAuthCodeToken`), `core/oauth-command.ts` (the paste
@@ -810,6 +833,162 @@ Phase 2.5 fix-text sweep covers the new messages), and
 `__tests__/oauth-flow.test.ts` (loopback-callback + listener-lifecycle
 tests replaced by paste-parse tests: bare code, full URL with state,
 `?error=` surfacing, tolerant no-host input).
+
+### Phase 2.7 — Guide-less OAuth2 bootstrap (DRAFT — under review)
+
+> **Draft, not landed.** Written up for review after live OSM testing
+> showed the last piece of bootstrap friction: client-credentials already
+> bootstraps guide-less (probe mint-on-demand) but the interactive grant
+> still requires authoring a throwaway draft guide before `/api oauth` can
+> resolve the flow. This phase dissolves that asymmetry. Nothing here is
+> committed; review before implementation.
+
+#### Problem
+
+The interactive dance itself (visit authorize URL, consent, paste back) is
+*good* friction — it is the security model and it is irreducible. The
+removable piece is the prerequisite: `/api oauth <domain>` requires a saved
+oauth2 guide to know the grant, `tokenUrl`, and `authorizeUrl`, so proving
+a new provider's PKCE flow means authoring a minimal draft guide first
+(staged dir, save round-trip, and a stub op whose path may be wrong — the
+live OSM run stubbed `/user.json` before discovering the real endpoint was
+`/user/details.json`). The guide is needed *eventually* (for `api-fetch`),
+but the flow facts it supplies are few and knowable before any guide-quality
+decisions are.
+
+Client-credentials already solved this half (probe inline mint); auth-code
+cannot inline into the probe (the probe is a one-shot tool — the PKCE
+verifier and pending state must survive between "print authorize URL" and
+"paste code back", which is command-shaped, not tool-shaped). The interactive
+bootstrap therefore belongs in the command, not the probe.
+
+#### Design — `/api oauth init <domain>` (guide-less bootstrap subcommand)
+
+Bootstrap gets its own subcommand rather than overloading plain
+`/api oauth <domain>`, so the main command keeps exactly one meaning
+("resolve a guide and run its flow") and the mode never forks on
+filesystem state (guide-present vs guide-absent behaving differently is
+invisible in `--help` and surprising when a guide was just deleted).
+
+`/api oauth init <domain>` (both grants):
+
+1. **Interactive (`ctx.hasUI`)** → wizard prompts, mirroring the
+   `secrets-command` assisted-entry precedent (`ctx.ui.input`, picker where
+   a list is offered, values never prompted):
+   1. **Grant** — `client_credentials` | `authorization_code` (picker).
+   2. **`tokenUrl`** — free-text prompt (no guessing; the agent or user
+      supplies it from provider docs).
+   3. **Client credentials** — client-id and client-secret are prompted as
+      **store NAMES**, chosen from a picker of provisioned secrets for the
+      domain (parent-domain-normalized, same lookup the probe uses) — never
+      values, never free-typed literals. Audit rule identical to
+      `/api secrets`: client IDs pasted as literals are how per-user
+      credentials leak into transcripts.
+   4. **auth-code only**: `authorizeUrl` (free-text), optional
+      `clientSecret` (PKCE public clients omit it), `scopes`
+      (comma-separated, often empty), `tokenEndpointAuthMethod`
+      (default `client_secret_post`).
+   → build the synthetic oauth2 auth (the same construction the probe's
+   mint arm already does — shared helper, not duplicated), run the exact
+   existing flow (PKCE pair → authorize URL → paste → exchange → stamp),
+   done. No guide, no `api-learn`. (The `client_credentials` arm skips the
+   browser steps entirely — prompts, one POST, stamp.)
+2. **Headless (`!ctx.hasUI` or scripted)** → same wizard, no prompts: the
+   flag one-shot prints nothing and acts directly:
+   `/api oauth init <domain> --grant authorization_code --token-url …
+   --authorize-url … --client-id <store name> [--client-secret <store
+   name>] [--scopes a,b] [--token-endpoint-auth-method …]`. Flags are the
+   headless escape valve, not the primary UX — the same split the paste
+   flow already uses (`ctx.ui.input` when interactive, `--code` when not).
+
+Plain `/api oauth <domain>` with no guide keeps today's behavior (orphan
+listing / status / revoke) plus a one-line nudge pointing at
+`/api oauth init` when minting would have been possible. The completion
+step (`--code`) stays on the plain command, as today.
+
+The wizard's branch tree is deliberately short because Phase 2.5 locked the
+schema narrow: grant → client-secret optionality (auth-code) →
+token-endpoint auth method → scopes. Everything else (DPoP, PAR, device
+flow, JWT assertions, ROPC) is deferred by design and must NOT grow wizard
+branches — the wizard is a provisioning aid, not an OAuth playground.
+
+**Store-name rule (hard):** every credential the wizard collects is a
+**secrets-store name**, resolved at flow time — identical to the probe's
+mint fields and `/api secrets`. If a needed secret is not provisioned, the
+wizard says so and points at `/api secrets <domain> <name>` rather than
+prompting for a value.
+
+**Token-store keying wrinkle (the one real con):** guide-less runs stamp
+under the passed `domain`, but the eventual guide's `canonicalStoreDomain`
+is `domains[0]` — bootstrap as `api.openstreetmap.org`, author the guide
+keyed `openstreetmap.org`, and the token is invisible. Mitigation: apply
+the same parent-domain normalization the probe's store resolution already
+uses (longest provisioned parent domain), as shared code — not a new
+mechanism. If the passed domain matches no provisioned store, use it as
+given (fail at exchange, not silently).
+
+**Why not the alternatives (decided in review of alternatives):**
+
++ *Auth-only draft guides (relax ≥1-op parser rule)* — weakens the
+  "guide = runnable contract" invariant the parser holds; still needs the
+  `api-learn` dance; rejected.
++ *Probe prints the authorize URL* — the probe is one-shot; the PKCE
+  verifier must survive between print and paste, which the probe cannot
+  hold. A signpost, not a path; rejected as the mechanism (a later
+  cosmetic note pointing at `/api oauth` bootstrap is fine).
++ *Status quo* — defensible (friction is once per provider and mostly
+  agent-side), but the asymmetry with client-credentials is arbitrary and
+  this lands while schema churn is still cheap.
+
+#### Explicit non-goals
+
++ No new schema fields, no parser changes, no `api-guide-types.ts` edits —
+  the synthetic auth object is built in memory and never saved. The guide,
+  when authored later, is the *real* recipe; the wizard bootstraps the
+  token, not the guide.
++ No auto-authoring: the wizard does not write a draft guide or scaffold
+  operations. Discovery (probe) and recipe authoring (`api-learn`) stay
+  separate steps.
++ No scope picker beyond the declared prompt (static list per the plan's
+  scope-management deferral).
++ `--status` / `--revoke` guide-less behavior already landed (post-plan
+  addendum) and is unchanged by this phase.
+
+#### Touch list (mechanical)
+
++ `core/oauth-command.ts` — wizard prompts (interactive), flag parsing
+  (headless), and the shared synthetic-auth constructor. The command
+  already owns flow dispatch for both grants; this extends its no-guide
+  branch from "print the orphan listing / nudge" to "run bootstrap".
++ `core/oauth-flow.ts` — unchanged (the wizard feeds the existing
+  `mintAuthCodeToken` / client-credentials paths).
++ Shared helper for the synthetic oauth2 auth construction — extract from
+  `tools/api-probe.ts`'s mint arm (`resolveProbeAuth`) into a core location
+  both call sites use (probe keeps its note-riding semantics; command gets
+  fail-closed wizard validation). Keep the direction core-outward: the
+  command imports the helper; the probe keeps its own thin wrapper.
++ Parent-domain store-key normalization — shared with the probe's existing
+  longest-provisioned-parent lookup (no new mechanism).
++ `__tests__/oauth-command.test.ts` (or `oauth-flow.test.ts`) — wizard
+  branch (mocked `ctx.ui`), headless flags path, store-name resolution
+  (miss → nudge, never a value prompt), token stamped under the
+  parent-normalized domain, guide-present path regression (unchanged).
+
+#### Review decisions (confirmed)
+
+1. **`init` subcommand** — bootstrap scoped to `/api oauth init <domain>`;
+   plain `/api oauth <domain>` never state-forks into a wizard (review
+   conclusion: explicit subcommand beats implicit guide-detection dispatch
+   — see Design above).
+2. **Client-credentials arm included.** The probe already mints cc
+   guide-less inline, but only reachable *through the probe*. The init
+   wizard's cc arm (no browser — prompts, one POST, stamp) makes
+   `/api oauth init` the single bootstrap surface for both grants; the
+   dispatch is identical, only the post-prompt path differs.
+3. **Headless flags surface stays.** ~30 lines, needed for scripting/VM
+   users; the wizard is the primary UX, flags are the escape valve.
+4. **Sequencing:** land **before** Phase 3 — the caritas auth-code recipe
+   work will use this bootstrap for its own live verification.
 
 ### Phase 3 — Axis coverage + caritas recipes
 
