@@ -16,9 +16,15 @@ import type {
 	ApiGuide,
 	AuthConfig,
 	OAuth2Auth,
+	OAuth2Grant,
+	OAuth2TokenEndpointAuthMethod,
 	StaticKeyAuth,
 } from "./api-guide-types.js";
-import { readSecret, provisionedDomainsSuffix } from "./secrets-store.js";
+import {
+	listDomains,
+	readSecret,
+	provisionedDomainsSuffix,
+} from "./secrets-store.js";
 import { readToken, writeToken, deleteToken } from "./oauth-store.js";
 import type { OAuthToken } from "./oauth-store.js";
 
@@ -636,4 +642,121 @@ export async function revokeAccessToken(
 		}
 	}
 	deleteToken(domain);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Guide-less bootstrap (Phase 2.7) — shared synthetic-auth construction
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Secrets-store domain for a not-yet-guided hostname: the hostname when it is
+ * itself provisioned, else the longest provisioned parent domain
+ * (api.openstreetmap.org → openstreetmap.org), else the hostname as-is (fail
+ * at exchange, not silently). Matched against the SECRETS store — the wizard
+ * and the probe both resolve credentials from it. ponytail: parent-suffix
+ * match against the store, not a public-suffix list — no dep, and the store
+ * is the source of truth for where secrets live.
+ */
+export function resolveProvisionedParentDomain(hostname: string): string {
+	const domains = listDomains();
+	if (domains.includes(hostname)) return hostname;
+	const parent = domains
+		.filter((d) => hostname.endsWith(`.${d}`))
+		.sort((a, b) => b.length - a.length)[0];
+	return parent ?? hostname;
+}
+
+/** Fields the bootstrap surfaces collect into a synthetic `OAuth2Auth`. */
+export interface SyntheticOAuth2Fields {
+	grant: OAuth2Grant;
+	tokenUrl: string;
+	/** secrets-store NAME — the value resolves at flow time, never a literal. */
+	clientId: string;
+	clientSecret?: string;
+	authorizeUrl?: string;
+	scopes?: string[];
+	tokenEndpointAuthMethod?: OAuth2TokenEndpointAuthMethod;
+}
+
+/**
+ * Build a synthetic oauth2 auth for the guide-less bootstrap paths (`/api
+ * oauth init <domain>` and api-probe's mint arm). Shared construction pattern:
+ * the synthetic auth feeds the existing resolveAccessToken / mintAuthCodeToken
+ * machinery, so cache/refresh/lock/stamp is shared code. Fail-closed (command
+ * semantics — the probe wraps its own try/catch around the flow): invalid
+ * combinations throw instead of parsing loosely.
+ */
+export function buildSyntheticOAuth2Auth(f: SyntheticOAuth2Fields): OAuth2Auth {
+	if (f.grant !== "client_credentials" && f.grant !== "authorization_code") {
+		throw new Error(
+			`--grant must be client_credentials | authorization_code (got: ${String(f.grant)})`,
+		);
+	}
+	if (!isHttpUrl(f.tokenUrl)) {
+		throw new Error(`--token-url must be an http(s) URL (got: ${f.tokenUrl})`);
+	}
+	if (!f.clientId) {
+		throw new Error("--client-id (a provisioned store NAME) is required.");
+	}
+	if (
+		f.tokenEndpointAuthMethod !== undefined &&
+		f.tokenEndpointAuthMethod !== "client_secret_basic" &&
+		f.tokenEndpointAuthMethod !== "client_secret_post" &&
+		f.tokenEndpointAuthMethod !== "none"
+	) {
+		throw new Error(
+			`--token-endpoint-auth-method must be client_secret_basic | client_secret_post | none (got: ${f.tokenEndpointAuthMethod})`,
+		);
+	}
+	if (f.grant === "client_credentials") {
+		if (!f.clientSecret) {
+			throw new Error(
+				"grant client_credentials requires --client-secret (a provisioned store NAME).",
+			);
+		}
+		if (f.authorizeUrl !== undefined) {
+			throw new Error(
+				"--authorize-url is only valid with --grant authorization_code (client_credentials is server-to-server).",
+			);
+		}
+	} else if (!f.authorizeUrl) {
+		throw new Error(
+			"grant authorization_code requires --authorize-url (the provider's authorization endpoint).",
+		);
+	}
+	if (f.authorizeUrl !== undefined && !isHttpUrl(f.authorizeUrl)) {
+		throw new Error(
+			`--authorize-url must be an http(s) URL (got: ${f.authorizeUrl})`,
+		);
+	}
+	if (f.tokenEndpointAuthMethod === "none" && f.clientSecret !== undefined) {
+		throw new Error(
+			"--token-endpoint-auth-method none sends no client credentials — drop --client-secret.",
+		);
+	}
+	return {
+		kind: "oauth2",
+		grant: f.grant,
+		tokenUrl: f.tokenUrl,
+		clientId: { secret: f.clientId },
+		...(f.clientSecret === undefined
+			? {}
+			: { clientSecret: { secret: f.clientSecret } }),
+		...(f.scopes !== undefined && f.scopes.length > 0
+			? { scopes: f.scopes }
+			: {}),
+		...(f.tokenEndpointAuthMethod === undefined
+			? {}
+			: { tokenEndpointAuthMethod: f.tokenEndpointAuthMethod }),
+		...(f.authorizeUrl === undefined ? {} : { authorizeUrl: f.authorizeUrl }),
+	};
+}
+
+function isHttpUrl(s: string): boolean {
+	try {
+		const u = new URL(s);
+		return u.protocol === "https:" || u.protocol === "http:";
+	} catch {
+		return false;
+	}
 }

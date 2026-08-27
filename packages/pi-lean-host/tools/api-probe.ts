@@ -27,7 +27,9 @@ import {
 	joinUrl,
 } from "../core/path-template.js";
 import {
+	buildSyntheticOAuth2Auth,
 	resolveAccessToken,
+	resolveProvisionedParentDomain,
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
 	scrubSecretValues,
@@ -40,7 +42,6 @@ import { serverMessage, isPlanGated } from "../core/status-hint.js";
 import { appendFooter, contentText } from "./utils.js";
 import type {
 	ApiGuide,
-	OAuth2Auth,
 	SecretRef,
 	StaticKeyAuth,
 } from "../core/api-guide-types.js";
@@ -350,19 +351,16 @@ async function resolveProbeAuth(
 		// per-domain refresh lock). resolveAccessToken only reads `.auth`;
 		// the store domain is passed explicitly. Failures never fail-closed:
 		// the message rides the note and the probe proceeds unauthenticated.
-		const oauthAuth: OAuth2Auth = {
-			kind: "oauth2",
+		const oauthAuth = buildSyntheticOAuth2Auth({
 			grant: "client_credentials",
 			tokenUrl: auth!.tokenUrl!,
-			clientId: { secret: auth!.clientId! },
-			...(auth!.clientSecret
-				? { clientSecret: { secret: auth!.clientSecret } }
-				: {}),
+			clientId: auth!.clientId!,
+			...(auth!.clientSecret ? { clientSecret: auth!.clientSecret } : {}),
 			...(auth!.scopes?.length ? { scopes: auth!.scopes } : {}),
 			...(auth!.tokenEndpointAuthMethod
 				? { tokenEndpointAuthMethod: auth!.tokenEndpointAuthMethod }
 				: {}),
-		};
+		});
 		try {
 			const result = await resolveAccessToken(
 				// SAFETY: resolveAccessToken only reads `.auth` off the guide; the
@@ -440,18 +438,11 @@ function authMissNote(authCtx: ProbeAuthCtx, domain: string): string {
 		.join(" — ");
 }
 
-/** Resolve the secrets-store domain for a probe: the apiHost hostname when it
- *  is itself provisioned, else the longest provisioned parent domain
- *  (pro-api.coinmarketcap.com → coinmarketcap.com), else the hostname as-is.
- *  ponytail: parent-suffix match against the store, not a public-suffix list —
- *  no dep, and the store is the source of truth for where secrets live. */
+/** Probe-semantics wrapper over the core secrets-store parent-domain lookup
+ *  (resolveProvisionedParentDomain) — same longest-provisioned-parent rule,
+ *  kept under the probe's name for its call sites + tests. */
 export function resolveProbeStoreDomain(hostname: string): string {
-	const domains = listDomains();
-	if (domains.includes(hostname)) return hostname;
-	const parent = domains
-		.filter((d) => hostname.endsWith(`.${d}`))
-		.sort((a, b) => b.length - a.length)[0];
-	return parent ?? hostname;
+	return resolveProvisionedParentDomain(hostname);
 }
 
 /** Hostname of an apiHost URL (falls back to the raw string). */

@@ -53,6 +53,7 @@
 		"core/response-spill.ts",
 		"core/resolve-op.ts",
 		"core/guide-picker.ts",
+		"core/select-picker.ts",
 		"core/verify-command.ts",
 		"core/delete-command.ts",
 		"core/oauth-store.ts",

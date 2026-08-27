@@ -13,12 +13,20 @@
  * - `oauth <domain> --revoke`  — revoke at the provider's revokeUrl (if declared) and clear the store.
  * - `oauth <domain> --code <code>` — complete an authorization-code flow with
  *   the pasted redirect URL (or bare code) from a previous authorize step.
+ * - `oauth init <domain> [flags]` — guide-less bootstrap (Phase 2.7): provision
+ *   a token without an oauth2 guide. Interactive wizard (ctx.hasUI) or headless
+ *   flags (--grant --token-url --client-id [--client-secret] [--authorize-url]
+ *   [--scopes] [--token-endpoint-auth-method]); auth-code completion is the
+ *   two-call `init <domain> <same flags> --code <paste>`. Client credentials
+ *   are secrets-store NAMES picked from what's provisioned — values never
+ *   enter the transcript.
  * - `oauth` (bare)             — list token-store domains with status metadata.
  *
  * Tokens can outlive their guide (deleted via /api delete, or minted while
  * testing), so bare listing, `--status`, and `--revoke` also work guide-less
  * (keyed by the literal domain; revoke is then local-only — no revokeUrl
- * without a guide). Minting/refreshing still requires the guide.
+ * without a guide). Minting/refreshing goes through the guide's flow, or
+ * guide-less through `init`.
  *
  * Always-available / not focus-guarded — a peer of `secrets`/`verify`/`delete`
  * (writes the token store, not toolset state). The client secret lives in the
@@ -28,18 +36,22 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { findGuidesByDomain } from "./guide-store.js";
 import { pickGuide } from "./guide-picker.js";
+import { pickWithDescription, type PickerItem } from "./select-picker.js";
 import {
 	formatGuideListings,
 	selectGuideByShortName,
 	shortNameErrorText,
 } from "./parse-api-guide.js";
 import {
+	buildSyntheticOAuth2Auth,
 	canonicalStoreDomain,
 	isTokenExpired,
 	resolveAccessToken,
+	resolveProvisionedParentDomain,
 	revokeAccessToken,
 	OAuthTokenMissingError,
 } from "./auth.js";
+import type { SyntheticOAuth2Fields } from "./auth.js";
 import {
 	readToken,
 	deleteToken,
@@ -49,6 +61,7 @@ import {
 } from "./oauth-store.js";
 import type { OAuthToken } from "./oauth-store.js";
 import { mintAuthCodeToken } from "./oauth-flow.js";
+import { listNames } from "./secrets-store.js";
 import type { ApiGuide } from "./api-guide-types.js";
 
 /** Full usage + storage docs, surfaced by `--help`. */
@@ -64,6 +77,14 @@ function helpText(): string {
 		"  /api oauth <domain> --revoke  revoke at the guide's revokeUrl (if declared) and clear the store",
 		"  /api oauth <domain> --code <code>  complete an auth-code flow with the pasted",
 		"                                redirect URL (or bare code)",
+		"  /api oauth init <domain>     guide-less bootstrap (no oauth2 guide needed):",
+		"                               interactive wizard (TUI), or headless flags:",
+		"                               --grant client_credentials|authorization_code",
+		"                               --token-url <url> --client-id <store name>",
+		"                               [--client-secret <store name>] [--authorize-url <url>]",
+		"                               [--scopes a,b] [--token-endpoint-auth-method <method>]",
+		"                               auth-code completion (headless two-call): /api oauth init",
+		"                               <domain> <same flags> --code <redirect-url-or-code>",
 		"  /api oauth                    list token-store domains (guide-independent);",
 		"                                --status/--revoke on orphaned tokens use the literal domain",
 		"",
@@ -102,6 +123,13 @@ export async function handleOauthSubcommand(
 		return;
 	}
 
+	// `init` subcommand — guide-less bootstrap (Phase 2.7). Its own flag
+	// grammar, so it short-circuits before the plain-command parsing below.
+	if (parts[0] === "init") {
+		await handleOauthInit(args.trim().replace(/^init\b\s*/, ""), ctx);
+		return;
+	}
+
 	const statusFlag = parts.includes("--status");
 	const refreshFlag = parts.includes("--refresh");
 	const revokeFlag = parts.includes("--revoke");
@@ -127,7 +155,7 @@ export async function handleOauthSubcommand(
 		const domains = listTokenDomains();
 		if (domains.length === 0) {
 			ctx.ui.notify(
-				"🔑 OAuth2 token store is empty. Provision a token with /api oauth <domain> (needs an oauth2 guide) — see /api oauth --help.",
+				"🔑 OAuth2 token store is empty. Provision a token with /api oauth <domain> (needs an oauth2 guide) or guide-less with /api oauth init <domain> — see /api oauth --help.",
 				"info",
 			);
 			return;
@@ -182,7 +210,8 @@ export async function handleOauthSubcommand(
 		}
 		ctx.ui.notify(
 			`No API guide for '${domain}'. ` +
-				`Call api-guide({}) to list available guides, or api-learn({domain: "${domain}"}) to author one.`,
+				`Call api-guide({}) to list available guides, or api-learn({domain: "${domain}"}) to author one. ` +
+				`To bootstrap a token guide-less, run: /api oauth init ${domain}.`,
 			"warning",
 		);
 		return;
@@ -301,4 +330,406 @@ export async function handleOauthSubcommand(
 		`🔑 OAuth2 token for '${storeDomain}' ${refreshFlag ? "refreshed" : "provisioned"} (grant ${auth.grant}).`,
 		"info",
 	);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// init — guide-less OAuth2 bootstrap (Phase 2.7)
+// ═══════════════════════════════════════════════════════════════
+
+const INIT_USAGE = [
+	"Usage: /api oauth init <domain> [flags] — guide-less OAuth2 bootstrap (no oauth2 guide needed).",
+	"  Flags (headless/scripting; TUI users get a wizard instead):",
+	"    --grant client_credentials|authorization_code   (inferred from --authorize-url when omitted)",
+	"    --token-url <url>            token endpoint",
+	"    --client-id <store name>     provisioned secrets-store NAME (never a literal)",
+	"    --client-secret <store name> required for client_credentials",
+	"    --authorize-url <url>        required for authorization_code",
+	"    --scopes a,b                 comma-separated",
+	"    --token-endpoint-auth-method client_secret_post|client_secret_basic|none",
+	"  auth-code completion (headless two-call): re-run with the same flags + --code <redirect-url-or-code>.",
+	"  Client credentials are store names resolved from the secrets store — values never enter the transcript.",
+].join("\n");
+
+/** Flags with values the `init` grammar understands. */
+const INIT_FLAG_NAMES: readonly string[] = [
+	"--grant",
+	"--token-url",
+	"--authorize-url",
+	"--client-id",
+	"--client-secret",
+	"--scopes",
+	"--token-endpoint-auth-method",
+	"--code",
+];
+
+/** Wizard picker option meaning "no client secret" (PKCE public client). */
+const OMIT_SECRET = "(omit — PKCE public client)";
+
+/**
+ * `/api oauth init <domain>` — provision a token WITHOUT an oauth2 guide
+ * (Phase 2.7). The interactive grant's bootstrap previously required
+ * authoring a throwaway draft guide first; the wizard dissolves that
+ * asymmetry with client-credentials (which probe mint-on-demand already
+ * solved). The wizard collects flow facts (grant, tokenUrl, authorizeUrl,
+ * store-NAME credentials) into a synthetic oauth2 auth and feeds the
+ * EXISTING flow machinery (`mintAuthCodeToken` / `resolveAccessToken`) —
+ * no new mint mechanism, no schema change, nothing saved.
+ *
+ * Interactive (ctx.hasUI, no flags) → wizard prompts mirroring the
+ * `secrets-command` assisted-entry precedent. Headless or scripted → the
+ * flag one-shot acts directly (the same split the paste flow already uses).
+ * Token-store keying applies the probe's parent-domain normalization
+ * (longest provisioned parent in the SECRETS store); a normalized stamp is
+ * called out so it doesn't go invisible to the eventual guide.
+ */
+async function handleOauthInit(
+	args: string,
+	ctx: ExtensionCommandContext,
+): Promise<void> {
+	const parts = args.trim().split(/\s+/).filter(Boolean);
+
+	// Parse the flag grammar: each known flag consumes one value; anything
+	// else is a positional (exactly one — the domain).
+	const flags: Record<string, string | undefined> = {};
+	const positional: string[] = [];
+	for (let i = 0; i < parts.length; i++) {
+		const p = parts[i]!;
+		if (INIT_FLAG_NAMES.includes(p)) {
+			const value = parts[i + 1];
+			if (value === undefined) {
+				ctx.ui.notify(
+					`Flag '${p}' is missing its value — see /api oauth --help.`,
+					"warning",
+				);
+				return;
+			}
+			flags[p] = value;
+			i++;
+			continue;
+		}
+		if (p.startsWith("--")) {
+			ctx.ui.notify(
+				`Unknown flag '${p}' for /api oauth init — see /api oauth --help.`,
+				"warning",
+			);
+			return;
+		}
+		positional.push(p);
+	}
+	const domain = positional[0];
+	if (domain === undefined || positional.length > 1) {
+		ctx.ui.notify(INIT_USAGE, "info");
+		return;
+	}
+	const codeArg = flags["--code"];
+	if (parts.includes("--code") && codeArg === undefined) {
+		ctx.ui.notify(
+			"Usage: /api oauth init <domain> <flags> --code <code> — the code is missing.",
+			"warning",
+		);
+		return;
+	}
+
+	// Token-store key wrinkle: normalize against the SECRETS store (same
+	// longest-provisioned-parent lookup the probe uses) so a bootstrap as
+	// `api.example.org` lands where a guide keyed `example.org` looks.
+	// No provisioned match → use the domain as given (fail at exchange,
+	// not silently).
+	const storeDomain = resolveProvisionedParentDomain(domain);
+	const viaFlags = Object.values(flags).some((v) => v !== undefined);
+
+	let fields: SyntheticOAuth2Fields;
+	if (viaFlags) {
+		const scopesRaw = flags["--scopes"];
+		const grant =
+			flags["--grant"] ??
+			(flags["--authorize-url"] === undefined
+				? "client_credentials"
+				: "authorization_code");
+		const methodFlag = flags["--token-endpoint-auth-method"];
+		fields = {
+			grant: grant as SyntheticOAuth2Fields["grant"],
+			tokenUrl: flags["--token-url"] ?? "",
+			clientId: flags["--client-id"] ?? "",
+			...(flags["--client-secret"] === undefined
+				? {}
+				: { clientSecret: flags["--client-secret"] }),
+			...(flags["--authorize-url"] === undefined
+				? {}
+				: { authorizeUrl: flags["--authorize-url"] }),
+			...(scopesRaw === undefined
+				? {}
+				: {
+						scopes: scopesRaw
+							.split(",")
+							.map((s) => s.trim())
+							.filter(Boolean),
+					}),
+			...(methodFlag === undefined
+				? {}
+				: {
+						tokenEndpointAuthMethod: methodFlag as NonNullable<
+							SyntheticOAuth2Fields["tokenEndpointAuthMethod"]
+						>,
+					}),
+		};
+	} else if (ctx.hasUI) {
+		const gathered = await wizardFields(ctx, storeDomain);
+		if (gathered === undefined) return; // cancelled / aborted (message shown)
+		fields = gathered;
+	} else {
+		ctx.ui.notify(INIT_USAGE, "info");
+		return;
+	}
+
+	let synthetic;
+	try {
+		synthetic = buildSyntheticOAuth2Auth(fields);
+	} catch (err) {
+		ctx.ui.notify(
+			`⚡ ${err instanceof Error ? err.message : String(err)}\n\n${INIT_USAGE}`,
+			"warning",
+		);
+		return;
+	}
+
+	// Store-name rule (hard): every credential is a provisioned store NAME,
+	// resolved at flow time. A miss points at /api secrets — never a value
+	// prompt, never a free-typed literal.
+	const provisioned = listNames(storeDomain);
+	const requiredNames = [
+		fields.clientId,
+		...(fields.clientSecret === undefined ? [] : [fields.clientSecret]),
+	];
+	const missing = requiredNames.filter((n) => !provisioned.includes(n));
+	if (missing.length > 0) {
+		ctx.ui.notify(
+			`OAuth2 client credentials must be provisioned store NAMEs, but ${missing.map((n) => `'${n}'`).join(", ")} ` +
+				`are not in the secrets store for '${storeDomain}'. ` +
+				`Provision them first: /api secrets ${storeDomain} <name> (values never enter the transcript).`,
+			"warning",
+		);
+		return;
+	}
+
+	const provisionedMsg = () => {
+		const lines = [
+			`🔑 OAuth2 token for '${storeDomain}' provisioned via /api oauth init (grant ${synthetic.grant}).`,
+		];
+		if (storeDomain !== domain) {
+			// Ordering dependency the plan calls out: normalization matched the
+			// SECRETS store, but the eventual guide keys on its domains[0].
+			lines.push(
+				`Note: provision secrets under the same domain the guide will claim as domains[0] — the token was stamped at '${storeDomain}' (normalized from '${domain}').`,
+			);
+		}
+		ctx.ui.notify(lines.join("\n"), "info");
+	};
+
+	try {
+		if (codeArg !== undefined) {
+			// Headless two-call completion: reconstruct the synthetic auth from
+			// the same flags used to start; the pending flow holds verifier+state.
+			await mintAuthCodeToken(synthetic, storeDomain, ctx, { code: codeArg });
+			provisionedMsg();
+			return;
+		}
+		if (synthetic.grant === "client_credentials") {
+			// Bootstrap wants a fresh mint, not a cached token (mirrors the
+			// plain command's --refresh path).
+			deleteToken(storeDomain);
+			await resolveAccessToken(
+				// SAFETY: resolveAccessToken only reads `.auth` off the guide; the
+				// store domain is passed explicitly (same cast as api-probe's mint arm).
+				{ domains: [storeDomain], auth: synthetic } as unknown as ApiGuide,
+				storeDomain,
+			);
+			provisionedMsg();
+			return;
+		}
+		// authorization_code start: prints the authorize URL and persists the
+		// pending flow; interactive users complete inline, headless awaits
+		// `init ... --code`.
+		try {
+			await mintAuthCodeToken(synthetic, storeDomain, ctx, {});
+			provisionedMsg();
+		} catch (err) {
+			if (!(err instanceof OAuthTokenMissingError)) throw err;
+			if (viaFlags) {
+				// Headless start: the pending flow survived — teach the init-owned
+				// completion call (reconstructs the synthetic auth from flags).
+				ctx.ui.notify(
+					`🔑 Awaiting the OAuth2 authorization result for '${storeDomain}'. ` +
+						`Open the URL above, authorize, then complete:\n` +
+						`  /api oauth init ${args.trim()} --code <redirect-url-or-code>`,
+					"info",
+				);
+			} else {
+				// Wizard user cancelled the paste prompt — flags-based completion
+				// isn't available to them; a re-run generates a fresh URL.
+				ctx.ui.notify(
+					`🔑 Cancelled. Re-run /api oauth init ${domain} to generate a fresh authorize URL (or complete with flags + --code).`,
+					"info",
+				);
+			}
+		}
+	} catch (err) {
+		if (err instanceof OAuthTokenMissingError) {
+			ctx.ui.notify(`🔑 ${err.message}`, "warning");
+			return;
+		}
+		ctx.ui.notify(
+			`⚡ OAuth2 bootstrap failed for '${storeDomain}': ` +
+				`${err instanceof Error ? err.message : String(err)}`,
+			"warning",
+		);
+	}
+}
+
+/**
+ * Interactive wizard — the wizard branch tree is deliberately short (Phase
+ * 2.5 locked the schema narrow): grant → tokenUrl → client credentials as
+ * store NAMES from a picker → auth-code extras. DPoP, PAR, device flow, JWT
+ * assertions etc. must NOT grow wizard branches — this is a provisioning aid,
+ * not an OAuth playground. Returns undefined when the user cancels/aborts.
+ */
+const GRANT_ITEMS: PickerItem[] = [
+	{
+		value: "client_credentials",
+		label: "client_credentials",
+		description: "Server-to-server — no browser; one POST to the token endpoint.",
+	},
+	{
+		value: "authorization_code",
+		label: "authorization_code",
+		description:
+			"Consent in your own browser (PKCE), then paste the redirect URL back.",
+	},
+];
+
+const AUTH_METHOD_ITEMS: PickerItem[] = [
+	{
+		value: "client_secret_post",
+		label: "client_secret_post",
+		description: "Credentials in the token-POST body.",
+	},
+	{
+		value: "client_secret_basic",
+		label: "client_secret_basic",
+		description: "Credentials in a Basic Authorization header.",
+	},
+];
+
+async function wizardFields(
+	ctx: ExtensionCommandContext,
+	storeDomain: string,
+): Promise<SyntheticOAuth2Fields | undefined> {
+	const cancelled = () =>
+		ctx.ui.notify("Cancelled — nothing provisioned.", "info");
+
+	const grant = await pickWithDescription(
+		ctx,
+		`OAuth2 grant for '${storeDomain}'`,
+		GRANT_ITEMS,
+	);
+	if (grant === undefined) {
+		await cancelled();
+		return undefined;
+	}
+	const tokenUrl = (
+		await ctx.ui.input(
+			`Token endpoint URL for '${storeDomain}'`,
+			"https://provider.example.com/oauth/token",
+		)
+	)?.trim();
+	if (!tokenUrl) {
+		await cancelled();
+		return undefined;
+	}
+	// Store-name rule: client-id/secret are picked from provisioned secrets —
+	// never values, never free-typed literals (the /api secrets audit rule).
+	const names = listNames(storeDomain);
+	if (names.length === 0) {
+		ctx.ui.notify(
+			`No provisioned secrets for '${storeDomain}' — client credentials are store NAMES, never free-typed literals. ` +
+				`Provision them first: /api secrets ${storeDomain} <name>.`,
+			"warning",
+		);
+		return undefined;
+	}
+	const clientId = await ctx.ui.select(
+		`client-id STORE NAME for '${storeDomain}' (value resolves from the store)`,
+		names,
+	);
+	if (clientId === undefined) {
+		await cancelled();
+		return undefined;
+	}
+	const clientSecret = await ctx.ui.select(
+		`client-secret STORE NAME for '${storeDomain}'`,
+		grant === "client_credentials" ? names : [OMIT_SECRET, ...names],
+	);
+	if (clientSecret === undefined) {
+		await cancelled();
+		return undefined;
+	}
+	if (grant === "client_credentials") {
+		return {
+			grant: "client_credentials",
+			tokenUrl,
+			clientId,
+			clientSecret: clientSecret!,
+		};
+	}
+	const authorizeUrl = (
+		await ctx.ui.input(
+			`Authorization endpoint URL for '${storeDomain}'`,
+			"https://provider.example.com/oauth/authorize",
+		)
+	)?.trim();
+	if (!authorizeUrl) {
+		await cancelled();
+		return undefined;
+	}
+	const scopesRaw = await ctx.ui.input(
+		"Scopes (comma-separated)",
+		"e.g. read,profile — empty to skip",
+	);
+	if (scopesRaw === undefined) {
+		await cancelled();
+		return undefined;
+	}
+	const scopes = scopesRaw
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	// A public PKCE client (secret omitted) sends no client credentials —
+	// method is forced to none; the prompt only fires when a secret was chosen.
+	const tokenEndpointAuthMethod =
+		clientSecret === OMIT_SECRET
+			? ("none" as const)
+			: await pickWithDescription(
+					ctx,
+					"Token-endpoint auth method",
+					AUTH_METHOD_ITEMS,
+				);
+	if (clientSecret !== OMIT_SECRET && tokenEndpointAuthMethod === undefined) {
+		await cancelled();
+		return undefined;
+	}
+	return {
+		grant: grant as SyntheticOAuth2Fields["grant"],
+		tokenUrl,
+		clientId,
+		...(clientSecret === OMIT_SECRET ? {} : { clientSecret: clientSecret! }),
+		authorizeUrl,
+		...(scopes.length > 0 ? { scopes } : {}),
+		...(tokenEndpointAuthMethod === undefined
+			? {}
+			: {
+					tokenEndpointAuthMethod: tokenEndpointAuthMethod as NonNullable<
+						SyntheticOAuth2Fields["tokenEndpointAuthMethod"]
+					>,
+				}),
+	};
 }
