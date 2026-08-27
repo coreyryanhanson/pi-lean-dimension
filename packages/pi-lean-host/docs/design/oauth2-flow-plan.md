@@ -888,8 +888,8 @@ invisible in `--help` and surprising when a guide was just deleted).
       `clientSecret` (PKCE public clients omit it), `scopes`
       (comma-separated, often empty), `tokenEndpointAuthMethod`
       (default `client_secret_post`).
-   → build the synthetic oauth2 auth (the same construction the probe's
-   mint arm already does — shared helper, not duplicated), run the exact
+   → build the synthetic oauth2 auth following the probe's mint-arm
+   construction pattern (shared helper — see Touch list), run the exact
    existing flow (PKCE pair → authorize URL → paste → exchange → stamp),
    done. No guide, no `api-learn`. (The `client_credentials` arm skips the
    browser steps entirely — prompts, one POST, stamp.)
@@ -903,8 +903,22 @@ invisible in `--help` and surprising when a guide was just deleted).
 
 Plain `/api oauth <domain>` with no guide keeps today's behavior (orphan
 listing / status / revoke) plus a one-line nudge pointing at
-`/api oauth init` when minting would have been possible. The completion
-step (`--code`) stays on the plain command, as today.
+`/api oauth init` when minting would have been possible.
+
+**Headless auth-code completion (design point):** the completion step
+(`--code`) does **not** stay on the plain command — the plain command's
+guide-less branch only handles `--status` / `--revoke`, and deeper,
+`completePastedCode` needs the `OAuth2Auth` object (`tokenUrl`, `clientId`,
+…) that the guide normally supplies, while `PendingAuthCodeFlow` only
+stores `{ verifier, state, redirectUri }`. So `init` owns the whole two-call
+headless flow: `/api oauth init …` (start → prints authorize URL, persists
+pending state) → `/api oauth init … --code <paste>` (complete →
+reconstructs the synthetic auth from the same flags used to start, reads
+the pending flow for verifier+state, calls `completePastedCode`). The
+interactive path is unaffected — the inline `ctx.ui.input` paste prompt
+completes in one invocation. No `oauth-store.ts` change is needed (the
+pending flow shape is unchanged); the auth config is re-derived from flags,
+not persisted.
 
 The wizard's branch tree is deliberately short because Phase 2.5 locked the
 schema narrow: grant → client-secret optionality (auth-code) →
@@ -923,9 +937,16 @@ under the passed `domain`, but the eventual guide's `canonicalStoreDomain`
 is `domains[0]` — bootstrap as `api.openstreetmap.org`, author the guide
 keyed `openstreetmap.org`, and the token is invisible. Mitigation: apply
 the same parent-domain normalization the probe's store resolution already
-uses (longest provisioned parent domain), as shared code — not a new
-mechanism. If the passed domain matches no provisioned store, use it as
-given (fail at exchange, not silently).
+uses (longest provisioned parent domain, matched against the **secrets**
+store), as shared code — not a new mechanism. If the passed domain matches
+no provisioned store, use it as given (fail at exchange, not silently).
+**Ordering dependency to surface:** normalization matches the *secrets*
+store, so if the user provisions secrets under `api.openstreetmap.org`
+(exact match, no parent normalization needed) but later authors a guide
+keyed `domains: [openstreetmap.org]`, the token is stamped at
+`api.openstreetmap.org` and goes invisible to `api-fetch`. The wizard
+prints a one-line note at stamp time: *"provision secrets under the same
+domain the guide will claim as `domains[0]`"* to reduce the surprise.
 
 **Why not the alternatives (decided in review of alternatives):**
 
@@ -957,20 +978,30 @@ given (fail at exchange, not silently).
 #### Touch list (mechanical)
 
 + `core/oauth-command.ts` — wizard prompts (interactive), flag parsing
-  (headless), and the shared synthetic-auth constructor. The command
-  already owns flow dispatch for both grants; this extends its no-guide
-  branch from "print the orphan listing / nudge" to "run bootstrap".
+  (headless, incl. the `init … --code <paste>` completion arm), the shared
+  synthetic-auth constructor, and `helpText()` / bare-listing nudge updates
+  to list the `init` subcommand and its flags (easily missed otherwise).
+  The command already owns flow dispatch for both grants; this extends its
+  no-guide branch from "print the orphan listing / nudge" to "run
+  bootstrap".
 + `core/oauth-flow.ts` — unchanged (the wizard feeds the existing
-  `mintAuthCodeToken` / client-credentials paths).
-+ Shared helper for the synthetic oauth2 auth construction — extract from
-  `tools/api-probe.ts`'s mint arm (`resolveProbeAuth`) into a core location
-  both call sites use (probe keeps its note-riding semantics; command gets
-  fail-closed wizard validation). Keep the direction core-outward: the
-  command imports the helper; the probe keeps its own thin wrapper.
+  `mintAuthCodeToken` / client-credentials paths; `completePastedCode` is
+  called with the flag-reconstructed synthetic auth).
++ Shared helper for the synthetic oauth2 auth construction — extract the
+  *construction pattern* from `tools/api-probe.ts`'s mint arm
+  (`resolveProbeAuth`, currently `client_credentials`-only) into a core
+  location both call sites use. The auth-code arm (adds `authorizeUrl`,
+  optional `clientSecret` for PKCE public clients) is new code following
+  the same pattern, not a literal extraction. Probe keeps its note-riding
+  semantics; command gets fail-closed wizard validation. Keep the
+  direction core-outward: the command imports the helper; the probe keeps
+  its own thin wrapper.
 + Parent-domain store-key normalization — shared with the probe's existing
   longest-provisioned-parent lookup (no new mechanism).
 + `__tests__/oauth-command.test.ts` (or `oauth-flow.test.ts`) — wizard
-  branch (mocked `ctx.ui`), headless flags path, store-name resolution
+  branch (mocked `ctx.ui`), headless flags path, **headless `init … --code`
+  two-call completion** (reconstructs synthetic auth from flags, reads
+  pending flow, calls `completePastedCode`), store-name resolution
   (miss → nudge, never a value prompt), token stamped under the
   parent-normalized domain, guide-present path regression (unchanged).
 
