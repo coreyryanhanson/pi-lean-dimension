@@ -206,12 +206,17 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
     Shared `authStatusLine()` footer renders five metadata-only states on
     both `api-guide` and `api-fetch` (no-auth / ok / nudge-provision /
     ok-optional / optional-not-provisioned).
-  - **`api-probe` extras**: inline `auth` block (injection fields only:
-    `secretRefs` / `secretQueryRefs` / `headerPrefixes` / `useTokenStore`)
-    for probing auth-gated endpoints; `useTokenStore: true` reads the cached
+  - **`api-probe` extras**: inline `auth` block (injection fields:
+    `secretRefs` / `secretQueryRefs` / `headerPrefixes` / `useTokenStore`, plus
+    client-credentials mint-on-demand fields `tokenUrl` + `clientId` [+
+    `clientSecret`, `scopes`, `tokenEndpointAuthMethod`] for bootstrapping a
+    guide-less authoring loop — the mint stamps the token store and reuses
+    `resolveAccessToken`'s cache/refresh/lock machinery) for probing
+    auth-gated endpoints; `useTokenStore: true` reads the cached
     OAuth2 access token for the resolved domain from the token store and
     injects `Authorization: Bearer <token>` (absent/expired → a note nudging
-    `/api oauth <domain>`, call proceeds unauthenticated — never fail-closed);
+    `/api oauth <domain>`, call proceeds unauthenticated — never fail-closed;
+    with mint fields present, the miss mints instead of nudging);
     learn-gated `listSecrets: true` lists
     provisioned secret names (names only) to close the authoring bootstrap
     gap. A bare `listSecrets` call (no `domain`, no `apiHost`) lists

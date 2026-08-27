@@ -32,7 +32,12 @@ import {
 	setSecretsDir,
 	getSecretsDir,
 } from "../core/secrets-store.js";
-import { writeToken, setOAuthDir, getOAuthDir } from "../core/oauth-store.js";
+import {
+	readToken,
+	writeToken,
+	setOAuthDir,
+	getOAuthDir,
+} from "../core/oauth-store.js";
 import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
 import {
 	_setToggleStateForTest,
@@ -646,6 +651,163 @@ describe("probe redirect handling (live localhost)", () => {
 				server.close();
 				server.closeAllConnections?.();
 				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+	});
+
+	// Mint-on-demand (client-credentials authoring bootstrap): inline tokenUrl
+	// + clientId mints when the store has no usable token, stamps it, and
+	// injects the fresh Bearer. Failures ride the note — never fail-closed.
+	describe("probe mint-on-demand (client-credentials bootstrap)", () => {
+		it("absent token + mint fields → POSTs tokenUrl, stamps the store, injects the Bearer", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-ok-"));
+			const prevDir = getOAuthDir();
+			const prevSecrets = getSecretsDir();
+			setOAuthDir(tmp);
+			setSecretsDir(tmp);
+			writeSecret("example.com", "client_id", "cid_value");
+			writeSecret("example.com", "client_secret", "cs_value");
+			let tokenPosts = 0;
+			let seenAuth: string | undefined;
+			const server = http.createServer((req, res) => {
+				if (req.method === "POST" && req.url === "/token") {
+					tokenPosts++;
+					res.writeHead(200, { "Content-Type": "application/json" });
+					res.end(
+						JSON.stringify({
+							access_token: "minted_tok",
+							token_type: "Bearer",
+							expires_in: 3600,
+						}),
+					);
+					return;
+				}
+				seenAuth = req.headers.authorization;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: {
+							tokenUrl: `${base}/token`,
+							clientId: "client_id",
+							clientSecret: "client_secret",
+						},
+					},
+				);
+				expect(tokenPosts).toBe(1);
+				expect(seenAuth).toBe("Bearer minted_tok");
+				// The mint stamped the token store for the rest of the loop.
+				expect(readToken("example.com")?.accessToken).toBe("minted_tok");
+				expect(result.ok).toBe(true);
+				// Output-channel audit: the minted token never surfaces.
+				expect(result.raw).not.toContain("minted_tok");
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				setSecretsDir(prevSecrets);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("a fresh cached token short-circuits the mint (no POST)", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-cache-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			writeToken("example.com", {
+				accessToken: "cached_tok",
+				expiresAt: Date.now() + 600_000,
+			});
+			let tokenPosts = 0;
+			let seenAuth: string | undefined;
+			const server = http.createServer((req, res) => {
+				if (req.method === "POST") {
+					tokenPosts++;
+					res.writeHead(200, { "Content-Type": "application/json" });
+					res.end(JSON.stringify({ access_token: "x" }));
+					return;
+				}
+				seenAuth = req.headers.authorization;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: {
+							tokenUrl: `${base}/token`,
+							clientId: "client_id",
+							clientSecret: "client_secret",
+						},
+					},
+				);
+				expect(tokenPosts).toBe(0);
+				expect(seenAuth).toBe("Bearer cached_tok");
+				expect(result.ok).toBe(true);
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("mint failure rides the note; the probe proceeds unauthenticated", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-miss-"));
+			const prevDir = getOAuthDir();
+			const prevSecrets = getSecretsDir();
+			setOAuthDir(tmp);
+			setSecretsDir(tmp); // isolated empty store — clientId will miss
+			let sawAuthHeader = false;
+			const server = http.createServer((req, res) => {
+				if (req.method === "POST") {
+					res.writeHead(200, { "Content-Type": "application/json" });
+					res.end(JSON.stringify({ access_token: "x" }));
+					return;
+				}
+				sawAuthHeader = req.headers.authorization !== undefined;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: {
+							tokenUrl: `${base}/token`,
+							clientId: "client_id",
+							clientSecret: "client_secret",
+						},
+					},
+				);
+				expect(sawAuthHeader).toBe(false);
+				expect(result.ok).toBe(true);
+				expect(result.note ?? "").toContain("client id 'client_id'");
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				setSecretsDir(prevSecrets);
 				rmSync(tmp, { recursive: true, force: true });
 			}
 		});

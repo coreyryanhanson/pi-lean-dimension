@@ -61,6 +61,21 @@
 > domain (revoke is then local-only — no `revokeUrl` without a guide — and
 > also clears any leftover pending flow). Minting/refreshing still requires
 > the guide's `tokenUrl` + grant.
+>
+> **Post-plan addendum (landed): probe mint-on-demand.** The Phase 2 note
+> above ("store-read only, no mint-on-demand — YAGNI") created a
+> chicken-and-egg for the authoring loop: an auth-gated API 401s the probe
+> used to author its guide, and minting required the guide. api-probe's
+> inline `auth` block now accepts client-credentials mint fields (`tokenUrl`
+>
+> + `clientId` [+ `clientSecret`, `scopes`, `tokenEndpointAuthMethod`] —
+> store NAMES, values never enter the transcript); when the token store has
+> no usable token, the probe POSTs the token endpoint once, stamps the
+> token store, and injects the fresh Bearer (via a synthetic oauth2 guide
+> fed to `resolveAccessToken`, so cache/refresh/lock/stamp is shared code).
+> Failures ride the note — never fail-closed. auth-code is deliberately not
+> inlined (needs the interactive paste dance): its bootstrap stays
+> draft-guide + `/api oauth`.
 
 ## Current state (the seams already in place)
 

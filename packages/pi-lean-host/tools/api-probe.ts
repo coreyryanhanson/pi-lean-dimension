@@ -27,6 +27,7 @@ import {
 	joinUrl,
 } from "../core/path-template.js";
 import {
+	resolveAccessToken,
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
 	scrubSecretValues,
@@ -37,7 +38,12 @@ import { findGuidesByDomain } from "../core/guide-store.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
 import { serverMessage, isPlanGated } from "../core/status-hint.js";
 import { appendFooter, contentText } from "./utils.js";
-import type { SecretRef, StaticKeyAuth } from "../core/api-guide-types.js";
+import type {
+	ApiGuide,
+	OAuth2Auth,
+	SecretRef,
+	StaticKeyAuth,
+} from "../core/api-guide-types.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -101,9 +107,27 @@ export interface ProbeOptions {
 		 * never enter the transcript. Bearer-header only (ponytail: query
 		 * paramStyle waits for a recipe that needs it). No/expired token →
 		 * the note nudges `/api oauth <domain>` and the probe proceeds
-		 * unauthenticated (probe misses are never fail-closed).
+		 * unauthenticated (probe misses are never fail-closed). With mint
+		 * fields below, the miss mints instead of nudging.
 		 */
 		useTokenStore?: boolean;
+		/**
+		 * Mint-on-demand (client-credentials authoring bootstrap): when the
+		 * token store has no usable token, the probe POSTs `tokenUrl` once
+		 * (client-credentials grant), stamps the token store, and injects the
+		 * fresh Bearer. `clientId`/`clientSecret` are secrets-store NAMES —
+		 * values resolve from the store, never the transcript. Implies
+		 * useTokenStore. auth-code cannot be inlined (needs the interactive
+		 * paste dance) — save a draft guide and use `/api oauth` for that.
+		 */
+		tokenUrl?: string;
+		clientId?: string;
+		clientSecret?: string;
+		scopes?: string[];
+		tokenEndpointAuthMethod?:
+			| "client_secret_basic"
+			| "client_secret_post"
+			| "none";
 	};
 	/** Domain for secrets-store lookups; defaults to apiHost's hostname (or its provisioned parent domain). */
 	domain?: string;
@@ -276,10 +300,10 @@ function flatToStaticKeyAuth(
  * omitted. `requires`/`optional` are absent from the probe's injection-only
  * block, so every miss lands in the report list.
  */
-function resolveProbeAuth(
+async function resolveProbeAuth(
 	auth: NonNullable<ProbeOptions["auth"]> | undefined,
 	domain: string,
-): ProbeAuthCtx {
+): Promise<ProbeAuthCtx> {
 	// Computed before the hasRefs check so the flag survives both paths: a
 	// headerPrefixes-only block (hasRefs false → early return) and a
 	// secretQueryRefs block with prefixes but no secretRefs (hasRefs true →
@@ -295,7 +319,9 @@ function resolveProbeAuth(
 		(Object.keys(auth.secretRefs ?? {}).length > 0 ||
 			Object.keys(auth.secretQueryRefs ?? {}).length > 0);
 	const useTokenStore = !!auth?.useTokenStore;
-	if (!hasRefs && !useTokenStore) {
+	// Inline mint fields imply the token path even without useTokenStore.
+	const hasMintFields = !!auth?.tokenUrl && !!auth?.clientId;
+	if (!hasRefs && !useTokenStore && !hasMintFields) {
 		return {
 			hasAuthBlock: false,
 			headers: {},
@@ -311,13 +337,47 @@ function resolveProbeAuth(
 	const staticKeyAuth = flatToStaticKeyAuth(auth!);
 	const headerRes = resolveSecretHeaders(staticKeyAuth, domain);
 	const queryRes = resolveSecretQueryParams(staticKeyAuth, domain);
-	// OAuth2 store-read injection: the token rides the same ctx as secret
-	// headers (scrub + redirect-strip cover it). Store-read only — minting is
-	// `/api oauth`'s job; the probe never POSTs. Bearer-header only (ponytail:
-	// query paramStyle injection waits for a recipe that needs it).
+	// OAuth2 token injection: the token rides the same ctx as secret headers
+	// (scrub + redirect-strip cover it). Bearer-header only (ponytail: query
+	// paramStyle injection waits for a recipe that needs it). Two modes:
+	// store-read-only (useTokenStore, nudge /api oauth on miss) and
+	// mint-on-demand (inline tokenUrl + clientId — authoring bootstrap).
 	let tokenNote = "";
 	const tokenHeader: Record<string, string> = {};
-	if (useTokenStore) {
+	if (hasMintFields) {
+		// Construct a synthetic oauth2 guide so resolveAccessToken's cache →
+		// refresh → mint → stamp machinery is reused wholesale (incl. the
+		// per-domain refresh lock). resolveAccessToken only reads `.auth`;
+		// the store domain is passed explicitly. Failures never fail-closed:
+		// the message rides the note and the probe proceeds unauthenticated.
+		const oauthAuth: OAuth2Auth = {
+			kind: "oauth2",
+			grant: "client_credentials",
+			tokenUrl: auth!.tokenUrl!,
+			clientId: { secret: auth!.clientId! },
+			...(auth!.clientSecret
+				? { clientSecret: { secret: auth!.clientSecret } }
+				: {}),
+			...(auth!.scopes?.length ? { scopes: auth!.scopes } : {}),
+			...(auth!.tokenEndpointAuthMethod
+				? { tokenEndpointAuthMethod: auth!.tokenEndpointAuthMethod }
+				: {}),
+		};
+		try {
+			const result = await resolveAccessToken(
+				// SAFETY: resolveAccessToken only reads `.auth` off the guide; the
+				// store domain is passed explicitly, so the rest of ApiGuide is
+				// never touched by this call path.
+				{ domains: [domain], auth: oauthAuth } as unknown as ApiGuide,
+				domain,
+			);
+			const bearer = result.authHeaders?.authorization;
+			if (bearer) tokenHeader["authorization"] = bearer;
+			else tokenNote = "oauth2 mint succeeded but produced no bearer header";
+		} catch (e) {
+			tokenNote = e instanceof Error ? e.message : "oauth2 mint failed";
+		}
+	} else if (useTokenStore) {
 		const token = readToken(domain);
 		if (!token) {
 			tokenNote = `no cached token for "${domain}"; run /api oauth ${domain} to mint one`;
@@ -423,7 +483,7 @@ export async function probe(
 	const accept = opts.accept ?? "application/json";
 	const walkVersions = opts.walkVersions ?? true;
 	const domain = opts.domain ?? resolveProbeStoreDomain(hostnameOf(apiHost));
-	const authCtx = resolveProbeAuth(opts.auth, domain);
+	const authCtx = await resolveProbeAuth(opts.auth, domain);
 
 	// Base case only carries the apiHost version prefix; a walk-hit draft
 	// embeds its walked version in the prefix passed to fetchOne.
@@ -494,7 +554,7 @@ async function walkBackward(
 			// draft carries /v${k} while the body came from elsewhere — flag
 			// it so the agent checks finalUrl instead of trusting the prefix.
 			const redirected = tried.finalUrl !== tried.url;
-			tried.note = `${miss ? miss + " — " : ""}404 on /v${start}${ctx.path}; version walk → /v${k}${redirected ? " — verify finalUrl (redirect target)" : ""}`;
+			tried.note = `${miss ? `${miss} — ` : ""}404 on /v${start}${ctx.path}; version walk → /v${k}${redirected ? " — verify finalUrl (redirect target)" : ""}`;
 			return tried;
 		}
 	}
@@ -516,7 +576,7 @@ function withVersion(apiHost: string, k: number): string {
 /** The gate-excluded 404 note (bare / non-integer / subdomain version hosts). */
 function walkSkipNote(authCtx: ProbeAuthCtx, domain: string): string {
 	const miss = authMissNote(authCtx, domain);
-	return `${miss ? miss + " — " : ""}404 — no version walk (apiHost has no /vN prefix)`;
+	return `${miss ? `${miss} — ` : ""}404 — no version walk (apiHost has no /vN prefix)`;
 }
 
 async function fetchOne(
@@ -684,16 +744,16 @@ export function emitDraft(
 ): string {
 	// Idempotent: only prepend when the path doesn't already carry the prefix,
 	// so `apiHost: .../v3` + `path: /v3/items` doesn't become `/v3/v3/items`.
-	if (prefix && !path.startsWith(prefix)) path = prefix + path;
-	const name = suggestName(path);
-	const pathTokens = extractPathTokens(path);
+	const fullPath = prefix && !path.startsWith(prefix) ? prefix + path : path;
+	const name = suggestName(fullPath);
+	const pathTokens = extractPathTokens(fullPath);
 	const queryParamKeys = Object.keys(params).filter(
 		(k) => !pathTokens.includes(k),
 	);
 	const lines: string[] = [
 		`  - name: ${name}`,
 		`    via: ${shape.suggestedVia}`,
-		`    path: ${path}`,
+		`    path: ${fullPath}`,
 		`    accept: json`,
 	];
 
@@ -820,10 +880,45 @@ export const apiProbeTool = defineTool({
 								"Inject the OAuth2 access token from the token store as 'Authorization: Bearer <token>' (mint it first via /api oauth <domain>). Values never enter the transcript; absent/expired token → the note nudges /api oauth and the probe proceeds unauthenticated.",
 						}),
 					),
+					tokenUrl: Type.Optional(
+						Type.String({
+							description:
+								"Mint-on-demand: token endpoint URL. When the token store has no usable token, the probe POSTs client-credentials once, stamps the store, and injects the fresh Bearer.",
+						}),
+					),
+					clientId: Type.Optional(
+						Type.String({
+							description:
+								"Mint-on-demand: secrets-store NAME of the client id (value resolves from the store, never the transcript). Requires tokenUrl.",
+						}),
+					),
+					clientSecret: Type.Optional(
+						Type.String({
+							description: "Mint-on-demand: secrets-store NAME of the client secret.",
+						}),
+					),
+					scopes: Type.Optional(
+						Type.Array(Type.String(), {
+							description: "Mint-on-demand: scopes for the token request.",
+						}),
+					),
+					tokenEndpointAuthMethod: Type.Optional(
+						Type.Union(
+							[
+								Type.Literal("client_secret_basic"),
+								Type.Literal("client_secret_post"),
+								Type.Literal("none"),
+							],
+							{
+								description:
+									"Mint-on-demand: token-endpoint auth method (default client_secret_post).",
+							},
+						),
+					),
 				},
 				{
 					description:
-						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Accepts only secretRefs, secretQueryRefs, headerPrefixes, and useTokenStore. Values resolve from the secrets/token stores and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
+						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Accepts secretRefs, secretQueryRefs, headerPrefixes, useTokenStore, and client-credentials mint-on-demand fields (tokenUrl + clientId [+ clientSecret, scopes, tokenEndpointAuthMethod]) for bootstrapping a guide-less authoring loop. Values resolve from the secrets/token stores and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
 					// Tight: unknown keys (e.g. a stray `domain`) are rejected before execute runs.
 					// The description above names the allowed fields explicitly — keep it in
 					// sync when adding/renaming a field here, or the prose lies to agents.
@@ -1001,7 +1096,7 @@ export const apiProbeTool = defineTool({
 			const text = theme.fg("accent", theme.bold("🔑 api-probe"));
 			return new Text(
 				appendFooter(
-					text + ` — ${unscoped.length} unscoped domains`,
+					`${text} — ${unscoped.length} unscoped domains`,
 					expanded,
 					result,
 					theme,
