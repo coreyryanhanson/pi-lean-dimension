@@ -78,13 +78,12 @@
 > draft-guide + `/api oauth`. **Superseded for auth-code by Phase 2.7**
 > (below): the interactive grant gains its own guide-less bootstrap.
 
-> **Phase 2.7 status (DRAFT — scoped, not landed).** Decisions confirmed in
-> review: bootstrap is its own subcommand, `/api oauth init <domain>` (the
-> plain command never state-forks into a wizard); client-credentials arm
-> included; headless flags surface kept. Sequencing: before Phase 3. The
-> section in the phased plan below remains a proposal — nothing implemented.
-> Until it lands, auth-code bootstrap remains: author a minimal draft guide
-> via `api-learn`, then `/api oauth <domain>`.
+> **Phase 2.7 status (LANDED).** The human-driven guide-less bootstrap
+> shipped as the `/api oauth init <domain>` wizard (`core/oauth-command.ts`):
+> the plain command never state-forks into a wizard; client-credentials arm
+> included; headless flags surface kept. The agent-driven sibling
+> (`/api bootstrap oauth` + `oauth-mint`) is specified separately in
+> [`oauth2-agent-bootstrap.md`](./oauth2-agent-bootstrap.md).
 
 ## Current state (the seams already in place)
 
@@ -834,14 +833,107 @@ Phase 2.5 fix-text sweep covers the new messages), and
 tests replaced by paste-parse tests: bare code, full URL with state,
 `?error=` surfacing, tolerant no-host input).
 
-### Phase 2.7 — Guide-less OAuth2 bootstrap (DRAFT — under review)
+### Phase 2.7 — Guide-less OAuth2 bootstrap (LANDED)
 
-> **Draft, not landed.** Written up for review after live OSM testing
-> showed the last piece of bootstrap friction: client-credentials already
+> **Landed.** The human-driven `/api oauth init <domain>` wizard shipped
+> (`core/oauth-command.ts`) — see the **Phase 2.7 status** block at the top
+> of this doc. After live OSM testing showed the last piece of bootstrap
+> friction: client-credentials already
 > bootstraps guide-less (probe mint-on-demand) but the interactive grant
 > still requires authoring a throwaway draft guide before `/api oauth` can
-> resolve the flow. This phase dissolves that asymmetry. Nothing here is
-> committed; review before implementation.
+> resolve the flow. This phase dissolved that asymmetry.
+
+### Phase 2.8 — Agent-driven OAuth2 bootstrap (design-complete, not implemented)
+
+> Phase 2.7 solved bootstrap friction for the *human*; live use showed the
+> remaining friction is research the agent is well-suited to absorb (reading
+> provider docs, finding grant/endpoints, decoding scope meanings). This
+> phase specifies the **agent-driven** sibling. Full spec (all decisions
+> locked, review findings folded in):
+> [`oauth2-agent-bootstrap.md`](./oauth2-agent-bootstrap.md) — that doc is
+> the implementation entry point; this section is the plan-level summary.
+
+#### Shape (two pieces)
+
+1. **`/api bootstrap oauth <domain> <spec>`** (command) — orchestration
+   trigger. Validates args, auto-enables learn mode when off (loud fail if
+   the focus-mode guard blocks it; leave learn on), composes a research
+   brief, injects it via `pi.sendUserMessage(brief, { deliverAs:
+   "followUp" })`, and exits. Inject-and-exit: no spec fetching/parsing, no
+   supervision — the command's entire output is one message. Refuses
+   headless (the downstream tool prompts need `ctx.hasUI`). `oauth` is a
+   switch arm, not a mode registry.
+2. **`oauth-mint`** (learn-gated tool, rides the existing `api-learn`
+   ToolsetSpec) — the human-in-the-loop mint. The agent supplies all
+   researched parameters (`grant`, `tokenUrl`, `authorizeUrl`, scopes as
+   `{name, description}` pairs, client credentials as **store names**);
+   the tool does only what the agent cannot: fail-closed validation
+   (`buildSyntheticOAuth2Auth`), store-name precheck before any prompt, a
+   **token-URL confirm prompt** (the first prompt, before the scopes
+   picker — cheapest-to-cancel first, so a cancel never discards a
+   completed authorization; shows the full token endpoint URL + clientId
+   store name before any exchange on both grant arms — the human is the
+   trust root for the secret-bearing parameter, closing the
+   prompt-injection hole where researched `tokenUrl` could exfiltrate the
+   client secret), the scopes checklist picker (the design's one new UI
+   component, on the existing `SelectList` scaffolding), the paste prompt
+   (`ctx.ui.input` — the redirect URL never enters the transcript), then
+   mint/stamp via the existing `mintAuthCodeToken` / client-credentials
+   paths.
+
+#### Key semantics (locked in the companion doc)
+
++ **Cancel = bail, not pause.** The paste prompt retries until cancel;
+   cancelling throws with the escape-hatch hint — the **two-call `init`
+   completion form** the tool builds from its own parameters
+   (`/api oauth init <domain> --grant <g> --token-url <url>
+   [--authorize-url <url>] --client-id <store name> --code <redirect-url>`),
+   since plain `/api oauth <domain> --code` cannot complete guide-less and
+   bootstrap is guide-less by definition (`completePastedCode` completes
+   against a pending flow started with the same flags). A tool re-call starts
+   a **fresh** authorization — no resume-by-re-call contract.
++ **Agent stops and asks on cancel** — never auto-re-calls a human who
+   just declined.
++ **Learn auto-enable notifies** (`ctx.ui.notify`) only when learn was
+   actually flipped.
++ **Reuse, not new mechanisms:** `buildSyntheticOAuth2Auth`,
+   `resolveProvisionedParentDomain`, `mintAuthCodeToken` + retry loop,
+   `completePastedCode`, secrets-store `listNames`, `core/select-picker.ts`
+   scaffolding. One new mechanism total: the ✓/○ checklist multi-select
+   picker (~40 lines).
+
+#### Non-goals
+
++ The tool never researches, authors/scaffolds guides, or provisions
+   secrets (nudge only, never a value prompt). The command never fetches
+   the spec, mints, or supervises the agent.
++ No new ToolsetSpec; the Phase 2.7 wizard is untouched — the human-driven
+   and agent-driven siblings stay separate surfaces.
++ `tokenEndpointAuthMethod` is a tool param (default `client_secret_post`),
+   not a wizard branch; the wizard's branch tree stays locked per 2.5.
+
+#### Touch list (mechanical)
+
++ `tools/index.ts` — register `oauth-mint` in the api-learn ToolsetSpec arm.
++ `core/api-toggle.ts` — the `bootstrap` subcommand dispatch (usage error
+   on bare/unknown mode); brief composition; learn flip + notify.
++ New `oauth-mint` tool module + the checklist picker component in
+   `core/`.
++ `helpText()` updates for `/api` (bootstrap line + focus-guard note).
++ Tests (mocked-only, `__tests__/` idioms): tool picker/paste/confirm flows
+   via mocked `ctx.ui`, both grant arms, headless throws, store-miss
+   precheck, cancel → `--code` hint; command asserts exact `sendUserMessage`
+   args, brief contents, learn flip + notify-only-on-flip, focus-guard
+   fail, usage errors. Update tool-count assertions in `api-toggle.test.ts`,
+   `tools.test.ts`, monorepo count checks (18→19 suite / 5→6 host).
++ Both AGENTS.md files: tool counts, command surface, `oauth-mint` +
+  `bootstrap` descriptions, key-tools table.
+
+#### Sequencing
+
+Land after Phase 2.7 (which is already in) and **before Phase 3** — the
+Phase 3 caritas auth-code recipe verification can use the agent-driven
+bootstrap for its own live runs.
 
 #### Problem
 
