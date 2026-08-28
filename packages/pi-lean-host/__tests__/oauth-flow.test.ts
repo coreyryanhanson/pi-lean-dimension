@@ -373,4 +373,43 @@ describe("mintAuthCodeToken", () => {
 		expect(readToken("oauth.prompt")?.accessToken).toBe("PROMPTED");
 		expect(readPendingFlow("oauth.prompt")).toBeNull();
 	});
+
+	it("interactive: a failed paste re-prompts instead of aborting; escape still cancels", async () => {
+		const auth = makeAuthCodeAuth();
+		writeSecret("oauth.retry", "client_id", "MY_CLIENT");
+		stubTokenEndpoint(() =>
+			tokenResponse({ access_token: "RETRIED", expires_in: 3600 }),
+		);
+		let pending: ReturnType<typeof readPendingFlow>;
+		let pastes: (string | undefined)[];
+		const input = vi.fn();
+		const ctx = {
+			hasUI: true,
+			ui: {
+				notify: vi.fn(),
+				input: async () => {
+					input();
+					if (!pending) {
+						pending = readPendingFlow("oauth.retry");
+						pastes = [
+							// 1st: wrong state → rejected, re-prompt
+							`http://127.0.0.1/callback?code=BAD&state=WRONG`,
+							// 2nd: correct → completes
+							`http://127.0.0.1/callback?code=CB&state=${pending?.state}`,
+						];
+					}
+					return pastes!.shift();
+				},
+			},
+		} as any;
+
+		const token = await mintAuthCodeToken(auth, "oauth.retry", ctx, {});
+		expect(input).toHaveBeenCalledTimes(2);
+		expect(token.accessToken).toBe("RETRIED");
+		expect(readPendingFlow("oauth.retry")).toBeNull();
+		const warned = ctx.ui.notify.mock.calls
+			.map((c: unknown[]) => c[0] as string)
+			.join("\n");
+		expect(warned).toContain("state mismatch");
+	});
 });

@@ -19,6 +19,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { getCapabilities, hyperlink } from "@earendil-works/pi-tui";
 import type { OAuth2Auth } from "./api-guide-types.js";
 import {
 	exchangeAuthCode,
@@ -213,6 +214,31 @@ export async function mintAuthCodeToken(
 }
 
 /**
+ * The authorize URL as the user should see it. With OSC 8 support the visible
+ * text is just origin + path (always fits one line — no wrapping, so no
+ * space-inserted copies and no link split across lines); the hyperlink
+ * target carries the FULL URL, so click / copy-link always gets the intact
+ * authorize URL including the query string. Without OSC 8 the visible text
+ * is all the user gets, so print the full URL — plus a wrap warning, since
+ * the long query string will wrap and terminal copy inserts spaces at the
+ * breaks.
+ */
+function printableAuthorizeUrl(url: string): string {
+	if (getCapabilities().hyperlinks) {
+		try {
+			const u = new URL(url);
+			return hyperlink(`\x1b[1m${u.origin}${u.pathname}\x1b[22m`, url);
+		} catch {
+			// unreachable — buildAuthorizeUrl already validated the URL
+		}
+	}
+	return (
+		`\x1b[1m${url}\x1b[22m` +
+		`\n(if the URL wraps across lines, remove the extra spaces at each line break after copying)`
+	);
+}
+
+/**
  * The primary — and only — authorize path. Generates the PKCE pair + state,
  * builds the authorize URL with the `http://127.0.0.1/callback` convention,
  * persists the pending flow (the verifier MUST survive so the later exchange
@@ -237,17 +263,33 @@ async function startAuthCodeFlow(
 	ctx.ui.notify(
 		`🔑 Open this URL in YOUR browser and authorize (log in with your own credentials — the agent never sees them). ` +
 			`Your OAuth app needs '${REDIRECT_URI}' registered (RFC 8252 §7.3 — loopback, any port). ` +
-			`After consenting, copy the redirect URL from the browser's address bar.\n\n${authorizeUrl}`,
+			`After consenting, copy the redirect URL from the browser's address bar.\n\n` +
+			printableAuthorizeUrl(authorizeUrl),
 		"info",
 	);
 	if (ctx.hasUI) {
-		const pasted = await ctx.ui.input(
-			`Paste the redirect URL (or just the code) for '${storeDomain}'`,
-			"paste the address-bar URL after consenting",
-		);
-		// Cancelled → fall through to the --code nudge (pending flow survives).
-		if (pasted !== undefined) {
-			return completePastedCode(auth, storeDomain, pasted);
+		// The paste dialog is what's on screen while the user acts — repeat the
+		// URL + instructions in its title (accent-colored, multi-line, ANSI-aware
+		// wrap) so they never have to hunt for it in the scrollback above.
+		// Retry loop: a bad paste (typo, state mismatch, exchange hiccup) just
+		// re-prompts — the pending flow (verifier + state) is unchanged, so a
+		// retry is always safe. Escape/cancel exits to the --code nudge below.
+		for (;;) {
+			const pasted = await ctx.ui.input(
+				`Open this URL in YOUR browser and authorize, then paste the redirect URL (or just the code) for '${storeDomain}':\n` +
+					printableAuthorizeUrl(authorizeUrl),
+				"paste the address-bar URL after consenting",
+			);
+			// Cancelled → fall through to the --code nudge (pending flow survives).
+			if (pasted === undefined) break;
+			try {
+				return await completePastedCode(auth, storeDomain, pasted);
+			} catch (err) {
+				ctx.ui.notify(
+					`🔑 ${err instanceof Error ? err.message : String(err)} — paste again, or escape to cancel.`,
+					"warning",
+				);
+			}
 		}
 	}
 	throw new OAuthTokenMissingError(
