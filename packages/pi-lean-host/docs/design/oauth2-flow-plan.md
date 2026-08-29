@@ -219,45 +219,80 @@ two OAuth **issuers** behind one API domain (same grant, different
 (`v1`/`v2`) or per-dataset tokens need distinct slots (they don't: versions
 live in paths; same-issuer tokens are shared by design).
 
-**The fix.** Slot key = `(storeDomain, grant, tokenUrl)` (status: **planned — nothing landed yet**; the store is still bare-domain keyed, see the pre-implementation review notes inline below):
+**The fix.** Slot key = `(storeDomain, grant, tokenUrl)`, realized as an
+**in-file slot map** (status: **planned — nothing landed yet**; the store is
+still bare-domain keyed). The token store stays one file per domain
+(`<domain>.json`); the file now holds `Record<slot, StoredToken>` where
+`slot = <grant>__<hash(tokenUrl)>`. This converges on the secrets store's
+shape — which is already a per-domain file keyed by name
+(`Record<name, value>`) and which this store's own header comment claims to
+mirror — instead of a filename-as-database layout of
+`<domain>__<grant>__<issuer-slug>.json` files.
 
 + Same domain + same grant + same issuer → same slot (multi-recipe domains
   keep sharing — `internet-archive`/`wayback-availability` unchanged).
-+ Any difference → different slot. No `tokenKey` field in the schema: the
-  slot derives from `auth.grant` + `auth.tokenUrl`, both parse-required,
-  both already carried by every consumer (`resolveAccessToken`,
-  `mintAuthCodeToken`, `buildSyntheticOAuth2Auth`, probe inline auth).
++ Any difference → different slot key, same file. No `tokenKey` field in
+  the schema: the slot derives from `auth.grant` + `auth.tokenUrl`, both
+  parse-required, both already carried by every consumer
+  (`resolveAccessToken`, `mintAuthCodeToken`, `buildSyntheticOAuth2Auth`,
+  probe inline auth).
 + Derivation is **internal to the store layer** — the eight
   `switch (auth.kind)` consumer sites and all tool/command entry points
   keep their signatures.
++ **Why in-file map, not one file per slot:** a slot-per-file layout makes
+  the filename the database, and every "which slots exist" consumer
+  (guide-less `--status`/`--revoke` orphan enumeration, keychain backends)
+  then has to structurally parse `<domain>__<grant>__<hex>` filenames —
+  with `assertSafeDomain` permitting `__` inside domains, bare prefix
+  matching is ambiguous and enumeration needs a grant-enum grammar. The
+  in-file map gets slot enumeration for free (`Object.keys` of the file —
+  exactly the secrets store's `listNames` pattern) and keeps the
+  `TokenStore` backend swap clean (one keychain entry per domain, not one
+  per slot with mangled keys). Costs, both accepted: cross-slot write races
+  on one domain file are last-writer-wins — the same race class the secrets
+  store already accepts (its `write` is read-modify-write, no lock), and
+  the per-slot refresh lock serializes the realistic in-process case; and a
+  crash mid-write corrupts all slots of the domain rather than one —
+  mitigated by a ~4-line tmp+rename in `write()` (recommended here; tokens
+  are re-mintable, and a corrupt file already reads as absent today).
 
 **What will change, exhaustively** (pre-implementation review of 2.9 found
 four call-site classes the original list missed — folded in below; the
 implementer should treat this list as the checklist):
 
-+ `core/oauth-store.ts` — slot derivation helper (`slotKey(auth)` → slug of
-  domain + grant + **hashed full tokenUrl** — hash the complete URL string,
++ `core/oauth-store.ts` — `TokenStore` becomes (domain, slot)-keyed:
+  `read(domain, slot)`, `write(domain, slot, token)`, `delete(domain,
+  slot)`, `listSlots(domain)`; `listDomains()` unchanged (one
+  `<domain>.json` per domain, pruned when its last slot is deleted — the
+  secrets store's empty-file pattern). `slotKey` lives in the store and
+  takes grant + tokenUrl **structurally** (the two fields it needs, no
+  `OAuth2Auth` — the store layer stays free of `auth.ts` types). Slot =
+  `<grant>__` + **hashed full tokenUrl** — hash the complete URL string,
   never just the path: two issuers behind one API domain can differ by host
   only, e.g. `tenant-a.auth0.com/oauth/token` vs `tenant-b.auth0.com/oauth/token`,
   and a path-only hash recreates the exact multi-issuer clobber this phase
   exists to fix; **keep ≥16 hex chars of the SHA-256** — shorter truncation
-  risks cross-issuer collisions on tenant-farm issuers like Auth0). TokenUrl
+  risks cross-issuer collisions on tenant-farm issuers like Auth0. TokenUrl
   *spelling* differences (`/oauth/token` vs `/oauth/token/`, http vs https)
-  fragment slots rather than clobber them — harmless, just expected; file layout
-  `<domain>__<grant>__<issuer-slug>.json`; stored token JSON now records
-  `grant` + `tokenUrl` (self-describing store; readers don't need a legacy
-  branch — pre-release, files are re-minted not migrated). Pending-flow
-  file gets the same slot suffix. Seam decision: the store layer stays free
-  of `auth.ts` types — `slotKey` lives in the store and takes the grant +
-  tokenUrl **structurally** (the two fields it needs), not an `OAuth2Auth`.
+  fragment slots rather than clobber them — harmless, just expected. The
+  stored token record gains `grant` + `tokenUrl` (self-describing store —
+  status rows can render the real issuer instead of the opaque hash; readers
+  need no legacy branch, pre-release tokens are re-minted not migrated).
+  `write()` is read-modify-write on the domain file; harden it with
+  tmp-file + `renameSync` (atomic on POSIX) so a crash can't shred every
+  slot at once. Pending flow: `<domain>.pending.json` becomes
+  `Record<slot, PendingAuthCodeFlow>` — only `authorization_code` ever
+  writes pending entries, so the pending slot is always the auth-code slot.
+  It stays a separate file outside `TokenStore` on purpose: ephemeral
+  scratch that survives a keychain backend swap.
 + `core/auth.ts` — **every** `readToken`/`writeToken`/`deleteToken` call
   site derives its slot via `slotKey(auth)`, not just the two originally
   named. Full inventory: `resolveTokenUnlocked` + the refresh-lock map
   (keyed by the *same* helper as the store — two derivations that can
   diverge are a second clobber), `authStatusLine`'s oauth2 branch (a
-  domain-keyed read post-2.9 would report "no token" for a slotted file),
-  `hasUsableTokenPath` (used by `/api verify`'s oauth2 precheck — a bare
-  domain read would wrongly refuse ops whose token exists),
+  bare domain read post-2.9 would report "no token" even when the slot
+  exists), `hasUsableTokenPath` (used by `/api verify`'s oauth2 precheck —
+  a bare domain read would wrongly refuse ops whose token exists),
   `forceRefreshToken`, and `revokeAccessToken`. Also: the
   `deleteToken(domain)`-before-mint in the `--refresh` client-credentials
   path and `init`'s client-credentials arm must use the slot derivation —
@@ -270,30 +305,32 @@ implementer should treat this list as the checklist):
   keeps today's one-argument behavior; two slots without a qualifier →
   listing + usage error, never a guess). **Guide-less paths need their own
   slot story** (they have no auth object to derive from): single-domain
-  `--status <domain>` / `--revoke <domain>` on orphaned tokens enumerate
-  `<domain>__*` store files and act on each slot (rows for status; per-slot
-  delete for revoke), instead of today's bare `readToken(domain)` /
-  `deleteToken(domain)` which post-2.9 would find/delete nothing.
-  Enumeration details: (1) **pending-flow files count too** — the guide-less
-  path also calls `deletePendingFlow(domain)` (`oauth-command.ts:203`), and
-  pending files carry the same slot suffix, so revoke must enumerate
-  `<domain>__*.pending.json` alongside the token files; (2) enumerate by
-  **structurally parsing the slot filename** (`<prefix>__<grant>__<hex>` with
-  grant matched against the closed enum) rather than bare `<domain>__` prefix
-  matching — `assertSafeDomain` (`path-template.ts`) permits `__` inside
-  domains, so a bare prefix match is ambiguous; (3) status rows can render
-  the real issuer instead of the opaque hash because the stored token JSON
-  records `grant` + `tokenUrl`. Optional free improvement: apply the same
-  parent-domain normalization `init` uses (`resolveProvisionedParentDomain`)
-  to orphan enumeration so a subdomain spelling still finds the slot
-  (today's literal-domain behavior finds nothing — consistent, but 2.9
-  touches this arm anyway).
-+ `core/oauth-flow.ts` — pending-flow read/write keyed by slot;
-  `completePastedCode` derives the slot from the synthetic auth.
+  `--status <domain>` / `--revoke <domain>` on orphaned tokens use
+  `listSlots(domain)` and act on each slot (rows for status; per-slot
+  delete for revoke; pending entries deleted per-slot alongside), instead
+  of today's bare `readToken(domain)` / `deleteToken(domain)` which
+  post-2.9 would find/delete nothing — with the in-file map this is
+  `Object.keys` of the domain file, no filename parsing anywhere. Status
+  rows render the real issuer (the stored record carries `tokenUrl`).
+  Slot-scoped reads/deletes beyond the guide-less arm (pre-implementation
+  review found these; `auth` is in scope at every one): the guide-backed
+  `--revoke` arm's bare `deletePendingFlow(storeDomain)`
+  (`oauth-command.ts:274`) must derive the slot or a stale pending entry
+  survives revoke and a later `--code` paste reads a stale verifier; the
+  guide-backed `--status` read (`:283`) reads the slot, not the domain; and
+  the `--help` text hardcodes "stored per-domain … `<domain>.json`"
+  (`:89`) — update it in this landing. Optional free improvement: apply the
+  same parent-domain normalization `init` uses
+  (`resolveProvisionedParentDomain`) to orphan enumeration so a subdomain
+  spelling still finds the slot (today's literal-domain behavior finds
+  nothing — consistent, but 2.9 touches this arm anyway).
++ `core/oauth-flow.ts` — pending-flow read/write/delete keyed by slot (an
+  entry in the per-domain pending map; only the auth-code slot ever has
+  one); `completePastedCode` derives the slot from the synthetic auth.
 + `tools/api-probe.ts` — **one change, not zero**: the `useTokenStore: true`
   arm calls `readToken(domain)` with no auth object, so post-2.9 it must
   carry the same inline `grant` + `tokenUrl` facts the mint-on-demand arm
-  already has (they key the store lookup); without them it looks for a file
+  already has (they key the store lookup); without them it looks for a slot
   that never exists. The probe **tool-param schema gains `grant`** (guide
   schema untouched — "zero schema change" refers to the guide schema only;
   `tokenUrl` also becomes load-bearing for the store read, not just mint).
@@ -310,11 +347,12 @@ implementer should treat this list as the checklist):
   arm does a bare `deleteToken(storeDomain)` before minting
   (`oauth-mint.ts:242`) — the identical delete-before-mint pattern the
   `--refresh` and `init` arms already have on the checklist. Post-2.9 the
-  bare delete targets a file that no longer exists, so a stale
+  bare delete targets a slot that no longer exists, so a stale
   prior-grant/prior-issuer slot survives a re-mint — the exact clobber
   class this phase exists to fix, inside one of the three bootstrap
   surfaces. Fix: derive the slot from `finalSynthetic` (it already carries
-  grant + tokenUrl) and slot-delete. Also add the mint-time overwrite
+  grant + tokenUrl) and slot-delete (a map-key delete now, not a file
+  delete). Also add the mint-time overwrite
   warning (see "Reserved on paper" below): when the target slot already
   holds a token, warn "overwriting existing token for this slot
   (previous scope: X)" before minting — the same-grant scope collision is
@@ -325,21 +363,26 @@ implementer should treat this list as the checklist):
 + Tests — `__tests__/oauth.test.ts` gains the both-grants-one-domain
   non-clobber case; `__tests__/oauth-flow.test.ts` pending-slot isolation;
   oauth-command tests cover the disambiguation arm **and** the guide-less
-  orphan-slot status/revoke paths (token *and* pending files). **Also
-  broken by the layout change — add to the checklist:** the bare-domain
+  orphan-slot status/revoke paths (token *and* pending entries), plus the
+  empty-file prune when a domain's last slot is deleted. **Also broken by
+  the shape change — add to the checklist:** the bare-domain
   `writeToken(domain, …)` fixtures in `__tests__/verify-command.test.ts`
-  (line ~399), `__tests__/api-probe.test.ts` (lines ~547/623/709/726),
-  `__tests__/oauth-mint.test.ts` (lines ~188/223/249/334/384), and
-  `oauth-command.test.ts` throughout — every one writes bare
-  `<domain>.json` files that slotted reads will miss, going red on landing.
+  (line ~399), `__tests__/api-probe.test.ts` (lines ~547/623/726), and
+  `oauth-command.test.ts` throughout — every one writes the old flat
+  `<domain>.json` shape that slotted reads will miss, going red on landing.
+  `__tests__/oauth-mint.test.ts` (lines ~188/223/249/334/384) needs the
+  same update but contains **zero `writeToken` calls** — those lines are
+  bare `readToken`/`readPendingFlow` assertions, so an implementer grepping
+  `writeToken(` would miss the file.
 + Docs — this section; AGENTS.md token-store bullet; the deferred
-  multiple-accounts bullet now points here.
+  multiple-accounts bullet now points here; the `--help` layout string in
+  `oauth-command.ts` (called out above).
 
 **Reserved on paper (not implemented):** `tokenKey?: string` on
 `OAuth2Auth` — the sanctioned future fix when a recipe needs two same-grant
 slots. Slot becomes
-`(domain, grant, tokenUrl, tokenKey)`; additive, non-breaking, tokens
-re-mint on first use. **Known same-grant collision, deliberately deferred:**
+`<grant>__<hash>__<tokenKey>` — one more map key; additive, non-breaking,
+tokens re-mint on first use, zero file-layout change. **Known same-grant collision, deliberately deferred:**
 two sibling guides on one domain with the same grant, same tokenUrl, but
 different `scopes` (or different `clientId` — two app registrations)
 collapse into one slot; whoever mints/refreshes first wins, and
@@ -363,7 +406,7 @@ is a second same-grant slot.
 **Migration:** none — pre-release branch (host is entirely under
 `[Unreleased]`; 0.4.0 shipped with `oauth2` rejected at parse, so no shipped
 version ever had a domain-keyed token store). The two dev-minted tokens
-(mastodon.social, twitch.tv) get re-minted under the new layout when this
+(mastodon.social, twitch.tv) get re-minted under the new slot map when this
 lands.
 
 ## Remaining work
