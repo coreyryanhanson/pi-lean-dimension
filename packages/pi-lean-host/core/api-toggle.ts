@@ -35,6 +35,8 @@ import { handleVerifySubcommand } from "./verify-command.js";
 import { handleDeleteSubcommand } from "./delete-command.js";
 import { loadAllGuides } from "./guide-store.js";
 import { getAllHelpers, getDisabledHelperDomains } from "./local-helpers.js";
+import { resolveProvisionedParentDomain } from "./auth.js";
+import { listNames } from "./secrets-store.js";
 
 // Focus-mode guard: refuse actuating subcommands while the library holds the
 // line — inclusion mode or allowlist focus (an upstream pi-tool-masking
@@ -220,11 +222,22 @@ const BOOTSTRAP_USAGE = [
 
 /**
  * The research brief injected via `pi.sendUserMessage(brief, {deliverAs:
- * "followUp"})` — verbatim from oauth2-agent-bootstrap.md (BRIEF), with
- * {domain} / {spec} filled from the command args. Inject-and-exit: the
+ * "followUp"})` — from oauth2-agent-bootstrap.md (BRIEF), with
+ * {domain} / {spec} filled from the command args, plus the doc's conditional
+ * provisioned-secrets sentence when the store has names for the domain.
+ * Inject-and-exit: the
  * command's entire output is this one message.
  */
-export function composeBootstrapBrief(domain: string, spec: string): string {
+export function composeBootstrapBrief(
+	domain: string,
+	spec: string,
+	provisionedSecrets?: string[],
+): string {
+	// Names only (audit rule, same as /api secrets) — lets the agent skip the
+	// failed oauth-mint precheck call when credentials are already provisioned.
+	const provisionedNote = provisionedSecrets?.length
+		? `\nProvisioned secret names for this domain: ${provisionedSecrets.map((n) => `\`${n}\``).join(", ")} — use these store names (pick the ones matching the provider's client-id/secret semantics).`
+		: "";
 	return `**OAuth2 bootstrap for \`${domain}\` — research then mint.**
 
 Your task: bootstrap OAuth2 access for the API at domain \`${domain}\`. The
@@ -251,7 +264,7 @@ if the needed names aren't provisioned, the tool will tell you and the user
 will provision via \`/api secrets ${domain} <name>\`), the optional
 \`tokenEndpointAuthMethod\` (\`client_secret_post\` is the default; some
 providers require \`client_secret_basic\` — research which), and \`scopes\` as
-\`{name, description}\` pairs for the human to pick from.
+\`{name, description}\` pairs for the human to pick from.${provisionedNote}
 
 **Boundaries.** Do not fetch or mint anything yourself — \`oauth-mint\`
 performs the consent flow with the user. Do not author the guide yet; that
@@ -345,7 +358,13 @@ async function handleBootstrapSubcommand(
 		);
 	}
 
-	const brief = composeBootstrapBrief(domain, spec);
+	const brief = composeBootstrapBrief(
+		domain,
+		spec,
+		// Parent-domain normalization shared with probe/oauth-mint store
+		// resolution — names only, never values.
+		listNames(resolveProvisionedParentDomain(domain)),
+	);
 	pi.sendUserMessage(brief, { deliverAs: "followUp" });
 }
 

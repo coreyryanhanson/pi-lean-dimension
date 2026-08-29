@@ -9,13 +9,21 @@
  * refusal (H1 command side).
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { rmSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { setDefaultResolutionMode } from "pi-tool-masking";
+import {
+	setSecretsDir,
+	getSecretsDir,
+	writeSecret,
+} from "../core/secrets-store.js";
 import initApiToggle, { _resetToggleStateForTest } from "../core/api-toggle.js";
 
 // Clean globalThis registry between test files (same as api-toggle.test.ts).
@@ -23,11 +31,24 @@ const REGISTRY_KEY = "__piToolMaskingRegistry";
 const RESTORE_EVENT_KEY = "__piToolMaskingLastRestoreEvent";
 const MODULE_STATE_KEY = "__piToolMaskingModuleState";
 
+let tmpSecrets = "";
+let savedSecretsDir = "";
+
 beforeEach(() => {
 	_resetToggleStateForTest();
 	delete (globalThis as any)[REGISTRY_KEY];
 	delete (globalThis as any)[RESTORE_EVENT_KEY];
 	delete (globalThis as any)[MODULE_STATE_KEY];
+	// Point the secrets store at a temp dir so the provisioned-secrets brief
+	// injection never reads the developer's real store.
+	savedSecretsDir = getSecretsDir();
+	tmpSecrets = mkdtempSync(join(tmpdir(), "host-bootstrap-secrets-"));
+	setSecretsDir(tmpSecrets);
+});
+
+afterEach(() => {
+	rmSync(tmpSecrets, { recursive: true, force: true });
+	setSecretsDir(savedSecretsDir);
 });
 
 // ─── Fixtures ────────────────────────────────────────────────────
@@ -134,9 +155,7 @@ describe("bootstrap — usage errors", () => {
 	});
 
 	it("missing spec → usage error (F2: both required)", async () => {
-		const { ctx, sendUserMessage } = await runBootstrap(
-			"oauth openstreetmap.org",
-		);
+		const { ctx, sendUserMessage } = await runBootstrap("oauth api.example.org");
 		expect(out.call(null, ctx)).toContain("both required, domain first");
 		expect(sendUserMessage).not.toHaveBeenCalled();
 	});
@@ -173,20 +192,39 @@ describe("bootstrap — headless refusal", () => {
 describe("bootstrap — inject-and-exit", () => {
 	it("injects the brief with deliverAs followUp, containing domain + spec + tool name + stop-and-ask line", async () => {
 		const { ctx, sendUserMessage } = await runBootstrap(
-			"oauth openstreetmap.org https://wiki.openstreetmap.org/wiki/API",
+			"oauth example.org https://docs.example.org/oauth",
 		);
 		expect(sendUserMessage).toHaveBeenCalledTimes(1);
 		const [brief, opts] = (sendUserMessage as ReturnType<typeof vi.fn>).mock
 			.calls[0]!;
 		expect(opts).toEqual({ deliverAs: "followUp" });
 		const text = String(brief);
-		expect(text).toContain("openstreetmap.org");
-		expect(text).toContain("https://wiki.openstreetmap.org/wiki/API");
+		expect(text).toContain("example.org");
+		expect(text).toContain("https://docs.example.org/oauth");
 		expect(text).toContain("`oauth-mint`");
 		expect(text).toContain("stop and ask");
-		expect(text).toContain("/api secrets openstreetmap.org <name>");
+		expect(text).toContain("/api secrets example.org <name>");
+		// Empty store → no provisioned-secrets note.
+		expect(text).not.toContain("Provisioned secret names");
 		// No learn flip → no flip notify.
 		expect(out.call(null, ctx)).not.toContain("Learn mode enabled");
+	});
+
+	it("injects provisioned secret NAMES (never values) into the brief, parent-domain normalized", async () => {
+		writeSecret("example.org", "app_id", "real-id-value");
+		writeSecret("example.org", "app_secret", "hunter2");
+		const { sendUserMessage } = await runBootstrap(
+			"oauth api.example.org https://docs.example.org/oauth",
+		);
+		const text = String(
+			(sendUserMessage as ReturnType<typeof vi.fn>).mock.calls[0]![0],
+		);
+		expect(text).toContain("Provisioned secret names for this domain");
+		expect(text).toContain("`app_id`");
+		expect(text).toContain("`app_secret`");
+		// Values never enter the transcript.
+		expect(text).not.toContain("hunter2");
+		expect(text).not.toContain("real-id-value");
 	});
 
 	it("auto-enables learn when off, notifies the flip only then, and still injects", async () => {
