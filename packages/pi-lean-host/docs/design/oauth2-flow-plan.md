@@ -240,7 +240,10 @@ implementer should treat this list as the checklist):
   never just the path: two issuers behind one API domain can differ by host
   only, e.g. `tenant-a.auth0.com/oauth/token` vs `tenant-b.auth0.com/oauth/token`,
   and a path-only hash recreates the exact multi-issuer clobber this phase
-  exists to fix); file layout
+  exists to fix; **keep ≥16 hex chars of the SHA-256** — shorter truncation
+  risks cross-issuer collisions on tenant-farm issuers like Auth0). TokenUrl
+  *spelling* differences (`/oauth/token` vs `/oauth/token/`, http vs https)
+  fragment slots rather than clobber them — harmless, just expected; file layout
   `<domain>__<grant>__<issuer-slug>.json`; stored token JSON now records
   `grant` + `tokenUrl` (self-describing store; readers don't need a legacy
   branch — pre-release, files are re-minted not migrated). Pending-flow
@@ -271,20 +274,64 @@ implementer should treat this list as the checklist):
   `<domain>__*` store files and act on each slot (rows for status; per-slot
   delete for revoke), instead of today's bare `readToken(domain)` /
   `deleteToken(domain)` which post-2.9 would find/delete nothing.
+  Enumeration details: (1) **pending-flow files count too** — the guide-less
+  path also calls `deletePendingFlow(domain)` (`oauth-command.ts:203`), and
+  pending files carry the same slot suffix, so revoke must enumerate
+  `<domain>__*.pending.json` alongside the token files; (2) enumerate by
+  **structurally parsing the slot filename** (`<prefix>__<grant>__<hex>` with
+  grant matched against the closed enum) rather than bare `<domain>__` prefix
+  matching — `assertSafeDomain` (`path-template.ts`) permits `__` inside
+  domains, so a bare prefix match is ambiguous; (3) status rows can render
+  the real issuer instead of the opaque hash because the stored token JSON
+  records `grant` + `tokenUrl`. Optional free improvement: apply the same
+  parent-domain normalization `init` uses (`resolveProvisionedParentDomain`)
+  to orphan enumeration so a subdomain spelling still finds the slot
+  (today's literal-domain behavior finds nothing — consistent, but 2.9
+  touches this arm anyway).
 + `core/oauth-flow.ts` — pending-flow read/write keyed by slot;
   `completePastedCode` derives the slot from the synthetic auth.
 + `tools/api-probe.ts` — **one change, not zero**: the `useTokenStore: true`
   arm calls `readToken(domain)` with no auth object, so post-2.9 it must
   carry the same inline `grant` + `tokenUrl` facts the mint-on-demand arm
   already has (they key the store lookup); without them it looks for a file
-  that never exists. The mint arm (`resolveAccessToken` with a synthetic
-  auth) and `oauth-mint.ts` need no changes (auth-object carriers).
+  that never exists. The probe **tool-param schema gains `grant`** (guide
+  schema untouched — "zero schema change" refers to the guide schema only;
+  `tokenUrl` also becomes load-bearing for the store read, not just mint).
+  A `useTokenStore: true` call without `grant` + `tokenUrl` post-2.9 is a
+  **loud validation error**, not a silent store miss with a misleading
+  "run /api oauth" note. Residual (pre-existing, not a 2.9 regression,
+  worth a doc line): probe's store-domain resolution
+  (`resolveProbeStoreDomain(hostnameOf(apiHost))`, overridable via
+  `opts.domain`) can normalize to a parent domain while a guide's token
+  lives at `domains[0]` (`canonicalStoreDomain`) — the useTokenStore read
+  can miss across that seam today too.
++ `tools/oauth-mint.ts` — **not zero changes** (the original checklist
+  wrongly claimed auth-object carriers need none): the client-credentials
+  arm does a bare `deleteToken(storeDomain)` before minting
+  (`oauth-mint.ts:242`) — the identical delete-before-mint pattern the
+  `--refresh` and `init` arms already have on the checklist. Post-2.9 the
+  bare delete targets a file that no longer exists, so a stale
+  prior-grant/prior-issuer slot survives a re-mint — the exact clobber
+  class this phase exists to fix, inside one of the three bootstrap
+  surfaces. Fix: derive the slot from `finalSynthetic` (it already carries
+  grant + tokenUrl) and slot-delete. Also add the mint-time overwrite
+  warning (see "Reserved on paper" below): when the target slot already
+  holds a token, warn "overwriting existing token for this slot
+  (previous scope: X)" before minting — the same-grant scope collision is
+  reachable through all three bootstrap surfaces and deserves a cheap
+  signal.
 + `core/verify-command.ts` — **no changes** (its precheck goes through
   `hasUsableTokenPath`, which is now slot-aware inside `auth.ts`).
 + Tests — `__tests__/oauth.test.ts` gains the both-grants-one-domain
   non-clobber case; `__tests__/oauth-flow.test.ts` pending-slot isolation;
   oauth-command tests cover the disambiguation arm **and** the guide-less
-  orphan-slot status/revoke paths.
+  orphan-slot status/revoke paths (token *and* pending files). **Also
+  broken by the layout change — add to the checklist:** the bare-domain
+  `writeToken(domain, …)` fixtures in `__tests__/verify-command.test.ts`
+  (line ~399), `__tests__/api-probe.test.ts` (lines ~547/623/709/726),
+  `__tests__/oauth-mint.test.ts` (lines ~188/223/249/334/384), and
+  `oauth-command.test.ts` throughout — every one writes bare
+  `<domain>.json` files that slotted reads will miss, going red on landing.
 + Docs — this section; AGENTS.md token-store bullet; the deferred
   multiple-accounts bullet now points here.
 
@@ -301,7 +348,12 @@ guide's scope. Folding `scopes`/`clientId` into the slot key would be
 wrong — it fragments legitimately shared same-issuer tokens and orphans
 probe-minted slots — so `tokenKey` is the relief valve. **Name this when it
 bites:** a future sibling-guide-with-different-scopes bug is the reserved
-`tokenKey` seam, not a 2.9 regression. Also deferred: per-op grant override
+`tokenKey` seam, not a 2.9 regression. Because the collision is reachable
+today through all three bootstrap surfaces (`init` with different
+`--scopes`, `oauth-mint` with different picked scopes, sibling guides),
+2.9 ships a **mint-time overwrite warning**: when the target slot already
+holds a token, mint surfaces "overwriting existing token for this slot
+(previous scope: X)" — cheap mitigation until `tokenKey` is ever needed. Also deferred: per-op grant override
 (an op needing a different grant belongs in a sibling guide). The likeliest
 first consumer of `tokenKey` is the deferred ROPC `/api login`
 ([`oauth2-peertube-login-followup.md`](./oauth2-peertube-login-followup.md))
