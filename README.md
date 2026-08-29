@@ -59,10 +59,10 @@ the toolset's packaged default. Omit a key to use the packaged default; the
 
 | Mode | Command | What you get | Requires |
 |---|---|---|---|
-| **A — Browser + API** (recommended) | `pi install npm:pi-lean-portal` + `npm:pi-lean-host` | 17 tools (12 browser + 5 API) + `/web` + `/api` + co-install projection | `npx playwright install chromium firefox` |
-| **B — Full suite** | `pi install npm:pi-lean-dimension` | 18 tools (browser + search + API) + `/web` + `/api` | Playwright browsers + SearXNG server |
+| **A — Browser + API** (recommended) | `pi install npm:pi-lean-portal` + `npm:pi-lean-host` | 18 tools (12 browser + 6 API) + `/web` + `/api` + co-install projection | `npx playwright install chromium firefox` |
+| **B — Full suite** | `pi install npm:pi-lean-dimension` | 19 tools (browser + search + API) + `/web` + `/api` | Playwright browsers + SearXNG server |
 | **C — Browser only** | `pi install npm:pi-lean-portal` | 12 browser tools + `/web` command | `npx playwright install chromium firefox` |
-| **D — Host only (API)** | `pi install npm:pi-lean-host` | 5 API tools + `/api` command | none |
+| **D — Host only (API)** | `pi install npm:pi-lean-host` | 6 API tools + `/api` command | none |
 | **E — Search only** | `pi install npm:pi-lean-search` | `web-search` tool only | SearXNG server |
 
 Notes the table doesn't cover:
@@ -86,10 +86,10 @@ Notes the table doesn't cover:
 |---|---|---|
 | `pi-lean-portal` | Extension | Interactive browser + `/web` command owner. **12 tools + 1 command.** |
 | `pi-lean-search` | Extension | SearXNG search tool (`web-search`). **1 tool + 1 command** (`/searxng-status`). |
-| `pi-lean-host` | Extension | Declarative HTTP API client (`api-guide`, `api-fetch`, `api-learn`, `api-probe`, `api-scaffold`). **5 tools + 1 command** (`/api`). |
+| `pi-lean-host` | Extension | Declarative HTTP API client (`api-guide`, `api-fetch`, `api-learn`, `api-probe`, `api-scaffold`, `oauth-mint`). **6 tools + 1 command** (`/api`). |
 | `pi-lean-dimension` | Umbrella meta-package | Bundles portal + search + host for one-command install. |
 
-### Tools (18 total with search + host)
+### Tools (19 total with search + host)
 
 | Tool | Package | Purpose |
 |---|---|---|
@@ -111,6 +111,7 @@ Notes the table doesn't cover:
 | `api-learn` | host | Write or update an API guide |
 | `api-probe` | host | Discover an endpoint's shape and draft a recipe operation block |
 | `api-scaffold` | host | Bootstrap starter `verify.json` / `helper.ts` files (local write) |
+| `oauth-mint` | host | Human-in-the-loop OAuth2 token mint (agent supplies researched params; human confirms endpoint, picks scopes, pastes the redirect URL) |
 
 ### Commands
 
@@ -118,7 +119,7 @@ Notes the table doesn't cover:
 |---|---|---|
 | `/web on\|off\|learn\|cookies\|profile\|status` | portal | Unified toggle and management |
 | `/searxng-status` | search | Test SearXNG connection and update status glyph |
-| `/api on\|off\|learn\|status\|helpers\|secrets\|verify\|delete` | host | Independent API tools toggle, guide verification, secrets, and management |
+| `/api on\|off\|learn\|status\|helpers\|secrets\|verify\|delete\|bootstrap` | host | Independent API tools toggle, guide verification, secrets, management, and agent-driven OAuth2 bootstrap |
 
 ### Status bar
 

@@ -18,7 +18,7 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getCapabilities, hyperlink } from "@earendil-works/pi-tui";
 import type { OAuth2Auth } from "./api-guide-types.js";
 import {
@@ -196,7 +196,9 @@ export interface AuthCodeMintOptions {
 export async function mintAuthCodeToken(
 	auth: OAuth2Auth,
 	storeDomain: string,
-	ctx: ExtensionCommandContext,
+	// ExtensionContext (not the command subtype): tools drive the flow too
+	// (oauth-mint). Only ui.notify/ui.input/hasUI are used.
+	ctx: ExtensionContext,
 	opts: AuthCodeMintOptions = {},
 ): Promise<OAuthToken> {
 	if (opts.code !== undefined) {
@@ -248,7 +250,7 @@ function printableAuthorizeUrl(url: string): string {
 async function startAuthCodeFlow(
 	auth: OAuth2Auth,
 	storeDomain: string,
-	ctx: ExtensionCommandContext,
+	ctx: ExtensionContext,
 ): Promise<OAuthToken> {
 	const { verifier, challenge } = generatePkcePair();
 	const state = generateState();

@@ -65,6 +65,7 @@
 		"tools/api-fetch.ts",
 		"tools/api-learn.ts",
 		"tools/api-scaffold.ts",
+		"tools/oauth-mint.ts",
 		"tools/api-probe.ts",
 		"tools/utils.ts",
 		"README.md"

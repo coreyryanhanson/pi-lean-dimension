@@ -13,9 +13,9 @@
 
 ## What this package is
 
-- Registers **5 tools**: `api-guide`, `api-fetch`, `api-learn`, `api-probe`,
-  `api-scaffold`. `api-probe` is the shape-discovery tool for the authoring
-  loop (fetch an exploratory path, summarize the JSON shape, emit a draft
+- Registers **6 tools**: `api-guide`, `api-fetch`, `api-learn`, `api-probe`,
+  `api-scaffold`, `oauth-mint`. `api-probe` is the shape-discovery tool for the
+  authoring loop (fetch an exploratory path, summarize the JSON shape, emit a draft
   YAML op block); it never writes the guide. `api-scaffold` is the
   learn-gated bootstrap tool: it writes a starter `verify.json` (with
   `"__FILL_ME__"` sentinels for every unsatisfiable param) and/or a
@@ -23,9 +23,19 @@
   staging dir — never the guides dir. Refuse-to-overwrite on existing staged
   siblings; `verify.json` merge is additive (real values preserved, sentinels
   added for newly-unsatisfiable params); at least one of `verify`/`helper`
-  must be `true`.
+  must be `true`. `oauth-mint` is the human-in-the-loop mint of the
+  agent-driven OAuth2 bootstrap (learn-gated): the agent supplies researched
+  params (grant/tokenUrl/authorizeUrl, scopes as `{name, description}` pairs,
+  client credentials as **store NAMES**); the tool validates fail-closed,
+  prechecks store names, then prompts the human — token-URL confirm first
+  (human is the trust root for the secret-bearing endpoint), ✓/○ scopes
+  checklist, paste prompt (redirect URL never enters the transcript) — and
+  mints/stamps via the existing `mintAuthCodeToken` / `resolveAccessToken`
+  machinery. Any cancel throws the two-call `/api oauth init <domain> …
+  --code` escape-hatch hint built from the tool's own params. No discovery,
+  no guide authoring, no secret provisioning.
 - Registers the **`/api`** command with
-  `on|off|learn|status|helpers|secrets|verify|delete` subcommands — an
+  `on|off|learn|status|helpers|secrets|verify|delete|bootstrap` subcommands — an
   independent peer toggle that composes freely with portal's `/web`
   (additive-on / filter-off semantics).
   - `/api verify <domain> [guide] [--force]` runs every runnable op of a
@@ -53,6 +63,17 @@
     single-guide (by shortName) = no confirm. Also always-available /
     not focus-guarded. The agent has **no** delete surface: `api-learn`'s
     collision/malformed errors tell it to ask the human to run this.
+  - `/api bootstrap oauth <domain> <spec>` — the agent-driven OAuth2
+  bootstrap trigger (Phase 2.8, `docs/design/oauth2-agent-bootstrap.md`):
+  validates args (`<domain> <spec>`, both required, domain first; `oauth` is
+  the only mode — an explicit dispatch arm, no registry), auto-enables learn
+  when off (`ctx.ui.notify`s the flip; loud fail when the focus-mode guard
+  blocks the enable — learn stays on, same as the user running `/api learn`),
+  composes the research brief, injects it via
+  `pi.sendUserMessage(brief, { deliverAs: "followUp" })`, and exits
+  (inject-and-exit — its entire output is one message). Refuses headless
+  (the downstream `oauth-mint` prompts need `ctx.hasUI`). The command never
+  fetches the spec, mints, or supervises the agent.
   - `/api secrets [domain [name]]` lists/provisions/deletes the per-domain
   secrets store (`core/secrets-store.ts`,
   `~/.pi/agent/pi-lean-host/secrets/<domain>.json`, 0600,
@@ -67,7 +88,8 @@
   a single `<domain> <name>` (no confirm).
   - `/api helpers`, `/api status`, and bare `/api` are read-only — the
     focus-mode guard does not apply to any of them, nor to `secrets`,
-    `verify`, or `delete`.
+    `verify`, or `delete`. `bootstrap` is guarded only when it flips learn
+    (scoped inside the handler; learn-already-on proceeds unguarded).
 - Manages the **`api` status bar glyph**, shown as `● api` when `/api` is on
   (colored by learn state) and `○ api` when off.
 - Declares `pi-lean-portal` as an **optional peer dependency**. Host-only
@@ -98,16 +120,18 @@ they live in the [`caritas`](https://github.com/coreyryanhanson/caritas) repo, g
 `/api` has three states, mirroring portal's browser toggle:
 
 - **on** — `api-guide` + `api-fetch` enabled (`api-learn` + `api-probe` +
-  `api-scaffold` off)
-- **learn** — on + `api-learn` + `api-probe` + `api-scaffold` (authoring mode)
-- **off** — all five disabled
+  `api-scaffold` + `oauth-mint` off)
+- **learn** — on + `api-learn` + `api-probe` + `api-scaffold` + `oauth-mint`
+  (authoring mode)
+- **off** — all six disabled
 
 Starts **on**. Defaults are overridable via the `toolsetDefaults` settings tier
 read by `pi-tool-masking`. The two `ToolsetSpec`s (defined in `core/api-toggle.ts`):
 
 - `pi-lean-dimension.api` → `api-guide` + `api-fetch`, persistKey
   `toolset-state:pi-lean-dimension.api` (default `true`).
-- `pi-lean-dimension.api-learn` → `api-learn` + `api-probe` + `api-scaffold`,
+- `pi-lean-dimension.api-learn` → `api-learn` + `api-probe` + `api-scaffold` +
+  `oauth-mint`,
   persistKey `toolset-state:pi-lean-dimension.api-learn` (default `false`),
   `requires: ["pi-lean-dimension.api"]` — enabling learn cascades api on;
   disabling api cascades learn off. There is no `host.*` settings block;
@@ -277,7 +301,10 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   extracts the server's reason, `isPlanGated` flags plan/subscription
   limitations; one implementation used by both `api-probe` and
   `api-fetch`/`/api verify`), `response-spill.ts`, `api-toggle.ts` (`/api` toggle —
-  dispatches all 8 subcommands), `portal-projection.ts`,
+  dispatches all 9 subcommands, incl. the `bootstrap` inject-and-exit arm:
+  brief composition + `sendUserMessage` followUp + learn flip + notify),
+  `select-picker.ts` (two-column picker + the ✓/○ checklist multi-select),
+  `portal-projection.ts`,
   `verify-ship-manifest.ts` (vendored host-only copy of the portal utility).
 - `tools/` — `api-guide.ts`, `api-fetch.ts`, `api-learn.ts` (directory-level
   staged-file authoring: `{domain, new: true}` → fresh template; fetch-recipe
@@ -291,7 +318,10 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   proceeds); save-time guide↔helper validation refuses a guide declaring
   `helper: true` / `transform: true` without a loadable staged `helper.ts`
   (self-contained, no `core/local-helpers.ts` export)), `api-scaffold.ts`
-  (see above), `api-probe.ts`, `utils.ts`, `index.ts`.
+  (see above), `oauth-mint.ts` (the learn-gated human-in-the-loop mint:
+  fail-closed validation → store-name precheck → token-URL confirm → scopes
+  checklist → paste prompt → mint/stamp; cancel throws the two-call
+  `init … --code` escape-hatch hint), `api-probe.ts`, `utils.ts`, `index.ts`.
 - `__tests__/` — framework structural tests (no network): `smoke`,
   `parse-api-guide`, `all-guides-parse` (every bundled `guide.md` parses
   cleanly), `tools`, `api-learn-fetch-recipe` (fetch-recipe + entry-point
@@ -318,7 +348,12 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `status-hint` (shared 403 classifier: server-message extraction +
   plan-gating detection),
   `verify-stamp` (frontmatter-isolated `verified:` edit, `--force`),
-  `delete-command` (ghost-guide cache fix), `guide-picker` (TUI gate + row
+  `delete-command` (ghost-guide cache fix), `oauth-mint` (mocked ctx.ui:
+  prompt-order guarantee, both grant arms, store-miss precheck before any
+  prompt, cancel → `init … --code` hint, no token material in the success
+  summary, checklist picker toggle/Done/Esc), `bootstrap-command`
+  (exact `sendUserMessage` args, brief contents, learn flip + notify-only-on-flip,
+  focus-guard fail, usage errors, headless refusal), `guide-picker` (TUI gate + row
   mapping), `ship-manifest` (tarball coverage + asserts `api-guides/` is
   excluded from the npm tarball). Fixtures: `__tests__/fixtures/{axis,mediawiki,oai}/`.
 

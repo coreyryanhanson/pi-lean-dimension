@@ -843,7 +843,16 @@ tests replaced by paste-parse tests: bare code, full URL with state,
 > still requires authoring a throwaway draft guide before `/api oauth` can
 > resolve the flow. This phase dissolved that asymmetry.
 
-### Phase 2.8 — Agent-driven OAuth2 bootstrap (design-complete, not implemented)
+### Phase 2.8 — Agent-driven OAuth2 bootstrap (LANDED)
+
+> **Phase 2.8 status (LANDED).** `oauth-mint` (learn-gated tool,
+> `tools/oauth-mint.ts` + the `pickChecklist` ✓/○ multi-select in
+> `core/select-picker.ts`) and `/api bootstrap oauth <domain> <spec>` shipped
+> per the locked spec: inject-and-exit via `pi.sendUserMessage(brief,
+> { deliverAs: "followUp" })`, learn auto-enable + notify-only-on-flip (loud
+> focus-guard fail), headless refused on both surfaces, token-URL confirm
+> first on both grant arms, cancel → the two-call `init … --code` escape-hatch
+> hint with real values. Tool count: 18→19 suite / 5→6 host.
 
 > Phase 2.7 solved bootstrap friction for the *human*; live use showed the
 > remaining friction is research the agent is well-suited to absorb (reading
