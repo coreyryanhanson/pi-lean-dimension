@@ -1,7 +1,8 @@
 # OAuth2 Flow — Plan & Decision Record
 
-> Realizes the `auth.kind: oauth2` seam. **Phases 0–2.8 are LANDED** (see the
-> status table); what remains is **Phase 3** (axis guide + caritas recipes)
+> Realizes the `auth.kind: oauth2` seam. **Phases 0–2.8 are LANDED** (see
+> the status table); **Phase 2.9** (token-slot multi-grant) is planned for
+> this branch; what remains is **Phase 3** (axis guide + caritas recipes)
 > and the coordinated **`0.5.0` hard-gate flip**. This doc is the decision
 > record for the landed work and the plan for the remainder — the full
 > deliberation history lives in git and in the companion docs.
@@ -15,7 +16,7 @@
 > `pi-lean-host` docs carry a development-preview notice; `0.4.0` is the last
 > preview release.
 
-## Landed status (Phases 0–2.8)
+## Landed status (Phases 0–2.9)
 
 | Phase | What shipped | Where |
 |-------|--------------|-------|
@@ -28,6 +29,7 @@
 | **Post-plan addendum: probe mint-on-demand** | Probe's inline `auth` block accepts client-credentials mint fields (`tokenUrl` + `clientId` [+ `clientSecret`, `scopes`, `tokenEndpointAuthMethod`] — store NAMES); on a store miss it mints once, stamps the token store, injects the Bearer. Auth-code is not inlined (the pending state is command-shaped — see 2.7). | `tools/api-probe.ts` (`resolveProbeAuth`) |
 | **2.7 — Human guide-less bootstrap** | `/api oauth init <domain>` wizard: interactive prompts (TUI) or headless flags; both grants; two-call `init … --code` headless completion; parent-domain token-store normalization shared with the probe. | `core/oauth-command.ts` (`handleOauthInit`), `core/auth.ts` (`buildSyntheticOAuth2Auth`) |
 | **2.8 — Agent-driven bootstrap** | `oauth-mint` (learn-gated tool) + `/api bootstrap oauth <domain> <spec>` (inject-and-exit command). Locked spec + semantics: [`oauth2-agent-bootstrap.md`](./oauth2-agent-bootstrap.md). Tool count 18→19 suite / 5→6 host. | `tools/oauth-mint.ts`, `core/api-toggle.ts`, `core/select-picker.ts` (`pickChecklist`) |
+| **2.9 — Token-slot multi-grant + multi-issuer** *(planned — this branch, pre-0.5.0)* | Token slots keyed by `(storeDomain, grant, tokenUrl)` instead of bare domain. Closes the clobber hole: minting a user token for one domain no longer wipes its app token, and two OAuth issuers behind one API domain get separate slots. Zero schema change, zero author ceremony — the slot derives entirely from facts every consumer already carries in its `OAuth2Auth` object. | see "Phase 2.9 — Token-slot multi-grant" below |
 
 **Deferred by decision:** the `isStaleSchema` hard-gate flip (`isStaleSchema` stays a non-blocking ⚠ warning) — its own plan doc lives at
 [`schema-version-hard-gate.md`](./schema-version-hard-gate.md); it lands under the coordinated `0.5.0` step alongside the caritas re-stamp.
@@ -188,16 +190,81 @@ The shape decisions and why they hold:
   cancel → the two-call `init … --code` escape hatch). Full semantics:
   [`oauth2-agent-bootstrap.md`](./oauth2-agent-bootstrap.md).
 + **Token lifecycle:** lazy on-demand refresh inside `resolveAccessToken`
-  (store read fresh every call; no background worker), per-domain
+  (store read fresh every call; no background worker), per-slot
   `Map<string, Promise>` refresh lock (prevents double-spending a rotated
-  refresh token), `expiresAt − 60_000` skew buffer. `client_secret` lives in
-  the secrets store; only minted tokens live in the token store (separate
-  0600 files — tokens rotate and have structure).
+  refresh token), `expiresAt − 60_000` skew buffer. Slots are keyed
+  `(storeDomain, grant, tokenUrl)` — Phase 2.9 — so one domain can hold an
+  app token and a user token (and tokens from two issuers) without
+  clobbering. `client_secret` lives in the secrets store; only minted
+  tokens live in the token store (separate 0600 files — tokens rotate and
+  have structure).
 + **Token endpoints POST via a small helper in `core/auth.ts`
   (`oauthPost`)** — never through `transport.ts` (GET-only by contract).
   Secret values are scrubbed from error bodies. The probe's mint-on-demand
   and both bootstrap surfaces feed the same `resolveAccessToken` /
   `mintAuthCodeToken` machinery, so cache/refresh/lock/stamp is shared code.
+
+## Phase 2.9 — Token-slot multi-grant + multi-issuer (plan, pre-0.5.0)
+
+**The hole.** The token store was one file per domain (`<domain>.json`); the
+grant lived only on the guide's auth block. Minting a `client_credentials`
+token for one guide, then an `authorization_code` token for a sibling guide
+on the same domain, silently overwrote the first token — and each guide's
+lazy-refresh re-minted its *own* grant over the other's slot forever after.
+Live example: Twitch app-token (63 both-type endpoints) vs a future
+user-token guide (55 user-only endpoints) on `twitch.tv`. A second hole:
+two OAuth **issuers** behind one API domain (same grant, different
+`tokenUrl`) would also clobber — discovered reviewing whether API versions
+(`v1`/`v2`) or per-dataset tokens need distinct slots (they don't: versions
+live in paths; same-issuer tokens are shared by design).
+
+**The fix.** Slot key = `(storeDomain, grant, tokenUrl)`:
+
++ Same domain + same grant + same issuer → same slot (multi-recipe domains
+  keep sharing — `internet-archive`/`wayback-availability` unchanged).
++ Any difference → different slot. No `tokenKey` field in the schema: the
+  slot derives from `auth.grant` + `auth.tokenUrl`, both parse-required,
+  both already carried by every consumer (`resolveAccessToken`,
+  `mintAuthCodeToken`, `buildSyntheticOAuth2Auth`, probe inline auth).
++ Derivation is **internal to the store layer** — the eight
+  `switch (auth.kind)` consumer sites and all tool/command entry points
+  keep their signatures.
+
+**What changed, exhaustively:**
+
++ `core/oauth-store.ts` — slot derivation helper (`slotKey(auth)` → slug of
+  domain + grant + hashed tokenUrl path); file layout
+  `<domain>__<grant>__<issuer-slug>.json`; stored token JSON now records
+  `grant` + `tokenUrl` (self-describing store; readers don't need a legacy
+  branch — pre-release, files are re-minted not migrated). Pending-flow
+  file gets the same slot suffix.
++ `core/auth.ts` — `resolveTokenUnlocked` + refresh-lock map keyed by slot;
+  `buildSyntheticOAuth2Auth` unchanged (flags already reconstruct grant +
+  tokenUrl, so two-call `init … --code` completion lands in the same slot).
++ `core/oauth-command.ts` — bare listing shows per-slot rows
+  (`domain · grant · issuer`); `--status`/`--refresh`/`--revoke` take an
+  optional grant qualifier **only when a domain has 2+ slots** (single slot
+  keeps today's one-argument behavior; two slots without a qualifier →
+  listing + usage error, never a guess).
++ `core/oauth-flow.ts` — pending-flow read/write keyed by slot;
+  `completePastedCode` derives the slot from the synthetic auth.
++ `tools/oauth-mint.ts`, `tools/api-probe.ts`, `core/verify-command.ts` —
+  **no changes** (auth-object carriers).
++ Tests — `__tests__/oauth.test.ts` gains the both-grants-one-domain
+  non-clobber case; `__tests__/oauth-flow.test.ts` pending-slot isolation;
+  oauth-command tests cover the disambiguation arm.
++ Docs — this section; AGENTS.md token-store bullet; the deferred
+  multiple-accounts bullet now points here.
+
+**Reserved on paper (not implemented):** `tokenKey?: string` on
+`OAuth2Auth` — the sanctioned future fix when a recipe needs two same-grant
+slots (multiple accounts or scopes per domain). Slot becomes
+`(domain, grant, tokenUrl, tokenKey)`; additive, non-breaking, tokens
+re-mint on first use. Also deferred: per-op grant override (an op needing a
+different grant belongs in a sibling guide).
+
+**Migration:** none — pre-release branch; the two dev-minted tokens
+(mastodon.social, twitch.tv) were re-minted under the new layout.
 
 ## Remaining work
 
@@ -271,7 +338,9 @@ auth-block rewrite. This ships as one PR of the coordinated `0.5.0` release.
 
 + Device flow (RFC 8628) — the paste path covers usability.
 + Implicit / password grants — deprecated, never.
-+ Multiple accounts per domain (one token set per domain, v1).
++ Multiple accounts per domain (one token set per slot — slots are
+  `(domain, grant, tokenUrl)`, see Phase 2.9; a same-grant second account
+  is the reserved `tokenKey` seam).
 + Scope management UI (scopes are static in the guide / tool params).
 + Background refresh worker (lazy refresh covers it; add if a recipe's TTL
   makes on-demand latency hurt).
