@@ -261,7 +261,7 @@ async function startAuthCodeFlow(
 		state,
 		resolveClientCredentials(auth, storeDomain).clientId,
 	);
-	writePendingFlow(storeDomain, { verifier, state, redirectUri: REDIRECT_URI });
+	writePendingFlow(storeDomain, { verifier, state });
 	ctx.ui.notify(
 		`🔑 Open this URL in YOUR browser and authorize (log in with your own credentials — the agent never sees them). ` +
 			`Your OAuth app needs '${REDIRECT_URI}' registered (RFC 8252 §7.3 — loopback, any port). ` +

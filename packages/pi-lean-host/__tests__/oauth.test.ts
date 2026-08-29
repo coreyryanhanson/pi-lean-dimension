@@ -39,7 +39,11 @@ import {
 import { writeSecret, setSecretsDir } from "../core/secrets-store.js";
 import { resolveOpForExecution } from "../core/resolve-op.js";
 import { handleOauthSubcommand } from "../core/oauth-command.js";
-import type { ApiGuide, Operation } from "../core/api-guide-types.js";
+import type {
+	ApiGuide,
+	OAuth2Auth,
+	Operation,
+} from "../core/api-guide-types.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Fixtures
@@ -48,7 +52,7 @@ import type { ApiGuide, Operation } from "../core/api-guide-types.js";
 function makeOAuthGuide(
 	apiHost: string,
 	overrides: Partial<ApiGuide["auth"] & { domains?: string[] }> = {},
-): ApiGuide {
+): ApiGuide & { auth: OAuth2Auth } {
 	const auth = {
 		kind: "oauth2" as const,
 		grant: "client_credentials" as const,
@@ -73,7 +77,7 @@ function makeOAuthGuide(
 		auth,
 		responseShape: { format: "json", charset: "utf-8" },
 		operations: [],
-	};
+	} as ApiGuide & { auth: OAuth2Auth };
 }
 
 function makeOp(path: string): Operation {
@@ -149,7 +153,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 			});
 		});
 
-		const res = await resolveAccessToken(guide, "oauth.test");
+		const res = await resolveAccessToken(guide.auth, "oauth.test");
 		expect(res.authHeaders).toEqual({ authorization: "Bearer AT-1" });
 		expect(res.secretValues).toEqual(["AT-1"]);
 		expect(res.secretHeaderNames).toEqual(new Set(["authorization"]));
@@ -169,7 +173,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
 
-		const res = await resolveAccessToken(guide, "oauth.cached");
+		const res = await resolveAccessToken(guide.auth, "oauth.cached");
 		expect(res.authHeaders).toEqual({ authorization: "Bearer CACHED" });
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
@@ -192,7 +196,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 			});
 		});
 
-		const res = await resolveAccessToken(guide, "oauth.refresh");
+		const res = await resolveAccessToken(guide.auth, "oauth.refresh");
 		expect(res.authHeaders).toEqual({ authorization: "Bearer NEW" });
 		const token = readToken("oauth.refresh");
 		expect(token?.accessToken).toBe("NEW");
@@ -211,7 +215,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 			return tokenResponse({ access_token: "MINTED", expires_in: 3600 });
 		});
 
-		const res = await resolveAccessToken(guide, "oauth.remint");
+		const res = await resolveAccessToken(guide.auth, "oauth.remint");
 		expect(res.authHeaders).toEqual({ authorization: "Bearer MINTED" });
 	});
 
@@ -232,7 +236,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 		const guide = makeOAuthGuide("https://api.example.com");
 		// oauth.noclientid has neither credential in the secrets store.
 		await expect(
-			resolveAccessToken(guide, "oauth.noclientid"),
+			resolveAccessToken(guide.auth, "oauth.noclientid"),
 		).rejects.toBeInstanceOf(OAuthTokenMissingError);
 	});
 
@@ -241,7 +245,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 		// oauth.missing has no client_secret in the secrets store.
 		const guide = makeOAuthGuide("https://api.example.com");
 		await expect(
-			resolveAccessToken(guide, "oauth.missing"),
+			resolveAccessToken(guide.auth, "oauth.missing"),
 		).rejects.toBeInstanceOf(OAuthTokenMissingError);
 	});
 
@@ -251,7 +255,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 			authorizeUrl: "https://api.example.com/oauth/authorize",
 		});
 		await expect(
-			resolveAccessToken(guide, "oauth.authcode"),
+			resolveAccessToken(guide.auth, "oauth.authcode"),
 		).rejects.toBeInstanceOf(OAuthTokenMissingError);
 	});
 
@@ -269,7 +273,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 			expect(String(init.body)).not.toContain("client_secret");
 			return tokenResponse({ access_token: "BASIC", expires_in: 3600 });
 		});
-		const res = await resolveAccessToken(guide, "oauth.basic");
+		const res = await resolveAccessToken(guide.auth, "oauth.basic");
 		expect(res.authHeaders).toEqual({ authorization: "Bearer BASIC" });
 	});
 
@@ -281,7 +285,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 		stubTokenEndpoint(() =>
 			tokenResponse({ access_token: "QT", expires_in: 3600 }),
 		);
-		const res = await resolveAccessToken(guide, "oauth.query");
+		const res = await resolveAccessToken(guide.auth, "oauth.query");
 		expect(res.secretQueryParams).toEqual({ access_token: "QT" });
 		expect(res.secretQueryParamNames).toEqual(new Set(["access_token"]));
 		expect(res.secretValues).toEqual(["QT"]);
@@ -295,7 +299,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 		stubTokenEndpoint(() =>
 			tokenResponse({ access_token: "HDR-TOKEN", expires_in: 3600 }),
 		);
-		const res = await resolveAccessToken(guide, "oauth.headers");
+		const res = await resolveAccessToken(guide.auth, "oauth.headers");
 		expect(res.authHeaders).toEqual({
 			authorization: "Bearer HDR-TOKEN",
 			"Client-Id": "MY_CLIENT",
@@ -320,7 +324,6 @@ describe("resolveAccessToken (client_credentials)", () => {
 			expect(String(init.body)).toContain("token=RVK");
 			return tokenResponse({}, 200);
 		});
-		if (guide.auth.kind !== "oauth2") throw new Error("fixture");
 		await revokeAccessToken(guide.auth, "oauth.revoke");
 		expect(readToken("oauth.revoke")).toBeNull();
 	});
@@ -431,11 +434,7 @@ describe("handleOauthSubcommand guide-less paths", () => {
 
 	it("--revoke clears the token + pending flow locally, no guide needed", async () => {
 		writeToken(ORPHAN, { accessToken: "T", expiresAt: Date.now() + 3_600_000 });
-		writePendingFlow(ORPHAN, {
-			verifier: "v",
-			state: "s",
-			redirectUri: "http://127.0.0.1/callback",
-		});
+		writePendingFlow(ORPHAN, { verifier: "v", state: "s" });
 		const { ctx, out } = mockNotify();
 		await handleOauthSubcommand(`${ORPHAN} --revoke`, ctx);
 		expect(out()).toContain("cleared locally");

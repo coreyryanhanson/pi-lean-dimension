@@ -241,7 +241,6 @@ describe("mintAuthCodeToken", () => {
 		// Pending flow persisted with the verifier that produced the challenge.
 		const pending = readPendingFlow("oauth.manual");
 		expect(pending).not.toBeNull();
-		expect(pending?.redirectUri).toBe(REDIRECT_URI);
 		const text = ctx.ui.notify.mock.calls.map((c: unknown[]) => c[0]).join("\n");
 		expect(text).toContain("127.0.0.1/callback"); // registration convention
 		const url = text.match(/https?:\/\/\S*code_challenge=\S+/)?.[0];

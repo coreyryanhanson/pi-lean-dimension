@@ -181,7 +181,7 @@ export async function resolveOpForExecution(
 		}
 		case "oauth2": {
 			try {
-				authOpts = await resolveAccessToken(guide, storeDomain);
+				authOpts = await resolveAccessToken(guide.auth, storeDomain);
 			} catch (err) {
 				if (err instanceof OAuthTokenMissingError) {
 					return {

@@ -312,7 +312,7 @@ export async function handleOauthSubcommand(
 			});
 		} else {
 			if (refreshFlag) deleteToken(storeDomain);
-			await resolveAccessToken(guide, storeDomain);
+			await resolveAccessToken(auth, storeDomain);
 		}
 	} catch (err) {
 		if (err instanceof OAuthTokenMissingError) {
@@ -538,12 +538,7 @@ async function handleOauthInit(
 			// Bootstrap wants a fresh mint, not a cached token (mirrors the
 			// plain command's --refresh path).
 			deleteToken(storeDomain);
-			await resolveAccessToken(
-				// SAFETY: resolveAccessToken only reads `.auth` off the guide; the
-				// store domain is passed explicitly (same cast as api-probe's mint arm).
-				{ domains: [storeDomain], auth: synthetic } as unknown as ApiGuide,
-				storeDomain,
-			);
+			await resolveAccessToken(synthetic, storeDomain);
 			provisionedMsg();
 			return;
 		}

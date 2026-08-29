@@ -40,11 +40,7 @@ import { findGuidesByDomain } from "../core/guide-store.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
 import { serverMessage, isPlanGated } from "../core/status-hint.js";
 import { appendFooter, contentText } from "./utils.js";
-import type {
-	ApiGuide,
-	SecretRef,
-	StaticKeyAuth,
-} from "../core/api-guide-types.js";
+import type { SecretRef, StaticKeyAuth } from "../core/api-guide-types.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -346,11 +342,11 @@ async function resolveProbeAuth(
 	let tokenNote = "";
 	const tokenHeader: Record<string, string> = {};
 	if (hasMintFields) {
-		// Construct a synthetic oauth2 guide so resolveAccessToken's cache →
-		// refresh → mint → stamp machinery is reused wholesale (incl. the
-		// per-domain refresh lock). resolveAccessToken only reads `.auth`;
-		// the store domain is passed explicitly. Failures never fail-closed:
-		// the message rides the note and the probe proceeds unauthenticated.
+		// Build a synthetic oauth2 auth and hand it straight to
+		// resolveAccessToken so the cache → refresh → mint → stamp machinery is
+		// reused wholesale (incl. the per-domain refresh lock). Failures never
+		// fail-closed: the message rides the note and the probe proceeds
+		// unauthenticated.
 		const oauthAuth = buildSyntheticOAuth2Auth({
 			grant: "client_credentials",
 			tokenUrl: auth!.tokenUrl!,
@@ -362,13 +358,7 @@ async function resolveProbeAuth(
 				: {}),
 		});
 		try {
-			const result = await resolveAccessToken(
-				// SAFETY: resolveAccessToken only reads `.auth` off the guide; the
-				// store domain is passed explicitly, so the rest of ApiGuide is
-				// never touched by this call path.
-				{ domains: [domain], auth: oauthAuth } as unknown as ApiGuide,
-				domain,
-			);
+			const result = await resolveAccessToken(oauthAuth, domain);
 			const bearer = result.authHeaders?.authorization;
 			if (bearer) tokenHeader["authorization"] = bearer;
 			else tokenNote = "oauth2 mint succeeded but produced no bearer header";

@@ -273,22 +273,16 @@ export function isTokenExpired(
 const tokenLocks = new Map<string, Promise<AccessTokenResult>>();
 
 /**
- * Resolve an access token for an oauth2 guide: cached → lazy refresh →
- * client-credentials mint. Reads the token store fresh on every call (no
- * closure cache) so a refresh on op N is visible to op N+1 during a long
- * `/api verify` run. Fail-closed: throws `OAuthTokenMissingError` when no
+ * Resolve an access token for an oauth2 auth (guide-backed or synthetic):
+ * cached → lazy refresh → client-credentials mint. Reads the token store
+ * fresh on every call (no closure cache) so a refresh on op N is visible to
+ * op N+1 during a long `/api verify` run. Fail-closed: throws `OAuthTokenMissingError` when no
  * token exists and none can be minted.
  */
 export async function resolveAccessToken(
-	guide: ApiGuide,
+	auth: OAuth2Auth,
 	domain: string,
 ): Promise<AccessTokenResult> {
-	const auth = guide.auth;
-	if (auth.kind !== "oauth2") {
-		throw new Error(
-			`resolveAccessToken called for non-oauth2 guide (${auth.kind})`,
-		);
-	}
 	const inFlight = tokenLocks.get(domain);
 	if (inFlight) return inFlight;
 	const p = resolveTokenUnlocked(auth, domain);
@@ -438,6 +432,30 @@ export function hasUsableTokenPath(auth: OAuth2Auth, domain: string): boolean {
 }
 
 /**
+ * Attach client authentication to a token-endpoint request (RFC 6749 §2.3):
+ * `client_secret_basic` → Basic Authorization header, `client_secret_post`
+ * (the default) → `client_secret` form field, `none` → nothing. Mutates
+ * `form` / `headers`. No-op without a client secret (PKCE public clients).
+ */
+function applyClientAuth(
+	auth: OAuth2Auth,
+	clientId: string,
+	clientSecret: { secret: string } | null,
+	form: Record<string, string>,
+	headers: Record<string, string>,
+): void {
+	if (!clientSecret) return;
+	const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
+	if (method === "client_secret_basic") {
+		headers["authorization"] =
+			"Basic " +
+			Buffer.from(`${clientId}:${clientSecret.secret}`).toString("base64");
+	} else if (method === "client_secret_post") {
+		form["client_secret"] = clientSecret.secret;
+	}
+}
+
+/**
  * Exchange an authorization code for a token set (PKCE verifier in the
  * body). `redirectUri` must be the SAME URI sent in the authorize step.
  * The client secret (when the guide declares one) rides per
@@ -451,7 +469,6 @@ export async function exchangeAuthCode(
 	verifier: string,
 ): Promise<OAuthToken> {
 	const { clientId, clientSecret } = resolveClientCredentials(auth, domain);
-	const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
 	const form: Record<string, string> = {
 		grant_type: "authorization_code",
 		code,
@@ -460,13 +477,7 @@ export async function exchangeAuthCode(
 		code_verifier: verifier,
 	};
 	const headers: Record<string, string> = {};
-	if (clientSecret && method === "client_secret_basic") {
-		headers["authorization"] =
-			"Basic " +
-			Buffer.from(`${clientId}:${clientSecret.secret}`).toString("base64");
-	} else if (clientSecret && method === "client_secret_post") {
-		form["client_secret"] = clientSecret.secret;
-	}
+	applyClientAuth(auth, clientId, clientSecret, form, headers);
 	const data = await oauthPost(auth.tokenUrl, form, headers, [
 		code,
 		...(clientSecret ? [clientSecret.secret] : []),
@@ -564,19 +575,12 @@ async function mintClientCredentialsToken(
 				`for '${domain}'. Run /api secrets ${domain} then /api oauth ${domain}.`,
 		);
 	}
-	const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
 	const form: Record<string, string> = {
 		grant_type: "client_credentials",
 		client_id: clientId,
 	};
 	const headers: Record<string, string> = {};
-	if (method === "client_secret_basic") {
-		headers["authorization"] =
-			"Basic " +
-			Buffer.from(`${clientId}:${clientSecret.secret}`).toString("base64");
-	} else if (method === "client_secret_post") {
-		form["client_secret"] = clientSecret.secret;
-	}
+	applyClientAuth(auth, clientId, clientSecret, form, headers);
 	if (auth.scopes && auth.scopes.length > 0) {
 		form["scope"] = auth.scopes.join(" ");
 	}
@@ -593,20 +597,13 @@ async function refreshAccessToken(
 	refreshToken: string,
 ): Promise<OAuthToken> {
 	const { clientId, clientSecret } = resolveClientCredentials(auth, domain);
-	const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
 	const form: Record<string, string> = {
 		grant_type: "refresh_token",
 		refresh_token: refreshToken,
 		client_id: clientId,
 	};
 	const headers: Record<string, string> = {};
-	if (clientSecret && method === "client_secret_basic") {
-		headers["authorization"] =
-			"Basic " +
-			Buffer.from(`${clientId}:${clientSecret.secret}`).toString("base64");
-	} else if (clientSecret && method === "client_secret_post") {
-		form["client_secret"] = clientSecret.secret;
-	}
+	applyClientAuth(auth, clientId, clientSecret, form, headers);
 	const data = await oauthPost(auth.tokenUrl, form, headers, [
 		refreshToken,
 		...(clientSecret ? [clientSecret.secret] : []),
@@ -626,16 +623,9 @@ export async function revokeAccessToken(
 	if (token && auth.revokeUrl) {
 		try {
 			const { clientId, clientSecret } = resolveClientCredentials(auth, domain);
-			const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
 			const form: Record<string, string> = { token: token.accessToken };
 			const headers: Record<string, string> = {};
-			if (clientSecret && method === "client_secret_basic") {
-				headers["authorization"] =
-					"Basic " +
-					Buffer.from(`${clientId}:${clientSecret.secret}`).toString("base64");
-			} else if (clientSecret && method === "client_secret_post") {
-				form["client_secret"] = clientSecret.secret;
-			}
+			applyClientAuth(auth, clientId, clientSecret, form, headers);
 			await oauthPost(auth.revokeUrl, form, headers, [token.accessToken]);
 		} catch {
 			// best-effort — the local store is cleared regardless

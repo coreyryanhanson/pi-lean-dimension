@@ -35,7 +35,6 @@ import { listNames } from "../core/secrets-store.js";
 import { deleteToken } from "../core/oauth-store.js";
 import { mintAuthCodeToken } from "../core/oauth-flow.js";
 import { pickChecklist } from "../core/select-picker.js";
-import type { ApiGuide } from "../core/api-guide-types.js";
 import { appendFooter } from "./utils.js";
 
 /** The exact two-call completion command for the escape-hatch hint (D1). */
@@ -241,13 +240,7 @@ export const oauthMintTool = defineTool({
 				// Bootstrap wants a fresh mint, not a cached token (mirrors the
 				// init wizard / --refresh path).
 				deleteToken(storeDomain);
-				await resolveAccessToken(
-					// SAFETY: resolveAccessToken only reads `.auth` off the guide; the
-					// store domain is passed explicitly (same cast as oauth-command's
-					// init arm).
-					{ domains: [storeDomain], auth: finalSynthetic } as unknown as ApiGuide,
-					storeDomain,
-				);
+				await resolveAccessToken(finalSynthetic, storeDomain);
 			} else {
 				// Prints the authorize URL + paste prompt (retry loop inside);
 				// cancel lands in the OAuthTokenMissingError handler below.
