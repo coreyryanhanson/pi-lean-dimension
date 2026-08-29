@@ -25,7 +25,7 @@ import {
 	readSecret,
 	provisionedDomainsSuffix,
 } from "./secrets-store.js";
-import { readToken, writeToken, deleteToken } from "./oauth-store.js";
+import { readToken, writeToken, deleteToken, slotKey } from "./oauth-store.js";
 import type { OAuthToken } from "./oauth-store.js";
 
 /**
@@ -171,7 +171,7 @@ export function authStatusLine(
 			return "🔑 auth: ok";
 		}
 		case "oauth2": {
-			const token = readToken(domain);
+			const token = readToken(domain, auth.grant, auth.tokenUrl);
 			if (!token) {
 				return `🔑 auth: oauth2 — no token. Run /api oauth ${domain}.`;
 			}
@@ -264,11 +264,14 @@ export function isTokenExpired(
 }
 
 /**
- * Per-domain in-process lock keyed by the canonical store domain, so
- * concurrent `api-fetch` calls for the same domain serialize on one
- * read-check-refresh-write sequence. Without it, two parallel calls that both
- * see an expired token could race a refresh and double-spend a rotated
- * refresh token.
+ * Per-slot in-process lock keyed by `(storeDomain, slot)` — the same slot
+ * derivation the token store uses (two derivations that can diverge would be
+ * a second clobber), so concurrent `api-fetch` calls for the same slot
+ * serialize on one read-check-refresh-write sequence. Without it, two
+ * parallel calls that both see an expired token could race a refresh and
+ * double-spend a rotated refresh token. Cross-slot calls don't serialize —
+ * they touch different records; the store's synchronous read-modify-write
+ * keeps them atomic wrt the event loop.
  */
 const tokenLocks = new Map<string, Promise<AccessTokenResult>>();
 
@@ -283,14 +286,15 @@ export async function resolveAccessToken(
 	auth: OAuth2Auth,
 	domain: string,
 ): Promise<AccessTokenResult> {
-	const inFlight = tokenLocks.get(domain);
+	const lockKey = `${domain}:${slotKey(auth.grant, auth.tokenUrl)}`;
+	const inFlight = tokenLocks.get(lockKey);
 	if (inFlight) return inFlight;
 	const p = resolveTokenUnlocked(auth, domain);
-	tokenLocks.set(domain, p);
+	tokenLocks.set(lockKey, p);
 	try {
 		return await p;
 	} finally {
-		tokenLocks.delete(domain);
+		tokenLocks.delete(lockKey);
 	}
 }
 
@@ -298,13 +302,13 @@ async function resolveTokenUnlocked(
 	auth: OAuth2Auth,
 	domain: string,
 ): Promise<AccessTokenResult> {
-	let token = readToken(domain);
+	let token = readToken(domain, auth.grant, auth.tokenUrl);
 	if (token && !isTokenExpired(token))
 		return toAccessTokenResult(auth, token, domain);
 	if (token?.refreshToken) {
 		try {
 			token = await refreshAccessToken(auth, domain, token.refreshToken);
-			writeToken(domain, token);
+			writeToken(domain, auth.grant, auth.tokenUrl, token);
 			return toAccessTokenResult(auth, token, domain);
 		} catch {
 			// Refresh failed (rotated/revoked refresh token, endpoint down) —
@@ -313,7 +317,7 @@ async function resolveTokenUnlocked(
 	}
 	if (auth.grant === "client_credentials") {
 		token = await mintClientCredentialsToken(auth, domain);
-		writeToken(domain, token);
+		writeToken(domain, auth.grant, auth.tokenUrl, token);
 		return toAccessTokenResult(auth, token, domain);
 	}
 	// authorization_code: no interactive mint in Phase 1 — fail closed with
@@ -418,7 +422,7 @@ export function resolveClientCredentials(
  * fail-fast instead of surfacing N identical token-missing failures.
  */
 export function hasUsableTokenPath(auth: OAuth2Auth, domain: string): boolean {
-	const token = readToken(domain);
+	const token = readToken(domain, auth.grant, auth.tokenUrl);
 	if (token && !isTokenExpired(token)) return true;
 	if (token?.refreshToken) return true;
 	if (auth.grant === "client_credentials") {
@@ -494,14 +498,14 @@ export async function forceRefreshToken(
 	auth: OAuth2Auth,
 	domain: string,
 ): Promise<OAuthToken> {
-	const token = readToken(domain);
+	const token = readToken(domain, auth.grant, auth.tokenUrl);
 	if (!token?.refreshToken) {
 		throw new OAuthTokenMissingError(
 			`No refresh token for '${domain}' — run /api oauth ${domain} to start the interactive flow.`,
 		);
 	}
 	const fresh = await refreshAccessToken(auth, domain, token.refreshToken);
-	writeToken(domain, fresh);
+	writeToken(domain, auth.grant, auth.tokenUrl, fresh);
 	return fresh;
 }
 
@@ -619,7 +623,7 @@ export async function revokeAccessToken(
 	auth: OAuth2Auth,
 	domain: string,
 ): Promise<void> {
-	const token = readToken(domain);
+	const token = readToken(domain, auth.grant, auth.tokenUrl);
 	if (token && auth.revokeUrl) {
 		try {
 			const { clientId, clientSecret } = resolveClientCredentials(auth, domain);
@@ -631,7 +635,7 @@ export async function revokeAccessToken(
 			// best-effort — the local store is cleared regardless
 		}
 	}
-	deleteToken(domain);
+	deleteToken(domain, auth.grant, auth.tokenUrl);
 }
 
 // ═══════════════════════════════════════════════════════════════

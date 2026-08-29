@@ -1,8 +1,8 @@
 # OAuth2 Flow — Plan & Decision Record
 
 > Realizes the `auth.kind: oauth2` seam. **Phases 0–2.8 are LANDED** (see
-> the status table); **Phase 2.9** (token-slot multi-grant) is planned for
-> this branch; what remains is **Phase 3** (axis guide + caritas recipes)
+> the status table); **Phase 2.9** (token-slot multi-grant) has landed; what
+> remains is **Phase 3** (axis guide + caritas recipes)
 > and the coordinated **`0.5.0` hard-gate flip**. This doc is the decision
 > record for the landed work and the plan for the remainder — the full
 > deliberation history lives in git and in the companion docs.
@@ -29,7 +29,7 @@
 | **Post-plan addendum: probe mint-on-demand** | Probe's inline `auth` block accepts client-credentials mint fields (`tokenUrl` + `clientId` [+ `clientSecret`, `scopes`, `tokenEndpointAuthMethod`] — store NAMES); on a store miss it mints once, stamps the token store, injects the Bearer. Auth-code is not inlined (the pending state is command-shaped — see 2.7). | `tools/api-probe.ts` (`resolveProbeAuth`) |
 | **2.7 — Human guide-less bootstrap** | `/api oauth init <domain>` wizard: interactive prompts (TUI) or headless flags; both grants; two-call `init … --code` headless completion; parent-domain token-store normalization shared with the probe. | `core/oauth-command.ts` (`handleOauthInit`), `core/auth.ts` (`buildSyntheticOAuth2Auth`) |
 | **2.8 — Agent-driven bootstrap** | `oauth-mint` (learn-gated tool) + `/api bootstrap oauth <domain> <spec>` (inject-and-exit command). Locked spec + semantics: [`oauth2-agent-bootstrap.md`](./oauth2-agent-bootstrap.md). Tool count 18→19 suite / 5→6 host. | `tools/oauth-mint.ts`, `core/api-toggle.ts`, `core/select-picker.ts` (`pickChecklist`) |
-| **2.9 — Token-slot multi-grant + multi-issuer** *(planned — this branch, pre-0.5.0; plan reviewed, not yet implemented)* | Token slots keyed by `(storeDomain, grant, tokenUrl)` instead of bare domain. Closes the clobber hole: minting a user token for one domain no longer wipes its app token, and two OAuth issuers behind one API domain get separate slots. Zero schema change, zero author ceremony — the slot derives entirely from facts every consumer already carries in its `OAuth2Auth` object. | see "Phase 2.9 — Token-slot multi-grant" below |
+| **2.9 — Token-slot multi-grant + multi-issuer** *(landed)* | Token slots keyed by `(storeDomain, grant, tokenUrl)` instead of bare domain. Closes the clobber hole: minting a user token for one domain no longer wipes its app token, and two OAuth issuers behind one API domain get separate slots. Zero schema change, zero author ceremony — the slot derives entirely from facts every consumer already carries in its `OAuth2Auth` object. | `core/oauth-store.ts` (`slotKey`, slot map, tmp+rename writes, `.pending.json` listDomains fix), `core/auth.ts` (slot-aware reads/writes + `(domain, slot)` refresh lock), `core/oauth-command.ts` (per-slot listing, grant qualifier, guide-less orphan slots), `core/oauth-flow.ts`, `tools/api-probe.ts` (`grant` param + loud slot-key validation), `tools/oauth-mint.ts` (slot delete-before-mint + overwrite warning) |
 
 **Deferred by decision:** the `isStaleSchema` hard-gate flip (`isStaleSchema` stays a non-blocking ⚠ warning) — its own plan doc lives at
 [`schema-version-hard-gate.md`](./schema-version-hard-gate.md); it lands under the coordinated `0.5.0` step alongside the caritas re-stamp.
@@ -172,6 +172,17 @@ The shape decisions and why they hold:
   Paste parsing accepts the full URL (default — enables state validation +
   provider `?error=` surfacing) or a bare code. The pending flow survives a
   failed paste so the user retries without re-authorizing.
++ **The redirect URI is a flow-start parameter with the RFC 8252 default
+  (post-2.6 addendum).** The default `http://127.0.0.1/callback` can't serve
+  every provider — Twitch accepts only https (or the `localhost` spelling)
+  for loopback, OSM only `http://127.0.0.1*` — and the URI is a fact of the
+  USER's app registration anyway, so it stays out of the schema and is
+  overridable per invocation: `--redirect-uri <url>` on `/api oauth` / `init`,
+  the `redirectUri` param on `oauth-mint`. It rides the existing token-URL
+  confirm prompt (same trust class — it decides where the provider sends the
+  code), and the pending flow record stores it so the `--code` completion
+  exchanges with the SAME value (RFC 6749 §4.1.3) without re-supplying the
+  flag. A client_credentials mint never touches it.
 + **Guide-less bootstrap (2.7):** `/api oauth init <domain>` wizard, both
   grants. Plain `/api oauth <domain>` never state-forks into a wizard — one
   meaning, no guide-present/absent dispatch fork. Credentials are
@@ -192,9 +203,8 @@ The shape decisions and why they hold:
 + **Token lifecycle:** lazy on-demand refresh inside `resolveAccessToken`
   (store read fresh every call; no background worker), per-slot
   `Map<string, Promise>` refresh lock (prevents double-spending a rotated
-  refresh token), `expiresAt − 60_000` skew buffer. Slots are/will be keyed
-  `(storeDomain, grant, tokenUrl)` — Phase 2.9 (planned, not yet landed;
-  today the lock is per-domain) — so one domain can hold an
+  refresh token), `expiresAt − 60_000` skew buffer. Slots are keyed
+  `(storeDomain, grant, tokenUrl)` — Phase 2.9 (landed) — so one domain can hold an
   app token and a user token (and tokens from two issuers) without
   clobbering. `client_secret` lives in the secrets store; only minted
   tokens live in the token store (separate 0600 files — tokens rotate and
@@ -205,7 +215,7 @@ The shape decisions and why they hold:
   and both bootstrap surfaces feed the same `resolveAccessToken` /
   `mintAuthCodeToken` machinery, so cache/refresh/lock/stamp is shared code.
 
-## Phase 2.9 — Token-slot multi-grant + multi-issuer (plan, pre-0.5.0)
+## Phase 2.9 — Token-slot multi-grant + multi-issuer (landed)
 
 **The hole.** The token store was one file per domain (`<domain>.json`); the
 grant lived only on the guide's auth block. Minting a `client_credentials`
@@ -220,8 +230,7 @@ two OAuth **issuers** behind one API domain (same grant, different
 live in paths; same-issuer tokens are shared by design).
 
 **The fix.** Slot key = `(storeDomain, grant, tokenUrl)`, realized as an
-**in-file slot map** (status: **planned — nothing landed yet**; the store is
-still bare-domain keyed). The token store stays one file per domain
+**in-file slot map** (status: **landed**). The token store stays one file per domain
 (`<domain>.json`); the file now holds `Record<slot, StoredToken>` where
 `slot = <grant>__<hash(tokenUrl)>`. This converges on the secrets store's
 shape — which is already a per-domain file keyed by name
@@ -262,9 +271,13 @@ mirror — instead of a filename-as-database layout of
   recommended here; tokens are re-mintable, and a corrupt file already
   reads as absent today).
 
-**What will change, exhaustively** (pre-implementation review of 2.9 found
-four call-site classes the original list missed — folded in below; the
-implementer should treat this list as the checklist):
+**What changed (implementation record)** — the pre-implementation checklist
+below was executed with one deviation: the slot read/write/delete convenience
+API takes `(domain, grant, tokenUrl)` directly (derivation fully internal to
+the store layer) rather than a caller-precomputed slot; `slotKey` is exported
+for the refresh lock map (`(domain, slot)` keys) and orphan enumeration. The
+`.pending.json` `listDomains` leak and the empty-file prune were fixed as
+planned. Original checklist kept for reference:
 
 + `core/oauth-store.ts` — `TokenStore` becomes (domain, slot)-keyed:
   `read(domain, slot)`, `write(domain, slot, token)`, `delete(domain,
@@ -394,7 +407,12 @@ implementer should treat this list as the checklist):
   multiple-accounts bullet now points here; the `--help` layout string in
   `oauth-command.ts` (called out above).
 
-**Reserved on paper (not implemented):** `tokenKey?: string` on
+**Landed deviation (one, deliberate):** probe's `useTokenStore` slot key
+requires `grant` + `tokenUrl` per the checklist — implemented as a thrown
+validation error from `resolveProbeAuth` (surfaced by the tool's error
+path), and the guide-less orphan `--status`/`--revoke` arms apply
+`resolveProvisionedParentDomain` normalization (the plan's optional
+improvement). **Reserved on paper (not implemented):** `tokenKey?: string` on
 `OAuth2Auth` — the sanctioned future fix when a recipe needs two same-grant
 slots. Slot becomes
 `<grant>__<hash>__<tokenKey>` — one more map key; additive, non-breaking,

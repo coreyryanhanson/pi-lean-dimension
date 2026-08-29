@@ -239,8 +239,13 @@ describe("mintAuthCodeToken", () => {
 			mintAuthCodeToken(auth, "oauth.manual", ctx, {}),
 		).rejects.toThrow(/--code/);
 		// Pending flow persisted with the verifier that produced the challenge.
-		const pending = readPendingFlow("oauth.manual");
+		const pending = readPendingFlow(
+			"oauth.manual",
+			"authorization_code",
+			TOKEN_URL,
+		);
 		expect(pending).not.toBeNull();
+		expect(pending?.redirectUri).toBe(REDIRECT_URI);
 		const text = ctx.ui.notify.mock.calls.map((c: unknown[]) => c[0]).join("\n");
 		expect(text).toContain("127.0.0.1/callback"); // registration convention
 		const url = text.match(/https?:\/\/\S*code_challenge=\S+/)?.[0];
@@ -252,8 +257,55 @@ describe("mintAuthCodeToken", () => {
 			code: "PASTED",
 		});
 		expect(token.accessToken).toBe("MANUAL");
-		expect(readToken("oauth.manual")?.accessToken).toBe("MANUAL");
-		expect(readPendingFlow("oauth.manual")).toBeNull();
+		expect(
+			readToken("oauth.manual", "authorization_code", TOKEN_URL)?.accessToken,
+		).toBe("MANUAL");
+		expect(
+			readPendingFlow("oauth.manual", "authorization_code", TOKEN_URL),
+		).toBeNull();
+	});
+
+	it("redirectUri override: authorize URL + pending record + exchange all carry the same value", async () => {
+		const auth = makeAuthCodeAuth();
+		writeSecret("oauth.ruri", "client_id", "MY_CLIENT");
+		const CUSTOM = "http://localhost:5173/callback"; // Twitch-style spelling
+		const seenBodies: string[] = [];
+		stubTokenEndpoint((_url, init) => {
+			seenBodies.push(String(init.body));
+			return tokenResponse({
+				access_token: "CUSTOM",
+				refresh_token: "RT",
+				expires_in: 3600,
+			});
+		});
+		const ctx = headlessCtx();
+
+		await expect(
+			mintAuthCodeToken(auth, "oauth.ruri", ctx, {
+				redirectUri: CUSTOM,
+			}),
+		).rejects.toThrow(/--code/);
+		// Pending record remembers the override (the --code completion reads it).
+		const pending = readPendingFlow(
+			"oauth.ruri",
+			"authorization_code",
+			TOKEN_URL,
+		);
+		expect(pending?.redirectUri).toBe(CUSTOM);
+		const text = ctx.ui.notify.mock.calls.map((c: unknown[]) => c[0]).join("\n");
+		const url = text.match(/https?:\/\/\S*code_challenge=\S+/)?.[0];
+		expect(url).toContain("redirect_uri=" + encodeURIComponent(CUSTOM));
+		expect(url).not.toContain(encodeURIComponent(REDIRECT_URI));
+
+		// --code completion: the pending record supplies the SAME URI (RFC 6749
+		// §4.1.3) — no flag re-supply, and the default would be wrong here.
+		const token = await mintAuthCodeToken(auth, "oauth.ruri", ctx, {
+			code: "PASTED",
+		});
+		expect(token.accessToken).toBe("CUSTOM");
+		expect(seenBodies[0]).toContain("redirect_uri=" + encodeURIComponent(CUSTOM));
+		// The registration hint echoes the actual URI, not the const.
+		expect(text).toContain(`'${CUSTOM}'`);
 	});
 
 	it("--code accepts the full redirect URL and validates the state", async () => {
@@ -265,7 +317,11 @@ describe("mintAuthCodeToken", () => {
 		await expect(
 			mintAuthCodeToken(auth, "oauth.state", headlessCtx(), {}),
 		).rejects.toBeInstanceOf(OAuthTokenMissingError);
-		const pending = readPendingFlow("oauth.state");
+		const pending = readPendingFlow(
+			"oauth.state",
+			"authorization_code",
+			TOKEN_URL,
+		);
 		expect(pending).not.toBeNull();
 
 		// Mismatched state → rejected, pending flow survives for a retry.
@@ -273,7 +329,9 @@ describe("mintAuthCodeToken", () => {
 		await expect(
 			mintAuthCodeToken(auth, "oauth.state", headlessCtx(), { code: pasted }),
 		).rejects.toThrow("state mismatch");
-		expect(readPendingFlow("oauth.state")).not.toBeNull();
+		expect(
+			readPendingFlow("oauth.state", "authorization_code", TOKEN_URL),
+		).not.toBeNull();
 
 		// Matching state → completes.
 		const good = `http://127.0.0.1/callback?code=GOOD&state=${pending?.state}`;
@@ -281,8 +339,12 @@ describe("mintAuthCodeToken", () => {
 			code: good,
 		});
 		expect(token.accessToken).toBe("STATEFUL");
-		expect(readToken("oauth.state")?.accessToken).toBe("STATEFUL");
-		expect(readPendingFlow("oauth.state")).toBeNull();
+		expect(
+			readToken("oauth.state", "authorization_code", TOKEN_URL)?.accessToken,
+		).toBe("STATEFUL");
+		expect(
+			readPendingFlow("oauth.state", "authorization_code", TOKEN_URL),
+		).toBeNull();
 	});
 
 	it("--code surfaces a provider ?error= paste", async () => {
@@ -298,7 +360,9 @@ describe("mintAuthCodeToken", () => {
 			}),
 		).rejects.toThrow("access_denied — Nope");
 		// The pending flow survives a failed paste — the user can retry.
-		expect(readPendingFlow("oauth.denied")).not.toBeNull();
+		expect(
+			readPendingFlow("oauth.denied", "authorization_code", TOKEN_URL),
+		).not.toBeNull();
 	});
 
 	it("--code with no pending flow fails closed", async () => {
@@ -314,7 +378,7 @@ describe("mintAuthCodeToken", () => {
 		const auth = makeAuthCodeAuth();
 		writeSecret("oauth.force", "client_id", "MY_CLIENT");
 		writeSecret("oauth.force", "client_secret", "S3CRET");
-		writeToken("oauth.force", {
+		writeToken("oauth.force", "authorization_code", TOKEN_URL, {
 			accessToken: "OLD",
 			refreshToken: "RT-1",
 			expiresAt: Date.now() + 300_000, // still fresh — refresh is forced
@@ -333,7 +397,9 @@ describe("mintAuthCodeToken", () => {
 			refresh: true,
 		});
 		expect(token.accessToken).toBe("FRESH");
-		expect(readToken("oauth.force")?.refreshToken).toBe("RT-2");
+		expect(
+			readToken("oauth.force", "authorization_code", TOKEN_URL)?.refreshToken,
+		).toBe("RT-2");
 	});
 
 	it("--refresh with no refresh token falls through to a fresh authorize URL", async () => {
@@ -344,7 +410,9 @@ describe("mintAuthCodeToken", () => {
 			mintAuthCodeToken(auth, "oauth.norefresh", ctx, { refresh: true }),
 		).rejects.toBeInstanceOf(OAuthTokenMissingError);
 		// Fell through to the authorize path → pending flow written.
-		expect(readPendingFlow("oauth.norefresh")).not.toBeNull();
+		expect(
+			readPendingFlow("oauth.norefresh", "authorization_code", TOKEN_URL),
+		).not.toBeNull();
 	});
 
 	it("interactive (hasUI): prompts for the paste and completes inline", async () => {
@@ -361,7 +429,7 @@ describe("mintAuthCodeToken", () => {
 				input: async () => {
 					// The pending flow is written BEFORE the prompt so the paste
 					// can be validated against the generated state.
-					pending = readPendingFlow("oauth.prompt");
+					pending = readPendingFlow("oauth.prompt", "authorization_code", TOKEN_URL);
 					return `http://127.0.0.1/callback?code=CB&state=${pending?.state}`;
 				},
 			},
@@ -369,8 +437,12 @@ describe("mintAuthCodeToken", () => {
 
 		const token = await mintAuthCodeToken(auth, "oauth.prompt", ctx, {});
 		expect(token.accessToken).toBe("PROMPTED");
-		expect(readToken("oauth.prompt")?.accessToken).toBe("PROMPTED");
-		expect(readPendingFlow("oauth.prompt")).toBeNull();
+		expect(
+			readToken("oauth.prompt", "authorization_code", TOKEN_URL)?.accessToken,
+		).toBe("PROMPTED");
+		expect(
+			readPendingFlow("oauth.prompt", "authorization_code", TOKEN_URL),
+		).toBeNull();
 	});
 
 	it("interactive: a failed paste re-prompts instead of aborting; escape still cancels", async () => {
@@ -389,7 +461,7 @@ describe("mintAuthCodeToken", () => {
 				input: async () => {
 					input();
 					if (!pending) {
-						pending = readPendingFlow("oauth.retry");
+						pending = readPendingFlow("oauth.retry", "authorization_code", TOKEN_URL);
 						pastes = [
 							// 1st: wrong state → rejected, re-prompt
 							`http://127.0.0.1/callback?code=BAD&state=WRONG`,
@@ -405,10 +477,52 @@ describe("mintAuthCodeToken", () => {
 		const token = await mintAuthCodeToken(auth, "oauth.retry", ctx, {});
 		expect(input).toHaveBeenCalledTimes(2);
 		expect(token.accessToken).toBe("RETRIED");
-		expect(readPendingFlow("oauth.retry")).toBeNull();
+		expect(
+			readPendingFlow("oauth.retry", "authorization_code", TOKEN_URL),
+		).toBeNull();
 		const warned = ctx.ui.notify.mock.calls
 			.map((c: unknown[]) => c[0] as string)
 			.join("\n");
 		expect(warned).toContain("state mismatch");
+	});
+
+	it("pending flows are slot-isolated: two issuers on one domain don't consume each other's verifier", async () => {
+		const TT2 = "https://other-issuer.example.com/oauth/token";
+		const authA = makeAuthCodeAuth(); // tokenUrl = TOKEN_URL
+		const authB = makeAuthCodeAuth({ tokenUrl: TT2 });
+		writeSecret("oauth.slots", "client_id", "MY_CLIENT");
+		// Start both flows on the same domain (different issuers → different
+		// slots; both pending entries coexist in one <domain>.pending.json).
+		await expect(
+			mintAuthCodeToken(authA, "oauth.slots", headlessCtx(), {}),
+		).rejects.toThrow(/--code/);
+		await expect(
+			mintAuthCodeToken(authB, "oauth.slots", headlessCtx(), {}),
+		).rejects.toThrow(/--code/);
+		expect(
+			readPendingFlow("oauth.slots", "authorization_code", TOKEN_URL),
+		).not.toBeNull();
+		expect(
+			readPendingFlow("oauth.slots", "authorization_code", TT2),
+		).not.toBeNull();
+
+		// Completing slot A with a valid paste consumes ONLY A's pending entry.
+		const pendingA = readPendingFlow(
+			"oauth.slots",
+			"authorization_code",
+			TOKEN_URL,
+		);
+		stubTokenEndpoint(() => tokenResponse({ access_token: "COMPLETED-A" }));
+		const token = await mintAuthCodeToken(authA, "oauth.slots", headlessCtx(), {
+			code: `code=CODE-A&state=${pendingA!.state}`,
+		});
+		expect(token.accessToken).toBe("COMPLETED-A");
+		expect(
+			readPendingFlow("oauth.slots", "authorization_code", TOKEN_URL),
+		).toBeNull();
+		// Slot B's pending flow (its verifier) survives untouched.
+		expect(
+			readPendingFlow("oauth.slots", "authorization_code", TT2),
+		).not.toBeNull();
 	});
 });

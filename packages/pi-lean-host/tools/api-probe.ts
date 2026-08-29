@@ -40,7 +40,11 @@ import { findGuidesByDomain } from "../core/guide-store.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
 import { serverMessage, isPlanGated } from "../core/status-hint.js";
 import { appendFooter, contentText } from "./utils.js";
-import type { SecretRef, StaticKeyAuth } from "../core/api-guide-types.js";
+import type {
+	SecretRef,
+	StaticKeyAuth,
+	OAuth2Grant,
+} from "../core/api-guide-types.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -105,9 +109,17 @@ export interface ProbeOptions {
 		 * paramStyle waits for a recipe that needs it). No/expired token →
 		 * the note nudges `/api oauth <domain>` and the probe proceeds
 		 * unauthenticated (probe misses are never fail-closed). With mint
-		 * fields below, the miss mints instead of nudging.
+		 * fields below, the miss mints instead of nudging. Requires `grant` +
+		 * `tokenUrl` (the slot key) — omitting either is a validation error.
 		 */
 		useTokenStore?: boolean;
+		/**
+		 * The token slot to read: slots are keyed `(domain, grant, tokenUrl)`,
+		 * so a store read needs the same grant + token endpoint facts the mint
+		 * arm already carries. Required with useTokenStore — a call without
+		 * them is a loud validation error, not a silent store miss.
+		 */
+		grant?: OAuth2Grant;
 		/**
 		 * Mint-on-demand (client-credentials authoring bootstrap): when the
 		 * token store has no usable token, the probe POSTs `tokenUrl` once
@@ -116,6 +128,8 @@ export interface ProbeOptions {
 		 * values resolve from the store, never the transcript. Implies
 		 * useTokenStore. auth-code cannot be inlined (needs the interactive
 		 * paste dance) — save a draft guide and use `/api oauth` for that.
+		 * `tokenUrl` is load-bearing beyond minting: it keys the token-store
+		 * slot read (with `grant`).
 		 */
 		tokenUrl?: string;
 		clientId?: string;
@@ -366,7 +380,18 @@ async function resolveProbeAuth(
 			tokenNote = e instanceof Error ? e.message : "oauth2 mint failed";
 		}
 	} else if (useTokenStore) {
-		const token = readToken(domain);
+		// Slot-keyed store read: the slot derives from (grant, tokenUrl) — the
+		// same facts the mint arm carries. Without them the read would target a
+		// slot that never exists; that misconfiguration is a LOUD validation
+		// error (the caller's try/catch surfaces it), not a misleading
+		// "run /api oauth" note on an unauthenticated fetch.
+		if (!auth?.grant || !auth?.tokenUrl) {
+			throw new Error(
+				"auth.useTokenStore requires auth.grant (client_credentials | authorization_code) " +
+					"and auth.tokenUrl — token slots are keyed by (domain, grant, token endpoint).",
+			);
+		}
+		const token = readToken(domain, auth.grant, auth.tokenUrl);
 		if (!token) {
 			tokenNote = `no cached token for "${domain}"; run /api oauth ${domain} to mint one`;
 		} else if (token.expiresAt !== undefined && token.expiresAt <= Date.now()) {
@@ -858,13 +883,22 @@ export const apiProbeTool = defineTool({
 					useTokenStore: Type.Optional(
 						Type.Boolean({
 							description:
-								"Inject the OAuth2 access token from the token store as 'Authorization: Bearer <token>' (mint it first via /api oauth <domain>). Values never enter the transcript; absent/expired token → the note nudges /api oauth and the probe proceeds unauthenticated.",
+								"Inject the OAuth2 access token from the token store as 'Authorization: Bearer <token>' (mint it first via /api oauth <domain>). Requires auth.grant + auth.tokenUrl (the token-slot key). Values never enter the transcript; absent/expired token → the note nudges /api oauth and the probe proceeds unauthenticated.",
 						}),
+					),
+					grant: Type.Optional(
+						Type.Union(
+							[Type.Literal("client_credentials"), Type.Literal("authorization_code")],
+							{
+								description:
+									"The token slot's grant — token slots are keyed (domain, grant, tokenUrl). Required with useTokenStore; the mint arm always uses client_credentials.",
+							},
+						),
 					),
 					tokenUrl: Type.Optional(
 						Type.String({
 							description:
-								"Mint-on-demand: token endpoint URL. When the token store has no usable token, the probe POSTs client-credentials once, stamps the store, and injects the fresh Bearer.",
+								"Token endpoint URL — load-bearing beyond minting: it keys the token-store slot read (with grant). When the token store has no usable token and mint fields are present, the probe POSTs client-credentials once, stamps the store, and injects the fresh Bearer.",
 						}),
 					),
 					clientId: Type.Optional(
@@ -899,7 +933,7 @@ export const apiProbeTool = defineTool({
 				},
 				{
 					description:
-						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Accepts secretRefs, secretQueryRefs, headerPrefixes, useTokenStore, and client-credentials mint-on-demand fields (tokenUrl + clientId [+ clientSecret, scopes, tokenEndpointAuthMethod]) for bootstrapping a guide-less authoring loop. Values resolve from the secrets/token stores and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
+						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Accepts secretRefs, secretQueryRefs, headerPrefixes, useTokenStore (+ grant + tokenUrl, the token-slot key), and client-credentials mint-on-demand fields (tokenUrl + clientId [+ clientSecret, scopes, tokenEndpointAuthMethod]) for bootstrapping a guide-less authoring loop. Values resolve from the secrets/token stores and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
 					// Tight: unknown keys (e.g. a stray `domain`) are rejected before execute runs.
 					// The description above names the allowed fields explicitly — keep it in
 					// sync when adding/renaming a field here, or the prose lies to agents.
@@ -936,6 +970,7 @@ export const apiProbeTool = defineTool({
 				secretQueryRefs?: Record<string, string>;
 				headerPrefixes?: Record<string, string>;
 				useTokenStore?: boolean;
+				grant?: "client_credentials" | "authorization_code";
 			};
 			domain?: string;
 			listSecrets?: boolean;

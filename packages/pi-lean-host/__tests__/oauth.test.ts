@@ -49,6 +49,10 @@ import type {
 // Fixtures
 // ═══════════════════════════════════════════════════════════════════
 
+// makeOAuthGuide's grant + tokenUrl — the token-slot key in every fixture.
+const CC = "client_credentials";
+const TT = "https://token.example.com/oauth/token";
+
 function makeOAuthGuide(
 	apiHost: string,
 	overrides: Partial<ApiGuide["auth"] & { domains?: string[] }> = {},
@@ -158,7 +162,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 		expect(res.secretValues).toEqual(["AT-1"]);
 		expect(res.secretHeaderNames).toEqual(new Set(["authorization"]));
 		// Stamped into the token store.
-		const token = readToken("oauth.test");
+		const token = readToken("oauth.test", CC, TT);
 		expect(token?.accessToken).toBe("AT-1");
 		expect(token?.scope).toBe("read");
 		expect(token?.expiresAt).toBeGreaterThan(Date.now());
@@ -166,7 +170,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 
 	it("cache hit: a fresh cached token is reused without a token-endpoint call", async () => {
 		const guide = makeOAuthGuide("https://api.example.com");
-		writeToken("oauth.cached", {
+		writeToken("oauth.cached", CC, TT, {
 			accessToken: "CACHED",
 			expiresAt: Date.now() + 300_000, // well beyond the 60s skew
 		});
@@ -181,7 +185,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 	it("expired token with a refresh token → refresh (grant_type=refresh_token)", async () => {
 		provisionCreds("oauth.refresh");
 		const guide = makeOAuthGuide("https://api.example.com");
-		writeToken("oauth.refresh", {
+		writeToken("oauth.refresh", CC, TT, {
 			accessToken: "OLD",
 			refreshToken: "RT-1",
 			expiresAt: Date.now() - 1000, // expired
@@ -198,7 +202,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 
 		const res = await resolveAccessToken(guide.auth, "oauth.refresh");
 		expect(res.authHeaders).toEqual({ authorization: "Bearer NEW" });
-		const token = readToken("oauth.refresh");
+		const token = readToken("oauth.refresh", CC, TT);
 		expect(token?.accessToken).toBe("NEW");
 		expect(token?.refreshToken).toBe("RT-2");
 	});
@@ -206,7 +210,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 	it("expired token without a refresh token → re-mint (client_credentials)", async () => {
 		provisionCreds("oauth.remint");
 		const guide = makeOAuthGuide("https://api.example.com");
-		writeToken("oauth.remint", {
+		writeToken("oauth.remint", CC, TT, {
 			accessToken: "OLD",
 			expiresAt: Date.now() - 1000, // expired, no refresh token
 		});
@@ -315,7 +319,7 @@ describe("resolveAccessToken (client_credentials)", () => {
 		const guide = makeOAuthGuide("https://api.example.com", {
 			revokeUrl: "https://token.example.com/oauth/revoke",
 		});
-		writeToken("oauth.revoke", {
+		writeToken("oauth.revoke", CC, TT, {
 			accessToken: "RVK",
 			expiresAt: Date.now() + 1000,
 		});
@@ -325,7 +329,34 @@ describe("resolveAccessToken (client_credentials)", () => {
 			return tokenResponse({}, 200);
 		});
 		await revokeAccessToken(guide.auth, "oauth.revoke");
-		expect(readToken("oauth.revoke")).toBeNull();
+		expect(readToken("oauth.revoke", CC, TT)).toBeNull();
+	});
+
+	it("both grants (and two issuers) on one domain land in separate slots — no clobber", async () => {
+		provisionCreds("oauth.slots");
+		const guide = makeOAuthGuide("https://api.example.com");
+		// A user token (authorization_code) already in the store.
+		writeToken("oauth.slots", "authorization_code", TT, {
+			accessToken: "USER-TOKEN",
+			refreshToken: "RT-USER",
+		});
+		stubTokenEndpoint(() =>
+			tokenResponse({ access_token: "APP-TOKEN", expires_in: 3600 }),
+		);
+		// Minting the app token must not wipe the user-token slot.
+		await resolveAccessToken(guide.auth, "oauth.slots");
+		expect(readToken("oauth.slots", CC, TT)?.accessToken).toBe("APP-TOKEN");
+		expect(readToken("oauth.slots", "authorization_code", TT)?.accessToken).toBe(
+			"USER-TOKEN",
+		);
+		// Two issuers behind one API domain → distinct slots, same file.
+		const TT2 = "https://other-issuer.example.com/oauth/token";
+		writeToken("oauth.slots", CC, TT2, { accessToken: "OTHER-ISSUER" });
+		expect(readToken("oauth.slots", CC, TT2)?.accessToken).toBe("OTHER-ISSUER");
+		expect(readToken("oauth.slots", CC, TT)?.accessToken).toBe("APP-TOKEN");
+		expect(readToken("oauth.slots", "authorization_code", TT)?.accessToken).toBe(
+			"USER-TOKEN",
+		);
 	});
 });
 
@@ -417,7 +448,10 @@ describe("handleOauthSubcommand guide-less paths", () => {
 	}
 
 	it("bare listing shows token-store domains", async () => {
-		writeToken(ORPHAN, { accessToken: "T", expiresAt: Date.now() + 3_600_000 });
+		writeToken(ORPHAN, CC, TT, {
+			accessToken: "T",
+			expiresAt: Date.now() + 3_600_000,
+		});
 		const { ctx, out } = mockNotify();
 		await handleOauthSubcommand("", ctx);
 		expect(out()).toContain("token store");
@@ -425,7 +459,10 @@ describe("handleOauthSubcommand guide-less paths", () => {
 	});
 
 	it("--status works without a guide", async () => {
-		writeToken(ORPHAN, { accessToken: "T", expiresAt: Date.now() + 3_600_000 });
+		writeToken(ORPHAN, CC, TT, {
+			accessToken: "T",
+			expiresAt: Date.now() + 3_600_000,
+		});
 		const { ctx, out } = mockNotify();
 		await handleOauthSubcommand(`${ORPHAN} --status`, ctx);
 		expect(out()).toContain("no guide");
@@ -433,13 +470,20 @@ describe("handleOauthSubcommand guide-less paths", () => {
 	});
 
 	it("--revoke clears the token + pending flow locally, no guide needed", async () => {
-		writeToken(ORPHAN, { accessToken: "T", expiresAt: Date.now() + 3_600_000 });
-		writePendingFlow(ORPHAN, { verifier: "v", state: "s" });
+		writeToken(ORPHAN, CC, TT, {
+			accessToken: "T",
+			expiresAt: Date.now() + 3_600_000,
+		});
+		writePendingFlow(ORPHAN, CC, TT, {
+			verifier: "v",
+			state: "s",
+			redirectUri: "http://127.0.0.1/callback",
+		});
 		const { ctx, out } = mockNotify();
 		await handleOauthSubcommand(`${ORPHAN} --revoke`, ctx);
 		expect(out()).toContain("cleared locally");
-		expect(readToken(ORPHAN)).toBeNull();
-		expect(readPendingFlow(ORPHAN)).toBeNull();
+		expect(readToken(ORPHAN, CC, TT)).toBeNull();
+		expect(readPendingFlow(ORPHAN, CC, TT)).toBeNull();
 	});
 
 	it("--revoke with no token says so (no guide error)", async () => {

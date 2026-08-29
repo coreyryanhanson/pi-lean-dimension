@@ -7,12 +7,15 @@
  * {name, description} pairs, client credentials as STORE NAMES); the tool
  * does only what the agent cannot: fail-closed validation, store-name
  * precheck, the token-URL confirm prompt (the human is the trust root for the
- * secret-bearing destination), the scopes checklist picker, the paste prompt
+ * secret-bearing destination) with the redirect-URI edit folded in as a
+ * third action (auth-code select: Confirm / Change redirect URI / Esc), the
+ * scopes checklist picker, the paste prompt
  * (the redirect URL never enters the transcript), and the mint/stamp via the
  * existing `mintAuthCodeToken` / `resolveAccessToken` machinery.
  *
- * Prompt order is deliberate (cheapest-to-cancel first): confirm → picker →
- * paste. A cancel at the confirm or picker never discards a completed browser
+ * Prompt order is deliberate (cheapest-to-cancel first): confirm/select →
+ * picker → paste. A cancel at the confirm/select, redirect-URI input, or
+ * picker never discards a completed browser
  * authorization. Any cancel throws with the two-call `init … --code`
  * escape-hatch hint (plain `/api oauth <domain> --code` cannot complete
  * guide-less; bootstrap is guide-less by definition).
@@ -32,8 +35,8 @@ import {
 } from "../core/auth.js";
 import type { SyntheticOAuth2Fields } from "../core/auth.js";
 import { listNames } from "../core/secrets-store.js";
-import { deleteToken } from "../core/oauth-store.js";
-import { mintAuthCodeToken } from "../core/oauth-flow.js";
+import { readToken, deleteToken } from "../core/oauth-store.js";
+import { mintAuthCodeToken, REDIRECT_URI } from "../core/oauth-flow.js";
 import { pickChecklist } from "../core/select-picker.js";
 import { appendFooter } from "./utils.js";
 
@@ -146,6 +149,12 @@ export const oauthMintTool = defineTool({
 				},
 			),
 		),
+		redirectUri: Type.Optional(
+			Type.String({
+				description:
+					"Redirect URI registered in the user's OAuth app (authorization_code only; default http://127.0.0.1/callback). Some providers constrain the spelling (Twitch: https or localhost; OSM: unencrypted must be 127.0.0.1) — supply the user's registered URI when it differs from the default. Proposed in the combined endpoint-confirm dialog; the human can change it inline there.",
+			}),
+		),
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -161,6 +170,7 @@ export const oauthMintTool = defineTool({
 				| "client_secret_basic"
 				| "client_secret_post"
 				| "none";
+			redirectUri?: string;
 		};
 
 		// H1 — one guard at the top; no degraded half-flow.
@@ -207,11 +217,39 @@ export const oauthMintTool = defineTool({
 		// Token-URL confirm — the FIRST prompt, both grants, before any
 		// exchange: tokenUrl is the one agent-supplied parameter that receives
 		// secret values, and the agent's research source is untrusted.
-		const confirmed = await ctx.ui.confirm(
-			`Confirm the token endpoint for '${storeDomain}'`,
-			`Exchange credentials at ${p.tokenUrl} (client: '${p.clientId}')? The client secret is sent to this URL.`,
-		);
-		if (!confirmed) throw cancelledError(p.domain, fields);
+		//
+		// Redirect URI — human-editable override of the RFC 8252 loopback
+		// default (auth-code only). The human owns their OAuth app
+		// registration, so while the agent proposes a value, the human can
+		// correct it inline before consenting — it decides where the provider
+		// sends the auth code (same trust class as the token endpoint).
+		// Auth-code folds both into ONE select: "Confirm" accepts endpoint +
+		// redirect URI as proposed (the common case — no extra dialog);
+		// "Change redirect URI" drops to an input, then loops back so the
+		// updated value is visible before consenting. Esc/undefined cancels.
+		let redirectUri = p.redirectUri ?? REDIRECT_URI;
+		if (p.grant === "authorization_code") {
+			for (;;) {
+				const choice = await ctx.ui.select(
+					`Confirm the token endpoint for '${storeDomain}' — exchange credentials at ${p.tokenUrl} (client: '${p.clientId}'; the client secret is sent to this URL). Redirect URI: ${redirectUri}`,
+					["Confirm", "Change redirect URI"],
+				);
+				if (choice === undefined) throw cancelledError(p.domain, fields);
+				if (choice === "Confirm") break;
+				const entered = await ctx.ui.input(
+					`Redirect URI for '${storeDomain}' — where the provider sends the auth code (must match your app registration). Proposed: ${redirectUri}`,
+					`Enter to keep ${redirectUri}, or type an override`,
+				);
+				if (entered === undefined) throw cancelledError(p.domain, fields);
+				if (entered !== "") redirectUri = entered;
+			}
+		} else {
+			const confirmed = await ctx.ui.confirm(
+				`Confirm the token endpoint for '${storeDomain}'`,
+				`Exchange credentials at ${p.tokenUrl} (client: '${p.clientId}')? The client secret is sent to this URL.`,
+			);
+			if (!confirmed) throw cancelledError(p.domain, fields);
+		}
 
 		// Scopes checklist — the human's affirmative grant. No scopes → skip.
 		let pickedScopes: string[] | undefined;
@@ -235,16 +273,35 @@ export const oauthMintTool = defineTool({
 		};
 		const finalSynthetic = buildSyntheticOAuth2Auth(finalFields);
 
+		// Mint-time overwrite warning (Phase 2.9): slots are keyed
+		// (domain, grant, tokenUrl), so a same-grant re-mint with different
+		// scopes/issuer silently replaces the previous token. The scope
+		// collision is reachable through all three bootstrap surfaces — surface
+		// a cheap warning before the mint instead of silently clobbering.
+		const existing = readToken(
+			storeDomain,
+			finalSynthetic.grant,
+			finalSynthetic.tokenUrl,
+		);
+		if (existing) {
+			ctx.ui.notify(
+				`⚠ Overwriting an existing token for this slot (${finalSynthetic.grant}) — previous scope: ${existing.scope ?? "(none)"}.`,
+				"warning",
+			);
+		}
+
 		try {
 			if (finalSynthetic.grant === "client_credentials") {
 				// Bootstrap wants a fresh mint, not a cached token (mirrors the
-				// init wizard / --refresh path).
-				deleteToken(storeDomain);
+				// init wizard / --refresh path). Slot-scoped delete: a bare
+				// domain delete would leave a stale prior-grant/prior-issuer slot
+				// surviving the re-mint — the exact clobber class 2.9 fixes.
+				deleteToken(storeDomain, finalSynthetic.grant, finalSynthetic.tokenUrl);
 				await resolveAccessToken(finalSynthetic, storeDomain);
 			} else {
 				// Prints the authorize URL + paste prompt (retry loop inside);
 				// cancel lands in the OAuthTokenMissingError handler below.
-				await mintAuthCodeToken(finalSynthetic, storeDomain, ctx, {});
+				await mintAuthCodeToken(finalSynthetic, storeDomain, ctx, { redirectUri });
 			}
 		} catch (err) {
 			if (err instanceof OAuthTokenMissingError)

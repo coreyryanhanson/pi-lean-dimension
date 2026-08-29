@@ -282,14 +282,17 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `verify-stamp` logic lives in `parse-api-guide.ts` (`stampFrontmatterField`),
   `delete-command.ts` (`/api delete` — `rm -rf` + `invalidateCache()`),
   `auth.ts` (static-key secret resolution + shared auth-status footer +
-  OAuth2 token resolution: `resolveAccessToken` mint/refresh + per-domain
+  OAuth2 token resolution: `resolveAccessToken` mint/refresh + per-slot
   lock + skew buffer, `exchangeAuthCode`, `forceRefreshToken`,
-  `hasUsableTokenPath`, `revokeAccessToken`), `oauth-store.ts` (per-domain
-  token store + pending auth-code flow — 0600 file backend, swappable
-  `TokenStore` interface, kept free of any `auth.ts` import),
+  `hasUsableTokenPath`, `revokeAccessToken`), `oauth-store.ts` (per-domain,
+  slot-keyed token store — slots `(domain, grant, tokenUrl)` via `slotKey`,
+  one `<domain>.json` holding `Record<slot, OAuthToken>` — + pending
+  auth-code flow (slot-keyed `<domain>.pending.json`) — 0600 file backend,
+  swappable `TokenStore` interface, kept free of any `auth.ts` import),
   `oauth-command.ts` (`/api oauth` — mint / `--status` / `--refresh` /
-  `--revoke` / `--code <code>` / bare listing; `--status` + `--revoke` also
-  work guide-less on orphaned tokens — local-only clear, no `revokeUrl`), `oauth-flow.ts` (headless paste-based
+  `--revoke` / `--code <code>` / bare per-slot listing; `--status` +
+  `--revoke` also work guide-less on orphaned slots (grant qualifier
+  disambiguates 2+ slot domains) — local-only clear, no `revokeUrl`), `oauth-flow.ts` (headless paste-based
   auth-code + PKCE dance: PKCE pair gen, `buildAuthorizeUrl`,
   `parsePastedRedirect` (full redirect URL / bare code, state check,
   `?error=` surfacing), `mintAuthCodeToken` orchestration, the

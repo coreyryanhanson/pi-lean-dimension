@@ -396,7 +396,7 @@ describe("/api verify — oauth2 auth precheck", () => {
 
 	it("proceeds when an authorization_code guide has a valid cached token", async () => {
 		setupGuide(recipe(opBlock(OP_HEALTH), oauthAuthBlock("authorization_code")));
-		writeToken("verify.test", {
+		writeToken("verify.test", "authorization_code", "https://verify.test/oauth/token", {
 			accessToken: "VALID",
 			expiresAt: Date.now() + 300_000,
 		});

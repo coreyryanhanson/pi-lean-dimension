@@ -544,10 +544,15 @@ describe("probe redirect handling (live localhost)", () => {
 			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-ok-"));
 			const prevDir = getOAuthDir();
 			setOAuthDir(tmp);
-			writeToken("example.com", {
-				accessToken: "tok_secret_value",
-				expiresAt: Date.now() + 600_000,
-			});
+			writeToken(
+				"example.com",
+				"client_credentials",
+				"https://token.example.test/oauth/token",
+				{
+					accessToken: "tok_secret_value",
+					expiresAt: Date.now() + 600_000,
+				},
+			);
 			let seenAuth: string | undefined;
 			const server = http.createServer((req, res) => {
 				seenAuth = req.headers.authorization;
@@ -564,7 +569,11 @@ describe("probe redirect handling (live localhost)", () => {
 					{},
 					{
 						domain: "example.com",
-						auth: { useTokenStore: true },
+						auth: {
+							useTokenStore: true,
+							grant: "client_credentials",
+							tokenUrl: "https://token.example.test/oauth/token",
+						},
 					},
 				);
 				expect(seenAuth).toBe("Bearer tok_secret_value");
@@ -599,7 +608,11 @@ describe("probe redirect handling (live localhost)", () => {
 					{},
 					{
 						domain: "example.com",
-						auth: { useTokenStore: true },
+						auth: {
+							useTokenStore: true,
+							grant: "client_credentials",
+							tokenUrl: "https://token.example.test/oauth/token",
+						},
 					},
 				);
 				// Probe misses are never fail-closed: request went out, no header.
@@ -620,10 +633,15 @@ describe("probe redirect handling (live localhost)", () => {
 			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-exp-"));
 			const prevDir = getOAuthDir();
 			setOAuthDir(tmp);
-			writeToken("example.com", {
-				accessToken: "tok_stale",
-				expiresAt: Date.now() - 1_000,
-			});
+			writeToken(
+				"example.com",
+				"client_credentials",
+				"https://token.example.test/oauth/token",
+				{
+					accessToken: "tok_stale",
+					expiresAt: Date.now() - 1_000,
+				},
+			);
 			let sawAuthHeader = false;
 			const server = http.createServer((req, res) => {
 				sawAuthHeader = req.headers.authorization !== undefined;
@@ -639,7 +657,11 @@ describe("probe redirect handling (live localhost)", () => {
 					{},
 					{
 						domain: "example.com",
-						auth: { useTokenStore: true },
+						auth: {
+							useTokenStore: true,
+							grant: "client_credentials",
+							tokenUrl: "https://token.example.test/oauth/token",
+						},
 					},
 				);
 				// A stale token is not sent (a 401 from it would mislead the author).
@@ -650,6 +672,28 @@ describe("probe redirect handling (live localhost)", () => {
 			} finally {
 				server.close();
 				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("useTokenStore without grant + tokenUrl is a loud validation error, not a silent miss", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-badkey-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			try {
+				await expect(
+					probe(
+						"https://example.com",
+						"/me",
+						{},
+						{
+							domain: "example.com",
+							auth: { useTokenStore: true },
+						},
+					),
+				).rejects.toThrow(/auth\.useTokenStore requires auth\.grant/);
+			} finally {
 				setOAuthDir(prevDir);
 				rmSync(tmp, { recursive: true, force: true });
 			}
@@ -706,7 +750,10 @@ describe("probe redirect handling (live localhost)", () => {
 				expect(tokenPosts).toBe(1);
 				expect(seenAuth).toBe("Bearer minted_tok");
 				// The mint stamped the token store for the rest of the loop.
-				expect(readToken("example.com")?.accessToken).toBe("minted_tok");
+				expect(
+					readToken("example.com", "client_credentials", `${base}/token`)
+						?.accessToken,
+				).toBe("minted_tok");
 				expect(result.ok).toBe(true);
 				// Output-channel audit: the minted token never surfaces.
 				expect(result.raw).not.toContain("minted_tok");
@@ -723,10 +770,6 @@ describe("probe redirect handling (live localhost)", () => {
 			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-cache-"));
 			const prevDir = getOAuthDir();
 			setOAuthDir(tmp);
-			writeToken("example.com", {
-				accessToken: "cached_tok",
-				expiresAt: Date.now() + 600_000,
-			});
 			let tokenPosts = 0;
 			let seenAuth: string | undefined;
 			const server = http.createServer((req, res) => {
@@ -743,6 +786,11 @@ describe("probe redirect handling (live localhost)", () => {
 			await new Promise<void>((r) => server.listen(0, r));
 			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 			try {
+				// Same slot the mint stamps: (client_credentials, ${base}/token).
+				writeToken("example.com", "client_credentials", `${base}/token`, {
+					accessToken: "cached_tok",
+					expiresAt: Date.now() + 600_000,
+				});
 				const result = await probe(
 					base,
 					"/me",

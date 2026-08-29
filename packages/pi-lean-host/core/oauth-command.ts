@@ -11,6 +11,8 @@
  *   re-mint; authorization_code: refresh via the stored refresh token, or a
  *   fresh authorize URL when there is none).
  * - `oauth <domain> --revoke`  — revoke at the provider's revokeUrl (if declared) and clear the store.
+ *   Tokens live in slot-keyed store entries (`<grant>__<hash(tokenUrl)>` within
+ *   one `<domain>.json`), so an app token and a user token coexist per domain.
  * - `oauth <domain> --code <code>` — complete an authorization-code flow with
  *   the pasted redirect URL (or bare code) from a previous authorize step.
  * - `oauth init <domain> [flags]` — guide-less bootstrap (Phase 2.7): provision
@@ -20,7 +22,7 @@
  *   two-call `init <domain> <same flags> --code <paste>`. Client credentials
  *   are secrets-store NAMES picked from what's provisioned — values never
  *   enter the transcript.
- * - `oauth` (bare)             — list token-store domains with status metadata.
+ * - `oauth` (bare)             — list token-store slots (domain · grant · issuer) with status metadata.
  *
  * Tokens can outlive their guide (deleted via /api delete, or minted while
  * testing), so bare listing, `--status`, and `--revoke` also work guide-less
@@ -56,7 +58,9 @@ import {
 	readToken,
 	deleteToken,
 	deletePendingFlow,
+	readPendingFlow,
 	listTokenDomains,
+	listSlots,
 	getOAuthDir,
 } from "./oauth-store.js";
 import type { OAuthToken } from "./oauth-store.js";
@@ -77,6 +81,10 @@ function helpText(): string {
 		"  /api oauth <domain> --revoke  revoke at the guide's revokeUrl (if declared) and clear the store",
 		"  /api oauth <domain> --code <code>  complete an auth-code flow with the pasted",
 		"                                redirect URL (or bare code)",
+		"  /api oauth <domain> [--redirect-uri <url>]  override the default redirect URI",
+		"                                (default http://127.0.0.1/callback; some providers",
+		"                                require the localhost spelling or https — match your",
+		"                                app registration; only matters for auth-code mint)",
 		"  /api oauth init <domain>     guide-less bootstrap (no oauth2 guide needed):",
 		"                               interactive wizard (TUI), or headless flags:",
 		"                               --grant client_credentials|authorization_code",
@@ -86,10 +94,13 @@ function helpText(): string {
 		"                               auth-code completion (headless two-call): /api oauth init",
 		"                               <domain> <same flags> --code <redirect-url-or-code>",
 		"  /api oauth                    list token-store domains (guide-independent);",
-		"                                --status/--revoke on orphaned tokens use the literal domain",
+		"                                --status/--revoke on orphaned tokens accept an",
+		"                                optional grant qualifier when the domain has 2+ slots",
 		"",
-		`Tokens are stored per-domain as JSON (0600) at ${getOAuthDir()}/<domain>.json.`,
-		"The client secret lives in the secrets store (/api secrets <domain>), never here.",
+		`Tokens are stored per-domain (0600) at ${getOAuthDir()}/<domain>.json, keyed by`,
+		"slot = <grant>__<hash(tokenUrl)> — one domain can hold an app token and a user",
+		"token (and tokens from two issuers) side by side. The client secret lives in",
+		"the secrets store (/api secrets <domain>), never here.",
 	].join("\n");
 }
 
@@ -103,6 +114,25 @@ function tokenExpiry(token: OAuthToken): string {
 	return token.expiresAt === undefined
 		? "unknown"
 		: new Date(token.expiresAt).toISOString();
+}
+
+/** The grant qualifier accepted after a domain in `--status`/`--revoke`. */
+type GrantQualifier = "client_credentials" | "authorization_code";
+const GRANT_QUALIFIERS: readonly GrantQualifier[] = [
+	"client_credentials",
+	"authorization_code",
+];
+
+/** Render slot rows (grant · issuer · state) for a listing / usage error. */
+function slotRows(
+	slots: { grant: string; tokenUrl: string; token: OAuthToken }[],
+): string {
+	return slots
+		.map(
+			(s) =>
+				`  · ${s.grant} · ${s.tokenUrl || "(unknown issuer)"} — ${tokenState(s.token)}`,
+		)
+		.join("\n");
 }
 
 /**
@@ -142,10 +172,33 @@ export async function handleOauthSubcommand(
 		);
 		return;
 	}
+	// `--redirect-uri <url>`: override of the RFC 8252 default redirect URI for
+	// the mint arm — some providers constrain the spelling (Twitch: https or
+	// `localhost`; OSM: unencrypted must be 127.0.0.1). Stored on the pending
+	// flow, so the `--code` completion needs no flag.
+	const redirectUriIdx = parts.indexOf("--redirect-uri");
+	const redirectUriArg =
+		redirectUriIdx >= 0 ? parts[redirectUriIdx + 1] : undefined;
+	if (parts.includes("--redirect-uri") && redirectUriArg === undefined) {
+		ctx.ui.notify(
+			"Usage: /api oauth <domain> --redirect-uri <url> — the redirect URI is missing.",
+			"warning",
+		);
+		return;
+	}
+	// Positional tokens = everything except the flags and the values the
+	// value-flags consumed (position-based — a value that happens to spell a
+	// flag name must not be mistaken for one).
+	const valueFlagIdx = new Set<number>();
+	for (const f of ["--code", "--redirect-uri"]) {
+		const i = parts.indexOf(f);
+		if (i >= 0 && parts[i + 1] !== undefined) valueFlagIdx.add(i + 1);
+	}
 	const tokens = parts.filter(
-		(p) =>
-			p !== codeArg &&
-			!["--status", "--refresh", "--revoke", "--code"].includes(p),
+		(p, i) =>
+			!["--status", "--refresh", "--revoke", "--code", "--redirect-uri"].includes(
+				p,
+			) && !valueFlagIdx.has(i),
 	);
 	const domain = tokens[0];
 	const selector = tokens[1];
@@ -162,12 +215,16 @@ export async function handleOauthSubcommand(
 		}
 		const lines = ["🔑 OAuth2 token store:"];
 		for (const d of domains) {
-			const t = readToken(d);
-			lines.push(
-				t
-					? `  ${d} — ${tokenState(t)}, expires ${tokenExpiry(t)}`
-					: `  ${d} — unreadable`,
-			);
+			const slots = listSlots(d);
+			if (slots.length === 0) {
+				lines.push(`  ${d} — unreadable`);
+				continue;
+			}
+			for (const s of slots) {
+				lines.push(
+					`  ${d} · ${s.grant} · ${s.tokenUrl || "(unknown issuer)"} — ${tokenState(s.token)}, expires ${tokenExpiry(s.token)}`,
+				);
+			}
 		}
 		ctx.ui.notify(lines.join("\n"), "info");
 		return;
@@ -177,33 +234,84 @@ export async function handleOauthSubcommand(
 	const allMatches = findGuidesByDomain(domain);
 	if (allMatches.length === 0) {
 		// Guide-less fallback: tokens can outlive their guide, so --status /
-		// --revoke work on the literal domain. Minting/refreshing still needs
-		// the guide's tokenUrl + grant.
-		if (statusFlag) {
-			const token = readToken(domain);
-			ctx.ui.notify(
-				token
-					? [
-							`🔑 OAuth2 for '${domain}' (no guide)`,
-							`  State: ${tokenState(token)}`,
-							`  Expires: ${tokenExpiry(token)}`,
-							...(token.refreshToken ? ["  Refresh token: present"] : []),
-							...(token.scope ? [`  Scope: ${token.scope}`] : []),
-						].join("\n")
-					: `🔑 OAuth2 for '${domain}': no token.`,
-				"info",
-			);
-			return;
-		}
-		if (revokeFlag) {
-			if (!readToken(domain)) {
-				ctx.ui.notify(`🔑 OAuth2 for '${domain}': no token.`, "info");
+		// --revoke work on the orphaned slots (all of them, or the one a grant
+		// qualifier names when the domain has 2+). The lookup applies the same
+		// parent-domain normalization `init` stamps with, so a subdomain spelling
+		// still finds the slots. Minting/refreshing still needs auth facts.
+		if (statusFlag || revokeFlag) {
+			const storeDomain = resolveProvisionedParentDomain(domain);
+			const qualifier = tokens[1];
+			if (
+				qualifier !== undefined &&
+				!GRANT_QUALIFIERS.includes(qualifier as GrantQualifier)
+			) {
+				ctx.ui.notify(
+					`Unknown grant qualifier '${qualifier}' — use client_credentials or authorization_code.`,
+					"warning",
+				);
 				return;
 			}
-			deletePendingFlow(domain);
-			deleteToken(domain);
+			const slots = listSlots(storeDomain);
+			if (slots.length === 0) {
+				ctx.ui.notify(
+					`🔑 OAuth2 for '${storeDomain}' (no guide): no token.`,
+					"info",
+				);
+				return;
+			}
+			const target =
+				qualifier === undefined
+					? slots
+					: slots.filter((s) => s.grant === qualifier);
+			if (target.length === 0) {
+				ctx.ui.notify(
+					`🔑 OAuth2 for '${storeDomain}' — no '${qualifier}' slot. Slots:\n` +
+						slotRows(slots),
+					"info",
+				);
+				return;
+			}
+			if (target.length > 1) {
+				if (qualifier === undefined) {
+					// 2+ slots and no qualifier — list + usage error, never a guess.
+					ctx.ui.notify(
+						`🔑 OAuth2 for '${storeDomain}' (no guide) has ${target.length} slots — pass the grant qualifier (client_credentials | authorization_code):\n` +
+							slotRows(target),
+						"info",
+					);
+					return;
+				}
+				// Same grant on two issuers behind one domain — the grant qualifier
+				// alone can't disambiguate; list and stop, never a guess.
+				ctx.ui.notify(
+					`🔑 OAuth2 for '${storeDomain}' has ${target.length} '${qualifier}' slots (two issuers, same grant) — the grant qualifier alone can't disambiguate; use a guide-backed call.\n` +
+						slotRows(target),
+					"info",
+				);
+				return;
+			}
+			const slot = target[0]!;
+			if (statusFlag) {
+				const pending = readPendingFlow(storeDomain, slot.grant, slot.tokenUrl);
+				ctx.ui.notify(
+					[
+						`🔑 OAuth2 for '${storeDomain}' (no guide) — slot ${slot.grant}`,
+						`  Token URL: ${slot.tokenUrl || "(unknown)"}`,
+						`  State: ${tokenState(slot.token)}`,
+						`  Expires: ${tokenExpiry(slot.token)}`,
+						...(slot.token.refreshToken ? ["  Refresh token: present"] : []),
+						...(slot.token.scope ? [`  Scope: ${slot.token.scope}`] : []),
+						...(pending ? ["  Pending flow: awaiting --code paste"] : []),
+					].join("\n"),
+					"info",
+				);
+				return;
+			}
+			// revoke — guide-less, so provider-side revocation isn't possible.
+			deletePendingFlow(storeDomain, slot.grant, slot.tokenUrl);
+			deleteToken(storeDomain, slot.grant, slot.tokenUrl);
 			ctx.ui.notify(
-				`🔑 OAuth2 token for '${domain}' cleared locally — no guide, so provider-side revocation was not attempted.`,
+				`🔑 OAuth2 token slot (${slot.grant}) for '${storeDomain}' cleared locally — no guide, so provider-side revocation was not attempted.`,
 				"info",
 			);
 			return;
@@ -271,7 +379,9 @@ export async function handleOauthSubcommand(
 
 	if (revokeFlag) {
 		await revokeAccessToken(auth, storeDomain);
-		deletePendingFlow(storeDomain);
+		// Slot-scoped: a bare pending delete would leave a stale verifier for a
+		// sibling-grant/prior-issuer slot to consume.
+		deletePendingFlow(storeDomain, auth.grant, auth.tokenUrl);
 		ctx.ui.notify(
 			`🔑 OAuth2 token for '${storeDomain}' revoked and cleared.`,
 			"info",
@@ -280,7 +390,7 @@ export async function handleOauthSubcommand(
 	}
 
 	if (statusFlag) {
-		const token = readToken(storeDomain);
+		const token = readToken(storeDomain, auth.grant, auth.tokenUrl);
 		if (!token) {
 			ctx.ui.notify(
 				`🔑 OAuth2 for '${storeDomain}': no token. Run /api oauth ${storeDomain} to mint one.`,
@@ -309,9 +419,10 @@ export async function handleOauthSubcommand(
 			await mintAuthCodeToken(auth, storeDomain, ctx, {
 				...(codeArg === undefined ? {} : { code: codeArg }),
 				...(refreshFlag ? { refresh: true } : {}),
+				...(redirectUriArg === undefined ? {} : { redirectUri: redirectUriArg }),
 			});
 		} else {
-			if (refreshFlag) deleteToken(storeDomain);
+			if (refreshFlag) deleteToken(storeDomain, auth.grant, auth.tokenUrl);
 			await resolveAccessToken(auth, storeDomain);
 		}
 	} catch (err) {
@@ -346,6 +457,8 @@ const INIT_USAGE = [
 	"    --authorize-url <url>        required for authorization_code",
 	"    --scopes a,b                 comma-separated",
 	"    --token-endpoint-auth-method client_secret_post|client_secret_basic|none",
+	"    --redirect-uri <url>         override the default redirect URI (default",
+	"                                 http://127.0.0.1/callback — match your app registration)",
 	"  auth-code completion (headless two-call): re-run with the same flags + --code <redirect-url-or-code>.",
 	"  Client credentials are store names resolved from the secrets store — values never enter the transcript.",
 ].join("\n");
@@ -359,6 +472,7 @@ const INIT_FLAG_NAMES: readonly string[] = [
 	"--client-secret",
 	"--scopes",
 	"--token-endpoint-auth-method",
+	"--redirect-uri",
 	"--code",
 ];
 
@@ -537,16 +651,23 @@ async function handleOauthInit(
 		if (synthetic.grant === "client_credentials") {
 			// Bootstrap wants a fresh mint, not a cached token (mirrors the
 			// plain command's --refresh path).
-			deleteToken(storeDomain);
+			deleteToken(storeDomain, synthetic.grant, synthetic.tokenUrl);
 			await resolveAccessToken(synthetic, storeDomain);
 			provisionedMsg();
 			return;
 		}
 		// authorization_code start: prints the authorize URL and persists the
-		// pending flow; interactive users complete inline, headless awaits
-		// `init ... --code`.
+		// pending flow (including the redirect URI, so the --code completion
+		// exchanges with the same value); interactive users complete inline,
+		// headless awaits `init ... --code`.
+		const mintRedirectUri = flags["--redirect-uri"];
 		try {
-			await mintAuthCodeToken(synthetic, storeDomain, ctx, {});
+			await mintAuthCodeToken(
+				synthetic,
+				storeDomain,
+				ctx,
+				mintRedirectUri === undefined ? {} : { redirectUri: mintRedirectUri },
+			);
 			provisionedMsg();
 		} catch (err) {
 			if (!(err instanceof OAuthTokenMissingError)) throw err;

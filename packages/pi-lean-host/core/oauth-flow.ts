@@ -156,21 +156,22 @@ function validatePasted(pasted: string, state: string): string {
 	return parsed.code;
 }
 
-/** Exchange the code and stamp the token store. */
+/** Exchange the code and stamp the token store (slot-keyed by the auth). */
 async function exchangeAndStamp(
 	auth: OAuth2Auth,
 	storeDomain: string,
 	code: string,
 	verifier: string,
+	redirectUri: string,
 ): Promise<OAuthToken> {
 	const token = await exchangeAuthCode(
 		auth,
 		storeDomain,
 		code,
-		REDIRECT_URI,
+		redirectUri,
 		verifier,
 	);
-	writeToken(storeDomain, token);
+	writeToken(storeDomain, auth.grant, auth.tokenUrl, token);
 	return token;
 }
 
@@ -180,6 +181,10 @@ export interface AuthCodeMintOptions {
 	code?: string;
 	/** Force a refresh via the stored refresh token (no re-consent). */
 	refresh?: boolean;
+	/** Override of the default redirect URI — sent as `redirect_uri` in the
+	 *  authorize request AND stored on the pending flow so the `--code`
+	 *  completion exchanges with the same value (RFC 6749 §4.1.3). */
+	redirectUri?: string;
 }
 
 /**
@@ -212,7 +217,7 @@ export async function mintAuthCodeToken(
 			// no refresh token → fall through to a fresh authorize flow
 		}
 	}
-	return startAuthCodeFlow(auth, storeDomain, ctx);
+	return startAuthCodeFlow(auth, storeDomain, ctx, opts.redirectUri);
 }
 
 /**
@@ -242,7 +247,8 @@ function printableAuthorizeUrl(url: string): string {
 
 /**
  * The primary — and only — authorize path. Generates the PKCE pair + state,
- * builds the authorize URL with the `http://127.0.0.1/callback` convention,
+ * builds the authorize URL with the redirect URI (default: the
+ * `http://127.0.0.1/callback` convention, overridable per invocation),
  * persists the pending flow (the verifier MUST survive so the later exchange
  * matches the challenge sent in the authorize URL), prints the URL, and
  * either prompts for the paste (TUI) or throws awaiting `--code` (headless).
@@ -251,20 +257,25 @@ async function startAuthCodeFlow(
 	auth: OAuth2Auth,
 	storeDomain: string,
 	ctx: ExtensionContext,
+	redirectUri: string = REDIRECT_URI,
 ): Promise<OAuthToken> {
 	const { verifier, challenge } = generatePkcePair();
 	const state = generateState();
 	const authorizeUrl = buildAuthorizeUrl(
 		auth,
-		REDIRECT_URI,
+		redirectUri,
 		challenge,
 		state,
 		resolveClientCredentials(auth, storeDomain).clientId,
 	);
-	writePendingFlow(storeDomain, { verifier, state });
+	writePendingFlow(storeDomain, auth.grant, auth.tokenUrl, {
+		verifier,
+		state,
+		redirectUri,
+	});
 	ctx.ui.notify(
 		`🔑 Open this URL in YOUR browser and authorize (log in with your own credentials — the agent never sees them). ` +
-			`Your OAuth app needs '${REDIRECT_URI}' registered (RFC 8252 §7.3 — loopback, any port). ` +
+			`Your OAuth app needs '${redirectUri}' registered as its redirect URI (default: RFC 8252 §7.3 — loopback, any port). ` +
 			`After consenting, copy the redirect URL from the browser's address bar.\n\n` +
 			printableAuthorizeUrl(authorizeUrl),
 		"info",
@@ -300,13 +311,16 @@ async function startAuthCodeFlow(
 	);
 }
 
-/** `--code` (or interactive-prompt) completion: parse, validate state, exchange. */
+/** `--code` (or interactive-prompt) completion: parse, validate state, exchange.
+ *  The pending flow is read/written under the slot derived from the synthetic
+ *  (or guide-backed) auth, so two auth-code issuers on one domain can't
+ *  consume each other's verifier. */
 async function completePastedCode(
 	auth: OAuth2Auth,
 	storeDomain: string,
 	pasted: string,
 ): Promise<OAuthToken> {
-	const pending = readPendingFlow(storeDomain);
+	const pending = readPendingFlow(storeDomain, auth.grant, auth.tokenUrl);
 	if (!pending) {
 		throw new OAuthTokenMissingError(
 			`No pending OAuth2 authorization flow for '${storeDomain}'. ` +
@@ -314,12 +328,18 @@ async function completePastedCode(
 		);
 	}
 	const code = validatePasted(pasted, pending.state);
+	// The exchange's redirect_uri must match the authorize request's exactly
+	// (RFC 6749 §4.1.3) — read it back from the pending flow, which remembers
+	// what was sent. Records missing the field are rejected at read time, so
+	// a pre-field pending entry just reads as "no pending flow" (re-run the
+	// authorize step — tokens/pending are re-mintable, no migration).
 	const token = await exchangeAndStamp(
 		auth,
 		storeDomain,
 		code,
 		pending.verifier,
+		pending.redirectUri,
 	);
-	deletePendingFlow(storeDomain);
+	deletePendingFlow(storeDomain, auth.grant, auth.tokenUrl);
 	return token;
 }

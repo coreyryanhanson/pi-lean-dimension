@@ -29,7 +29,8 @@
 		"./core/local-helpers.js": "./core/local-helpers.ts",
 		"./core/api-guide-types.js": "./core/api-guide-types.ts",
 		"./core/transport.js": "./core/transport.ts",
-		"./core/auth.js": "./core/auth.ts"
+		"./core/auth.js": "./core/auth.ts",
+		"./core/resolve-op.js": "./core/resolve-op.ts"
 	},
 	"files": [
 		"index.ts",

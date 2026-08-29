@@ -1,12 +1,20 @@
 /**
- * OAuth2 token store — per-domain token-set persistence.
+ * OAuth2 token store — per-domain, per-slot token persistence.
  *
- * File backend: `~/.pi/agent/pi-lean-host/oauth/<domain>.json`, one token
- * object per domain. SEPARATE from the secrets store because tokens rotate
- * and have structure (`expiresAt`, `refreshToken`) — raw secrets don't. Two
- * 0600 file stores with the same `SecretStore`-style interface shape is
- * simpler than one overloaded file. `client_secret` stays in the secrets
- * store (a raw credential provisioned once); only minted tokens live here.
+ * File backend: `~/.pi/agent/pi-lean-host/oauth/<domain>.json`, one file per
+ * domain holding `Record<slot, OAuthToken>` — the secrets-store's per-domain
+ * name-keyed shape, not a filename-as-database layout. The slot key derives
+ * from `(grant, tokenUrl)` via `slotKey` (Phase 2.9): the same domain can
+ * hold an app token and a user token (and tokens from two issuers) without
+ * clobbering, while multi-recipe domains sharing one grant + issuer keep
+ * sharing a slot. `slotKey` takes the two facts structurally — the store
+ * layer stays free of `auth.ts` types.
+ *
+ * SEPARATE from the secrets store because tokens rotate and have structure
+ * (`expiresAt`, `refreshToken`) — raw secrets don't. Two 0600 file stores
+ * with the same interface shape is simpler than one overloaded file.
+ * `client_secret` stays in the secrets store (a raw credential provisioned
+ * once); only minted tokens live here.
  *
  * Security posture mirrors secrets-store.ts: 0600 files, lazy-mkdir on write
  * only, names-only listing. The store is swappable (the `TokenStore`
@@ -19,31 +27,66 @@
 
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
 	mkdirSync,
 	readFileSync,
 	readdirSync,
+	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { assertSafeDomain } from "./path-template.js";
 
-/** A minted token set for one domain. */
+/** A minted token set for one (domain, grant, tokenUrl) slot. */
 export interface OAuthToken {
 	accessToken: string;
 	refreshToken?: string;
 	/** Epoch ms when the access token expires. Absent → treat as never-expiring. */
 	expiresAt?: number;
 	scope?: string;
+	/** Facts this token was minted under — stamped by `write()` so the store
+	 *  is self-describing (status rows render the real issuer, not the hash). */
+	grant?: string;
+	tokenUrl?: string;
 }
 
-/** A token store: read/write/delete one domain's token set. */
+/**
+ * The token-slot key: `<grant>__<hash(tokenUrl)>`. Two tokens share a slot
+ * iff they share store domain + grant + token URL — same domain + same grant
+ * + same issuer → same slot (multi-recipe domains keep sharing); any
+ * difference → a different slot key in the same file. Hash the FULL URL
+ * (never just the path): two issuers behind one API domain can differ by
+ * host only (tenant-a vs tenant-b auth0). ≥16 hex chars of SHA-256 so
+ * tenant-farm issuers don't collide. TokenUrl *spelling* differences
+ * fragment slots rather than clobber — harmless, just expected.
+ */
+export function slotKey(grant: string, tokenUrl: string): string {
+	const hash = createHash("sha256").update(tokenUrl).digest("hex").slice(0, 16);
+	return `${grant}__${hash}`;
+}
+
+/** One slot's stored token, with the facts status rows render. */
+export interface TokenSlotInfo {
+	slot: string;
+	grant: string;
+	tokenUrl: string;
+	token: OAuthToken;
+}
+
+/**
+ * A token store: read/write/delete one (domain, slot) token; enumerate a
+ * domain's slots and the store's domains. One `<domain>.json` per domain
+ * holding `Record<slot, OAuthToken>` — slot enumeration is `Object.keys` of
+ * the file (the secrets store's `listNames` pattern), never filename parsing.
+ */
 export interface TokenStore {
-	read(domain: string): OAuthToken | null;
-	write(domain: string, token: OAuthToken): void;
-	delete(domain: string): void;
+	read(domain: string, slot: string): OAuthToken | null;
+	write(domain: string, slot: string, token: OAuthToken): void;
+	delete(domain: string, slot: string): void;
+	listSlots(domain: string): TokenSlotInfo[];
 	listDomains(): string[];
 }
 
@@ -54,47 +97,91 @@ export function createTokenStore(dir: string): TokenStore {
 		return join(dir, `${domain}.json`);
 	};
 
-	const readFile = (domain: string): OAuthToken | null => {
+	// Read a domain file as a slot→token map. Missing/corrupt file → {}.
+	// (A legacy pre-2.9 flat token file has no valid slot→token entries, so it
+	// reads as empty — tokens are re-minted, no migration.)
+	const readFileMap = (domain: string): Record<string, OAuthToken> => {
 		const p = domainPath(domain);
-		if (!existsSync(p)) return null;
+		if (!existsSync(p)) return {};
 		try {
 			const parsed: unknown = JSON.parse(readFileSync(p, "utf-8"));
-			if (
-				parsed &&
-				typeof parsed === "object" &&
-				!Array.isArray(parsed) &&
-				typeof (parsed as OAuthToken).accessToken === "string"
-			) {
-				return parsed as OAuthToken;
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+				return {};
 			}
-			return null;
+			const map: Record<string, OAuthToken> = {};
+			for (const [slot, value] of Object.entries(parsed)) {
+				if (
+					value &&
+					typeof value === "object" &&
+					!Array.isArray(value) &&
+					typeof (value as OAuthToken).accessToken === "string"
+				) {
+					map[slot] = value as OAuthToken;
+				}
+			}
+			return map;
 		} catch {
-			return null;
+			return {};
 		}
 	};
 
+	// Write the whole slot map atomically: tmp file + rename (atomic on POSIX)
+	// so a crash mid-write can't shred every slot of the domain at once.
+	const writeFileMap = (
+		domain: string,
+		map: Record<string, OAuthToken>,
+	): void => {
+		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+		const p = domainPath(domain);
+		const tmp = `${p}.tmp`;
+		writeFileSync(tmp, JSON.stringify(map, null, 2) + "\n", { mode: 0o600 });
+		try {
+			chmodSync(tmp, 0o600); // guard against umask overriding the mode
+		} catch {
+			// best-effort; rename still proceeds
+		}
+		renameSync(tmp, p);
+	};
+
+	const toSlotInfo = (slot: string, token: OAuthToken): TokenSlotInfo => ({
+		slot,
+		grant: token.grant ?? slot.slice(0, slot.indexOf("__")),
+		tokenUrl: token.tokenUrl ?? "",
+		token,
+	});
+
 	return {
-		read(domain) {
-			return readFile(domain);
+		read(domain, slot) {
+			return readFileMap(domain)[slot] ?? null;
 		},
-		write(domain, token) {
-			const p = domainPath(domain); // also asserts domain safety
-			if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-			writeFileSync(p, JSON.stringify(token, null, 2) + "\n", { mode: 0o600 });
-			try {
-				chmodSync(p, 0o600); // guard against umask overriding the mode
-			} catch {
-				// best-effort; file was already written
+		write(domain, slot, token) {
+			const map = readFileMap(domain); // sync RMW: atomic wrt the event loop
+			map[slot] = token;
+			writeFileMap(domain, map);
+		},
+		delete(domain, slot) {
+			const map = readFileMap(domain);
+			if (!Object.hasOwn(map, slot)) return;
+			delete map[slot];
+			if (Object.keys(map).length === 0) {
+				// Prune the empty file so the domain drops out of listDomains.
+				rmSync(domainPath(domain), { force: true });
+			} else {
+				writeFileMap(domain, map);
 			}
 		},
-		delete(domain) {
-			const p = domainPath(domain); // also asserts domain safety
-			if (existsSync(p)) rmSync(p, { force: true });
+		listSlots(domain) {
+			return Object.entries(readFileMap(domain))
+				.map(([slot, token]) => toSlotInfo(slot, token))
+				.sort((a, b) => a.slot.localeCompare(b.slot));
 		},
 		listDomains() {
 			if (!existsSync(dir)) return [];
+			// Exclude `<domain>.pending.json` — the pending-flow scratch file is
+			// not a token domain (a live pending flow must not surface as a
+			// bogus "unreadable" row in bare /api oauth).
 			return readdirSync(dir)
-				.filter((f) => f.endsWith(".json"))
+				.filter((f) => f.endsWith(".json") && !f.endsWith(".pending.json"))
 				.map((f) => f.slice(0, -".json".length))
 				.sort((a, b) => a.localeCompare(b));
 		},
@@ -126,15 +213,35 @@ export function setTokenStore(store: TokenStore): void {
 	_store = store;
 }
 
-// Convenience API (delegates to the active store).
-export function readToken(domain: string): OAuthToken | null {
-	return _store.read(domain);
+// Convenience API (delegates to the active store). Slot derivation is
+// INTERNAL to the store layer: callers pass the `grant` + `tokenUrl` facts
+// they already carry in their `OAuth2Auth` object — never a precomputed slot.
+export function readToken(
+	domain: string,
+	grant: string,
+	tokenUrl: string,
+): OAuthToken | null {
+	return _store.read(domain, slotKey(grant, tokenUrl));
 }
-export function writeToken(domain: string, token: OAuthToken): void {
-	_store.write(domain, token);
+export function writeToken(
+	domain: string,
+	grant: string,
+	tokenUrl: string,
+	token: OAuthToken,
+): void {
+	// Stamp the record so the store is self-describing (status rows render the
+	// real issuer instead of the opaque hash).
+	_store.write(domain, slotKey(grant, tokenUrl), { ...token, grant, tokenUrl });
 }
-export function deleteToken(domain: string): void {
-	_store.delete(domain);
+export function deleteToken(
+	domain: string,
+	grant: string,
+	tokenUrl: string,
+): void {
+	_store.delete(domain, slotKey(grant, tokenUrl));
+}
+export function listSlots(domain: string): TokenSlotInfo[] {
+	return _store.listSlots(domain);
 }
 export function listTokenDomains(): string[] {
 	return _store.listDomains();
@@ -151,11 +258,20 @@ export function listTokenDomains(): string[] {
  * fails if the verifier doesn't match the challenge sent in the authorize
  * URL) and validate the pasted `state`. Written by the authorize step,
  * consumed once at completion. Ephemeral scratch — lives on the file dir
- * even if a keychain token backend is swapped in.
+ * even if a keychain token backend is swapped in. Stored as
+ * `Record<slot, PendingAuthCodeFlow>` in `<domain>.pending.json` (slot-keyed
+ * like the token file; only `authorization_code` ever writes entries, so a
+ * pending slot is always an auth-code slot). Kept OUTSIDE the `TokenStore`
+ * interface on purpose — a keychain backend swap must not carry it.
  */
 export interface PendingAuthCodeFlow {
 	verifier: string;
 	state: string;
+	/** The redirect URI sent in the authorize request — the token exchange
+	 *  must send the SAME URI (RFC 6749 §4.1.3). Defaulted to REDIRECT_URI
+	 *  by the flow; user-overridable per invocation (e.g. Twitch requires
+	 *  https or the `localhost` spelling). Read back on `--code` completion. */
+	redirectUri: string;
 }
 
 function pendingPath(domain: string): string {
@@ -163,13 +279,43 @@ function pendingPath(domain: string): string {
 	return join(_dir, `${domain}.pending.json`);
 }
 
+function readPendingMap(domain: string): Record<string, PendingAuthCodeFlow> {
+	const p = pendingPath(domain);
+	if (!existsSync(p)) return {};
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(p, "utf-8"));
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+			return {};
+		}
+		const map: Record<string, PendingAuthCodeFlow> = {};
+		for (const [slot, value] of Object.entries(parsed)) {
+			if (
+				value &&
+				typeof value === "object" &&
+				!Array.isArray(value) &&
+				typeof (value as PendingAuthCodeFlow).verifier === "string" &&
+				typeof (value as PendingAuthCodeFlow).redirectUri === "string"
+			) {
+				map[slot] = value as PendingAuthCodeFlow;
+			}
+		}
+		return map;
+	} catch {
+		return {};
+	}
+}
+
 export function writePendingFlow(
 	domain: string,
+	grant: string,
+	tokenUrl: string,
 	flow: PendingAuthCodeFlow,
 ): void {
 	const p = pendingPath(domain);
 	if (!existsSync(_dir)) mkdirSync(_dir, { recursive: true });
-	writeFileSync(p, JSON.stringify(flow, null, 2) + "\n", { mode: 0o600 });
+	const map = readPendingMap(domain);
+	map[slotKey(grant, tokenUrl)] = flow;
+	writeFileSync(p, JSON.stringify(map, null, 2) + "\n", { mode: 0o600 });
 	try {
 		chmodSync(p, 0o600); // guard against umask overriding the mode
 	} catch {
@@ -177,26 +323,33 @@ export function writePendingFlow(
 	}
 }
 
-export function readPendingFlow(domain: string): PendingAuthCodeFlow | null {
-	const p = pendingPath(domain);
-	if (!existsSync(p)) return null;
-	try {
-		const parsed: unknown = JSON.parse(readFileSync(p, "utf-8"));
-		if (
-			parsed &&
-			typeof parsed === "object" &&
-			!Array.isArray(parsed) &&
-			typeof (parsed as PendingAuthCodeFlow).verifier === "string"
-		) {
-			return parsed as PendingAuthCodeFlow;
-		}
-		return null;
-	} catch {
-		return null;
-	}
+export function readPendingFlow(
+	domain: string,
+	grant: string,
+	tokenUrl: string,
+): PendingAuthCodeFlow | null {
+	return readPendingMap(domain)[slotKey(grant, tokenUrl)] ?? null;
 }
 
-export function deletePendingFlow(domain: string): void {
+export function deletePendingFlow(
+	domain: string,
+	grant: string,
+	tokenUrl: string,
+): void {
 	const p = pendingPath(domain);
-	if (existsSync(p)) rmSync(p, { force: true });
+	if (!existsSync(p)) return;
+	const map = readPendingMap(domain);
+	const slot = slotKey(grant, tokenUrl);
+	if (!Object.hasOwn(map, slot)) return;
+	delete map[slot];
+	if (Object.keys(map).length === 0) {
+		rmSync(p, { force: true });
+	} else {
+		writeFileSync(p, JSON.stringify(map, null, 2) + "\n", { mode: 0o600 });
+		try {
+			chmodSync(p, 0o600);
+		} catch {
+			// best-effort; file was already written
+		}
+	}
 }
