@@ -261,7 +261,11 @@ live in paths; same-issuer tokens are shared by design).
 slots (multiple accounts or scopes per domain). Slot becomes
 `(domain, grant, tokenUrl, tokenKey)`; additive, non-breaking, tokens
 re-mint on first use. Also deferred: per-op grant override (an op needing a
-different grant belongs in a sibling guide).
+different grant belongs in a sibling guide). The likeliest first consumer
+of `tokenKey` is the deferred ROPC `/api login`
+([`oauth2-peertube-login-followup.md`](./oauth2-peertube-login-followup.md))
+— ROPC tokens are account-scoped, so a second user on one PeerTube instance
+is a second same-grant slot.
 
 **Migration:** none — pre-release branch; the two dev-minted tokens
 (mastodon.social, twitch.tv) were re-minted under the new layout.
