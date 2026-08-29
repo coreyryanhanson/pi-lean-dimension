@@ -248,13 +248,19 @@ mirror — instead of a filename-as-database layout of
   in-file map gets slot enumeration for free (`Object.keys` of the file —
   exactly the secrets store's `listNames` pattern) and keeps the
   `TokenStore` backend swap clean (one keychain entry per domain, not one
-  per slot with mangled keys). Costs, both accepted: cross-slot write races
-  on one domain file are last-writer-wins — the same race class the secrets
-  store already accepts (its `write` is read-modify-write, no lock), and
-  the per-slot refresh lock serializes the realistic in-process case; and a
-  crash mid-write corrupts all slots of the domain rather than one —
-  mitigated by a ~4-line tmp+rename in `write()` (recommended here; tokens
-  are re-mintable, and a corrupt file already reads as absent today).
+  per slot with mangled keys). Costs, both accepted: in-process cross-slot lost-update is
+  **impossible** as long as `write()`'s read-modify-write stays synchronous
+  (sync read+write with no `await` between is atomic wrt the event loop —
+  the same property the secrets store already relies on); the per-slot
+  refresh lock's job is only the same-slot double-refresh (rotated refresh
+  token), not cross-slot serialization. Cross-**process** writers on one
+  domain file remain last-writer-wins — the same race class the secrets
+  store already accepts — and tmp+rename covers crash, not concurrency
+  (different mechanisms; both worth a doc line). A crash mid-write would
+  otherwise corrupt all slots of the domain rather than one — mitigated by
+  a ~4-line tmp-file + `renameSync` in `write()` (atomic on POSIX;
+  recommended here; tokens are re-mintable, and a corrupt file already
+  reads as absent today).
 
 **What will change, exhaustively** (pre-implementation review of 2.9 found
 four call-site classes the original list missed — folded in below; the
@@ -264,7 +270,11 @@ implementer should treat this list as the checklist):
   `read(domain, slot)`, `write(domain, slot, token)`, `delete(domain,
   slot)`, `listSlots(domain)`; `listDomains()` unchanged (one
   `<domain>.json` per domain, pruned when its last slot is deleted — the
-  secrets store's empty-file pattern). `slotKey` lives in the store and
+  secrets store's empty-file pattern; while reworking `listDomains`, fix
+  the pre-existing filter leak: `endsWith(".json")`
+  (`oauth-store.ts:145-147`) counts `<domain>.pending.json` as a domain,
+  so a live pending flow surfaces as a bogus `example.pending`
+  "unreadable" row in bare `/api oauth` — exclude `.pending.json`). `slotKey` lives in the store and
   takes grant + tokenUrl **structurally** (the two fields it needs, no
   `OAuth2Auth` — the store layer stays free of `auth.ts` types). Slot =
   `<grant>__` + **hashed full tokenUrl** — hash the complete URL string,
@@ -319,7 +329,10 @@ implementer should treat this list as the checklist):
   survives revoke and a later `--code` paste reads a stale verifier; the
   guide-backed `--status` read (`:283`) reads the slot, not the domain; and
   the `--help` text hardcodes "stored per-domain … `<domain>.json`"
-  (`:89`) — update it in this landing. Optional free improvement: apply the
+  (`:91`) — update it in this landing. Also update the `oauth-store.ts`
+  header comment ("one token object per domain") and the probe tool-param
+  descriptions for the new `grant` field and `tokenUrl`'s new
+  load-bearing role in the store read. Optional free improvement: apply the
   same parent-domain normalization `init` uses
   (`resolveProvisionedParentDomain`) to orphan enumeration so a subdomain
   spelling still finds the slot (today's literal-domain behavior finds
@@ -367,13 +380,16 @@ implementer should treat this list as the checklist):
   empty-file prune when a domain's last slot is deleted. **Also broken by
   the shape change — add to the checklist:** the bare-domain
   `writeToken(domain, …)` fixtures in `__tests__/verify-command.test.ts`
-  (line ~399), `__tests__/api-probe.test.ts` (lines ~547/623/726), and
-  `oauth-command.test.ts` throughout — every one writes the old flat
-  `<domain>.json` shape that slotted reads will miss, going red on landing.
-  `__tests__/oauth-mint.test.ts` (lines ~188/223/249/334/384) needs the
-  same update but contains **zero `writeToken` calls** — those lines are
-  bare `readToken`/`readPendingFlow` assertions, so an implementer grepping
-  `writeToken(` would miss the file.
+  (line ~399), `__tests__/api-probe.test.ts` (lines ~547/623/726),
+  `__tests__/oauth.test.ts` (lines ~169/184/209/318/420/428/436), and
+  `__tests__/oauth-flow.test.ts` (line ~317) — every one writes the old
+  flat `<domain>.json` shape that slotted reads will miss, going red on
+  landing (the TS signature change catches these, so the checklist is
+  completeness, not correctness). Two files contain **zero `writeToken`
+  calls** — an implementer grepping `writeToken(` would miss them:
+  `__tests__/oauth-mint.test.ts` (lines ~188/223/249/334/384) and
+  `__tests__/oauth-command.test.ts` — both need bare `readToken`/
+  `readPendingFlow` assertion updates, not write-fixture rewrites.
 + Docs — this section; AGENTS.md token-store bullet; the deferred
   multiple-accounts bullet now points here; the `--help` layout string in
   `oauth-command.ts` (called out above).
