@@ -10,7 +10,8 @@
  *  - Store-name rule: unprovisioned client-id nudges /api secrets, no fetch.
  *  - Interactive wizard (mocked ctx.ui): both grants, store-NAME pickers
  *    (values never offered), omit-secret → public PKCE client (method none),
- *    no-secrets abort, cancel.
+ *    redirect-URI prompt (typed override + Esc cancel), no-secrets abort,
+ *    cancel.
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
@@ -390,10 +391,11 @@ describe("oauth init — interactive wizard", () => {
 		const m = makeCtx({ hasUI: true });
 		// Destructure so the paste-prompt implementation can read the queue.
 		const { inputs } = m;
-		// grant, client-id, client-secret (omit) — omitting the secret
-		// short-circuits the method prompt, so only two selects fire.
+		// grant (select) → redirect URI (empty = default) → tokenUrl,
+		// authorizeUrl, scopes (empty) + client-id / client-secret (omit) picks —
+		// omitting the secret short-circuits the method prompt.
 		m.selects.push("authorization_code", "client_id", OMIT);
-		m.inputs.push(TOKEN_URL, AUTHORIZE_URL, "");
+		m.inputs.push("", TOKEN_URL, AUTHORIZE_URL, "");
 		// After the queue is exhausted the next input call is the paste prompt;
 		// the pending flow (written before the prompt) holds the state.
 		(m.ctx.ui.input as ReturnType<typeof vi.fn>).mockImplementation(async () => {
@@ -413,6 +415,58 @@ describe("oauth init — interactive wizard", () => {
 		expect(
 			readPendingFlow("wzda.invalid", "authorization_code", TOKEN_URL),
 		).toBeNull();
+	});
+
+	it("wizard --redirect-uri prompt: typed override reaches the pending record + exchange body; empty keeps the default", async () => {
+		writeSecret("wzdr.invalid", "client_id", "MY_CLIENT");
+		const CUSTOM = "http://localhost:5173/callback";
+		const seenBodies: string[] = [];
+		stubTokenEndpoint((_url, init) => {
+			seenBodies.push(String(init.body));
+			return tokenResponse({ access_token: "WZRURI", expires_in: 3600 });
+		});
+		const m = makeCtx({ hasUI: true });
+		const { inputs } = m;
+		// grant (select) → redirect URI (typed override) → tokenUrl,
+		// authorizeUrl, scopes (empty) + client-id / client-secret (omit) picks.
+		m.selects.push("authorization_code", "client_id", OMIT);
+		m.inputs.push(CUSTOM, TOKEN_URL, AUTHORIZE_URL, "");
+		(m.ctx.ui.input as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+			const queued = inputs.shift();
+			if (queued !== undefined) return queued;
+			const pending = readPendingFlow(
+				"wzdr.invalid",
+				"authorization_code",
+				TOKEN_URL,
+			);
+			// The pending record carries the wizard-typed URI (feeds the exchange).
+			expect(pending?.redirectUri).toBe(CUSTOM);
+			return `${CUSTOM}?code=CB&state=${pending?.state}`;
+		});
+		await handleOauthSubcommand("init wzdr.invalid", m.ctx);
+		expect(
+			readToken("wzdr.invalid", "authorization_code", TOKEN_URL)?.accessToken,
+		).toBe("WZRURI");
+		// The exchange sent the wizard-typed URI (RFC 6749 §4.1.3), not the default.
+		expect(
+			seenBodies.some((b) =>
+				b.includes("redirect_uri=" + encodeURIComponent(CUSTOM)),
+			),
+		).toBe(true);
+	});
+
+	it("wizard redirect-URI prompt: Esc cancels, nothing provisioned", async () => {
+		writeSecret("wzdc.invalid", "client_id", "MY_CLIENT");
+		const m = makeCtx({ hasUI: true });
+		// grant (select) → redirect prompt fires immediately and gets nothing
+		// (Esc/dismiss) — nothing provisioned.
+		m.selects.push("authorization_code");
+		await handleOauthSubcommand("init wzdc.invalid", m.ctx);
+		expect(m.out()).toContain("Cancelled");
+		expect(
+			readPendingFlow("wzdc.invalid", "authorization_code", TOKEN_URL),
+		).toBeNull();
+		expect(readToken("wzdc.invalid", "authorization_code", TOKEN_URL)).toBeNull();
 	});
 
 	it("wizard with no provisioned secrets aborts with the /api secrets nudge", async () => {

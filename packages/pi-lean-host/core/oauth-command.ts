@@ -64,7 +64,7 @@ import {
 	getOAuthDir,
 } from "./oauth-store.js";
 import type { OAuthToken } from "./oauth-store.js";
-import { mintAuthCodeToken } from "./oauth-flow.js";
+import { REDIRECT_URI, mintAuthCodeToken } from "./oauth-flow.js";
 import { listNames } from "./secrets-store.js";
 import type { ApiGuide } from "./api-guide-types.js";
 
@@ -458,7 +458,8 @@ const INIT_USAGE = [
 	"    --scopes a,b                 comma-separated",
 	"    --token-endpoint-auth-method client_secret_post|client_secret_basic|none",
 	"    --redirect-uri <url>         override the default redirect URI (default",
-	"                                 http://127.0.0.1/callback — match your app registration)",
+	"                                 http://127.0.0.1/callback — match your app registration;",
+	"                                 the TUI wizard prompts for this too)",
 	"  auth-code completion (headless two-call): re-run with the same flags + --code <redirect-url-or-code>.",
 	"  Client credentials are store names resolved from the secrets store — values never enter the transcript.",
 ].join("\n");
@@ -553,6 +554,7 @@ async function handleOauthInit(
 	const viaFlags = Object.values(flags).some((v) => v !== undefined);
 
 	let fields: SyntheticOAuth2Fields;
+	let wizardRedirectUri: string | undefined;
 	if (viaFlags) {
 		const scopesRaw = flags["--scopes"];
 		const grant =
@@ -590,7 +592,8 @@ async function handleOauthInit(
 	} else if (ctx.hasUI) {
 		const gathered = await wizardFields(ctx, storeDomain);
 		if (gathered === undefined) return; // cancelled / aborted (message shown)
-		fields = gathered;
+		fields = gathered.fields;
+		wizardRedirectUri = gathered.redirectUri;
 	} else {
 		ctx.ui.notify(INIT_USAGE, "info");
 		return;
@@ -660,7 +663,7 @@ async function handleOauthInit(
 		// pending flow (including the redirect URI, so the --code completion
 		// exchanges with the same value); interactive users complete inline,
 		// headless awaits `init ... --code`.
-		const mintRedirectUri = flags["--redirect-uri"];
+		const mintRedirectUri = flags["--redirect-uri"] ?? wizardRedirectUri;
 		try {
 			await mintAuthCodeToken(
 				synthetic,
@@ -739,7 +742,9 @@ const AUTH_METHOD_ITEMS: PickerItem[] = [
 async function wizardFields(
 	ctx: ExtensionCommandContext,
 	storeDomain: string,
-): Promise<SyntheticOAuth2Fields | undefined> {
+): Promise<
+	{ fields: SyntheticOAuth2Fields; redirectUri?: string } | undefined
+> {
 	const cancelled = () =>
 		ctx.ui.notify("Cancelled — nothing provisioned.", "info");
 
@@ -751,6 +756,25 @@ async function wizardFields(
 	if (grant === undefined) {
 		await cancelled();
 		return undefined;
+	}
+	let redirectUri: string | undefined;
+	if (grant === "authorization_code") {
+		// Ask first: the redirect URI is a fact of the user's app registration,
+		// not the provider's API — if it isn't registered at the provider,
+		// nothing later in the wizard matters, so fail fast (empty keeps the
+		// RFC 8252 convention). The pending flow carries it through to the
+		// --code exchange (RFC 6749 §4.1.3).
+		const raw = (
+			await ctx.ui.input(
+				`Redirect URI — make sure your provider app has this registered (empty for the default ${REDIRECT_URI})`,
+				REDIRECT_URI,
+			)
+		)?.trim();
+		if (raw === undefined) {
+			await cancelled();
+			return undefined;
+		}
+		if (raw !== "") redirectUri = raw;
 	}
 	const tokenUrl = (
 		await ctx.ui.input(
@@ -791,10 +815,12 @@ async function wizardFields(
 	}
 	if (grant === "client_credentials") {
 		return {
-			grant: "client_credentials",
-			tokenUrl,
-			clientId,
-			clientSecret: clientSecret!,
+			fields: {
+				grant: "client_credentials",
+				tokenUrl,
+				clientId,
+				clientSecret: clientSecret!,
+			},
 		};
 	}
 	const authorizeUrl = (
@@ -834,18 +860,21 @@ async function wizardFields(
 		return undefined;
 	}
 	return {
-		grant: grant as SyntheticOAuth2Fields["grant"],
-		tokenUrl,
-		clientId,
-		...(clientSecret === OMIT_SECRET ? {} : { clientSecret: clientSecret! }),
-		authorizeUrl,
-		...(scopes.length > 0 ? { scopes } : {}),
-		...(tokenEndpointAuthMethod === undefined
-			? {}
-			: {
-					tokenEndpointAuthMethod: tokenEndpointAuthMethod as NonNullable<
-						SyntheticOAuth2Fields["tokenEndpointAuthMethod"]
-					>,
-				}),
+		fields: {
+			grant: grant as SyntheticOAuth2Fields["grant"],
+			tokenUrl,
+			clientId,
+			...(clientSecret === OMIT_SECRET ? {} : { clientSecret: clientSecret! }),
+			authorizeUrl,
+			...(scopes.length > 0 ? { scopes } : {}),
+			...(tokenEndpointAuthMethod === undefined
+				? {}
+				: {
+						tokenEndpointAuthMethod: tokenEndpointAuthMethod as NonNullable<
+							SyntheticOAuth2Fields["tokenEndpointAuthMethod"]
+						>,
+					}),
+		},
+		...(redirectUri === undefined ? {} : { redirectUri }),
 	};
 }
