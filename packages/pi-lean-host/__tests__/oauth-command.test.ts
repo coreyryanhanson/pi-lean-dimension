@@ -1,5 +1,5 @@
 /**
- * /api oauth init <domain> — guide-less OAuth2 bootstrap (Phase 2.7) tests.
+ * /api oauth init <domain> — guide-less OAuth2 bootstrap tests.
  *
  * Mocked transport; covers the plan's touch-list axes:
  *  - Headless flags, client_credentials: mint + stamp under the
@@ -494,7 +494,7 @@ describe("oauth init — interactive wizard", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// Phase 2.9 — token slots: multi-grant listing, orphan-slot arms, prune
+// token slots: multi-grant listing, orphan-slot arms, prune
 // ═══════════════════════════════════════════════════════════════
 
 describe("handleOauthSubcommand — slot-aware guide-less paths", () => {

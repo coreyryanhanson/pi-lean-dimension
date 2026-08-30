@@ -4,7 +4,7 @@
  * File backend: `~/.pi/agent/pi-lean-host/oauth/<domain>.json`, one file per
  * domain holding `Record<slot, OAuthToken>` — the secrets-store's per-domain
  * name-keyed shape, not a filename-as-database layout. The slot key derives
- * from `(grant, tokenUrl)` via `slotKey` (Phase 2.9): the same domain can
+ * from `(grant, tokenUrl)` via `slotKey`: the same domain can
  * hold an app token and a user token (and tokens from two issuers) without
  * clobbering, while multi-recipe domains sharing one grant + issuer keep
  * sharing a slot. `slotKey` takes the two facts structurally — the store

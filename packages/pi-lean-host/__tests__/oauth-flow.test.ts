@@ -2,7 +2,7 @@
  * OAuth2 authorization-code + PKCE flow tests — mocked transport, headless
  * paste-based flow (no listener, no inbound network).
  *
- * Covers the Phase-2.6 headless-only flow:
+ * Covers the headless-only flow:
  *  - PKCE pair generation + authorize-URL construction (redirect_uri is the
  *    http://127.0.0.1/callback convention).
  *  - parsePastedRedirect: bare code, full address-bar URL (state surfaced),

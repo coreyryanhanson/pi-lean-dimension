@@ -2,7 +2,7 @@
  * OAuth2 (client_credentials) structural tests — mocked transport + mocked
  * token endpoint.
  *
- * Covers the Phase-1 client-credentials runtime:
+ * Covers the client-credentials runtime:
  *  - resolveAccessToken: mint → store, cache hit (no re-fetch), expiry →
  *    refresh, expiry → re-mint, fail-closed (no client_secret / auth-code
  *    with no interactive flow), skew buffer.

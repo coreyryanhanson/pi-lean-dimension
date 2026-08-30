@@ -2,7 +2,7 @@
  * oauth-mint tool definition.
  *
  * The human-in-the-loop mint of the agent-driven OAuth2 bootstrap
- * (docs/design/oauth2-agent-bootstrap.md — Phase 2.8). The agent supplies all
+ * (docs/design/oauth2-agent-bootstrap.md). The agent supplies all
  * researched parameters (grant, tokenUrl, authorizeUrl, scopes as
  * {name, description} pairs, client credentials as STORE NAMES); the tool
  * does only what the agent cannot: fail-closed validation, store-name
@@ -273,7 +273,7 @@ export const oauthMintTool = defineTool({
 		};
 		const finalSynthetic = buildSyntheticOAuth2Auth(finalFields);
 
-		// Mint-time overwrite warning (Phase 2.9): slots are keyed
+		// Mint-time overwrite warning: slots are keyed
 		// (domain, grant, tokenUrl), so a same-grant re-mint with different
 		// scopes/issuer silently replaces the previous token. The scope
 		// collision is reachable through all three bootstrap surfaces — surface

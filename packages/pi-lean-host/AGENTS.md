@@ -82,7 +82,7 @@
     not focus-guarded. The agent has **no** delete surface: `api-learn`'s
     collision/malformed errors tell it to ask the human to run this.
   - `/api bootstrap oauth <domain> <spec>` — the agent-driven OAuth2
-  bootstrap trigger (Phase 2.8, `docs/design/oauth2-agent-bootstrap.md`):
+  bootstrap trigger:
   validates args (`<domain> <spec>`, both required, domain first; `oauth` is
   the only mode — an explicit dispatch arm, no registry), auto-enables learn
   when off (`ctx.ui.notify`s the flip; loud fail when the focus-mode guard

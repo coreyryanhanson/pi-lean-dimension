@@ -1,6 +1,6 @@
 /**
  * oauth-mint tool — the human-in-the-loop mint of the agent-driven OAuth2
- * bootstrap (Phase 2.8). Mocked transport + mocked ctx.ui, mirroring
+ * bootstrap. Mocked transport + mocked ctx.ui, mirroring
  * __tests__/oauth-command.test.ts idioms. Covers the locked test strategy:
  *  - headless throw before any prompt;
  *  - store-name precheck fires BEFORE any prompt (confirm never called);

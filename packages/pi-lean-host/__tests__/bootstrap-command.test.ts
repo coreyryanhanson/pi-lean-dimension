@@ -1,6 +1,6 @@
 /**
  * `/api bootstrap oauth <domain> <spec>` — the inject-and-exit orchestration
- * command of the agent-driven OAuth2 bootstrap (Phase 2.8). Mocked pi +
+ * command of the agent-driven OAuth2 bootstrap. Mocked pi +
  * ctx, mirroring __tests__/api-toggle.test.ts idioms. Covers the locked test
  * strategy: exact sendUserMessage args (deliverAs "followUp", brief contains
  * domain + spec + tool name + stop-and-ask line); learn auto-enable when off

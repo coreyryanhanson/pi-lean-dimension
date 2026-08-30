@@ -320,8 +320,8 @@ async function resolveTokenUnlocked(
 		writeToken(domain, auth.grant, auth.tokenUrl, token);
 		return toAccessTokenResult(auth, token, domain);
 	}
-	// authorization_code: no interactive mint in Phase 1 — fail closed with
-	// a nudge. Phase 2 wires /api oauth to the interactive flow.
+	// authorization_code: no interactive mint here — fail closed with
+	// a nudge to /api oauth.
 	throw new OAuthTokenMissingError(
 		`No usable OAuth2 token for '${domain}' (grant: authorization_code). ` +
 			`Run /api oauth ${domain} to start the interactive flow.`,
@@ -639,7 +639,7 @@ export async function revokeAccessToken(
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Guide-less bootstrap (Phase 2.7) — shared synthetic-auth construction
+// Guide-less bootstrap — shared synthetic-auth construction
 // ═══════════════════════════════════════════════════════════════
 
 /**

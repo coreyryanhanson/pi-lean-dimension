@@ -15,7 +15,7 @@
  *   one `<domain>.json`), so an app token and a user token coexist per domain.
  * - `oauth <domain> --code <code>` — complete an authorization-code flow with
  *   the pasted redirect URL (or bare code) from a previous authorize step.
- * - `oauth init <domain> [flags]` — guide-less bootstrap (Phase 2.7): provision
+ * - `oauth init <domain> [flags]` — guide-less bootstrap: provision
  *   a token without an oauth2 guide. Interactive wizard (ctx.hasUI) or headless
  *   flags (--grant --token-url --client-id [--client-secret] [--authorize-url]
  *   [--scopes] [--token-endpoint-auth-method]); auth-code completion is the
@@ -153,7 +153,7 @@ export async function handleOauthSubcommand(
 		return;
 	}
 
-	// `init` subcommand — guide-less bootstrap (Phase 2.7). Its own flag
+	// `init` subcommand — guide-less bootstrap. Its own flag
 	// grammar, so it short-circuits before the plain-command parsing below.
 	if (parts[0] === "init") {
 		await handleOauthInit(args.trim().replace(/^init\b\s*/, ""), ctx);
@@ -444,7 +444,7 @@ export async function handleOauthSubcommand(
 }
 
 // ═══════════════════════════════════════════════════════════════
-// init — guide-less OAuth2 bootstrap (Phase 2.7)
+// init — guide-less OAuth2 bootstrap
 // ═══════════════════════════════════════════════════════════════
 
 const INIT_USAGE = [
@@ -481,11 +481,10 @@ const INIT_FLAG_NAMES: readonly string[] = [
 const OMIT_SECRET = "(omit — PKCE public client)";
 
 /**
- * `/api oauth init <domain>` — provision a token WITHOUT an oauth2 guide
- * (Phase 2.7). The interactive grant's bootstrap previously required
- * authoring a throwaway draft guide first; the wizard dissolves that
- * asymmetry with client-credentials (which probe mint-on-demand already
- * solved). The wizard collects flow facts (grant, tokenUrl, authorizeUrl,
+ * `/api oauth init <domain>` — provision a token WITHOUT an oauth2 guide.
+ * The interactive grant's bootstrap previously required authoring a
+ * throwaway draft guide first; the wizard dissolves that asymmetry with
+ * client-credentials (which probe mint-on-demand already solved). The wizard collects flow facts (grant, tokenUrl, authorizeUrl,
  * store-NAME credentials) into a synthetic oauth2 auth and feeds the
  * EXISTING flow machinery (`mintAuthCodeToken` / `resolveAccessToken`) —
  * no new mint mechanism, no schema change, nothing saved.
@@ -706,8 +705,7 @@ async function handleOauthInit(
 }
 
 /**
- * Interactive wizard — the wizard branch tree is deliberately short (Phase
- * 2.5 locked the schema narrow): grant → tokenUrl → client credentials as
+ * Interactive wizard — the wizard branch tree is deliberately short: grant → tokenUrl → client credentials as
  * store NAMES from a picker → auth-code extras. DPoP, PAR, device flow, JWT
  * assertions etc. must NOT grow wizard branches — this is a provisioning aid,
  * not an OAuth playground. Returns undefined when the user cancels/aborts.

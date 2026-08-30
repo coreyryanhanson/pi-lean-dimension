@@ -531,7 +531,7 @@ describe("probe redirect handling (live localhost)", () => {
 		});
 	});
 
-	// OAuth2 store-read injection (Phase 2): useTokenStore reads the token
+	// OAuth2 store-read injection: useTokenStore reads the token
 	// store — the value never enters the transcript; miss/expiry nudge /api oauth.
 	describe("probe useTokenStore (oauth2 bearer injection)", () => {
 		it("injects Authorization: Bearer from the token store; value never surfaces", async () => {
