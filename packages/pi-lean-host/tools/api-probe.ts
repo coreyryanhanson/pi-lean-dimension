@@ -35,10 +35,8 @@ import {
 	resolveSecretQueryParams,
 	scrubSecretValues,
 } from "../core/auth.js";
-import { listDomains, listNames } from "../core/secrets-store.js";
 import { readToken } from "../core/oauth-store.js";
-import { findGuidesByDomain } from "../core/guide-store.js";
-import { isApiLearnEnabled } from "../core/api-toggle.js";
+import { listDomains } from "../core/secrets-store.js";
 import { serverMessage, isPlanGated } from "../core/status-hint.js";
 import { appendFooter, contentText } from "./utils.js";
 import type {
@@ -820,9 +818,9 @@ export const apiProbeTool = defineTool({
 		"It only suggests — it never writes the guide, and the operation must still be " +
 		"traceable to your plan source. Pre-guide: pass apiHost + path. After a guide " +
 		"exists, use api-guide({domain}) to get apiHost, or api-fetch to execute. " +
-		"Before the first auth-gated probe, call with listSecrets: true (and no domain) " +
-		"to list every provisioned store domain and which already have guides — pass that " +
-		"domain up front so a store-miss round-trip is avoided. " +
+		"Before the first auth-gated probe, use api-store (learn mode) to check what " +
+		"credentials exist for the domain — pass that domain up front so a store-miss " +
+		"round-trip is avoided. " +
 		"Before authoring a new guide, read the provider's docs index (llms.txt, " +
 		"openapi.json at the API root, or the docs page) to learn the current API " +
 		"version — then probe that version explicitly. Do not default the version from " +
@@ -831,23 +829,19 @@ export const apiProbeTool = defineTool({
 		"but cannot detect a stale-but-working one. ",
 
 	parameters: Type.Object({
-		apiHost: Type.Optional(
-			Type.String({
-				description:
-					"Base URL including the API's current version prefix, e.g. " +
-					"'https://api.example.com/v3'. Find the latest version before probing: " +
-					"check the API's docs page, openapi.json/swagger.json at the API root, " +
-					"or llms.txt. Supply the newest version you can verify — if it 404s, the " +
-					"probe walks backward (v3→v2→v1) to recover. Do not default to /v1 from " +
-					"memory; a stale version that still returns 200 is not detected as old.",
-			}),
-		),
-		path: Type.Optional(
-			Type.String({
-				description:
-					"Templated path, e.g. '/repos/{owner}/{repo}/branches'. {token} placeholders are filled from params.",
-			}),
-		),
+		apiHost: Type.String({
+			description:
+				"Base URL including the API's current version prefix, e.g. " +
+				"'https://api.example.com/v3'. Find the latest version before probing: " +
+				"check the API's docs page, openapi.json/swagger.json at the API root, " +
+				"or llms.txt. Supply the newest version you can verify — if it 404s, the " +
+				"probe walks backward (v3→v2→v1) to recover. Do not default to /v1 from " +
+				"memory; a stale version that still returns 200 is not detected as old.",
+		}),
+		path: Type.String({
+			description:
+				"Templated path, e.g. '/repos/{owner}/{repo}/branches'. {token} placeholders are filled from params.",
+		}),
 		params: Type.Optional(
 			Type.Record(Type.String(), Type.Unknown(), {
 				description:
@@ -933,22 +927,12 @@ export const apiProbeTool = defineTool({
 					"Domain for secrets-store lookups; defaults to apiHost's hostname (or its provisioned parent domain).",
 			}),
 		),
-		listSecrets: Type.Optional(
-			Type.Boolean({
-				description:
-					"Names only, never values. Two modes: with no domain/apiHost, lists " +
-					"provisioned-but-guideless store domains (authoring-bootstrap view — " +
-					"call this empty first to see what's provisioned); with a domain (or " +
-					"apiHost), lists provisioned secret names for that domain, with " +
-					"declared-vs-stored gaps when a guide exists.",
-			}),
-		),
 	}),
 
 	async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-		const { apiHost, path, walkVersions, auth, domain, listSecrets } = params as {
-			apiHost?: string;
-			path?: string;
+		const { apiHost, path, walkVersions, auth, domain } = params as {
+			apiHost: string;
+			path: string;
 			params?: Record<string, unknown>;
 			walkVersions?: boolean;
 			auth?: {
@@ -959,71 +943,10 @@ export const apiProbeTool = defineTool({
 				grant?: "client_credentials" | "authorization_code";
 			};
 			domain?: string;
-			listSecrets?: boolean;
 		};
 		const userParams = (params as Record<string, unknown>)["params"] as
 			| Record<string, unknown>
 			| undefined;
-
-		// Learn-gated secrets discovery — short-circuits the fetch entirely.
-		// The agent's only programmatic path to the secrets store; /api secrets is
-		// user-typed only. Names only, never values.
-		if (listSecrets === true) {
-			if (!isApiLearnEnabled()) {
-				return {
-					content: [
-						{
-							type: "text",
-							text:
-								"api-probe: listSecrets: true is learn mode only — run /api learn first.",
-						},
-					],
-					details: { error: "learn_mode_only" },
-				};
-			}
-			// Bare call (no domain, no apiHost): orphan list only. apiHost present:
-			// orphan list first, then the per-domain view. domain present: unchanged.
-			const unscoped = domain ? undefined : unscopedStoreDomains();
-			const blocks: string[] = [];
-			if (unscoped !== undefined) blocks.push(formatUnscopedDomains(unscoped));
-			const target =
-				domain ??
-				(apiHost ? resolveProvisionedParentDomain(hostnameOf(apiHost)) : undefined);
-			if (target !== undefined) {
-				const secrets = listDomainSecrets(target);
-				blocks.push(formatSecretsResult(secrets));
-				// apiHost/domain present means a real probe was suppressed by
-				// listSecrets: true — say so, or the author silently loses the probe.
-				blocks.push(
-					"probe suppressed because listSecrets: true — drop listSecrets to probe.",
-				);
-				return {
-					content: [{ type: "text", text: blocks.join("\n\n") }],
-					details: unscoped === undefined ? { secrets } : { secrets, unscoped },
-				};
-			}
-			return {
-				content: [{ type: "text", text: blocks.join("\n\n") }],
-				details: { unscoped: unscoped! },
-			};
-		}
-
-		// apiHost/path are optional in the schema so the bare listSecrets call is
-		// legal; every real probe needs both. The schema no longer enforces it,
-		// so guard here before falling through to probe(). (The listSecrets:true
-		// branch always returns above, so this guard only sees non-listSecrets.)
-		if (!apiHost || !path) {
-			return {
-				content: [
-					{
-						type: "text",
-						text:
-							"api-probe: apiHost and path are required unless listSecrets: true.",
-					},
-				],
-				details: { error: "missing_apiHost_or_path" },
-			};
-		}
 
 		try {
 			const result = await probe(apiHost, path, userParams ?? {}, {
@@ -1071,42 +994,6 @@ export const apiProbeTool = defineTool({
 		const d = result.details as Record<string, unknown> | undefined;
 		if (d?.error) {
 			return new Text(theme.fg("error", `⚠ ${contentText(result, "?")}`), 0, 0);
-		}
-		// Secrets first: the domain-scoped view is the primary output and is present
-		// for both the per-domain and combined (apiHost-no-domain) shapes. Only the
-		// bare call (no domain/apiHost) carries unscoped alone.
-		const secrets = d?.secrets as
-			| { domain: string; provisioned: string[] }
-			| undefined;
-		if (secrets) {
-			const text = theme.fg("accent", theme.bold("🔑 api-probe"));
-			return new Text(
-				appendFooter(
-					text +
-						` — secrets for ${secrets.domain} · ${secrets.provisioned.length} provisioned`,
-					expanded,
-					result,
-					theme,
-					1000,
-				),
-				0,
-				0,
-			);
-		}
-		const unscoped = d?.unscoped as string[] | undefined;
-		if (unscoped) {
-			const text = theme.fg("accent", theme.bold("🔑 api-probe"));
-			return new Text(
-				appendFooter(
-					`${text} — ${unscoped.length} unscoped domains`,
-					expanded,
-					result,
-					theme,
-					1000,
-				),
-				0,
-				0,
-			);
 		}
 		const status = d?.status as number | undefined;
 		const shape = d?.shape as ShapeSummary | null | undefined;
@@ -1163,77 +1050,5 @@ export function formatProbeResult(r: ProbeResult): string {
 	}
 	lines.push("");
 	lines.push(`  ${DOCS_NUDGE.join("\n  ")}`);
-	return lines.join("\n");
-}
-
-/** Store domains that are provisioned but not scoped to any guide.
- *  Authoring-loop diagnostic: surfaces bootstrap + migration-orphan
- *  secrets. Names only. */
-function unscopedStoreDomains(): string[] {
-	return listDomains().filter((d) => findGuidesByDomain(d).length === 0);
-}
-
-function formatUnscopedDomains(domains: string[]): string {
-	const lines: string[] = ["🗂 unscoped store domains (provisioned, no guide)"];
-	lines.push(`  ${domains.length > 0 ? domains.join(", ") : "(none)"}`);
-	lines.push("  (names only — values never leave the store)");
-	return lines.join("\n");
-}
-
-/** List mode: provisioned secret names for a domain (names only). */
-function listDomainSecrets(domain: string): {
-	domain: string;
-	provisioned: string[];
-	declared?: string[];
-} {
-	const provisioned = listNames(domain);
-	const matches = findGuidesByDomain(domain);
-	if (matches.length === 0) return { domain, provisioned };
-	const declaredSet = new Set<string>();
-	for (const { guide } of matches) {
-		switch (guide.auth.kind) {
-			case "static-key":
-				for (const ref of Object.values(guide.auth.secretRefs ?? {}))
-					declaredSet.add(ref.secret);
-				for (const ref of Object.values(guide.auth.secretQueryRefs ?? {}))
-					declaredSet.add(ref.secret);
-				break;
-			case "oauth2":
-				// clientId/clientSecret are SecretRefs too — surface their store
-				// names in declared-vs-stored gaps.
-				for (const ref of [guide.auth.clientId, guide.auth.clientSecret])
-					if (ref) declaredSet.add(ref.secret);
-				for (const ref of Object.values(guide.auth.secretRefs ?? {}))
-					declaredSet.add(ref.secret);
-				break;
-			case "none":
-				break;
-			default: {
-				const _exhaustive: never = guide.auth;
-				throw new Error(`Unhandled auth kind: ${_exhaustive}`);
-			}
-		}
-	}
-	const declared = [...declaredSet].sort();
-	return { domain, provisioned, declared };
-}
-
-function formatSecretsResult(s: {
-	domain: string;
-	provisioned: string[];
-	declared?: string[];
-}): string {
-	const lines: string[] = [`🔑 secrets for ${s.domain}`];
-	lines.push(
-		`  provisioned: ${s.provisioned.length > 0 ? s.provisioned.join(", ") : "(none)"}`,
-	);
-	if (s.declared !== undefined) {
-		lines.push(
-			`  declared: ${s.declared.length > 0 ? s.declared.join(", ") : "(none)"}`,
-		);
-		const gaps = s.declared.filter((d) => !s.provisioned.includes(d));
-		if (gaps.length > 0) lines.push(`  gaps: ${gaps.join(", ")}`);
-	}
-	lines.push("  (names only — values never leave the store)");
 	return lines.join("\n");
 }

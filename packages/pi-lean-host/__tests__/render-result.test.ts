@@ -388,61 +388,6 @@ describe("api-learn renderResult", () => {
 // ═══════════════════════════════════════════════════════════════════
 
 describe("api-probe renderResult", () => {
-	it("bare listSecrets (unscoped only) renders an unscoped-domains summary", () => {
-		const out = renderResult(
-			apiProbeTool,
-			{
-				content: [
-					{
-						type: "text",
-						text:
-							"🗂 unscoped store domains (provisioned, no guide)\n- api.github.com",
-					},
-				],
-				details: { unscoped: ["api.github.com"] },
-			},
-			{ expanded: false },
-		);
-		expect(out.text).toContain("🔑 api-probe");
-		expect(out.text).toContain("1 unscoped domains");
-		expect(out.text).toContain("(expand)");
-		// Must not fall through to the generic probe renderer.
-		expect(out.text).not.toContain("🔬");
-	});
-
-	it("per-domain listSecrets renders provisioned-secrets summary", () => {
-		const out = renderResult(
-			apiProbeTool,
-			{
-				content: [""],
-				details: {
-					secrets: { domain: "api.github.com", provisioned: ["token"] },
-				},
-			},
-			{ expanded: false },
-		);
-		expect(out.text).toContain("🔑 api-probe");
-		expect(out.text).toContain("secrets for api.github.com · 1 provisioned");
-	});
-
-	it("combined (apiHost, no domain) prioritizes the secrets summary", () => {
-		const out = renderResult(
-			apiProbeTool,
-			{
-				content: [""],
-				details: {
-					secrets: { domain: "api.github.com", provisioned: ["token"] },
-					unscoped: ["api.github.com", "api.gitlab.com"],
-				},
-			},
-			{ expanded: false },
-		);
-		expect(out.text).toContain("🔑 api-probe");
-		expect(out.text).toContain("secrets for api.github.com · 1 provisioned");
-		// The unscoped count must not replace the secrets summary.
-		expect(out.text).not.toContain("unscoped domains");
-	});
-
 	it("real probe renders 🔬 generic summary, not the 🔑 key glyph", () => {
 		const out = renderResult(
 			apiProbeTool,
@@ -453,7 +398,7 @@ describe("api-probe renderResult", () => {
 			{ expanded: false },
 		);
 		expect(out.text).toContain("🔬 api-probe");
-		// New unscoped/secrets branches must not hijack the generic path.
+		// listSecrets render branches are gone — the 🔑 glyph must never appear.
 		expect(out.text).not.toContain("🔑");
 	});
 });

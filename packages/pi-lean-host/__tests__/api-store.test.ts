@@ -301,36 +301,33 @@ describe("api-store", () => {
 	});
 
 	it("renders the orphan summary and the per-domain summary", () => {
-		const orphan = apiStoreTool.renderResult(
-			{
-				content: [{ type: "text", text: "" }],
-				details: { unscoped: { secretDomains: ["a.dev"], tokenDomains: [] } },
+		const render = (details: Record<string, unknown>): string =>
+			(
+				apiStoreTool.renderResult as unknown as (...a: unknown[]) => {
+					text: string;
+				}
+			)(
+				{ content: [{ type: "text", text: "" }], details },
+				{ expanded: false, isPartial: false },
+				mockTheme,
+				{},
+			).text;
+		const orphan = render({
+			unscoped: { secretDomains: ["a.dev"], tokenDomains: [] },
+		});
+		expect(orphan).toContain("🔐 api-store");
+		expect(orphan).toContain("1 unscoped secret domain(s)");
+		const perDomain = render({
+			domain: "github.com",
+			secrets: {
+				provisioned: ["a"],
+				declared: ["a"],
+				gaps: [],
+				guides: ["github-com"],
 			},
-			{ expanded: false },
-			mockTheme,
-			{},
-		);
-		expect(orphan.text).toContain("🔐 api-store");
-		expect(orphan.text).toContain("1 unscoped secret domain(s)");
-		const perDomain = apiStoreTool.renderResult(
-			{
-				content: [{ type: "text", text: "" }],
-				details: {
-					domain: "github.com",
-					secrets: {
-						provisioned: ["a"],
-						declared: ["a"],
-						gaps: [],
-						guides: ["github-com"],
-					},
-					tokens: { slots: [{}], unclaimed: [{}] },
-				},
-			},
-			{ expanded: false },
-			mockTheme,
-			{},
-		);
-		expect(perDomain.text).toContain("1 provisioned · 1 token slot(s)");
-		expect(perDomain.text).toContain("1 unclaimed");
+			tokens: { slots: [{}], unclaimed: [{}] },
+		});
+		expect(perDomain).toContain("1 provisioned · 1 token slot(s)");
+		expect(perDomain).toContain("1 unclaimed");
 	});
 });
