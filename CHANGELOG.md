@@ -84,18 +84,21 @@
   save/validate cycle instead of one per line. Authoring is spec-first,
   probe-second; the agent never authors guides unprompted outside
   `/api learn`.
-- **Static-key auth and per-domain secrets store** — `auth.kind:
-  static-key` realizes store-backed `secretRefs` (header injection),
-  `secretQueryRefs` (query-param injection), `requires`/`optional`
-  secret sets (parser-enforced to coincide with the refs), and an
-  optional `headerPrefixes` map (`headerName -> prefix`) prepended to
-  the resolved secret value at fetch time, so the store holds the raw
-  credential while the guide declares how it is presented (e.g.
-  `Authorization: "Bearer "`) — without it, the token-scheme prefix
-  was smuggled into every user's secret store. `api-fetch` resolves
-  and injects values in code — the value never enters agent context; a
-  missing `requires` secret **fails closed before the request**.
-  Secrets persist at
+- **Auth: v1 union schema and per-domain secrets store** — `auth.kind` is
+  a `NoneAuth | StaticKeyAuth | OAuth2Auth` discriminated union and every
+  secret reference is a nested `SecretRef` — `{ secret, prefix?, optional? }`,
+  where `secret` is the store name, `prefix` is prepended to the resolved
+  value at fetch time (e.g. `Authorization: "Bearer "`), and `optional: true`
+  means absent → proceed unauthenticated (otherwise the ref is hard-required
+  and absent → `api-fetch` **fails closed before the request**). Availability
+  and prefix are properties of each ref — the old flat rosters
+  (`requires`/`optional`/`headerPrefixes`) are gone. `static-key` realizes
+  `secretRefs` (header injection) + `secretQueryRefs` (query-param injection,
+  collision with any op's `params` rejected at parse); `oauth2` is realized
+  at runtime (see the OAuth2 bullet below). Guides authoring against earlier
+  snapshots of the flat shape should be migrated per
+  `docs/migration-v1.md`. `api-fetch` resolves and injects values in
+  code — the value never enters agent context. Secrets persist at
   `~/.pi/agent/pi-lean-host/secrets/<domain>.json` (mode `0600`,
   lazy-mkdir-on-write-only), provisioned transcript-safely via
   `/api secrets` (names only, never values; headless hosts get direct
@@ -104,9 +107,8 @@
   `details.headers`, redacts query-param secrets to `?param=***` on
   every surfaced URL, and forces any auth-bearing call through the
   SSRF-guarded redirect loop with injected secrets stripped on
-  cross-domain hops. `oauth2` is declared in the schema and realized at
-  runtime (see the OAuth2 bullet below); an OS-keychain at-rest backend is
-  deferred (the `0600` file stays the honest default).
+  cross-domain hops. An OS-keychain at-rest backend is deferred (the
+  `0600` file stays the honest default).
 - **OAuth2 token flows and `api-store` inspection** — `auth.kind: oauth2`
   is realized: `client_credentials` mints/caches/lazily-refreshes via
   `resolveAccessToken` (per-slot lock + skew buffer), and the auth-code

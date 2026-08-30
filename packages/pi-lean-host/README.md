@@ -169,7 +169,8 @@ touches the other's tools.
 | `/api secrets [<domain> [<name>]]` | Manage stored API secrets — list, provision, delete (see [Authentication & Secrets](#authentication--secrets)). |
 | `/api verify <domain> [guide] [--force]` | Run every runnable op against the live API and stamp `verified` on success — strict: any runnable-op failure → no stamp; skipped ops named in the report (see [Recipe drift](#recipe-drift)). |
 | `/api delete <domain> [guide]` | Remove a guide directory and invalidate the guide-store cache — a human-typed recovery gesture (no agent tool surface); interactive confirm for a whole-domain delete. |
-| `/api oauth <domain> …` | OAuth2 token management — mint / `--status` / `--refresh` / `--revoke` / `--code <code>` per token slot (human-typed; the agent's mint path is `oauth-mint`). |
+| `/api oauth <domain> …` | OAuth2 token management — `init` / mint / `--status` / `--refresh` / `--revoke` / `--code <code>` per token slot (human-typed; the agent's mint path is `oauth-mint`). `init` runs an interactive wizard (or headless flags) and finishes a paste-based auth-code flow via `/api oauth init <domain> … --code <code>`. |
+| `/api bootstrap oauth <domain> <spec>` | Agent-driven OAuth2 bootstrap — validates args, auto-enables learn when off, injects a research brief into the session, and exits; the agent then researches the provider and calls `oauth-mint` (the human is the trust root for the secret-bearing endpoint). Refused headless. |
 
 ### Why a peer toggle?
 
@@ -425,13 +426,17 @@ recipe library and copy a domain folder that matches your target.
 | `verified` | guide | creation date | drift signal — **defaulted, not enforced**; stamped on success by `/api verify` |
 | `schemaVersion` | guide | `0` (floor) | breaking-change detection — stamped on save by `api-learn`; a stale guide (`< current`) gets a non-blocking `⚠` warning in `api-guide`/`api-fetch`, **never a gate** |
 | `gatherAllMax` | guide / op | `1000` | `gatherAll` ceiling; an op can override |
-| `auth.kind` | guide | `none` | `none` \| `static-key` (store-backed header/query secrets). `oauth2` is a declared-but-unrealized seam (rejected at parse) |
+| `auth.kind` | guide | `none` | `none` \| `static-key` (store-backed header/query secrets) \| `oauth2` (client_credentials + authorization_code token flows) |
 | `auth.headers` | guide | — | literal extra headers merged into every request (e.g. X-Api-Key: DEMO_KEY) — **literal values only**, never the path for real credentials |
-| `auth.secretRefs` | guide | — | `Record<headerName, secretName>` — store-backed header injection (`static-key`) |
-| `auth.headerPrefixes` | guide | — | `Record<headerName, prefix>` — prefix prepended to a secretRefs header value, e.g. `Authorization: "Bearer "` (store holds the raw credential) |
-| `auth.secretQueryRefs` | guide | — | `Record<paramName, secretName>` — store-backed query-param injection (`static-key`) |
-| `auth.requires` | guide | — | secret names the guide hard-requires; absent → `api-fetch` fails closed before the request |
-| `auth.optional` | guide | — | secret names used if present, skipped if absent (e.g. GitHub rate-limit token) |
+| `auth.secretRefs` | guide | — | `Record<headerName, SecretRef>` — store-backed header injection (`static-key` + `oauth2`). Each ref is `{ secret, prefix?, optional? }`: `secret` is the store name, `prefix` is prepended to the stored value at resolution time (e.g. `"Bearer "`), `optional: true` → absent secret proceeds unauthenticated instead of failing closed |
+| `auth.secretQueryRefs` | guide | — | `Record<paramName, SecretRef>` — store-backed query-param injection (`static-key`); a param name colliding with any op's `params` map is a parse error |
+| `auth.grant` | guide | required (`oauth2`) | `client_credentials` \| `authorization_code` |
+| `auth.tokenUrl` | guide | required (`oauth2`) | token endpoint (the only non-GET request host makes) |
+| `auth.clientId` / `auth.clientSecret` | guide | required / grant-dependent | `SecretRef`s resolving from the secrets store — per-user, never shipped in a guide. `clientSecret` is parser-required for `client_credentials` and forbidden for `authorization_code` (PKCE public clients have none) |
+| `auth.scopes` | guide | — | static scope list declared in the guide (`oauth2`) — no runtime picker |
+| `auth.paramStyle` | guide | `bearer-header` | `bearer-header` \| `query` (sends `?access_token=…`, RFC 6750 §2.3) |
+| `auth.tokenEndpointAuthMethod` | guide | `client_secret_post` | `client_secret_basic` \| `client_secret_post` \| `none` — how the client authenticates at the token endpoint |
+| `auth.authorizeUrl` / `auth.revokeUrl` | guide | — | `authorizeUrl` is auth-code-only (parser-enforced present iff `grant: authorization_code`); `revokeUrl` is an optional revocation endpoint |
 | `pagination.style` | guide / op | required when `via: paginate` | `offset-limit` \| `nextLink` \| `cursor` \| `page` \| `resumptionToken` \| `tokenBag` |
 | `pagination.itemsPath` | guide / op | — | JSON path to the items array in the body |
 | `pagination.totalCountPath` | guide / op | — | optional, any style → server-reported total surfaced as `serverTotal` / `server total: N` |
@@ -456,8 +461,9 @@ Three helpers, for v1. The agent never calls these directly — `api-fetch`
 routes each operation through the one its `via` names:
 
 - **`restGet`** — path templating, query params, Accept negotiation
-  (JSON/XML), and auth injection for `auth.kind: static-key` guides
-  (store-backed `secretRefs` / `secretQueryRefs`). See [Authentication &
+  (JSON/XML), and auth injection for auth-bearing guides (static-key
+  store-backed `secretRefs` / `secretQueryRefs`; `oauth2` Bearer tokens).
+  See [Authentication &
   Secrets](#authentication--secrets).
 - **`paginate`** — wraps a list operation. The guide declares the style; the
   helper follows it. Returns `{items, next?, serverTotal?}` so the agent can
@@ -858,33 +864,42 @@ The value never lives in the guide (a real key committed there would be one
 auth:
   kind: static-key
   secretRefs:
-    x-cg-demo-api-key: api_key   # headerName: secretName
-  requires: [api_key]            # absent → api-fetch fails closed
-# secretQueryRefs: { apikey: api_key }  # query-param injection (?key=)
-# optional: [api_key]            # used if present, skipped if absent
-# headerPrefixes:                # headerName → prefix for scheme-style headers
-#   Authorization: "Bearer "       #   (GitHub/GitLab) — the store holds the
-#                                 #   RAW token; the guide adds the prefix
+    x-cg-demo-api-key:
+      secret: api_key            # store name (required — this IS the ref)
+    # Authorization:             # scheme-style header (GitHub/GitLab) —
+    #   secret: github_token     #   the store holds the RAW token; the
+    #   prefix: "Bearer "        #   guide declares how it is presented
+  secretQueryRefs:
+    apikey:
+      secret: api_key            # query-param injection (?key=)
+    user_key:
+      secret: user_key
+      optional: true             # used if present, skipped if absent
 ```
 
-- **`auth.secretRefs`** — `Record<headerName, secretName>`: inject the store
-  value into that request header.
-- **`auth.headerPrefixes`** — `Record<headerName, prefix>`: prepend a scheme
-  prefix to the resolved value for that header (e.g. `Authorization: "Bearer "`).
-  The store holds the **raw credential**; the guide declares how it is
-  presented. Absent = verbatim value. Every key must also be a `secretRefs`
-  header (parser-enforced).
-- **`auth.secretQueryRefs`** — `Record<paramName, secretName>`: inject the
-  store value as that query param.
-- **`auth.requires`** — names the guide **hard-requires**. If one is absent
-  from the store, `api-fetch` **fails closed before the request** — no silent
-  unauthenticated fetch that could return partial data the agent mistakes for
-  complete.
-- **`auth.optional`** — names usable-if-present. Absent → `api-fetch` proceeds
-  unauthenticated (e.g. GitHub: 60 req/hr unauth, 5000 with a token); present
-  → injected like a required secret.
+Each ref is `{ secret, prefix?, optional? }` — availability and prefix are
+properties of the ref itself, not separate rosters:
+
+- **`auth.secretRefs`** — `Record<headerName, SecretRef>`: inject the store
+  value into that request header. A ref without `optional: true` is
+  **hard-required**: absent from the store → `api-fetch` **fails closed
+  before the request** — no silent unauthenticated fetch that could return
+  partial data the agent mistakes for complete.
+- **`prefix`** — prepend a scheme prefix to the resolved value for that
+  header (e.g. `Authorization: "Bearer "`). The store holds the **raw
+  credential**; the ref declares how it is presented. Absent = verbatim value.
+- **`optional: true`** — usable-if-present. Absent → `api-fetch` proceeds
+  unauthenticated (e.g. GitHub: 60 req/hr unauth, 5000 with a token);
+  present → injected like a required secret.
+- **`auth.secretQueryRefs`** — `Record<paramName, SecretRef>`: inject the
+  store value as that query param. A param name colliding with any op's
+  `params` map is a parse error.
 - **`auth.headers`** stays **literal-only** (demo keys, committed rate-limit
   tokens) — it is not the path for real credentials.
+
+Migrating a guide from the old flat shape (`requires`/`optional` rosters,
+`headerPrefixes` map, bare-string refs)? See
+[docs/migration-v1.md](docs/migration-v1.md).
 
 ### Provisioning
 
@@ -907,10 +922,11 @@ Secrets persist at `~/.pi/agent/pi-lean-host/secrets/<domain>.json` (mode
 
 ### The status footer
 
-Every `api-guide` / `api-fetch` result on an auth-bearing guide (`secretRefs`
-or `secretQueryRefs`) ends with a `🔑 auth:` line — `ok`, `requires <name>
-— not provisioned`, or an optional state — showing name and presence only,
-never the value, so it's safe anywhere it renders.
+Every `api-guide` / `api-fetch` result on an auth-bearing guide (static-key
+`secretRefs`/`secretQueryRefs`, or an `oauth2` token slot) ends with a
+`🔑 auth:` line — `ok`, `requires <name> — not provisioned`, or an optional
+state — showing name and presence only, never the value, so it's safe
+anywhere it renders.
 
 ### Authoring keyed guides
 
@@ -959,9 +975,10 @@ channel stays closed.
 - **GET-read only.** No mutation helper. Add one only when a real *retrieval*
   guide needs it (e.g. a search-then-fetch POST), behind a real auth-review
   gate.
-- **Static-key auth only.** `auth.kind: static-key` is realized (store-backed
-  header/query-param secrets, `requires`/`optional`); `oauth2` and cookie-login
-  stay deferred. Values live in the `0600` secrets store, never in a guide —
+- **GET-read auth surface.** `auth.kind: static-key` (store-backed
+  header/query-param secrets) and `auth.kind: oauth2` (`client_credentials`
+  - paste-based `authorization_code`) are realized; cookie-login stays
+  deferred. Values live in the `0600` secrets store, never in a guide —
   see [Authentication & Secrets](#authentication--secrets).
 - **Bundled recipes are inert.** Nothing the package ships executes until you
   place it in `~/.pi/agent/pi-lean-host/` and opt in.
