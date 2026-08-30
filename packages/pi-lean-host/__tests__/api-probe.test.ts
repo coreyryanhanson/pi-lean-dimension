@@ -22,8 +22,8 @@ import {
 	probe,
 	formatProbeResult,
 	MAX_VERSION_WALK,
-	resolveProbeStoreDomain,
 } from "../tools/api-probe.js";
+import { resolveProvisionedParentDomain as resolveProbeStoreDomain } from "../core/auth.js";
 import { apiProbeTool } from "../tools/index.js";
 import { contentText } from "../tools/utils.js";
 import { Check } from "typebox/value";

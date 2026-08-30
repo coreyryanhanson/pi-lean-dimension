@@ -660,6 +660,15 @@ export function resolveProvisionedParentDomain(hostname: string): string {
 	return parent ?? hostname;
 }
 
+/** Hostname of an apiHost URL (falls back to the raw string). */
+export function hostnameOf(apiHost: string): string {
+	try {
+		return new URL(apiHost).hostname;
+	} catch {
+		return apiHost;
+	}
+}
+
 /** Fields the bootstrap surfaces collect into a synthetic `OAuth2Auth`. */
 export interface SyntheticOAuth2Fields {
 	grant: OAuth2Grant;

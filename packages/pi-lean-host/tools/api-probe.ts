@@ -28,6 +28,7 @@ import {
 } from "../core/path-template.js";
 import {
 	buildSyntheticOAuth2Auth,
+	hostnameOf,
 	resolveAccessToken,
 	resolveProvisionedParentDomain,
 	resolveSecretHeaders,
@@ -453,22 +454,6 @@ function authMissNote(authCtx: ProbeAuthCtx, domain: string): string {
 		.join(" — ");
 }
 
-/** Probe-semantics wrapper over the core secrets-store parent-domain lookup
- *  (resolveProvisionedParentDomain) — same longest-provisioned-parent rule,
- *  kept under the probe's name for its call sites + tests. */
-export function resolveProbeStoreDomain(hostname: string): string {
-	return resolveProvisionedParentDomain(hostname);
-}
-
-/** Hostname of an apiHost URL (falls back to the raw string). */
-function hostnameOf(apiHost: string): string {
-	try {
-		return new URL(apiHost).hostname;
-	} catch {
-		return apiHost;
-	}
-}
-
 /** Trailing path of an apiHost URL (e.g. `/v3`), or `""` when empty/root.
  *  Trailing slashes stripped so `.../v3/` + `/items` → `/v3/items`, not `/v3//items`.
  *  Lets the probe draft carry the version prefix that was actually fetched. */
@@ -488,7 +473,8 @@ export async function probe(
 ): Promise<ProbeResult> {
 	const accept = opts.accept ?? "application/json";
 	const walkVersions = opts.walkVersions ?? true;
-	const domain = opts.domain ?? resolveProbeStoreDomain(hostnameOf(apiHost));
+	const domain =
+		opts.domain ?? resolveProvisionedParentDomain(hostnameOf(apiHost));
 	const authCtx = await resolveProbeAuth(opts.auth, domain);
 
 	// Base case only carries the apiHost version prefix; a walk-hit draft
@@ -1002,7 +988,7 @@ export const apiProbeTool = defineTool({
 			if (unscoped !== undefined) blocks.push(formatUnscopedDomains(unscoped));
 			const target =
 				domain ??
-				(apiHost ? resolveProbeStoreDomain(hostnameOf(apiHost)) : undefined);
+				(apiHost ? resolveProvisionedParentDomain(hostnameOf(apiHost)) : undefined);
 			if (target !== undefined) {
 				const secrets = listDomainSecrets(target);
 				blocks.push(formatSecretsResult(secrets));
