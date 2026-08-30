@@ -400,9 +400,17 @@ tarball (repo-only); the tests read them from disk.
 The membership is set by the axis-set audit (its matrix is encoded in
 `__tests__/axis-coverage.test.ts`). That test is the regression tripwire
 that pins the set: the kept union must cover every axis and the guide count
-must match. Co-located mocked-transport tests live only for
+must match (9 guides, auth kinds `none` + `static-key` + `oauth2`).
+Co-located mocked-transport tests live only for
 axes **not** consolidated into `__tests__/axis-units.test.ts` (local-helper,
-transform, static-key-auth, multi-recipe-domains, resumptionToken, tokenBag).
+transform, static-key-auth, multi-recipe-domains, resumptionToken, tokenBag,
+oauth2). The `oauth2` axis is carried by the sibling pair `twitch`
+(client_credentials — auto-mint, Bearer + `Client-Id` `secretRefs` merge,
+no-refresh re-mint) + `twitch-user` (authorization_code — fail-closed
+`oauth_token_missing`, multi-grant slot coexistence) on the shared
+`twitch.tv` store domain: compressed twins of the live-verified caritas
+recipes, grounded in real provider facts but never fetched live
+(see [`docs/design/oauth2-axis-guides.md`](docs/design/oauth2-axis-guides.md)).
 No `_shared/`, `WAF-NOTES.md`, or `CONTRIBUTING.md` remain here — those moved
 to caritas along with the real recipes.
 

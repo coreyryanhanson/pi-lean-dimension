@@ -38,7 +38,7 @@ to a `failedItems` group; no item dropped). Cannot inspect response headers.
 | Response formats | JSON, XML (`fast-xml-parser`, `removeNSPrefix`) | — |
 | Charsets | UTF-8 + any IANA charset via `TextDecoder` (guide `charset` as fallback) | — |
 | Content negotiation | `accept: json`/`xml` shorthands, free-form media strings | Query-param negotiation is just a param default — not a helper |
-| Auth | `auth.kind: none`, `auth.headers` (extra headers, e.g. `DEMO_KEY`) | `static-key` (realized via secrets store), `oauth2` (rejected at parse), `User-Agent` POLICY (not expressible in a guide; UA via transport config or `auth.headers`) |
+| Auth | `auth.kind: none`, `auth.headers` (extra headers, e.g. `DEMO_KEY`), `static-key` (secrets store + fail-closed), `oauth2` (both grants — cc auto-mint / auth-code paste flow, Bearer or query injection, multi-grant slots) | `User-Agent` POLICY (not expressible in a guide; UA via transport config or `auth.headers`) |
 | Pagination edge signals | empty-array stop, non-array wrap-and-continue, server-total surfacing (`totalCountPath`), continue-token bag (`tokenBag`), OAI `resumptionToken` | `endOfRecords: true` bool, count-bounded stop via a total field, `Link` header |
 | Rate-limit signaling | HTTP 429 + exponential backoff + `Retry-After` (delay-seconds and HTTP-date) | `X-RateLimit-*` (informational only, agent reads headers) |
 | Caching / conditional | `Cache-Control` TTL, ETag/`If-None-Match` → 304, `Expires` fallback | — |
@@ -48,9 +48,12 @@ to a `failedItems` group; no item dropped). Cannot inspect response headers.
 | Local-helper contract | signature `(params, ctx) => params`, pre-call only, async support, one-per-guide, gated post-response `transform` | per-param helper binding (out of scope) |
 
 The synthetic axis set keeps every guide-driven axis covered in-repo: all six
-pagination styles, both `transform × via` combos (restGet + paginate), both
-realized auth kinds (none + static-key), XML parsing, local-helper, SSRF guard
-(nextLink), and multi-recipe domains (`internet-archive` + `wayback-availability`).
+pagination styles, both `transform × via` combos (restGet + paginate), all
+three realized auth kinds (none + static-key + oauth2 — the `twitch` /
+`twitch-user` pair carrying `client_credentials` + `authorization_code` on one
+store domain), XML parsing, local-helper, SSRF guard (nextLink), and
+multi-recipe domains (`internet-archive` + `wayback-availability`, plus the
+auth-slot sibling split `twitch` + `twitch-user` on `twitch.tv`).
 `axis-coverage.test.ts` is the regression tripwire pinning that set.
 
 ## When to upgrade a local-helper quirk to built-in
@@ -73,7 +76,6 @@ in a guide.
 - **`Link`-header pagination** — only known recipe uses header-based pagination;
   no helper valve can see headers (pre-call runs pre-request, `transform` sees
   only the parsed body). Would need a header-aware pagination style.
-- **`oauth2`** — declared seam, rejected at parse (see `api-secrets-*.md`).
 - **General mutations / write gate** — transport is GET-only (`restGet`,
   `paginate`); scoping is behavioral (provision read-only keys).
 - **Cookie-login / session continuity** — separate capability; core is

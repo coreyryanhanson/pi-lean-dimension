@@ -448,18 +448,22 @@ lands.
 
 ## Remaining work
 
-### Phase 3 — Axis coverage + caritas recipes (open)
+### Phase 3 — Axis coverage + caritas recipes (host side landed; caritas open)
 
-+ **Host axis guide** — add the synthetic OAuth2 axis guide chosen in
-  Phase 0 (see [`oauth2-flow-research.md`](./oauth2-flow-research.md)) to
-  `api-guides/`, with a co-located mocked-transport test exercising token
-  injection + refresh + fail-closed. Update the
-  `__tests__/axis-coverage.test.ts` matrix (kept-set count + auth-kind axis:
-  `none` + `static-key` + `oauth2`) and the
-  `__tests__/all-guides-parse.test.ts` auth-kind assertion (extend to
-  `oauth2`). Move `oauth2` from "Deferred" to "Built-in" in
-  `api-helper-escape-valve.md`'s classification table.
-+ **Caritas recipes** — publish the Phase-0 client-credentials recipe and
++ [x] **Host axis guide** — the two-guide set chosen in
+  [`oauth2-axis-guides.md`](./oauth2-axis-guides.md): `twitch`
+  (client_credentials — auto-mint + Bearer/`Client-Id` `secretRefs` merge +
+  no-refresh re-mint) and `twitch-user` (authorization_code — fail-closed
+  `oauth_token_missing` + multi-grant slot coexistence), co-located
+  mocked-transport tests, `__tests__/axis-coverage.test.ts` matrix grown
+  7 → 9 (`none` + `static-key` + `oauth2`),
+  `__tests__/all-guides-parse.test.ts` auth-kind assertion already covering
+  `oauth2`, and `oauth2` moved from "Deferred" to "Built-in" in
+  `api-helper-escape-valve.md`'s classification table. Deliberate deviation
+  from the original bullet: guide-level **refresh** coverage is dropped —
+  it stays structurally owned by `__tests__/oauth.test.ts`; the fixture
+  pair proves the parsed-guide → `resolveOpForExecution` seam.
++ [ ] **Caritas recipes** — publish the Phase-0 client-credentials recipe and
   the auth-code-with-PKCE recipe into
   [`caritas`](https://github.com/coreyryanhanson/caritas) with live tests
   (`HOST_INTEGRATION=1`) and `verified:` dates. Caritas owns the drift
