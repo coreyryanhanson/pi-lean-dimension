@@ -107,7 +107,7 @@ The toggle also manages a `SIBLING_TOOL_NAMES` set populated with `"web-search"`
 - **Python bridge unit tests** (`pi-lean-portal/backends/python-base/tests/`): pure-logic pytest tests for the shared `pi_browser_bridge` library (accessibility, bot-detection, JSON-RPC transport, chromium-py/firefox-py routing, `PlaywrightBridge` stealth-quirk flags). Use fakes/mocks; the `playwright` import is lazily guarded, so they need only `pytest>=9.0` — no Playwright wheel, no browser binaries. Run via `npm run test:py-bridge`; wired into the `structural` CI job.
 - **MiniWoB behavioral tests** (`bench/miniwob/suites/`): behavioral evaluation against real browser engines (MiniWoB tasks, browser interaction pipeline verification). These require a live browser and MiniWoB++ content.
 - **Host structural tests** (`pi-lean-host/__tests__/`): guide parsing, transport, auth, resolve-op, secrets, verify-stamp, scaffold, oauth-mint, bootstrap command, status hint, render, host-only boundary — mocked unit tests, no live HTTP.
-- **Host recipe-validity tests** (`pi-lean-host/api-guides/<domain>/*.test.ts`): per-recipe endpoint coverage and helper transform tests co-located with their guide. Transform tests run in bare CI; live endpoint tests opt in via `HOST_INTEGRATION=1`. Excluded from the npm tarball.
+- **Host recipe-validity tests** (`pi-lean-host/api-guides/<domain>/*.test.ts`): per-recipe endpoint coverage and helper transform tests co-located with their guide. All mocked-transport (no live endpoints — the live tier lives in the caritas repo, gated by its `HOST_INTEGRATION=1`). Excluded from the npm tarball.
 - **Per-backend contract tests** (in `pi-lean-portal`): verify each backend (chromium, firefox, chromium-py, firefox-py, etc.) against the `BrowserPlugin` interface contract. Require their respective browser engine.
 
 ### Test file summary
@@ -120,7 +120,7 @@ The toggle also manages a `SIBLING_TOOL_NAMES` set populated with `"web-search"`
 | MiniWoB behavioral | `bench/miniwob/suites/` | 8 | 130 tasks × 4 + user-backends + smoke* | Chromium + Firefox + Python + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 29 | No |
 | Host structural | `pi-lean-host/__tests__/` | 34 | ~850 | No |
-| Host recipe-validity | `pi-lean-host/api-guides/<domain>/*.test.ts` | 8 | ~30 | No (live: `HOST_INTEGRATION=1`) |
+| Host recipe-validity | `pi-lean-host/api-guides/<domain>/*.test.ts` | 8 | ~30 | No |
 
 Per-file detail for the portal-owned test lists (structural, python bridge, per-backend contract, shared test utilities) lives in [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md) ("Testing (portal detail)"). Host-owned test detail lives in [`packages/pi-lean-host/AGENTS.md`](packages/pi-lean-host/AGENTS.md). MiniWoB suite detail (preflight gate, prerequisites, env overrides, suite files, coverage ceiling) lives in [`bench/AGENTS.md`](bench/AGENTS.md).
 
