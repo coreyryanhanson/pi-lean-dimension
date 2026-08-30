@@ -13,8 +13,8 @@
 
 ## What this package is
 
-- Registers **6 tools**: `api-guide`, `api-fetch`, `api-learn`, `api-probe`,
-  `api-scaffold`, `oauth-mint`. `api-probe` is the shape-discovery tool for the
+- Registers **7 tools**: `api-guide`, `api-fetch`, `api-learn`, `api-probe`,
+  `api-scaffold`, `api-store`, `oauth-mint`. `api-probe` is the shape-discovery tool for the
   authoring loop (fetch an exploratory path, summarize the JSON shape, emit a draft
   YAML op block); it never writes the guide. `api-scaffold` is the
   learn-gated bootstrap tool: it writes a starter `verify.json` (with
@@ -33,9 +33,27 @@
   mints/stamps via the existing `mintAuthCodeToken` / `resolveAccessToken`
   machinery. Any cancel throws the two-call `/api oauth init <domain> …
   --code` escape-hatch hint built from the tool's own params. No discovery,
-  no guide authoring, no secret provisioning.
+  no guide authoring, no secret provisioning. `api-store` is the
+  learn-gated read-only inspection of **both credential stores in one call**
+  (replaced `api-probe`'s former `listSecrets` arm — probe is back to pure
+  shape discovery): bare call → orphan view (unscoped secret domains +
+  token domains with no guide, via the same store-domain seam as minting —
+  `resolveProvisionedParentDomain` + `hostnameOf` in `core/auth.ts`);
+  with `domain`/`apiHost` → combined per-domain report: provisioned vs
+  declared vs gap secret names, token slots rendered from `TokenSlotInfo`
+  (issuer, granted scope with an "(assumed)" RFC 6749 §5.1 fallback to the
+  requested scopes, expiry, refreshable), and declared-slot gaps ("guide
+  declares X via `tokenUrl`: no token minted" — the pointer to `oauth-mint`
+  that replaces a trial-and-error 401). Strictly read-only — no
+  mint/refresh/revoke surface; those stay human-typed (`/api oauth`) or
+  human-consented (`oauth-mint`). Redaction at the collection boundary:
+  `accessToken`/`refreshToken` are physically absent from the metadata
+  objects, so they can't leak into rendered text **or** structured
+  `details` (test-enforced against `details`). Two-layer learn gate, same
+  as probe's former `listSecrets` arm: ToolsetSpec masking + runtime
+  `isApiLearnEnabled()` re-check.
 - Registers the **`/api`** command with
-  `on|off|learn|status|helpers|secrets|verify|delete|bootstrap` subcommands — an
+  `on|off|learn|status|helpers|secrets|verify|delete|oauth|bootstrap` subcommands — an
   independent peer toggle that composes freely with portal's `/web`
   (additive-on / filter-off semantics).
   - `/api verify <domain> [guide] [--force]` runs every runnable op of a
@@ -120,10 +138,10 @@ they live in the [`caritas`](https://github.com/coreyryanhanson/caritas) repo, g
 `/api` has three states, mirroring portal's browser toggle:
 
 - **on** — `api-guide` + `api-fetch` enabled (`api-learn` + `api-probe` +
-  `api-scaffold` + `oauth-mint` off)
-- **learn** — on + `api-learn` + `api-probe` + `api-scaffold` + `oauth-mint`
-  (authoring mode)
-- **off** — all six disabled
+  `api-scaffold` + `api-store` + `oauth-mint` off)
+- **learn** — on + `api-learn` + `api-probe` + `api-scaffold` + `api-store` +
+  `oauth-mint` (authoring mode)
+- **off** — all seven disabled
 
 Starts **on**. Defaults are overridable via the `toolsetDefaults` settings tier
 read by `pi-tool-masking`. The two `ToolsetSpec`s (defined in `core/api-toggle.ts`):
@@ -131,7 +149,7 @@ read by `pi-tool-masking`. The two `ToolsetSpec`s (defined in `core/api-toggle.t
 - `pi-lean-dimension.api` → `api-guide` + `api-fetch`, persistKey
   `toolset-state:pi-lean-dimension.api` (default `true`).
 - `pi-lean-dimension.api-learn` → `api-learn` + `api-probe` + `api-scaffold` +
-  `oauth-mint`,
+  `api-store` + `oauth-mint`,
   persistKey `toolset-state:pi-lean-dimension.api-learn` (default `false`),
   `requires: ["pi-lean-dimension.api"]` — enabling learn cascades api on;
   disabling api cascades learn off. There is no `host.*` settings block;
@@ -240,13 +258,17 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
     OAuth2 access token for the resolved domain from the token store and
     injects `Authorization: Bearer <token>` (absent/expired → a note nudging
     `/api oauth <domain>`, call proceeds unauthenticated — never fail-closed;
-    with mint fields present, the miss mints instead of nudging);
-    learn-gated `listSecrets: true` lists
-    provisioned secret names (names only) to close the authoring bootstrap
-    gap. A bare `listSecrets` call (no `domain`, no `apiHost`) lists
-    **provisioned-but-guideless** (unscoped) store domains first — the orphan
-    view for authoring bootstrap + post-flip migration cleanup — then the
-    per-domain view.
+    with mint fields present, the miss mints instead of nudging).
+    Probe is pure shape discovery — for the pre-probe "what credentials
+    exist" check, the agent calls `api-store` (learn-gated, both stores).
+  - **`api-store`** (learn-gated): read-only combined report over both
+    stores — bare call → orphan view (unscoped secret domains + guideless
+    token domains, via `resolveProvisionedParentDomain` in `core/auth.ts` —
+    the same store-domain seam minting uses); per-domain → provisioned/
+    declared/gap secret names + token slots (`TokenSlotMeta`: issuer, scope
+    with "(assumed)" fallback, expiry, refreshable) + declared-slot gaps
+    ("no token minted" → `oauth-mint`). Metadata only — token/secret values
+    never reach the render boundary.
   - **Deferred by design** (don't add): general mutations /
     write gate stay out (transport is GET-only); cookie-login (jar +
     `api-login`) is deferred in full; an OS-keychain at-rest backend
@@ -324,12 +346,16 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   (see above), `oauth-mint.ts` (the learn-gated human-in-the-loop mint:
   fail-closed validation → store-name precheck → token-URL confirm → scopes
   checklist → paste prompt → mint/stamp; cancel throws the two-call
-  `init … --code` escape-hatch hint), `api-probe.ts`, `utils.ts`, `index.ts`.
+  `init … --code` escape-hatch hint), `api-store.ts` (the learn-gated
+  read-only both-stores inspection — see the tool bullet above;
+  `TokenSlotMeta`/`collectDomainReport`/`collectUnscoped`), `api-probe.ts`, `utils.ts`, `index.ts`.
 - `__tests__/` — framework structural tests (no network): `smoke`,
   `parse-api-guide`, `all-guides-parse` (every bundled `guide.md` parses
   cleanly), `tools`, `api-learn-fetch-recipe` (fetch-recipe + entry-point
   split + N-guide disambiguation + file staging), `helpers`, `local-helpers`,
-  `api-toggle`, `api-scaffold`, `api-learn-multi-file` (multi-file staging,
+  `api-toggle`, `api-scaffold`, `api-store` (bare orphan view, per-domain
+  combined view, declared-slot gap, learn-gate refusal, redaction asserted
+  against `details`, scope "(assumed)" fallback), `api-learn-multi-file` (multi-file staging,
   mirror-save, deletion gate, guide↔helper validation),
   `secrets-store`, `secrets-command`, `auth` (static-key schema/injection/
   output-channel audit/SSRF/footer structural tests), `oauth`
@@ -337,7 +363,7 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   PKCE: paste-parse (full URL with state / bare code / `?error=`),
   headless `--code` completion, interactive inline prompt, --refresh), `query-secrets`
   (query-param-secret injection, output-channel redaction, api-probe inline
-  auth / `listSecrets`), `portal-projection`, `render-result`,
+  auth / probe inline-auth `domain` override), `portal-projection`, `render-result`,
   `response-spill`, `host-only-boundary`, `axis-units` (nextLink/XML/cursor/
   ETag via mocked transport; fixtures in `__tests__/fixtures/axis/`),
   `axis-coverage` (regression tripwire: the synthetic axis-guide set's union

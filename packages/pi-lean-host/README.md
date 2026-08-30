@@ -44,7 +44,7 @@
 1. [Quick Start](#quick-start)
 2. [The Big Idea: Recipes, Not a Runtime](#the-big-idea-recipes-not-a-runtime)
 3. [`/api` Command — API Toggle](#api-command--api-toggle)
-4. [All 5 Tools](#all-5-tools)
+4. [All 7 Tools](#all-7-tools)
 5. [Guide Recipes (the `recipe` block)](#guide-recipes-the-recipe-block)
 6. [Authoring a Guide](#authoring-a-guide)
 7. [Local User Helpers](#local-user-helpers)
@@ -70,12 +70,12 @@ pi install npm:pi-lean-host
 No browser binaries, no server, no setup wizard. The host tools are **enabled
 by default** — you'll see:
 
-> 📡 API tools enabled. /api learn to make api-learn + api-probe + api-scaffold available.
+> 📡 API tools enabled. /api learn to make api-learn + api-probe + api-scaffold + api-store + oauth-mint available.
 
 From a fresh install you have no guides yet, so the workflow is:
 
 1. **`/api learn`** — enable the authoring tools (`api-learn` + `api-probe` +
-   `api-scaffold`).
+   `api-scaffold` + `api-store` + `oauth-mint`).
 2. **`api-probe({apiHost, path})`** — discover the shape of a not-yet-guided
    endpoint; it drafts a YAML operation block to paste into a recipe.
 3. **`api-learn({domain, dir})`** — validate the staged draft(s) and write
@@ -161,7 +161,7 @@ touches the other's tools.
 | Command | Effect |
 |---------|--------|
 | `/api on` | **API access** — `api-guide` + `api-fetch` available. Authoring tools hidden. (Default for new sessions.) |
-| `/api learn` | **API access + authoring** — adds `api-learn` + `api-probe` + `api-scaffold` on top of `on`. The agent never authors guides unprompted — it must be in learn mode. |
+| `/api learn` | **API access + authoring** — adds `api-learn` + `api-probe` + `api-scaffold` + `api-store` + `oauth-mint` on top of `on`. The agent never authors guides unprompted — it must be in learn mode. |
 | `/api off` | **All API tools hidden** — removes `api-*` from the agent's context to save tokens on sessions that aren't doing API work. |
 | `/api` | Show current state and available sub-commands. |
 | `/api status` | Detailed runtime status — state, active guides, domains, helpers. |
@@ -169,6 +169,7 @@ touches the other's tools.
 | `/api secrets [<domain> [<name>]]` | Manage stored API secrets — list, provision, delete (see [Authentication & Secrets](#authentication--secrets)). |
 | `/api verify <domain> [guide] [--force]` | Run every runnable op against the live API and stamp `verified` on success — strict: any runnable-op failure → no stamp; skipped ops named in the report (see [Recipe drift](#recipe-drift)). |
 | `/api delete <domain> [guide]` | Remove a guide directory and invalidate the guide-store cache — a human-typed recovery gesture (no agent tool surface); interactive confirm for a whole-domain delete. |
+| `/api oauth <domain> …` | OAuth2 token management — mint / `--status` / `--refresh` / `--revoke` / `--code <code>` per token slot (human-typed; the agent's mint path is `oauth-mint`). |
 
 ### Why a peer toggle?
 
@@ -195,15 +196,16 @@ and `○ api` when off.
 
 ---
 
-## All 5 Tools
+## All 7 Tools
 
-`pi-lean-host` registers 5 tools. `api-guide` and `api-fetch` are available
-under `/api on`; `api-learn`, `api-probe`, and `api-scaffold` are added under
-`/api learn`.
+`pi-lean-host` registers 7 tools. `api-guide` and `api-fetch` are available
+under `/api on`; `api-learn`, `api-probe`, `api-scaffold`, `api-store`, and
+`oauth-mint` are added under `/api learn`.
 
-The five tools split cleanly by side-effect boundary — one each for **local
-read**, **network read**, **local write**, **network read (exploratory)**, and
-**local write (bootstrap)**:
+The seven tools split cleanly by side-effect boundary — one each for **local
+read**, **network read**, **local write**, **network read (exploratory)**,
+**local write (bootstrap)**, **store inspection (read-only)**, and
+**human-consented network write (mint)**:
 
 ### 1. `api-guide` — Inspect the Guide Store (local read)
 
@@ -337,6 +339,52 @@ Bootstrap tool for the two artifacts the authoring loop needs but that
   `api-learn`), so a scaffolded `verify.json`/`helper.ts` lands in the same
   dir `api-learn` saves from. Save the guide **first**, then scaffold —
   `api-scaffold` reads the saved guide. Requires `/api learn`.
+
+### 6. `api-store` — Inspect Both Credential Stores (local read, learn-gated)
+
+```text
+api-store → orphan view: unscoped secret domains + token domains with no guide
+api-store domain="api.github.com" → combined secrets + tokens report for the domain
+```
+
+Read-only inspection of **both credential stores in one call** — the
+agent-facing view of `/api secrets` + `/api oauth --status`. The authoring
+question is never "show me tokens" in isolation; it is what credentials exist
+for a domain, what's declared vs provisioned vs minted, what's expired, and
+what needs minting next.
+
+- Bare call → the authoring-bootstrap (orphan) view: unscoped secret domains
+  and token domains with no guide. Token domains resolve through the same
+  store-domain seam minting uses, so an `api.`-subdomain token maps to its
+  parent's guides instead of false-positive as guideless.
+- With `domain` (or `apiHost`, resolved the same way) → the combined
+  per-domain report: provisioned/declared/gap secret names, token slots
+  (issuer, granted scope, expiry, refreshable), and **declared-slot gaps** —
+  "guide declares client_credentials via `tokenUrl`: no token minted" — the
+  pointer to `oauth-mint` that replaces a trial-and-error 401.
+
+Metadata only: `accessToken`/`refreshToken` are dropped at the collection
+boundary and secret values never enter the tool — they can't appear in the
+rendered text **or** the structured `details`. When a token's granted scope
+wasn't echoed by the provider, the requested scopes render with an
+"(assumed)" marker (RFC 6749 §5.1). Strictly read-only — mint via
+`oauth-mint`, refresh/revoke stay human-typed (`/api oauth`). Requires
+`/api learn`.
+
+### 7. `oauth-mint` — Human-in-the-Loop OAuth2 Mint (network write, consented)
+
+```text
+oauth-mint domain="github.com" grant="authorization_code" tokenUrl="https://github.com/login/oauth/access_token" ... → prompts the human, then mints + stamps the token store
+```
+
+The learn-gated mint half of the agent-driven OAuth2 bootstrap. The agent
+supplies researched params (grant, token/authorize URLs, scopes, client
+credentials as **store NAMES**); the tool validates fail-closed, prechecks
+the store names, then prompts the human — token-URL confirm (the human is
+the trust root for the secret-bearing endpoint), a ✓/○ scopes checklist,
+and a paste prompt for the redirect URL (which never enters the
+transcript). Any cancel prints the two-call `/api oauth init <domain> …
+--code` escape-hatch hint. Requires `/api learn`.
 
 ---
 
@@ -660,7 +708,7 @@ axis-set audit matrix).
   Run /api helpers to list them.
 
   /api on      enable api-guide + api-fetch
-  /api learn   enable all five tools (adds api-learn + api-probe + api-scaffold)
+  /api learn   enable all seven tools (adds api-learn + api-probe + api-scaffold + api-store + oauth-mint)
   /api off     disable all API tools
 ```
 
@@ -869,10 +917,20 @@ never the value, so it's safe anywhere it renders.
 `api-probe` accepts an inline `auth` block (injection fields only) plus a
 `domain` selector, so you can prove a keyed shape before writing the guide —
 a store miss reports the name and fetches unauthenticated (authoring is
-human-in-the-loop, not fail-closed). A learn-gated `listSecrets: true` mode
-lists provisioned secret names (names only) to close the authoring bootstrap
-gap; a bare `listSecrets` call (no `domain`, no `apiHost`) lists
-provisioned-but-guideless store domains first.
+human-in-the-loop, not fail-closed). Probe is pure shape discovery — for
+the pre-probe "what credentials exist for this domain" check, the agent
+calls `api-store` (learn-gated; see below).
+
+### Store inspection for the agent: `api-store`
+
+`api-store` is the read-only agent view of both credential stores (the
+agent-facing counterpart of `/api secrets` + `/api oauth --status`). A bare
+call lists orphaned store domains (secrets or tokens with no matching
+guide); a `domain` (or `apiHost`) call renders the combined report —
+provisioned vs declared vs gap secret names, token slots (issuer, granted
+scope, expiry, refreshable), and declared-slot gaps pointing at `oauth-mint`
+for the not-yet-minted. Names and metadata only — secret and token values
+never leave the store. Requires `/api learn`.
 
 ## Security & Scope
 

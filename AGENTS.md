@@ -19,12 +19,12 @@ An npm-workspaces monorepo containing four packages:
 
 - **`pi-lean-portal`** — Interactive web browsing (owns `/web` command). **12 tools + 1 command.**
 - **`pi-lean-search`** — SearXNG search tool (`web-search`), wired into portal's `/web` toggle. **1 tool + 1 command** (`/searxng-status`).
-- **`pi-lean-host`** — Declarative HTTP API client (`api-guide`, `api-fetch`, `api-learn`, `api-probe`, `api-scaffold`, `oauth-mint`, `/api` namespace). **6 tools + 1 command.**
+- **`pi-lean-host`** — Declarative HTTP API client (`api-guide`, `api-fetch`, `api-learn`, `api-probe`, `api-scaffold`, `api-store`, `oauth-mint`, `/api` namespace). **7 tools + 1 command.**
 - **`pi-lean-dimension`** — Umbrella meta-package that bundles portal + search + host (codeless manifest).
 
 The MiniWoB++ evaluation harness was dissolved out of the workspaces and lives at `bench/miniwob/` — it is research tooling, not a pi extension.
 
-With search + host installed, the suite totals **19 tools + 3 commands** (portal 12 + search 1 + host 6). Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool + declarative HTTP API helpers (`pi-lean-host/core/resolve-op.ts` is the single shared guide-resolution → helper → transform → auth → dispatch sequence used by both `api-fetch` and `/api verify`). Portal entrypoint: `packages/pi-lean-portal/index.ts`. Host entrypoint: `packages/pi-lean-host/index.ts`. Search entrypoint: `packages/pi-lean-search/index.ts`.
+With search + host installed, the suite totals **20 tools + 3 commands** (portal 12 + search 1 + host 7). Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool + declarative HTTP API helpers (`pi-lean-host/core/resolve-op.ts` is the single shared guide-resolution → helper → transform → auth → dispatch sequence used by both `api-fetch` and `/api verify`). Portal entrypoint: `packages/pi-lean-portal/index.ts`. Host entrypoint: `packages/pi-lean-host/index.ts`. Search entrypoint: `packages/pi-lean-search/index.ts`.
 
 ## Developer Commands
 
@@ -75,13 +75,13 @@ Portal dispatches through a `PluginRegistry` + typed `BrowserPlugin` interface; 
 
 > For the `BrowserPlugin` method list, router dispatch, the status bar `browser` slot, profile/cookie persistence, guides, key-tools table, engine parity, snapshot cache, nav-settle, bot-detection tiers, `browser-inspect` internals, the `backends/` vs `core/` boundary, and the full constraints & debt list, see [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md). The search-owned `search` status bar slot is documented in [`packages/pi-lean-search/AGENTS.md`](packages/pi-lean-search/AGENTS.md).
 
-### Registered Tools (19 total with search + host)
+### Registered Tools (20 total with search + host)
 
 **Portal (12):** web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
 
 **Search (1):** web-search
 
-**Host (6):** api-guide, api-fetch, api-learn, api-probe, api-scaffold, oauth-mint
+**Host (7):** api-guide, api-fetch, api-learn, api-probe, api-scaffold, api-store, oauth-mint
 
 ### Registered Commands
 
@@ -89,7 +89,7 @@ Portal dispatches through a `PluginRegistry` + typed `BrowserPlugin` interface; 
 
 **Search:** `/searxng-status` — test the full SearXNG search pipeline and update the status bar glyph.
 
-**Host:** `/api on|off|learn|status|helpers|secrets|verify|delete|bootstrap` — `/api on` (API tools enabled), `/api off` (all disabled), `/api learn` (API tools + api-learn + api-probe + api-scaffold + oauth-mint for guide authoring), `/api status` (active guides + helpers), `/api helpers [domain]` (list/view helper source), `/api secrets [domain [name]]` (provision/list/delete per-domain secret store, names only never values), `/api verify <domain> [guide] [--force]` (run every runnable op live, stamp `verified: today` only on all-pass), `/api delete <domain> [guide]` (`rm -rf` guide dir + invalidate guide-store cache), `/api bootstrap oauth <domain> <spec>` (agent-driven OAuth2 bootstrap: injects a research brief via `sendUserMessage` followUp, exits; auto-enables learn — the flip is focus-guard-refused loudly when focus holds; headless-refused). `status`/`helpers`/`secrets`/`verify`/`delete` and bare `/api` are read-only or always-available — the focus-mode guard doesn't apply to them; `bootstrap` writes toolset state only when learn was off, so the guard is enforced inside the handler, scoped to the flip.
+**Host:** `/api on|off|learn|status|helpers|secrets|verify|delete|oauth|bootstrap` — `/api on` (API tools enabled), `/api off` (all disabled), `/api learn` (API tools + api-learn + api-probe + api-scaffold + api-store + oauth-mint for guide authoring), `/api status` (active guides + helpers), `/api helpers [domain]` (list/view helper source), `/api secrets [domain [name]]` (provision/list/delete per-domain secret store, names only never values), `/api verify <domain> [guide] [--force]` (run every runnable op live, stamp `verified: today` only on all-pass), `/api delete <domain> [guide]` (`rm -rf` guide dir + invalidate guide-store cache), `/api oauth <domain> …` (mint / `--status` / `--refresh` / `--revoke` / `--code <code>` per token slot), `/api bootstrap oauth <domain> <spec>` (agent-driven OAuth2 bootstrap: injects a research brief via `sendUserMessage` followUp, exits; auto-enables learn — the flip is focus-guard-refused loudly when focus holds; headless-refused). `status`/`helpers`/`secrets`/`verify`/`delete` and bare `/api` are read-only or always-available — the focus-mode guard doesn't apply to them; `bootstrap` writes toolset state only when learn was off, so the guard is enforced inside the handler, scoped to the flip.
 
 Toggle state is persisted via `pi.appendEntry("web-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`. Three-field schema: `{browserToolsEnabled, learnToolsEnabled, defaultProfile}`.
 
