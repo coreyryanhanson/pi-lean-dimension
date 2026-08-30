@@ -30,6 +30,7 @@
 | **2.7 — Human guide-less bootstrap** | `/api oauth init <domain>` wizard: interactive prompts (TUI) or headless flags; both grants; two-call `init … --code` headless completion; parent-domain token-store normalization shared with the probe. | `core/oauth-command.ts` (`handleOauthInit`), `core/auth.ts` (`buildSyntheticOAuth2Auth`) |
 | **2.8 — Agent-driven bootstrap** | `oauth-mint` (learn-gated tool) + `/api bootstrap oauth <domain> <spec>` (inject-and-exit command). Locked spec + semantics: [`oauth2-agent-bootstrap.md`](./oauth2-agent-bootstrap.md). Tool count 18→19 suite / 5→6 host. | `tools/oauth-mint.ts`, `core/api-toggle.ts`, `core/select-picker.ts` (`pickChecklist`) |
 | **2.9 — Token-slot multi-grant + multi-issuer** *(landed)* | Token slots keyed by `(storeDomain, grant, tokenUrl)` instead of bare domain. Closes the clobber hole: minting a user token for one domain no longer wipes its app token, and two OAuth issuers behind one API domain get separate slots. Zero schema change, zero author ceremony — the slot derives entirely from facts every consumer already carries in its `OAuth2Auth` object. | `core/oauth-store.ts` (`slotKey`, slot map, tmp+rename writes, `.pending.json` listDomains fix), `core/auth.ts` (slot-aware reads/writes + `(domain, slot)` refresh lock), `core/oauth-command.ts` (per-slot listing, grant qualifier, guide-less orphan slots), `core/oauth-flow.ts`, `tools/api-probe.ts` (`grant` param + loud slot-key validation), `tools/oauth-mint.ts` (slot delete-before-mint + overwrite warning) |
+| **Post-plan: `api-store` inspection** | Learn-gated read-only combined view over both stores (the agent-facing read of the self-describing token store 2.9 created): bare call → orphan view, `domain`/`apiHost` → provisioned/declared/gap secrets + token slots + declared-slot gaps → `oauth-mint`. Probe's `listSecrets` arm was removed (clean removal, no deprecation — host is all `[Unreleased]`); probe is pure shape discovery again. The store-domain seam now lives in `core/auth.ts` (`resolveProvisionedParentDomain` + `hostnameOf`); the former `resolveProbeStoreDomain` wrapper was deleted rather than moved (it was a pure alias). Spec + decision record: [`api-store-inspection-tool.md`](./api-store-inspection-tool.md). Tool count 19→20 suite / 6→7 host. | `tools/api-store.ts`, `tools/api-probe.ts`, `core/auth.ts`, `core/api-toggle.ts` |
 
 **Deferred by decision:** the `isStaleSchema` hard-gate flip (`isStaleSchema` stays a non-blocking ⚠ warning) — its own plan doc lives at
 [`schema-version-hard-gate.md`](./schema-version-hard-gate.md); it lands under the coordinated `0.5.0` step alongside the caritas re-stamp.
@@ -364,10 +365,12 @@ planned. Original checklist kept for reference:
   **loud validation error**, not a silent store miss with a misleading
   "run /api oauth" note. Residual (pre-existing, not a 2.9 regression,
   worth a doc line): probe's store-domain resolution
-  (`resolveProbeStoreDomain(hostnameOf(apiHost))`, overridable via
-  `opts.domain`) can normalize to a parent domain while a guide's token
-  lives at `domains[0]` (`canonicalStoreDomain`) — the useTokenStore read
-  can miss across that seam today too.
+  (`resolveProvisionedParentDomain(hostnameOf(apiHost))` — since the
+  `api-store` landing this lives in `core/auth.ts` and is shared with
+  `api-store`, overridable via `opts.domain`) can normalize to a parent
+  domain while a guide's token lives at `domains[0]`
+  (`canonicalStoreDomain`) — the useTokenStore read can miss across that
+  seam today too.
 + `tools/oauth-mint.ts` — **not zero changes** (the original checklist
   wrongly claimed auth-object carriers need none): the client-credentials
   arm does a bare `deleteToken(storeDomain)` before minting
