@@ -434,8 +434,8 @@ current`) gets a **non-blocking `⚠` warning** in the `api-guide` catalog /
 detail / disambiguation and a note on `api-fetch`. **Never a gate** — the
 guide always loads and runs (proved by `__tests__/schema-version.test.ts`).
 A hard-gate flip (stale → parse refusal) is the coordinated `0.5.0`
-decision, deferred until caritas re-stamps its corpus — see
-`docs/design/oauth2-flow-plan.md`.
+decision, deferred until caritas re-stamps its corpus.
+<!-- schema-gate-flip: remove this whole marker + sentence once the hard gate lands -->
 
 **v1 (0.5.0) — the auth-type reshape:** `AuthConfig` became the
 `NoneAuth | StaticKeyAuth | OAuth2Auth` discriminated union with nested
@@ -446,6 +446,25 @@ runtime + `/api oauth`; the auth-code flow is headless paste-based —
 authorize URL printed, user consents in their own browser and pastes the
 redirect URL back, `redirect_uri` is the `http://127.0.0.1/callback`
 convention, RFC 8252 §7.3).
+
+**Reserved seam (do not re-litigate slot-key design):** `tokenKey?: string`
+on `OAuth2Auth` — NOT in the schema today. The slot key is
+`(storeDomain, grant, tokenUrl)`; `scopes`/`clientId` are deliberately NOT
+in the key because same-issuer tokens are shared by design (folding them in
+would fragment legitimately shared tokens and orphan probe-minted slots).
+The accepted consequence: two sibling guides on one domain with the same
+grant + tokenUrl but different `scopes` (or two app registrations —
+different `clientId`) collapse into one slot; whoever mints/refreshes first
+wins, and refresh doesn't re-send scopes, so the token keeps the first
+guide's scope. Mitigated by the mint-time overwrite warning
+("overwriting existing token for this slot (previous scope: X)"). **When a
+bug report of the form "wrong scope / sibling guide gets the other guide's
+token" arrives on one domain + same grant, that is the trigger to add
+`tokenKey`** — slot becomes `<grant>__<hash>__<tokenKey>`; additive,
+non-breaking, zero file-layout change, tokens re-mint on first use. Likeliest
+first consumer: a ROPC `/api login` (account-scoped tokens — a second user on
+one instance is a second same-grant slot). Per-op grant override stays out
+(an op needing a different grant belongs in a sibling guide).
 
 **Bump rule (post-v1):** do not bump unless a guide that used to parse now
 fails to parse. Adding an optional field, a new enum value, or relaxing a
