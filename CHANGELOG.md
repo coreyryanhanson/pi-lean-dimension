@@ -35,7 +35,9 @@
   (any runnable-op failure → no stamp; skipped ops named; `--force` is
   human-typed only); `/api delete <domain> [guide]` removes a guide
   directory and invalidates the guide-store cache (human-typed recovery
-  gesture, no agent tool surface).
+  gesture, no agent tool surface). `/api oauth <domain> …` (init / mint /
+  `--status` / `--refresh` / `--revoke` / `--code <code>` per token slot)
+  manages OAuth2 tokens.
 - **Recipe schema and fixed executor** — `via: restGet|paginate` per
   operation; `responseShape.format: json|xml|text` with an IANA
   `charset` fallback (header charset always wins). Six pagination styles
@@ -116,7 +118,7 @@
   in their own browser and pastes the redirect URL back — RFC 8252 §7.3
   `http://127.0.0.1/callback` convention). Token slots are keyed by
   `(storeDomain, grant, tokenUrl)` so one domain can hold multiple grants
-  and issuers without clobbering. `/api oauth` mints / `--status` /
+  and issuers without clobbering. `/api oauth` init / mint / `--status` /
   `--refresh` / `--revoke` / `--code <code>` per slot (human-typed);
   `/api bootstrap oauth <domain> <spec>` injects an agent-driven research
   brief; `oauth-mint` is the learn-gated human-in-the-loop mint tool (the

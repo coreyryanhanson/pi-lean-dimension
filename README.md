@@ -27,7 +27,8 @@ default; the guide-authoring tools stay off until you opt in. Control them with
 `/web on|off|learn` (`on` = browser tools, `learn` = adds `web-learn` for
 guide-saving, `off` = everything off) and `/api on|off|learn` (`on` =
 `api-guide` + `api-fetch`, `learn` = adds `api-learn` + `api-probe` +
-`api-scaffold` for guide authoring, `off` = everything off). Each toggle's state
+`api-scaffold` + `api-store` + `oauth-mint` for guide authoring, `off` =
+everything off). Each toggle's state
 persists per session independently. To set a different default for **new**
 sessions, add a `toolsetDefaults` block to your Pi settings
 (`~/.pi/agent/settings.json` or `.pi/settings.json`):

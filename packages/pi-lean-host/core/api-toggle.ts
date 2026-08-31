@@ -349,7 +349,7 @@ async function handleBootstrapSubcommand(
 	}
 
 	// F5: auto-enable learn when off (same as the user running /api learn);
-	// loud fail if the focus-mode guard blocks the enable. Learn stays on.
+	// loud fail if the focus-mode guard blocks the enable. Learn stays off.
 	if (!hooks.learnEnabled()) {
 		if (isFocusHolding()) {
 			const inInclusion = getDefaultResolutionMode() === "inclusion";

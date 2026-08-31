@@ -713,9 +713,13 @@ axis-set audit matrix).
   ⚠ Disabled: boe.es
   Run /api helpers to list them.
 
-  /api on      enable api-guide + api-fetch
-  /api learn   enable all seven tools (adds api-learn + api-probe + api-scaffold + api-store + oauth-mint)
-  /api off     disable all API tools
+  /api on           enable api-guide + api-fetch
+  /api learn       enable all seven tools (adds api-learn + api-probe + api-scaffold + api-store + oauth-mint)
+  /api off         disable all API tools
+  /api verify      verify a guide's ops against its live API (stamps verified)
+  /api oauth       provision/inspect/revoke OAuth2 tokens (client_credentials + auth-code/PKCE)
+  /api bootstrap   agent-driven OAuth2 bootstrap (injects a research brief; enables learn)
+  /api delete      delete a guide directory (human-typed recovery gesture)
 ```
 
 Covers toggle state, active guide count, the domain list, and helper health

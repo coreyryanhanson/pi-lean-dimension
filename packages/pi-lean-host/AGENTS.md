@@ -86,7 +86,7 @@
   validates args (`<domain> <spec>`, both required, domain first; `oauth` is
   the only mode — an explicit dispatch arm, no registry), auto-enables learn
   when off (`ctx.ui.notify`s the flip; loud fail when the focus-mode guard
-  blocks the enable — learn stays on, same as the user running `/api learn`),
+  blocks the enable — the command aborts and learn stays off),
   composes the research brief, injects it via
   `pi.sendUserMessage(brief, { deliverAs: "followUp" })`, and exits
   (inject-and-exit — its entire output is one message). Refuses headless
@@ -311,7 +311,7 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   one `<domain>.json` holding `Record<slot, OAuthToken>` — + pending
   auth-code flow (slot-keyed `<domain>.pending.json`) — 0600 file backend,
   swappable `TokenStore` interface, kept free of any `auth.ts` import),
-  `oauth-command.ts` (`/api oauth` — mint / `--status` / `--refresh` /
+  `oauth-command.ts` (`/api oauth` — init / mint / `--status` / `--refresh` /
   `--revoke` / `--code <code>` / bare per-slot listing; `--status` +
   `--revoke` also work guide-less on orphaned slots (grant qualifier
   disambiguates 2+ slot domains) — local-only clear, no `revokeUrl`), `oauth-flow.ts` (headless paste-based
