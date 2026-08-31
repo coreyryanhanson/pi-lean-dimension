@@ -370,8 +370,8 @@ describe("api-learn TUI rendering", () => {
 			mockTheme,
 			undefined as any,
 		);
-		expect(out.text).toContain("📝");
-		expect(out.text).not.toContain("📖");
+		expect((out as unknown as { text: string }).text).toContain("📝");
+		expect((out as unknown as { text: string }).text).not.toContain("📖");
 	});
 
 	it("renderCall shows the 📖 icon for a fetch-recipe call", () => {
@@ -380,7 +380,7 @@ describe("api-learn TUI rendering", () => {
 			mockTheme,
 			undefined as any,
 		);
-		expect(out.text).toContain("📖");
-		expect(out.text).not.toContain("📝");
+		expect((out as unknown as { text: string }).text).toContain("📖");
+		expect((out as unknown as { text: string }).text).not.toContain("📝");
 	});
 });

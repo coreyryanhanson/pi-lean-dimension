@@ -1527,7 +1527,8 @@ describe("api-guide — multi-guide disambiguation", () => {
 			"Collide",
 		);
 		expect(sel.ok).toBe(false);
-		if (sel.ok) throw new Error("unreachable");
+		if (sel.ok || sel.reason !== "ambiguous")
+			throw new Error("expected ambiguous");
 		expect(sel.reason).toBe("ambiguous");
 		expect(sel.directories).toEqual(["collide-a", "collide-b"]);
 	});
