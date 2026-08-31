@@ -31,6 +31,7 @@ import {
 	credentialNameGap,
 	mintFreshClientCredentials,
 	resolveProvisionedParentDomain,
+	slotOverwriteWarning,
 	OAuthTokenMissingError,
 } from "../core/auth.js";
 import type { SyntheticOAuth2Fields } from "../core/auth.js";
@@ -264,25 +265,14 @@ export const oauthMintTool = defineTool({
 		};
 		const finalSynthetic = buildSyntheticOAuth2Auth(finalFields);
 
-		// Mint-time overwrite warning: slots are keyed
-		// (domain, grant, tokenUrl), so a same-grant re-mint with different
-		// scopes/issuer silently replaces the previous token. The scope
-		// collision is reachable through all three bootstrap surfaces — surface
-		// a cheap warning before the mint instead of silently clobbering.
-		const existing = readToken(
-			storeDomain,
-			finalSynthetic.grant,
-			finalSynthetic.tokenUrl,
-		);
-		if (existing) {
-			ctx.ui.notify(
-				`⚠ Overwriting an existing token for this slot (${finalSynthetic.grant}) — previous scope: ${existing.scope ?? "(none)"}.`,
-				"warning",
-			);
-		}
-
 		try {
 			if (finalSynthetic.grant === "client_credentials") {
+				// Mint-time overwrite warning (shared mitigation — see
+				// slotOverwriteWarning): mintFreshClientCredentials is ui-free,
+				// so the caller renders it. The auth-code arm warns inside
+				// mintAuthCodeToken instead — do not double-warn here.
+				const overwrite = slotOverwriteWarning(finalSynthetic, storeDomain);
+				if (overwrite) ctx.ui.notify(overwrite, "warning");
 				// Bootstrap wants a fresh mint, not a cached token (mirrors the
 				// init wizard / --refresh path). Slot-scoped delete inside the
 				// shared helper: a bare domain delete would leave a stale

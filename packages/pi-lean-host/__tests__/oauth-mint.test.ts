@@ -265,6 +265,9 @@ describe("oauth-mint — token-URL confirm", () => {
 			.join("\n");
 		expect(warned).toContain("Overwriting an existing token");
 		expect(warned).toContain("previous scope: old-scope");
+		// Exactly once — the auth-code arm warns inside mintAuthCodeToken, the
+		// cc arm here; a second inline copy would double-warn.
+		expect(warned.match(/Overwriting an existing token/g)).toHaveLength(1);
 		// The mint proceeded (fresh token replaced the prior one).
 		expect(
 			readToken("mint.invalid", "client_credentials", TOKEN_URL)?.accessToken,

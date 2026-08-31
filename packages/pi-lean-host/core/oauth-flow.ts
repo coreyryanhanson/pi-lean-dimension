@@ -25,6 +25,7 @@ import {
 	exchangeAuthCode,
 	forceRefreshToken,
 	resolveClientCredentials,
+	slotOverwriteWarning,
 	OAuthTokenMissingError,
 } from "./auth.js";
 import {
@@ -224,7 +225,15 @@ export async function mintAuthCodeToken(
 	ctx: ExtensionContext,
 	opts: AuthCodeMintOptions = {},
 ): Promise<OAuthToken> {
+	// The `--code` and start branches both end in a fresh stamp that clobbers
+	// the slot; `--refresh` is exempt (same-slot refresh, never a scope
+	// change — and its fresh-flow fallback warns below).
+	const warnOverwrite = (): void => {
+		const warning = slotOverwriteWarning(auth, storeDomain);
+		if (warning) ctx.ui.notify(warning, "warning");
+	};
 	if (opts.code !== undefined) {
+		warnOverwrite();
 		return completePastedCode(auth, storeDomain, opts.code);
 	}
 	if (opts.refresh) {
@@ -235,6 +244,7 @@ export async function mintAuthCodeToken(
 			// no refresh token → fall through to a fresh authorize flow
 		}
 	}
+	warnOverwrite();
 	return startAuthCodeFlow(auth, storeDomain, ctx, opts.redirectUri);
 }
 

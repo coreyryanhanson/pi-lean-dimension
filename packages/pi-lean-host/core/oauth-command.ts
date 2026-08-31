@@ -53,6 +53,7 @@ import {
 	resolveAccessToken,
 	resolveProvisionedParentDomain,
 	revokeAccessToken,
+	slotOverwriteWarning,
 	OAuthTokenMissingError,
 } from "./auth.js";
 import type { SyntheticOAuth2Fields } from "./auth.js";
@@ -685,6 +686,8 @@ async function handleOauthInit(
 		if (synthetic.grant === "client_credentials") {
 			// Bootstrap wants a fresh mint, not a cached token (mirrors the
 			// plain command's --refresh path).
+			const overwrite = slotOverwriteWarning(synthetic, storeDomain);
+			if (overwrite) ctx.ui.notify(overwrite, "warning");
 			await mintFreshClientCredentials(synthetic, storeDomain);
 			provisionedMsg();
 			return;

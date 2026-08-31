@@ -510,6 +510,23 @@ export function credentialNameGap(
 }
 
 /**
+ * Mint-time overwrite warning: slots are keyed (domain, grant, tokenUrl), so
+ * a same-grant re-mint with different scopes/issuer silently replaces the
+ * previous token — the documented mitigation for the reserved slot-key seam
+ * (scopes/clientId are deliberately excluded from the key). Returns the
+ * warning text when a token already occupies the slot, else null; callers
+ * render via ctx.ui.notify (this module stays ui-free).
+ */
+export function slotOverwriteWarning(
+	auth: OAuth2Auth,
+	domain: string,
+): string | null {
+	const existing = readToken(domain, auth.grant, auth.tokenUrl);
+	if (!existing) return null;
+	return `⚠ Overwriting an existing token for this slot (${auth.grant}) — previous scope: ${existing.scope ?? "(none)"}.`;
+}
+
+/**
  * Fresh client_credentials mint: drop the slot's cached token, then mint.
  * Shared by `/api oauth init` and oauth-mint — bootstrap paths that always
  * want a fresh mint, never a cached token. Both must slot-scope the delete

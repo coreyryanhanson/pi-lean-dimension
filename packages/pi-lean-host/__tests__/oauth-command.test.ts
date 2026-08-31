@@ -122,6 +122,28 @@ describe("oauth init — headless flags, client_credentials", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
+	it("warns before overwriting an existing same-slot token; the mint proceeds", async () => {
+		writeSecret("ccow.invalid", "client_id", "MY_CLIENT");
+		writeSecret("ccow.invalid", "client_secret", "S3CRET");
+		writeToken("ccow.invalid", "client_credentials", TOKEN_URL, {
+			accessToken: "PRIOR",
+			scope: "old-scope",
+		});
+		stubTokenEndpoint(() =>
+			tokenResponse({ access_token: "CC", expires_in: 3600 }),
+		);
+		const m = makeCtx();
+		await handleOauthSubcommand(
+			`init ccow.invalid --grant client_credentials --token-url ${TOKEN_URL} --client-id client_id --client-secret client_secret`,
+			m.ctx,
+		);
+		expect(m.out()).toContain("Overwriting an existing token");
+		expect(m.out()).toContain("previous scope: old-scope");
+		expect(
+			readToken("ccow.invalid", "client_credentials", TOKEN_URL)?.accessToken,
+		).toBe("CC");
+	});
+
 	it("cc without --client-secret fails closed (parser invariant)", async () => {
 		const fetchMock = stubTokenEndpoint(() =>
 			tokenResponse({ access_token: "X" }),
@@ -282,6 +304,44 @@ describe("oauth init — headless flags, authorization_code", () => {
 		expect(
 			readPendingFlow("actwo.invalid", "authorization_code", TOKEN_URL),
 		).toBeNull();
+	});
+
+	it("completion warns before clobbering an existing same-slot token", async () => {
+		writeSecret("acow.invalid", "client_id", "MY_CLIENT");
+		writeToken("acow.invalid", "authorization_code", TOKEN_URL, {
+			accessToken: "PRIOR",
+			scope: "old-scope",
+		});
+		stubTokenEndpoint(() =>
+			tokenResponse({
+				access_token: "NEW",
+				refresh_token: "RT",
+				expires_in: 3600,
+			}),
+		);
+		const start = makeCtx();
+		await handleOauthSubcommand(
+			`init acow.invalid --token-url ${TOKEN_URL} --authorize-url ${AUTHORIZE_URL} --client-id client_id`,
+			start.ctx,
+		);
+		// The start warned too (its inline-completion path can clobber).
+		expect(start.out()).toContain("Overwriting an existing token");
+		const pending = readPendingFlow(
+			"acow.invalid",
+			"authorization_code",
+			TOKEN_URL,
+		);
+		expect(pending).not.toBeNull();
+
+		const m = makeCtx();
+		await handleOauthSubcommand(
+			`init acow.invalid --token-url ${TOKEN_URL} --authorize-url ${AUTHORIZE_URL} --client-id client_id --code ${REDIRECT_URI}?code=GOOD&state=${pending?.state}`,
+			m.ctx,
+		);
+		expect(m.out()).toContain("Overwriting an existing token");
+		expect(
+			readToken("acow.invalid", "authorization_code", TOKEN_URL)?.accessToken,
+		).toBe("NEW");
 	});
 
 	it("state mismatch rejects the paste; the pending flow survives for a retry", async () => {
