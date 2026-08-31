@@ -276,7 +276,12 @@ other pages or files, follow them as needed). From the docs, determine:
 - the **authorize URL** (authorization_code only),
 - the **scopes** the provider defines and what each one grants — you'll
   offer these to the user as a selectable list with short descriptions, so
-  research what each scope means, not just its name.
+  research what each scope means, not just its name. Request the narrowest
+  set that covers read operations: prefer a read-only variant
+  (\`*:readonly\` or equivalent) when one exists, omit write-only scopes
+  entirely, and include a write-capable scope only when no read-only
+  variant grants the needed access — and say so in that scope's
+  description.
 
 **Step 2 — Mint.** Call the \`oauth-mint\` tool with what you found: \`domain\`,
 \`grant\`, \`tokenUrl\`, \`authorizeUrl\` (auth-code only), \`clientId\` and
