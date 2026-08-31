@@ -55,6 +55,7 @@ import {
 	canonicalStoreDomain,
 	hasUsableTokenPath,
 } from "./auth.js";
+import { readSecret } from "./secrets-store.js";
 import { resolveOpForExecution, type ResolveOpResult } from "./resolve-op.js";
 import {
 	HelperError,
@@ -201,10 +202,17 @@ export async function handleVerifySubcommand(
 		}
 		case "oauth2": {
 			if (!hasUsableTokenPath(guide.auth, storeDomain)) {
+				// client_credentials reaching here ⇒ at least one credential secret
+				// is unprovisioned (hasUsableTokenPath would have returned true
+				// otherwise) — name the missing ones like the static-key arm above.
+				const missingCreds = [
+					guide.auth.clientId.secret,
+					...(guide.auth.clientSecret ? [guide.auth.clientSecret.secret] : []),
+				].filter((name) => readSecret(storeDomain, name) === null);
 				const hint =
 					guide.auth.grant === "authorization_code"
 						? `Run /api oauth ${storeDomain} to start the interactive flow`
-						: `Provision the client secret via /api secrets ${storeDomain}, then run /api oauth ${storeDomain}`;
+						: `Provision ${missingCreds.join(", ")} via /api secrets ${storeDomain}, then run /api oauth ${storeDomain}`;
 				ctx.ui.notify(
 					`🔑 ${guide.shortName} has no usable OAuth2 token for '${storeDomain}'.\n` +
 						`${hint}, then re-run /api verify.`,
