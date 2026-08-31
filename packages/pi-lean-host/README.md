@@ -155,7 +155,7 @@ library (`persistKey: toolset-state:pi-lean-dimension.api`), surviving
 `/reload`, `/resume`, `/fork`, and `/tree` navigation. A fresh conversation
 starts from the `toolsetDefaults` block in merged Pi settings (see
 [Configuration](#configuration-settingsjson)), falling back to the packaged
-default (`on` for `api`, `off` for `api-learn`).
+defaults.
 
 The status bar shows an `api` glyph (independent of the `browser`/`search`
 slots). It reads `● api` when `/api` is on (colored to reflect learn state)
@@ -573,9 +573,8 @@ Every `api-guide` / `api-fetch` result on an auth-bearing guide (static-key
 state — showing name and presence only, never the value, so it's safe
 anywhere it renders.
 
-For the agent's read-only view of both credential stores, call `api-store`
-— the agent-facing counterpart of `/api secrets` + `/api oauth --status`
-(see [All 7 Tools](#all-7-tools)).
+For the agent's learn-gated, read-only view of both credential stores, call
+`api-store` (see [All 7 Tools](#all-7-tools)).
 
 ## Security & Scope
 
