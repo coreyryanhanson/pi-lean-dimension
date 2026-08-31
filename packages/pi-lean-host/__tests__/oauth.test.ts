@@ -97,7 +97,7 @@ function makeOp(path: string): Operation {
 
 /** Stub global fetch to answer token-endpoint POSTs. */
 function stubTokenEndpoint(
-	handler: (url: string, init: RequestInit) => Response,
+	handler: (url: string, init: RequestInit) => Response | Promise<Response>,
 ): void {
 	vi.stubGlobal(
 		"fetch",
@@ -205,6 +205,56 @@ describe("resolveAccessToken (client_credentials)", () => {
 		const token = readToken("oauth.refresh", CC, TT);
 		expect(token?.accessToken).toBe("NEW");
 		expect(token?.refreshToken).toBe("RT-2");
+	});
+
+	it("concurrent callers on one slot serialize — a failed refresh is retried once, not by the herd", async () => {
+		// The lock exists to prevent overlapping refreshes from burning the same
+		// rotated refresh token. A caller whose refresh (and re-mint) fails must
+		// not send the whole queue of waiters back at the token endpoint with
+		// the same refresh token concurrently.
+		provisionCreds("oauth.locked");
+		const guide = makeOAuthGuide("https://api.example.com");
+		writeToken("oauth.locked", CC, TT, {
+			accessToken: "OLD",
+			refreshToken: "RT-1",
+			expiresAt: Date.now() - 1000, // expired
+		});
+		let refreshPosts = 0;
+		stubTokenEndpoint((_url, init) => {
+			const body = String(init.body);
+			if (body.includes("grant_type=refresh_token")) {
+				refreshPosts++;
+				// First attempt (holder A) fails; the next serialized attempt
+				// (chained caller B) succeeds and rotates.
+				if (refreshPosts === 1) return tokenResponse({ error: "boom" }, 500);
+				return tokenResponse({
+					access_token: "NEW",
+					refresh_token: "RT-2", // rotation
+					expires_in: 3600,
+				});
+			}
+			// Re-mint path: fail for A (while refreshPosts is still 1) so A
+			// rejects and the store stays stale; succeed for any later caller.
+			if (refreshPosts === 1) return tokenResponse({ error: "no" }, 500);
+			return tokenResponse({ access_token: "MINTED", expires_in: 3600 });
+		});
+
+		const [a, b, c] = await Promise.allSettled([
+			resolveAccessToken(guide.auth, "oauth.locked"),
+			resolveAccessToken(guide.auth, "oauth.locked"),
+			resolveAccessToken(guide.auth, "oauth.locked"),
+		]);
+		// Exactly two refresh POSTs: A's failed attempt + B's serialized retry.
+		// The old wait-then-run lock let B and C resume as a herd — 3 POSTs,
+		// two of them concurrent with the same RT-1: the rotated-token
+		// double-spend this lock exists to stop.
+		expect(refreshPosts).toBe(2);
+		expect(a?.status).toBe("rejected"); // A: failed refresh + failed re-mint
+		const bearer = (r: typeof a) =>
+			r?.status === "fulfilled" ? r.value.authHeaders?.authorization : undefined;
+		expect(bearer(b)).toBe("Bearer NEW"); // B: chained retry rotated the token
+		expect(bearer(c)).toBe("Bearer NEW"); // C: chained behind B, resolved from cache
+		expect(readToken("oauth.locked", CC, TT)?.refreshToken).toBe("RT-2");
 	});
 
 	it("expired token without a refresh token → re-mint (client_credentials)", async () => {

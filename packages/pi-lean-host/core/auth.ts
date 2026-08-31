@@ -287,14 +287,16 @@ async function withSlotLock<T>(
 	fn: () => Promise<T>,
 ): Promise<T> {
 	const lockKey = `${domain}:${slotKey(auth.grant, auth.tokenUrl)}`;
-	const inFlight = tokenLocks.get(lockKey);
-	if (inFlight) await inFlight.catch(() => {});
-	const p = fn();
-	tokenLocks.set(lockKey, p);
+	// Chain onto the current holder instead of wait-then-run: everyone who
+	// awaited the same in-flight promise would otherwise resume as a herd and
+	// run fn() concurrently (double-spending a rotated refresh token).
+	const prev = tokenLocks.get(lockKey) ?? Promise.resolve();
+	const next = prev.catch(() => {}).then(fn);
+	tokenLocks.set(lockKey, next);
 	try {
-		return await p;
+		return await next;
 	} finally {
-		tokenLocks.delete(lockKey);
+		if (tokenLocks.get(lockKey) === next) tokenLocks.delete(lockKey);
 	}
 }
 
