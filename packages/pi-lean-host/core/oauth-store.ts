@@ -270,7 +270,10 @@ function pendingPath(domain: string): string {
 function readPendingMap(domain: string): Record<string, PendingAuthCodeFlow> {
 	return readJsonMap(
 		pendingPath(domain),
-		(v) => typeof v.verifier === "string" && typeof v.redirectUri === "string",
+		(v) =>
+			typeof v.verifier === "string" &&
+			typeof v.redirectUri === "string" &&
+			typeof v.state === "string",
 	);
 }
 

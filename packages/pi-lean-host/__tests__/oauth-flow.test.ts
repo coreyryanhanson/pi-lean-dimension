@@ -36,7 +36,9 @@ import {
 	writeToken,
 	readPendingFlow,
 	setOAuthDir,
+	slotKey,
 } from "../core/oauth-store.js";
+import { writeJson0600 } from "../core/fs-0600.js";
 import { writeSecret, setSecretsDir } from "../core/secrets-store.js";
 import type { OAuth2Auth } from "../core/api-guide-types.js";
 
@@ -375,6 +377,21 @@ describe("mintAuthCodeToken", () => {
 				code: "X",
 			}),
 		).rejects.toBeInstanceOf(OAuthTokenMissingError);
+	});
+
+	it("a pending record missing `state` is rejected at read time (no flow, fail-closed)", () => {
+		const auth = makeAuthCodeAuth();
+		// Hand-corrupted file — the write path always emits full records; this
+		// partial-entry shape is what isEntry must reject (readJsonMap drops it).
+		writeJson0600(join(tmpOAuth, "oauth.partial.pending.json"), {
+			[slotKey("authorization_code", TOKEN_URL)]: {
+				verifier: "V",
+				redirectUri: REDIRECT_URI,
+			},
+		});
+		expect(
+			readPendingFlow("oauth.partial", auth.grant, auth.tokenUrl),
+		).toBeNull();
 	});
 
 	it("--refresh forces a refresh via the stored refresh token (no re-consent)", async () => {

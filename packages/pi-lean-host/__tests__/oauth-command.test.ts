@@ -432,8 +432,13 @@ describe("oauth init — interactive wizard", () => {
 			tokenResponse({ access_token: "WZD", expires_in: 3600 }),
 		);
 		const m = makeCtx({ hasUI: true });
-		// grant, client-id, client-secret — cc list has no omit option.
-		m.selects.push("client_credentials", "client_id", "client_secret");
+		// grant, client-id, client-secret, auth method — cc list has no omit.
+		m.selects.push(
+			"client_credentials",
+			"client_id",
+			"client_secret",
+			"client_secret_post",
+		);
 		m.inputs.push(TOKEN_URL);
 		await handleOauthSubcommand("init wzd.invalid", m.ctx);
 		expect(

@@ -51,6 +51,7 @@ import {
 	slotOverwriteWarning,
 	OAuthTokenMissingError,
 } from "./auth.js";
+import type { OAuth2TokenEndpointAuthMethod } from "./api-guide-types.js";
 import type { SyntheticOAuth2Fields } from "./auth.js";
 import {
 	readToken,
@@ -836,6 +837,22 @@ async function wizardFields(
 		await cancelled();
 		return undefined;
 	}
+	// A public PKCE client (secret omitted) sends no client credentials —
+	// method is forced to none. Otherwise the user picks where the secret
+	// goes (plenty of providers default to Basic; the runtime default is
+	// post). cc always has a secret, so this covers both arms.
+	const tokenEndpointAuthMethod: OAuth2TokenEndpointAuthMethod | undefined =
+		clientSecret === OMIT_SECRET
+			? "none"
+			: (await pickWithDescription(
+					ctx,
+					"Token-endpoint auth method",
+					AUTH_METHOD_ITEMS,
+				)) as OAuth2TokenEndpointAuthMethod | undefined;
+	if (tokenEndpointAuthMethod === undefined) {
+		await cancelled();
+		return undefined;
+	}
 	if (grant === "client_credentials") {
 		return {
 			fields: {
@@ -843,6 +860,7 @@ async function wizardFields(
 				tokenUrl,
 				clientId,
 				clientSecret: clientSecret!,
+				tokenEndpointAuthMethod,
 			},
 		};
 	}
@@ -868,20 +886,6 @@ async function wizardFields(
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean);
-	// A public PKCE client (secret omitted) sends no client credentials —
-	// method is forced to none; the prompt only fires when a secret was chosen.
-	const tokenEndpointAuthMethod =
-		clientSecret === OMIT_SECRET
-			? ("none" as const)
-			: await pickWithDescription(
-					ctx,
-					"Token-endpoint auth method",
-					AUTH_METHOD_ITEMS,
-				);
-	if (clientSecret !== OMIT_SECRET && tokenEndpointAuthMethod === undefined) {
-		await cancelled();
-		return undefined;
-	}
 	return {
 		fields: {
 			grant: grant as SyntheticOAuth2Fields["grant"],
@@ -890,13 +894,7 @@ async function wizardFields(
 			...(clientSecret === OMIT_SECRET ? {} : { clientSecret: clientSecret! }),
 			authorizeUrl,
 			...(scopes.length > 0 ? { scopes } : {}),
-			...(tokenEndpointAuthMethod === undefined
-				? {}
-				: {
-						tokenEndpointAuthMethod: tokenEndpointAuthMethod as NonNullable<
-							SyntheticOAuth2Fields["tokenEndpointAuthMethod"]
-						>,
-					}),
+			tokenEndpointAuthMethod,
 		},
 		...(redirectUri === undefined ? {} : { redirectUri }),
 	};
