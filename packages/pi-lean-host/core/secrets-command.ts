@@ -30,6 +30,7 @@ import {
 	writeSecret,
 } from "./secrets-store.js";
 import { findGuidesByDomain } from "./guide-store.js";
+import { declaredSecretRefNames } from "./auth.js";
 
 /** One-line pointer to `--help`, used in place of the full instructions block. */
 const HELP_HINT = "Run /api secrets --help for usage & storage details.";
@@ -134,36 +135,14 @@ function listAll(ctx: ExtensionCommandContext): void {
 
 /**
  * Declared secret store-names for a domain, from every registered guide's
- * `auth.secretRefs` and `auth.secretQueryRefs` (ref.secret values). For
- * oauth2 the `secretRefs` map holds the `client_secret` ref (form-field key
- * "client_secret"). Empty for guides without keyed/oauth auth.
+ * auth block — a thin domain-level fan-out over the shared per-guide
+ * scanner in core/auth.ts (single source of truth for the declared/gap
+ * report too).
  */
 function declaredSecretNames(domain: string): string[] {
 	const names = new Set<string>();
-	for (const { guide } of findGuidesByDomain(domain)) {
-		switch (guide.auth.kind) {
-			case "static-key":
-				for (const ref of Object.values(guide.auth.secretRefs ?? {}))
-					names.add(ref.secret);
-				for (const ref of Object.values(guide.auth.secretQueryRefs ?? {}))
-					names.add(ref.secret);
-				break;
-			case "oauth2":
-				// clientId/clientSecret are SecretRefs resolved per-user — declare
-				// their store names so assisted provisioning prompts for them.
-				for (const ref of [guide.auth.clientId, guide.auth.clientSecret])
-					if (ref) names.add(ref.secret);
-				for (const ref of Object.values(guide.auth.secretRefs ?? {}))
-					names.add(ref.secret);
-				break;
-			case "none":
-				break;
-			default: {
-				const _exhaustive: never = guide.auth;
-				throw new Error(`Unhandled auth kind: ${_exhaustive}`);
-			}
-		}
-	}
+	for (const { guide } of findGuidesByDomain(domain))
+		for (const name of declaredSecretRefNames(guide)) names.add(name);
 	return [...names].sort((a, b) => a.localeCompare(b));
 }
 

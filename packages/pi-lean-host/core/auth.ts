@@ -122,6 +122,41 @@ export function resolveSecretQueryParams(
 }
 
 /**
+ * Secret store-names a guide's auth block declares, from `auth.secretRefs`
+ * and `auth.secretQueryRefs` (ref.secret values). For oauth2 the clientId/
+ * clientSecret refs are declared too — their store names are resolved
+ * per-user, so assisted provisioning should prompt for them. Empty for
+ * guides without keyed/oauth auth. Single source of truth for both the
+ * `/api secrets` assisted-entry and the `api-store` declared/gap report.
+ */
+export function declaredSecretRefNames(guide: ApiGuide): string[] {
+	const names = new Set<string>();
+	switch (guide.auth.kind) {
+		case "static-key":
+			for (const ref of Object.values(guide.auth.secretRefs ?? {}))
+				names.add(ref.secret);
+			for (const ref of Object.values(guide.auth.secretQueryRefs ?? {}))
+				names.add(ref.secret);
+			break;
+		case "oauth2":
+			// clientId/clientSecret are SecretRefs resolved per-user — declare
+			// their store names so assisted provisioning prompts for them.
+			for (const ref of [guide.auth.clientId, guide.auth.clientSecret])
+				if (ref) names.add(ref.secret);
+			for (const ref of Object.values(guide.auth.secretRefs ?? {}))
+				names.add(ref.secret);
+			break;
+		case "none":
+			break;
+		default: {
+			const _exhaustive: never = guide.auth;
+			throw new Error(`Unhandled auth kind: ${_exhaustive}`);
+		}
+	}
+	return [...names].sort((a, b) => a.localeCompare(b));
+}
+
+/**
  * Metadata-only auth status footer line, shared by `api-guide` and `api-fetch`.
  * Five static-key states (no-auth → undefined / ok / nudge-provision /
  * ok-optional / optional-not-provisioned) plus the oauth2 states (ok /

@@ -38,12 +38,12 @@ import { listDomains, listNames } from "../core/secrets-store.js";
 import { listSlots, listTokenDomains, slotKey } from "../core/oauth-store.js";
 import { findGuidesByDomain, loadAllGuides } from "../core/guide-store.js";
 import {
+	declaredSecretRefNames,
 	grantedScopes,
 	hostnameOf,
 	resolveProvisionedParentDomain,
 } from "../core/auth.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
-import type { ApiGuide } from "../core/api-guide-types.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types — metadata only; no token/secret value ever lands in these
@@ -97,33 +97,6 @@ export interface UnscopedView {
 // Collection (pure over the two stores + guide cache)
 // ═══════════════════════════════════════════════════════════════════
 
-/** Secret names a guide's auth block declares — store names only, both
- *  static-key refs and oauth2 clientId/clientSecret. */
-function declaredSecretsOf(guide: ApiGuide): string[] {
-	const names = new Set<string>();
-	switch (guide.auth.kind) {
-		case "static-key":
-			for (const ref of Object.values(guide.auth.secretRefs ?? {}))
-				names.add(ref.secret);
-			for (const ref of Object.values(guide.auth.secretQueryRefs ?? {}))
-				names.add(ref.secret);
-			break;
-		case "oauth2":
-			for (const ref of [guide.auth.clientId, guide.auth.clientSecret])
-				if (ref) names.add(ref.secret);
-			for (const ref of Object.values(guide.auth.secretRefs ?? {}))
-				names.add(ref.secret);
-			break;
-		case "none":
-			break;
-		default: {
-			const _exhaustive: never = guide.auth;
-			throw new Error(`Unhandled auth kind: ${_exhaustive}`);
-		}
-	}
-	return [...names].sort((a, b) => a.localeCompare(b));
-}
-
 function relSpan(ms: number): string {
 	const m = Math.max(1, Math.round(ms / 60_000));
 	if (m < 90) return `${m}m`;
@@ -166,7 +139,7 @@ export function collectDomainReport(domain: string): DomainReport {
 
 	const declared = new Set<string>();
 	for (const { guide } of matches)
-		for (const name of declaredSecretsOf(guide)) declared.add(name);
+		for (const name of declaredSecretRefNames(guide)) declared.add(name);
 	const declaredList = [...declared];
 
 	const slots = listSlots(domain).map((s) => slotMeta(s));
