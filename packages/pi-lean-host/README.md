@@ -557,7 +557,6 @@ channel stays closed.
   header/query-param secrets) and `auth.kind: oauth2` (`client_credentials`
   - paste-based `authorization_code`) are realized; cookie-login stays
   deferred. See [Authentication & Secrets](#authentication--secrets).
-- **No inferred-link discovery.** Declared links only in v1; inference is v2.
 
 ### Mission
 
