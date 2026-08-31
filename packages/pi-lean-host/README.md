@@ -121,7 +121,7 @@ demand. A skill is pure text with no in-process eval, whereas a loaded
 |------|----------------|---------------|-------------------|-------|
 | Built-in helpers | package source (`core/`) | maintainers | yes | reviewed |
 | Local user helpers | `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/helper.ts` | you, or the agent in `/api learn` | no | user-owned |
-| Bundled recipes | `caritas` repo (`api-guides/<domain>/`) | maintainers | no (reference) | **inert — never auto-executed** |
+| Bundled recipes | `caritas` repo (`api-guides/<slug(shortName)>/`) | maintainers | no (reference) | **inert — never auto-executed** |
 
 Built-in helpers cover the common 90%. Local user helpers cover the weird 10%
 (computed signatures, strange date transforms, custom auth). Bundled recipes
@@ -452,8 +452,6 @@ the toolset's packaged default:
   defaults `false`).
 - The `api-learn` toolset `requires` `api`, so enabling learn cascades api on;
   disabling api cascades learn off.
-
-### No other settings keys
 
 There is no `host.*` settings block. The transport layer (per-domain undici
 `Agent` with retry-on-429, redirect policy, timeouts, ETag/`Cache-Control`
