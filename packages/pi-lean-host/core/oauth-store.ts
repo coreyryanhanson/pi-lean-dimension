@@ -45,7 +45,7 @@ export interface OAuthToken {
  *  every entry must be self-describing, so slot enumeration can render real
  *  grant/issuer and the orphan arms can round-trip a slot's key from its
  *  record (unstamped/legacy records fail validation → ignored, re-minted). */
-export type StampedToken = OAuthToken & { grant: string; tokenUrl: string };
+type StampedToken = OAuthToken & { grant: string; tokenUrl: string };
 
 /**
  * The token-slot key: `<grant>__<hash(tokenUrl)>`. Two tokens share a slot
