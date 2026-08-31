@@ -402,6 +402,29 @@ describe("mintAuthCodeToken", () => {
 		).toBe("RT-2");
 	});
 
+	it("--refresh keeps the old refresh token when the response omits one (RFC 6749 §6)", async () => {
+		const auth = makeAuthCodeAuth();
+		writeSecret("oauth.keep_rt", "client_id", "MY_CLIENT");
+		writeSecret("oauth.keep_rt", "client_secret", "S3CRET");
+		writeToken("oauth.keep_rt", "authorization_code", TOKEN_URL, {
+			accessToken: "OLD",
+			refreshToken: "RT-1",
+			expiresAt: Date.now() + 300_000,
+		});
+		stubTokenEndpoint(() =>
+			// No refresh_token in the response — the old one stays valid.
+			tokenResponse({ access_token: "FRESH", expires_in: 3600 }),
+		);
+
+		const token = await mintAuthCodeToken(auth, "oauth.keep_rt", headlessCtx(), {
+			refresh: true,
+		});
+		expect(token.accessToken).toBe("FRESH");
+		expect(
+			readToken("oauth.keep_rt", "authorization_code", TOKEN_URL)?.refreshToken,
+		).toBe("RT-1");
+	});
+
 	it("--refresh with no refresh token falls through to a fresh authorize URL", async () => {
 		const auth = makeAuthCodeAuth();
 		writeSecret("oauth.norefresh", "client_id", "MY_CLIENT");

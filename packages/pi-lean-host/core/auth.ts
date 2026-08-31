@@ -680,7 +680,12 @@ async function refreshAccessToken(
 		...(clientSecret ? [clientSecret.secret] : []),
 		...clientAuthValues,
 	]);
-	return tokenFromResponse(data);
+	const fresh = tokenFromResponse(data);
+	// RFC 6749 §6: the refresh response MAY omit refresh_token (e.g. GitHub,
+	// OSM) — the old one stays valid. Carry it forward so refresh capability
+	// isn't silently destroyed on the next expiry.
+	if (!fresh.refreshToken) fresh.refreshToken = refreshToken;
+	return fresh;
 }
 
 /**
