@@ -38,6 +38,7 @@ import {
 	readPendingFlow,
 } from "../core/oauth-store.js";
 import { writeSecret, setSecretsDir } from "../core/secrets-store.js";
+import { setUserGuidesDir } from "../core/guide-store.js";
 import { resolveOpForExecution } from "../core/resolve-op.js";
 import { handleOauthSubcommand } from "../core/oauth-command.js";
 import type {
@@ -585,5 +586,47 @@ describe("handleOauthSubcommand guide-less paths", () => {
 		await handleOauthSubcommand("never-provisioned.invalid --revoke", ctx);
 		expect(out()).toContain("no token");
 		expect(out()).not.toContain("No API guide");
+	});
+});
+
+describe("handleOauthSubcommand guide-based client_credentials arm", () => {
+	// Real bundled twitch axis fixture — exercises the actual guide-resolution
+	// path (guide-store → oauth2 filter → mint arm).
+	const TW_TOKEN_URL = "https://id.twitch.tv/oauth2/token";
+	function mockNotify() {
+		const notify = vi.fn();
+		const ctx = {
+			ui: { notify },
+		} as unknown as Parameters<typeof handleOauthSubcommand>[1];
+		const out = () => notify.mock.calls.map((c) => String(c[0])).join("\n");
+		return { ctx, out };
+	}
+
+	it("bare invocation resolves the cached fresh token (no network); --refresh force-mints", async () => {
+		setUserGuidesDir(join(import.meta.dirname, "..", "api-guides"));
+		writeSecret("twitch.tv", "client_id", "cid");
+		writeSecret("twitch.tv", "client_secret", "csecret");
+		writeToken("twitch.tv", CC, TW_TOKEN_URL, {
+			accessToken: "CACHED",
+			expiresAt: Date.now() + 3_600_000,
+		});
+		let mintCalls = 0;
+		stubTokenEndpoint(() => {
+			mintCalls += 1;
+			return tokenResponse({ access_token: "FRESH", expires_in: 3600 });
+		});
+
+		// No --refresh: the cached fresh token is reused, endpoint untouched.
+		const { ctx, out } = mockNotify();
+		await handleOauthSubcommand("twitch.tv twitch", ctx);
+		expect(out()).toContain("provisioned");
+		expect(mintCalls).toBe(0);
+		expect(readToken("twitch.tv", CC, TW_TOKEN_URL)?.accessToken).toBe("CACHED");
+
+		// --refresh: slot-scoped delete + fresh mint.
+		await handleOauthSubcommand("twitch.tv twitch --refresh", ctx);
+		expect(out()).toContain("refreshed");
+		expect(mintCalls).toBe(1);
+		expect(readToken("twitch.tv", CC, TW_TOKEN_URL)?.accessToken).toBe("FRESH");
 	});
 });

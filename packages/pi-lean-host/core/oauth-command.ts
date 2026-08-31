@@ -47,8 +47,9 @@ import {
 import {
 	buildSyntheticOAuth2Auth,
 	canonicalStoreDomain,
+	credentialNameGap,
 	isTokenExpired,
-	missingCredentialNames,
+	mintFreshClientCredentials,
 	resolveAccessToken,
 	resolveProvisionedParentDomain,
 	revokeAccessToken,
@@ -432,6 +433,8 @@ export async function handleOauthSubcommand(
 				...(redirectUriArg === undefined ? {} : { redirectUri: redirectUriArg }),
 			});
 		} else {
+			// Cached token resolves as-is; the delete is conditional on --refresh
+			// (unlike the bootstrap paths, which always want a fresh mint).
 			if (refreshFlag) deleteToken(storeDomain, auth.grant, auth.tokenUrl);
 			await resolveAccessToken(auth, storeDomain);
 		}
@@ -631,17 +634,13 @@ async function handleOauthInit(
 	// Store-name rule (hard): every credential is a provisioned store NAME,
 	// resolved at flow time. A miss points at /api secrets — never a value
 	// prompt, never a free-typed literal.
-	const missing = missingCredentialNames(storeDomain, [
+	const gap = credentialNameGap(
+		storeDomain,
 		fields.clientId,
-		...(fields.clientSecret === undefined ? [] : [fields.clientSecret]),
-	]);
-	if (missing.length > 0) {
-		ctx.ui.notify(
-			`OAuth2 client credentials must be provisioned store NAMEs, but ${missing.map((n) => `'${n}'`).join(", ")} ` +
-				`are not in the secrets store for '${storeDomain}'. ` +
-				`Provision them first: /api secrets ${storeDomain} <name> (values never enter the transcript).`,
-			"warning",
-		);
+		fields.clientSecret,
+	);
+	if (gap !== null) {
+		ctx.ui.notify(gap, "warning");
 		return;
 	}
 
@@ -681,8 +680,7 @@ async function handleOauthInit(
 		if (synthetic.grant === "client_credentials") {
 			// Bootstrap wants a fresh mint, not a cached token (mirrors the
 			// plain command's --refresh path).
-			deleteToken(storeDomain, synthetic.grant, synthetic.tokenUrl);
-			await resolveAccessToken(synthetic, storeDomain);
+			await mintFreshClientCredentials(synthetic, storeDomain);
 			provisionedMsg();
 			return;
 		}

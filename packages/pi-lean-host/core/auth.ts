@@ -456,6 +456,47 @@ export function missingCredentialNames(
 }
 
 /**
+ * Shared store-name precheck for both mint paths (oauth-mint tool +
+ * `/api oauth init`): returns the user-facing gap message, or null when all
+ * credential NAMES are provisioned. Keeps the security prose
+ * ("values never enter the transcript") in exactly one place.
+ * Caller decides delivery: notify (command) vs throw (tool).
+ */
+export function credentialNameGap(
+	storeDomain: string,
+	clientId: string,
+	clientSecret?: string,
+): string | null {
+	const missing = missingCredentialNames(storeDomain, [
+		clientId,
+		...(clientSecret === undefined ? [] : [clientSecret]),
+	]);
+	if (missing.length === 0) return null;
+	return (
+		`OAuth2 client credentials must be provisioned store NAMEs, but ${missing.map((n) => `'${n}'`).join(", ")} ` +
+		`are not in the secrets store for '${storeDomain}'. ` +
+		`Provision them first: /api secrets ${storeDomain} <name> (values never enter the transcript).`
+	);
+}
+
+/**
+ * Fresh client_credentials mint: drop the slot's cached token, then mint.
+ * Shared by `/api oauth init` and oauth-mint — bootstrap paths that always
+ * want a fresh mint, never a cached token. Both must slot-scope the delete
+ * (a bare domain delete would leave a stale prior-grant/prior-issuer slot
+ * surviving the re-mint). NOTE: the plain command's `--refresh` arm stays
+ * inline — its delete is conditional on the flag; resolving the cached
+ * token is the default there.
+ */
+export async function mintFreshClientCredentials(
+	auth: OAuth2Auth,
+	domain: string,
+): Promise<void> {
+	deleteToken(domain, auth.grant, auth.tokenUrl);
+	await resolveAccessToken(auth, domain);
+}
+
+/**
  * True when a token can be produced without human interaction: a cached
  * fresh token, a refreshable one, or (client_credentials) a provisioned
  * client secret to mint from. Used by the `/api verify` precheck to

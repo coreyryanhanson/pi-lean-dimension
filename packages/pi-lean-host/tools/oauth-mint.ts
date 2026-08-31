@@ -28,13 +28,13 @@ import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import {
 	buildSyntheticOAuth2Auth,
-	resolveAccessToken,
+	credentialNameGap,
+	mintFreshClientCredentials,
 	resolveProvisionedParentDomain,
-	missingCredentialNames,
 	OAuthTokenMissingError,
 } from "../core/auth.js";
 import type { SyntheticOAuth2Fields } from "../core/auth.js";
-import { readToken, deleteToken } from "../core/oauth-store.js";
+import { readToken } from "../core/oauth-store.js";
 import {
 	confirmTokenUrl,
 	mintAuthCodeToken,
@@ -203,17 +203,12 @@ export const oauthMintTool = defineTool({
 		const storeDomain = resolveProvisionedParentDomain(p.domain);
 
 		// Store-name precheck BEFORE any prompt (D1).
-		const missing = missingCredentialNames(storeDomain, [
+		const gap = credentialNameGap(
+			storeDomain,
 			fields.clientId,
-			...(fields.clientSecret === undefined ? [] : [fields.clientSecret]),
-		]);
-		if (missing.length > 0) {
-			throw new Error(
-				`OAuth2 client credentials must be provisioned secrets-store NAMES, but ${missing.map((n) => `'${n}'`).join(", ")} ` +
-					`are not in the store for '${storeDomain}'. Ask the user to provision them first: ` +
-					`/api secrets ${storeDomain} <name> (values never enter the transcript).`,
-			);
-		}
+			fields.clientSecret,
+		);
+		if (gap !== null) throw new Error(gap);
 
 		// Token-URL confirm — the FIRST prompt, both grants, before any
 		// exchange: tokenUrl is the one agent-supplied parameter that receives
@@ -289,11 +284,11 @@ export const oauthMintTool = defineTool({
 		try {
 			if (finalSynthetic.grant === "client_credentials") {
 				// Bootstrap wants a fresh mint, not a cached token (mirrors the
-				// init wizard / --refresh path). Slot-scoped delete: a bare
-				// domain delete would leave a stale prior-grant/prior-issuer slot
-				// surviving the re-mint — the exact clobber the slot keying fixes.
-				deleteToken(storeDomain, finalSynthetic.grant, finalSynthetic.tokenUrl);
-				await resolveAccessToken(finalSynthetic, storeDomain);
+				// init wizard / --refresh path). Slot-scoped delete inside the
+				// shared helper: a bare domain delete would leave a stale
+				// prior-grant/prior-issuer slot surviving the re-mint — the exact
+				// clobber the slot keying fixes.
+				await mintFreshClientCredentials(finalSynthetic, storeDomain);
 			} else {
 				// Prints the authorize URL + paste prompt (retry loop inside);
 				// cancel lands in the OAuthTokenMissingError handler below.
