@@ -23,6 +23,17 @@ export interface PickerItem {
 	description?: string;
 }
 
+/** Shared SelectList theme callbacks — keep both pickers visually identical. */
+function pickerTheme(theme: { fg(color: string, text: string): string }) {
+	return {
+		selectedPrefix: (text: string) => theme.fg("accent", text),
+		selectedText: (text: string) => theme.fg("accent", text),
+		description: (text: string) => theme.fg("muted", text),
+		scrollInfo: (text: string) => theme.fg("dim", text),
+		noMatch: (text: string) => theme.fg("warning", text),
+	};
+}
+
 export async function pickWithDescription(
 	ctx: ExtensionContext,
 	title: string,
@@ -46,13 +57,11 @@ export async function pickWithDescription(
 	return ctx.ui.custom<string | undefined>((tui, theme, _kb, done) => {
 		const container = new Container();
 		container.addChild(new Text(theme.fg("accent", theme.bold(title))));
-		const list = new SelectList(selectItems, Math.min(selectItems.length, 10), {
-			selectedPrefix: (text) => theme.fg("accent", text),
-			selectedText: (text) => theme.fg("accent", text),
-			description: (text) => theme.fg("muted", text),
-			scrollInfo: (text) => theme.fg("dim", text),
-			noMatch: (text) => theme.fg("warning", text),
-		});
+		const list = new SelectList(
+			selectItems,
+			Math.min(selectItems.length, 10),
+			pickerTheme(theme),
+		);
 		list.onSelect = (item) => done(item.value);
 		list.onCancel = () => done(undefined);
 		container.addChild(list);
@@ -123,13 +132,11 @@ export async function pickChecklist(
 				value: DONE_VALUE,
 				label: "✔ Done — grant the checked scopes",
 			});
-			const fresh = new SelectList(selectItems, Math.min(selectItems.length, 12), {
-				selectedPrefix: (text) => theme.fg("accent", text),
-				selectedText: (text) => theme.fg("accent", text),
-				description: (text) => theme.fg("muted", text),
-				scrollInfo: (text) => theme.fg("dim", text),
-				noMatch: (text) => theme.fg("warning", text),
-			});
+			const fresh = new SelectList(
+				selectItems,
+				Math.min(selectItems.length, 12),
+				pickerTheme(theme),
+			);
 			fresh.setSelectedIndex(Math.min(selectedIndex, selectItems.length - 1));
 			fresh.onSelectionChange = (item) => {
 				const at = selectItems.findIndex((s) => s.value === item.value);
