@@ -283,7 +283,7 @@ api-learn domain="arxiv.org" dir="/tmp/pi-lean-host/arxiv.org"  → validates + 
   (that flag is discovered only via the refusal message). A fail-closed
   guard refuses to overwrite an existing `guide.md` whose `shortName`
   differs from the incoming guide — a slug collision (two shortNames that
-  slug to the same folder, e.g. `cmc_full` / `cmc-full`); a same-`shortName`
+  slug to the same folder, e.g. `api_dev_full` / `api-dev-full`); a same-`shortName`
   save is a legitimate update. On a structural error it names the field, the
   expected shape, and what was found — the file on disk is left untouched (no
   half-written guide). Requires `/api learn`.

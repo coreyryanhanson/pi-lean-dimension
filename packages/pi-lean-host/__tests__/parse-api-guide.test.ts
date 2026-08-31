@@ -508,7 +508,7 @@ domains: [example.com]
 apiHost: https://api.example.com
 auth:
   kind: static-key
-  name: X-CMC_PRO_API_KEY
+  name: X-EXAMPLE_PRO_API_KEY
   secret: api_key
 operations:
   - name: get
@@ -1653,7 +1653,8 @@ describe("projectToGuide", () => {
 describe("slug()", () => {
 	it("lowercases and replaces non-[a-z0-9-] runs with a single '-'", () => {
 		expect(slug("BOE")).toBe("boe");
-		expect(slug("CoinMarketCap Pro!")).toBe("coinmarketcap-pro");
+		expect(slug("My Provider Pro!")).toBe("my-provider-pro");
+		expect(slug("Example Dev Inc")).toBe("example-dev-inc");
 		expect(slug("a/b")).toBe("a-b");
 	});
 
@@ -1669,9 +1670,9 @@ describe("slug()", () => {
 		expect(slug("-foo-")).toBe("foo");
 	});
 
-	it("slug-collision pair: cmc_full and cmc-full both slug to cmc-full", () => {
-		expect(slug("cmc_full")).toBe("cmc-full");
-		expect(slug("cmc-full")).toBe("cmc-full");
+	it("slug-collision pair: api_dev_full and api-dev-full both slug to api-dev-full", () => {
+		expect(slug("api_dev_full")).toBe("api-dev-full");
+		expect(slug("api-dev-full")).toBe("api-dev-full");
 	});
 
 	it("throws on empty or all-symbol shortName (slug flattens to empty)", () => {

@@ -979,11 +979,9 @@ describe("probe redirect handling (live localhost)", () => {
 			const tmp = mkdtempSync(join(tmpdir(), "host-probe-fallback-secrets-"));
 			const prevDir = getSecretsDir();
 			setSecretsDir(tmp);
-			writeSecret("coinmarketcap.com", "api_key", "K");
+			writeSecret("example.dev", "api_key", "K");
 			try {
-				expect(resolveProbeStoreDomain("pro-api.coinmarketcap.com")).toBe(
-					"coinmarketcap.com",
-				);
+				expect(resolveProbeStoreDomain("pro-api.example.dev")).toBe("example.dev");
 			} finally {
 				setSecretsDir(prevDir);
 				rmSync(tmp, { recursive: true, force: true });

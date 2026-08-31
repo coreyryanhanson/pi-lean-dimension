@@ -247,17 +247,17 @@ describe("api-learn save path (dir)", () => {
 		expect(saved).toMatch(/^schemaVersion: 1$/m);
 	});
 
-	it("slug collision: cmc_full / cmc-full → second save refused with rename-shortName advice", async () => {
-		// Both shortNames slug to "cmc-full" — the second save targets the
+	it("slug collision: api_dev_full / api-dev-full → second save refused with rename-shortName advice", async () => {
+		// Both shortNames slug to "api-dev-full" — the second save targets the
 		// same directory, where the overwrite guard now acts as a slug-collision
 		// detector (a different shortName already on disk) and refuses.
 		await saveRecipe(
-			"cmc-full",
-			recipe("coinmarketcap.com", "cmc_full", "getFull"),
+			"api-dev-full",
+			recipe("example.dev", "api_dev_full", "getFull"),
 		);
 		const res = await saveRecipe(
-			"cmc-full",
-			recipe("coinmarketcap.com", "cmc-full", "getFull"),
+			"api-dev-full",
+			recipe("example.dev", "api-dev-full", "getFull"),
 		);
 		const text = contentText(res);
 		expect(text).toContain("Refusing to overwrite");
@@ -267,12 +267,12 @@ describe("api-learn save path (dir)", () => {
 		expect(text).toContain("Rename");
 		expect(res.details).toMatchObject({
 			error: "overwrite_refused",
-			existing: "cmc_full",
-			incoming: "cmc-full",
+			existing: "api_dev_full",
+			incoming: "api-dev-full",
 		});
 		// First guide untouched on disk.
 		const saved = readFileSync(
-			join(tmpGuidesDir, "cmc-full", "guide.md"),
+			join(tmpGuidesDir, "api-dev-full", "guide.md"),
 			"utf-8",
 		);
 		expect(saved).toContain("getFull");

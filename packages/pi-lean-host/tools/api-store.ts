@@ -311,7 +311,7 @@ export const apiStoreTool = defineTool({
 		apiHost: Type.Optional(
 			Type.String({
 				description:
-					"API base URL — the store domain defaults to its hostname (or the longest provisioned parent, e.g. pro-api.coinmarketcap.com → coinmarketcap.com). Ignored when domain is set.",
+					"API base URL — the store domain defaults to its hostname (or the longest provisioned parent, e.g. pro-api.example.dev → example.dev). Ignored when domain is set.",
 			}),
 		),
 	}),
@@ -337,7 +337,7 @@ export const apiStoreTool = defineTool({
 			};
 		}
 
-		if (domain) return finishDomainReport(domain);
+		if (domain) return finishDomainReport(resolveProvisionedParentDomain(domain));
 		if (apiHost)
 			return finishDomainReport(
 				resolveProvisionedParentDomain(hostnameOf(apiHost)),

@@ -107,7 +107,7 @@ beforeAll(() => {
 	// Unscoped secret domain (no guide anywhere).
 	writeSecret("random.dev", "orphan_secret", "ORPHANVALUE");
 	// Parent-domain provisioning: secret lives under the registrable domain.
-	writeSecret("coinmarketcap.com", "cmc_key", "CMC-KEY");
+	writeSecret("example.dev", "parent_key", "PARENT-KEY");
 
 	// Guides: static-key (example.com), oauth2 with a minted slot (github.com),
 	// oauth2 with NO minted slot (gitlab.com — the declared-gap case).
@@ -194,12 +194,22 @@ describe("api-store", () => {
 
 	it("apiHost without domain resolves the provisioned parent domain", async () => {
 		const res = await run({
-			apiHost: "https://pro-api.coinmarketcap.com/v1",
+			apiHost: "https://pro-api.example.dev/v1",
 		});
 		const d = res.details as Record<string, unknown>;
-		expect(d.domain).toBe("coinmarketcap.com");
+		expect(d.domain).toBe("example.dev");
 		const secrets = d.secrets as { provisioned: string[] };
-		expect(secrets.provisioned).toEqual(["cmc_key"]);
+		expect(secrets.provisioned).toEqual(["parent_key"]);
+	});
+
+	it("explicit subdomain resolves the provisioned parent domain", async () => {
+		// Same seam as the apiHost arm: an exact-miss subdomain spelling reads
+		// the parent's provisioned slots instead of reporting empty + unclaimed.
+		const res = await run({ domain: "pro-api.example.dev" });
+		const d = res.details as Record<string, unknown>;
+		expect(d.domain).toBe("example.dev");
+		const secrets = d.secrets as { provisioned: string[] };
+		expect(secrets.provisioned).toEqual(["parent_key"]);
 	});
 
 	it("per-domain combined view: secrets section with declared + gaps", async () => {

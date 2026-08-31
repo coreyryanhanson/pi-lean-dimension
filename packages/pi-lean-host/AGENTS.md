@@ -230,7 +230,7 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
     routed it as `github.com` or an api-subdomain alias.
   - **`api-probe` store resolution** (no `guide` object): defaults to
     `hostnameOf(apiHost)`, falling back to the longest provisioned parent
-    domain (`pro-api.coinmarketcap.com` → `coinmarketcap.com`) before
+    domain (`pro-api.example.dev` → `example.dev`) before
     declaring a secret missing; overridable via an agent-visible `domain`
     param. Store-miss fetches unauthenticated with a prescriptive note
     (names provisioned domains + "pass domain: <one>") — never fail-closed.
