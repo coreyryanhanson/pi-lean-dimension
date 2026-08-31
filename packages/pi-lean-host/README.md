@@ -76,12 +76,17 @@ From a fresh install you have no guides yet, so the workflow is:
 
 1. **`/api learn`** — enable the authoring tools (`api-learn` + `api-probe` +
    `api-scaffold` + `api-store` + `oauth-mint`).
-2. **`api-probe({apiHost, path})`** — discover the shape of a not-yet-guided
-   endpoint; it drafts a YAML operation block to paste into a recipe.
+2. **`api-probe`** — the agent probes a not-yet-guided endpoint and drafts a
+   YAML op block to paste into a recipe (agent-driven — you don't call this
+   yourself).
 3. **`api-learn({domain, dir})`** — validate the staged draft(s) and write
    the guide to
    `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/guide.md`.
 4. **`api-fetch({domain, operation})`** — execute and verify.
+
+Auth-gated API? `/api bootstrap oauth <domain> <spec>` acquires OAuth2 tokens
+first; `/api secrets <domain>` provisions static keys (see
+[Authoring a Guide](#authoring-a-guide)).
 
 Or skip the authoring and **copy a bundled reference recipe** (see
 [Bundled Reference Recipes](#bundled-reference-recipes)) into
@@ -295,24 +300,18 @@ and publishes to the guides dir. No session-held state, no `/api save`.
 
 ### 4. `api-probe` — Discover an Endpoint's Shape (network read, exploratory)
 
-```text
-api-probe apiHost="https://api.github.com" path="/repos/{owner}/{repo}/branches" params={owner:"torvalds", repo:"linux"}
-```
+Agent-driven shape discovery for the authoring loop. Fetches a not-yet-guided
+endpoint over the real transport (same UA, charset, retry, and ETag handling
+as `api-fetch` — the sanctioned way to reach even WAF'd hosts), summarizes the
+JSON shape, and emits a **draft YAML operation block** to paste into a recipe.
+It only **suggests** — it never writes the guide, and a draft still needs
+confirming against the provider's docs (probe surfaces evidence, not
+authority). Requires `/api learn`.
 
-Shape-discovery for the authoring loop. Fetches a templated path over the
-real transport (same UA, charset, 429-retry, ETag cache as `api-fetch` — the
-sanctioned way to reach even WAF'd hosts), summarizes the JSON shape, suggests
-`via` / `itemsPath` / pagination style, echoes a representative record id, and
-emits a **draft YAML operation block** to paste straight into a recipe. On 404
-it walks the `apiHost` version backward (e.g. `/v3` → `/v2` → `/v1`) to recover
-an over-claimed version; a draft carries the version prefix that was actually
-fetched (disable with `walkVersions=false`). A stale version that still
-returns 200 is not detected as old — read the provider's docs to supply the
-newest version up front.
-
-`api-probe` only **suggests** — it never writes the guide. The operation must
-still be traceable to your plan source (the API docs or a working curl
-example); this tool surfaces evidence, not authority. Requires `/api learn`.
+You won't call this tool yourself — the agent does, during authoring. Its
+full parameter contract (version-walk on 404, inline auth block, domain
+override) lives in the tool description and the authoring manual `api-learn`
+prepends to staged drafts, not here.
 
 ### 5. `api-scaffold` — Bootstrap `verify.json` / `helper.ts` (local write)
 
@@ -495,6 +494,14 @@ loader enforces:
 ---
 
 ## Authoring a Guide
+
+**Auth-gated API? Handle credentials first.** For an OAuth2-gated provider,
+start with `/api bootstrap oauth <domain> <spec>` — it injects a research
+brief into the session (auto-enabling learn), the agent researches the
+provider and calls `oauth-mint`, and you confirm at the prompts (the human is
+the trust root for the secret-bearing endpoint). For static-key APIs,
+`/api secrets <domain>` provisions the secret names the guide declares before
+you verify. Then author as below.
 
 The authoring model is **spec-first, probe-second**: read the contract and
 encode it, then verify the encoding. The trial-and-error lives at the
