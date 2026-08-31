@@ -154,6 +154,23 @@ function renderApiGlyph(
 
 // ---- /api status command ------------------------------------------
 
+/** The /api subcommand menu — one source shared by `/api status` and the
+ *  bare/unknown-subcommand renderer so the two can't drift. */
+function apiCommandMenu(): string[] {
+	return [
+		`   /api on           enable api-guide + api-fetch`,
+		`   /api learn        enable all seven tools (adds ${learnToolNames()})`,
+		`   /api off          disable all API tools`,
+		`   /api status       detailed status (guides, helpers)`,
+		`   /api helpers      list local helpers`,
+		`   /api secrets      list/provision stored secrets (names only)`,
+		`   /api oauth        provision/inspect/revoke OAuth2 tokens (client_credentials + auth-code/PKCE)`,
+		`   /api verify       verify a guide's ops against its live API (stamps verified)`,
+		`   /api bootstrap    agent-driven OAuth2 bootstrap (injects a research brief; enables learn)`,
+		`   /api delete       delete a guide directory (human-typed recovery gesture)`,
+	];
+}
+
 function handleStatusSubcommand(
 	apiOn: boolean,
 	learnOn: boolean,
@@ -199,15 +216,8 @@ function handleStatusSubcommand(
 		lines.push(`  Run /api helpers to list them.`);
 	}
 
+	lines.push(``, ...apiCommandMenu());
 	lines.push(
-		``,
-		`  /api on           enable api-guide + api-fetch`,
-		`  /api learn       enable all seven tools (adds ${learnToolNames()})`,
-		`  /api off         disable all API tools`,
-		`  /api verify      verify a guide's ops against its live API (stamps verified)`,
-		`  /api oauth       provision/inspect/revoke OAuth2 tokens (client_credentials + auth-code/PKCE)`,
-		`  /api bootstrap   agent-driven OAuth2 bootstrap (injects a research brief; enables learn)`,
-		`  /api delete      delete a guide directory (human-typed recovery gesture)`,
 		``,
 		`  Focus mode: /api on|off|learn are refused while focus holds;`,
 		`  /api bootstrap flips learn mode, so enabling it is blocked there too.`,
@@ -522,16 +532,7 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 						`📡 API tools: ${apiStatus}`,
 						`📖 Learn mode: ${learnStatus}`,
 						``,
-						`   /api on           enable api-guide + api-fetch`,
-						`   /api learn        enable all seven tools (adds ${learnToolNames()})`,
-						`   /api off          disable all API tools`,
-						`   /api status       detailed status (guides, helpers)`,
-						`   /api helpers      list local helpers`,
-						`   /api secrets      list/provision stored secrets (names only)`,
-						`   /api oauth        provision/inspect/revoke OAuth2 tokens (client_credentials + auth-code/PKCE)`,
-						`   /api verify       verify a guide's ops against its live API (stamps verified)`,
-						`   /api bootstrap    agent-driven OAuth2 bootstrap (injects a research brief; enables learn)`,
-						`   /api delete       delete a guide directory (human-typed recovery gesture)`,
+						...apiCommandMenu(),
 						`   /api              show this status`,
 					];
 
