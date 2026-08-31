@@ -144,6 +144,58 @@ function slotRows(
 }
 
 /**
+ * Shared `--flag <value>` grammar for both oauth command arms. Each name in
+ * `valueFlags` consumes the following token as its value (position-based — a
+ * value that happens to spell a flag name is never mistaken for one); names
+ * in `boolFlags` are recognized bare; unknown `--flags` are rejected.
+ */
+type FlagParse =
+	| {
+			ok: true;
+			flags: Record<string, string>;
+			bools: Set<string>;
+			positional: string[];
+	  }
+	| { ok: false; message: string };
+
+function parseFlags(
+	parts: readonly string[],
+	valueFlags: readonly string[],
+	boolFlags: readonly string[],
+): FlagParse {
+	const flags: Record<string, string> = {};
+	const bools = new Set<string>();
+	const positional: string[] = [];
+	for (let i = 0; i < parts.length; i++) {
+		const p = parts[i]!;
+		if (valueFlags.includes(p)) {
+			const value = parts[i + 1];
+			if (value === undefined) {
+				return {
+					ok: false,
+					message: `Flag '${p}' is missing its value — see /api oauth --help.`,
+				};
+			}
+			flags[p] = value;
+			i++;
+			continue;
+		}
+		if (boolFlags.includes(p)) {
+			bools.add(p);
+			continue;
+		}
+		if (p.startsWith("--")) {
+			return {
+				ok: false,
+				message: `Unknown flag '${p}' — see /api oauth --help.`,
+			};
+		}
+		positional.push(p);
+	}
+	return { ok: true, flags, bools, positional };
+}
+
+/**
  * Handle the `oauth` subcommand of `/api`.
  *
  * @param args  The text after "oauth" ("" / "<domain>" / "<domain> <flag>")
@@ -168,48 +220,27 @@ export async function handleOauthSubcommand(
 		return;
 	}
 
-	const statusFlag = parts.includes("--status");
-	const refreshFlag = parts.includes("--refresh");
-	const revokeFlag = parts.includes("--revoke");
-	const codeIdx = parts.indexOf("--code");
-	const codeArg = codeIdx >= 0 ? parts[codeIdx + 1] : undefined;
-	if (parts.includes("--code") && codeArg === undefined) {
-		ctx.ui.notify(
-			"Usage: /api oauth <domain> --code <code> — the code is missing.",
-			"warning",
-		);
+	const parsed = parseFlags(
+		parts,
+		["--code", "--redirect-uri"],
+		["--status", "--refresh", "--revoke"],
+	);
+	if (!parsed.ok) {
+		ctx.ui.notify(parsed.message, "warning");
 		return;
 	}
-	// `--redirect-uri <url>`: override of the RFC 8252 default redirect URI for
+	const statusFlag = parsed.bools.has("--status");
+	const refreshFlag = parsed.bools.has("--refresh");
+	const revokeFlag = parsed.bools.has("--revoke");
+	// `--code` completes an auth-code flow with the pasted redirect URL (or
+	// bare code); `--redirect-uri <url>` overrides the RFC 8252 default for
 	// the mint arm — some providers constrain the spelling (Twitch: https or
 	// `localhost`; OSM: unencrypted must be 127.0.0.1). Stored on the pending
 	// flow, so the `--code` completion needs no flag.
-	const redirectUriIdx = parts.indexOf("--redirect-uri");
-	const redirectUriArg =
-		redirectUriIdx >= 0 ? parts[redirectUriIdx + 1] : undefined;
-	if (parts.includes("--redirect-uri") && redirectUriArg === undefined) {
-		ctx.ui.notify(
-			"Usage: /api oauth <domain> --redirect-uri <url> — the redirect URI is missing.",
-			"warning",
-		);
-		return;
-	}
-	// Positional tokens = everything except the flags and the values the
-	// value-flags consumed (position-based — a value that happens to spell a
-	// flag name must not be mistaken for one).
-	const valueFlagIdx = new Set<number>();
-	for (const f of ["--code", "--redirect-uri"]) {
-		const i = parts.indexOf(f);
-		if (i >= 0 && parts[i + 1] !== undefined) valueFlagIdx.add(i + 1);
-	}
-	const tokens = parts.filter(
-		(p, i) =>
-			!["--status", "--refresh", "--revoke", "--code", "--redirect-uri"].includes(
-				p,
-			) && !valueFlagIdx.has(i),
-	);
-	const domain = tokens[0];
-	const selector = tokens[1];
+	const codeArg = parsed.flags["--code"];
+	const redirectUriArg = parsed.flags["--redirect-uri"];
+	const domain = parsed.positional[0];
+	const selector = parsed.positional[1];
 
 	if (!domain) {
 		// Bare `/api oauth` — list the token store (guide-independent).
@@ -248,7 +279,7 @@ export async function handleOauthSubcommand(
 		// still finds the slots. Minting/refreshing still needs auth facts.
 		if (statusFlag || revokeFlag) {
 			const storeDomain = resolveProvisionedParentDomain(domain);
-			const qualifier = tokens[1];
+			const qualifier = parsed.positional[1];
 			if (
 				qualifier !== undefined &&
 				!GRANT_QUALIFIERS.includes(qualifier as OAuth2Grant)
@@ -524,47 +555,21 @@ async function handleOauthInit(
 ): Promise<void> {
 	const parts = args.trim().split(/\s+/).filter(Boolean);
 
-	// Parse the flag grammar: each known flag consumes one value; anything
-	// else is a positional (exactly one — the domain).
-	const flags: Record<string, string | undefined> = {};
-	const positional: string[] = [];
-	for (let i = 0; i < parts.length; i++) {
-		const p = parts[i]!;
-		if (INIT_FLAG_NAMES.includes(p)) {
-			const value = parts[i + 1];
-			if (value === undefined) {
-				ctx.ui.notify(
-					`Flag '${p}' is missing its value — see /api oauth --help.`,
-					"warning",
-				);
-				return;
-			}
-			flags[p] = value;
-			i++;
-			continue;
-		}
-		if (p.startsWith("--")) {
-			ctx.ui.notify(
-				`Unknown flag '${p}' for /api oauth init — see /api oauth --help.`,
-				"warning",
-			);
-			return;
-		}
-		positional.push(p);
+	// Parse the flag grammar (shared with the plain command): each known flag
+	// consumes one value; anything else is a positional (exactly one — the
+	// domain).
+	const parsed = parseFlags(parts, INIT_FLAG_NAMES, []);
+	if (!parsed.ok) {
+		ctx.ui.notify(parsed.message, "warning");
+		return;
 	}
-	const domain = positional[0];
-	if (domain === undefined || positional.length > 1) {
+	const flags = parsed.flags;
+	const domain = parsed.positional[0];
+	if (domain === undefined || parsed.positional.length > 1) {
 		ctx.ui.notify(INIT_USAGE, "info");
 		return;
 	}
 	const codeArg = flags["--code"];
-	if (parts.includes("--code") && codeArg === undefined) {
-		ctx.ui.notify(
-			"Usage: /api oauth init <domain> <flags> --code <code> — the code is missing.",
-			"warning",
-		);
-		return;
-	}
 
 	// Token-store key wrinkle: normalize against the SECRETS store (same
 	// longest-provisioned-parent lookup the probe uses) so a bootstrap as
@@ -572,7 +577,7 @@ async function handleOauthInit(
 	// No provisioned match → use the domain as given (fail at exchange,
 	// not silently).
 	const storeDomain = resolveProvisionedParentDomain(domain);
-	const viaFlags = Object.values(flags).some((v) => v !== undefined);
+	const viaFlags = Object.keys(flags).length > 0;
 
 	let fields: SyntheticOAuth2Fields;
 	let wizardRedirectUri: string | undefined;
