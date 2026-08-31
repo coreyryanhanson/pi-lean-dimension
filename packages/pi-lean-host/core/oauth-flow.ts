@@ -324,7 +324,8 @@ async function completePastedCode(
 	if (!pending) {
 		throw new OAuthTokenMissingError(
 			`No pending OAuth2 authorization flow for '${storeDomain}'. ` +
-				`Run /api oauth ${storeDomain} first to get the authorize URL.`,
+				`Run /api oauth ${storeDomain} (or /api oauth init ${storeDomain} guide-less) ` +
+				`first to get the authorize URL.`,
 		);
 	}
 	const code = validatePasted(pasted, pending.state);
