@@ -692,6 +692,46 @@ describe("probe redirect handling (live localhost)", () => {
 				rmSync(tmp, { recursive: true, force: true });
 			}
 		});
+
+		it("a static Authorization secretRef alongside the token is a loud validation error", async () => {
+			// secretRefs: { Authorization } + a store token would emit two
+			// same-named headers (case-split keys) — fetch merges them into one
+			// garbled header. Loud validation, same posture as the slot-key check.
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-clash-"));
+			const prevDir = getOAuthDir();
+			const prevSecrets = getSecretsDir();
+			setOAuthDir(join(tmp, "oauth"));
+			setSecretsDir(join(tmp, "secrets"));
+			writeSecret("example.com", "api_key", "K");
+			writeToken(
+				"example.com",
+				"client_credentials",
+				"https://token.example.test/oauth/token",
+				{ accessToken: "tok", expiresAt: Date.now() + 600_000 },
+			);
+			try {
+				await expect(
+					probe(
+						"https://example.com",
+						"/me",
+						{},
+						{
+							domain: "example.com",
+							auth: {
+								secretRefs: { Authorization: "api_key" },
+								useTokenStore: true,
+								grant: "client_credentials",
+								tokenUrl: "https://token.example.test/oauth/token",
+							},
+						},
+					),
+				).rejects.toThrow(/collides with the static 'Authorization' header/);
+			} finally {
+				setOAuthDir(prevDir);
+				setSecretsDir(prevSecrets);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
 	});
 
 	// Mint-on-demand (client-credentials authoring bootstrap): inline tokenUrl

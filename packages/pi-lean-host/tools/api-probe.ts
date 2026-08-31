@@ -29,6 +29,7 @@ import {
 	joinUrl,
 } from "../core/path-template.js";
 import {
+	assertNoBearerCollision,
 	buildSyntheticOAuth2Auth,
 	hostnameOf,
 	isTokenExpired,
@@ -448,6 +449,12 @@ async function resolveProbeAuth(
 			tokenHeader["authorization"] = `Bearer ${token.accessToken}`;
 			rawTokenValue = token.accessToken;
 		}
+	}
+	if (Object.keys(tokenHeader).length > 0) {
+		assertNoBearerCollision(
+			headerRes.headers,
+			"the probe auth block's secretRefs",
+		);
 	}
 	const headers = { ...headerRes.headers, ...tokenHeader };
 	return {

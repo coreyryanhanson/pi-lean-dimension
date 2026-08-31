@@ -438,6 +438,21 @@ describe("resolveAccessToken (client_credentials)", () => {
 		expect(res.secretValues).toEqual(["HDR-TOKEN", "MY_CLIENT"]);
 	});
 
+	it("a static Authorization secretRef alongside bearer injection fails loudly", async () => {
+		provisionCreds("oauth.clash");
+		const guide = makeOAuthGuide("https://api.example.com", {
+			secretRefs: { Authorization: { secret: "client_id" } },
+		});
+		stubTokenEndpoint(() =>
+			tokenResponse({ access_token: "HDR-TOKEN", expires_in: 3600 }),
+		);
+		// fetch merges same-named headers case-insensitively — two credentials
+		// would ride one garbled header. Loud validation, not a silent merge.
+		await expect(resolveAccessToken(guide.auth, "oauth.clash")).rejects.toThrow(
+			/collides with the static 'Authorization' header/,
+		);
+	});
+
 	it("revokeAccessToken clears the store (best-effort revoke POST)", async () => {
 		provisionCreds("oauth.revoke");
 		const guide = makeOAuthGuide("https://api.example.com", {

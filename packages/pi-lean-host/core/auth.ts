@@ -344,6 +344,27 @@ async function resolveTokenUnlocked(
 	);
 }
 
+/**
+ * Loud misconfiguration guard: a static `Authorization` header (from
+ * secretRefs) collides with the oauth2 bearer injection — fetch merges
+ * same-named headers case-insensitively, so both would ride one garbled
+ * `Authorization: Bearer x, Bearer y` header. Fail loudly instead.
+ */
+export function assertNoBearerCollision(
+	headers: Record<string, string>,
+	source: string,
+): void {
+	const clash = Object.keys(headers).find(
+		(k) => k.toLowerCase() === "authorization",
+	);
+	if (clash !== undefined) {
+		throw new Error(
+			`oauth2 bearer injection collides with the static '${clash}' header declared via ${source} — ` +
+				`declare the secret under a different header (e.g. Client-Id) or set paramStyle: query.`,
+		);
+	}
+}
+
 /** Map a token set onto the AuthOpts shape (bearer-header or query style). */
 function toAccessTokenResult(
 	auth: OAuth2Auth,
@@ -385,6 +406,7 @@ function toAccessTokenResult(
 			secretValues: [token.accessToken, ...resolvedValues],
 		};
 	}
+	assertNoBearerCollision(resolvedHeaders, "secretRefs");
 	return {
 		authHeaders: {
 			authorization: `Bearer ${token.accessToken}`,
