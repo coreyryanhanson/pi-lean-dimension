@@ -270,6 +270,7 @@ describe("/api verify — threshold + stamp", () => {
 		// Two guides claim verify.test; the picker resolves to the second.
 		setupGuideIn("verify-a", recipe(opBlock(OP_HEALTH), undefined, "Verify A"));
 		setupGuideIn("verify-b", recipe(opBlock(OP_LIST), undefined, "Verify B"));
+		const beforeA = readGuideIn("verify-a");
 		const ctx = mockCtx({
 			mode: "tui",
 			ui: {
@@ -286,11 +287,12 @@ describe("/api verify — threshold + stamp", () => {
 		expect(text).toContain("✓ list — 0 item(s) (paginate)");
 		// Only the picked guide's file is stamped; the sibling is untouched.
 		expect(readGuideIn("verify-b")).toContain(`verified: ${TODAY()}`);
-		expect(readGuideIn("verify-a")).toContain("verified: 2026-07-17");
+		expect(readGuideIn("verify-a")).toBe(beforeA);
 	});
 
 	it("does not stamp on partial failure and names the failing op", async () => {
 		setupGuide(recipe([opBlock(OP_HEALTH), opBlock(OP_BROKEN)].join("\n")));
+		const before = readGuide();
 		const ctx = mockCtx();
 		await handleVerifySubcommand("verify.test", ctx);
 
@@ -298,23 +300,25 @@ describe("/api verify — threshold + stamp", () => {
 		expect(text).toContain("❌ NOT stamped");
 		expect(text).toContain("✗ broken — Unexpected HTTP 500");
 		expect(text).toContain("✓ health");
-		expect(readGuide()).toContain("verified: 2026-07-17"); // unchanged
+		expect(readGuide()).toBe(before);
 	});
 
 	it("does not stamp on all-fail", async () => {
 		const brokenA = { ...OP_BROKEN, name: "brokenA" };
 		const brokenB = { ...OP_BROKEN, name: "brokenB" };
 		setupGuide(recipe([opBlock(brokenA), opBlock(brokenB)].join("\n")));
+		const before = readGuide();
 		const ctx = mockCtx();
 		await handleVerifySubcommand("verify.test", ctx);
 
 		const text = notifyText(ctx);
 		expect(text).toContain("❌ NOT stamped — 2 op(s) failed");
-		expect(readGuide()).toContain("verified: 2026-07-17");
+		expect(readGuide()).toBe(before);
 	});
 
 	it("does not stamp when all ops are skipped and warns with the fix", async () => {
 		setupGuide(recipe([opBlock(OP_GET), opBlock(OP_SEARCH_REQUIRED)].join("\n")));
+		const before = readGuide();
 		const ctx = mockCtx();
 		await handleVerifySubcommand("verify.test", ctx);
 
@@ -327,7 +331,7 @@ describe("/api verify — threshold + stamp", () => {
 			"⏭ search — skipped: requires agent-supplied params (q)",
 		);
 		expect(text).toContain("verify.json");
-		expect(readGuide()).toContain("verified: 2026-07-17");
+		expect(readGuide()).toBe(before);
 	});
 });
 
@@ -345,6 +349,7 @@ describe("/api verify — auth precheck", () => {
 			"      secret: apiKey\n" +
 			'      prefix: "Bearer "';
 		setupGuide(recipe(opBlock(OP_HEALTH), authBlock));
+		const before = readGuide();
 		const ctx = mockCtx();
 		await handleVerifySubcommand("verify.test", ctx);
 
@@ -352,7 +357,7 @@ describe("/api verify — auth precheck", () => {
 		expect(text).toContain("requires a secret not yet provisioned: apiKey");
 		expect(text).toContain("Run /api secrets verify.test");
 		expect(vi.mocked(fetchUrl)).not.toHaveBeenCalled();
-		expect(readGuide()).toContain("verified: 2026-07-17");
+		expect(readGuide()).toBe(before);
 	});
 });
 
@@ -382,6 +387,7 @@ function oauthAuthBlock(
 describe("/api verify — oauth2 auth precheck", () => {
 	it("fail-fasts on an authorization_code guide with no token (no HTTP)", async () => {
 		setupGuide(recipe(opBlock(OP_HEALTH), oauthAuthBlock("authorization_code")));
+		const before = readGuide();
 		const ctx = mockCtx();
 		await handleVerifySubcommand("verify.test", ctx);
 
@@ -391,15 +397,20 @@ describe("/api verify — oauth2 auth precheck", () => {
 			"Run /api oauth verify.test to start the interactive flow",
 		);
 		expect(vi.mocked(fetchUrl)).not.toHaveBeenCalled();
-		expect(readGuide()).toContain("verified: 2026-07-17");
+		expect(readGuide()).toBe(before);
 	});
 
 	it("proceeds when an authorization_code guide has a valid cached token", async () => {
 		setupGuide(recipe(opBlock(OP_HEALTH), oauthAuthBlock("authorization_code")));
-		writeToken("verify.test", "authorization_code", "https://verify.test/oauth/token", {
-			accessToken: "VALID",
-			expiresAt: Date.now() + 300_000,
-		});
+		writeToken(
+			"verify.test",
+			"authorization_code",
+			"https://verify.test/oauth/token",
+			{
+				accessToken: "VALID",
+				expiresAt: Date.now() + 300_000,
+			},
+		);
 		const ctx = mockCtx();
 		await handleVerifySubcommand("verify.test", ctx);
 
@@ -409,6 +420,7 @@ describe("/api verify — oauth2 auth precheck", () => {
 
 	it("fail-fasts on a client_credentials guide with no client secret", async () => {
 		setupGuide(recipe(opBlock(OP_HEALTH), oauthAuthBlock("client_credentials")));
+		const before = readGuide();
 		const ctx = mockCtx();
 		await handleVerifySubcommand("verify.test", ctx);
 
@@ -416,7 +428,7 @@ describe("/api verify — oauth2 auth precheck", () => {
 		expect(text).toContain("no usable OAuth2 token");
 		expect(text).toContain("run /api oauth verify.test");
 		expect(vi.mocked(fetchUrl)).not.toHaveBeenCalled();
-		expect(readGuide()).toContain("verified: 2026-07-17");
+		expect(readGuide()).toBe(before);
 	});
 
 	it("proceeds when a client_credentials guide can mint (client secret provisioned)", async () => {
@@ -629,6 +641,7 @@ describe("/api verify — requiresAnyOf", () => {
 				group: { id: "1", slug: "s", code: "c" },
 			}),
 		});
+		const before = readGuide();
 		// The `code` peer route is broken (500); the others pass.
 		vi.mocked(fetchUrl).mockImplementation(async (url: string) => {
 			if (url.includes("code=c")) {
@@ -654,7 +667,7 @@ describe("/api verify — requiresAnyOf", () => {
 		expect(text).toContain("✓ group (slug) — /group (restGet)");
 		expect(text).toContain("✗ group (code) — Unexpected HTTP 500");
 		expect(text).toContain("❌ NOT stamped");
-		expect(readGuide()).toContain("verified: 2026-07-17"); // unchanged
+		expect(readGuide()).toBe(before);
 	});
 
 	it("single supplied member → one run, no member tag (today's behavior)", async () => {
