@@ -68,31 +68,16 @@ by default** — you'll see:
 
 > 📡 API tools enabled. /api learn to make api-learn + api-probe + api-scaffold + api-store + oauth-mint available.
 
-From a fresh install you have no guides yet, so the workflow is:
+From a fresh install you have no guides yet, so the next step is to get one:
 
-1. **`/api learn`** — enable the authoring tools (`api-learn` + `api-probe` +
-   `api-scaffold` + `api-store` + `oauth-mint`).
-2. **`api-probe`** — the agent probes a not-yet-guided endpoint and drafts a
-   YAML op block to paste into a recipe (agent-driven — you don't call this
-   yourself).
-3. **`api-learn({domain, dir})`** — validate the staged draft(s) and write
-   the guide to
-   `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/guide.md`.
-4. **`api-fetch({domain, operation})`** — execute and verify.
-
-**Authoring your own guide?** The complete authoring manual — the field
-reference, pagination styles, helper contracts, and the authoring loop —
-lives in [docs/authoring.md](docs/authoring.md).
-
-Auth-gated API? `/api bootstrap oauth <domain> <spec>` acquires OAuth2 tokens
-first; `/api secrets <domain>` provisions static keys (see
-[Authentication & Secrets](#authentication--secrets)).
-
-Or skip the authoring and **copy a bundled reference recipe** (see
-[Bundled Reference Recipes](#bundled-reference-recipes)) into
-`~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/` — it loads
-immediately. The folder name must match `slug(shortName)` (see the
-0.4.0 breaking-change note above).
+- **Author one** — see [Authoring Your First Guide](#authoring-your-first-guide)
+  for the end-to-end workflow, including auth-gated APIs. The complete
+  authoring manual (field reference, pagination styles, helper contracts)
+  lives in [docs/authoring.md](docs/authoring.md).
+- **Or copy a bundled reference recipe** (see
+  [Bundled Reference Recipes](#bundled-reference-recipes)) into
+  `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/` — it loads
+  immediately.
 
 ---
 
