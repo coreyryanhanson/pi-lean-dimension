@@ -170,7 +170,7 @@ load and execute.
 | `/api secrets [<domain> [<name>]]` | Manage stored API secrets — list, provision, delete (see [Authentication & Secrets](#authentication--secrets)). |
 | `/api verify <domain> [guide] [--force]` | Run every runnable op against the live API and stamp `verified` on success — strict: any runnable-op failure → no stamp; skipped ops named in the report (see [Recipe drift](docs/authoring.md#recipe-drift)). |
 | `/api delete <domain> [guide]` | Remove a guide directory and invalidate the guide-store cache — a human-typed recovery gesture (no agent tool surface); interactive confirm for a whole-domain delete. |
-| `/api oauth <domain> …` | OAuth2 token management — `init` / mint / `--status` / `--refresh` / `--revoke` / `--code <code>` per token slot (human-typed; the agent's mint path is `oauth-mint`). `init` runs an interactive wizard (or headless flags) and finishes a paste-based auth-code flow via `/api oauth init <domain> … --code <code>`. |
+| `/api oauth <domain> …` | OAuth2 token management — `init` / mint / `--status` / `--refresh` / `--revoke` / `--code <code>` per token slot (human-typed; the agent's mint path is `oauth-mint`; `--redirect-uri <url>` overrides the default `http://127.0.0.1/callback` on init/mint — must match the provider app registration). `init` runs an interactive wizard (or headless flags) and finishes a paste-based auth-code flow via `/api oauth init <domain> … --code <code>`. |
 | `/api bootstrap oauth <domain> <spec>` | Agent-driven OAuth2 bootstrap — validates args, auto-enables learn when off, injects a research brief into the session, and exits; the agent then researches the provider and calls `oauth-mint` (the human is the trust root for the secret-bearing endpoint). Refused headless. |
 
 ### Persistence
@@ -252,9 +252,11 @@ api-learn domain="arxiv.org"                    → fetches an existing guide's 
 api-learn domain="arxiv.org" dir="/tmp/pi-lean-host/arxiv.org"  → validates + mirror-saves the staged dir to disk
 ```
 
-The working copy is staged at `/tmp/pi-lean-host/<domain>/` (`/tmp`
-self-cleans, so drafts don't accumulate) — a fresh fail-closed starter
-template (`new: true`), an existing guide's raw recipe + siblings for
+The working copy is staged under `/tmp/pi-lean-host/` (`/tmp`
+self-cleans, so drafts don't accumulate; `<domain>/` for starter
+templates (`new: true`), `<slug(shortName)>/` for fetched recipes) —
+a fresh fail-closed starter
+template, an existing guide's raw recipe + siblings for
 direct editing, or a validated mirror-save of the staged dir into
 `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/`. Every staged pull
 is prepended with the authoring manual. Requires `/api learn`.
@@ -275,8 +277,8 @@ authority). Requires `/api learn`. See
 ### 5. `api-scaffold` — Bootstrap `verify.json` / `helper.ts` (local write)
 
 ```text
-api-scaffold domain="arxiv.org" verify=true   → writes a starter verify.json with "__FILL_ME__" sentinels to /tmp/pi-lean-host/arxiv.org/verify.json
-api-scaffold domain="arxiv.org" helper=true  → writes a commented-out helper.ts stub to /tmp/pi-lean-host/arxiv.org/helper.ts
+api-scaffold domain="arxiv.org" verify=true   → writes a starter verify.json with "__FILL_ME__" sentinels to /tmp/pi-lean-host/<slug(shortName)>/verify.json
+api-scaffold domain="arxiv.org" helper=true  → writes a commented-out helper.ts stub to /tmp/pi-lean-host/<slug(shortName)>/helper.ts
 ```
 
 Bootstrap tool for the two artifacts the authoring loop needs but that

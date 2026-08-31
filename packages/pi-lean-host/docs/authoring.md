@@ -364,8 +364,8 @@ prepends to staged drafts, not here.
 ### `api-scaffold` — Bootstrap `verify.json` / `helper.ts`
 
 ```text
-api-scaffold domain="arxiv.org" verify=true   → writes a starter verify.json with "__FILL_ME__" sentinels to /tmp/pi-lean-host/arxiv.org/verify.json
-api-scaffold domain="arxiv.org" helper=true  → writes a commented-out helper.ts stub to /tmp/pi-lean-host/arxiv.org/helper.ts
+api-scaffold domain="arxiv.org" verify=true   → writes a starter verify.json with "__FILL_ME__" sentinels to /tmp/pi-lean-host/<slug(shortName)>/verify.json
+api-scaffold domain="arxiv.org" helper=true  → writes a commented-out helper.ts stub to /tmp/pi-lean-host/<slug(shortName)>/helper.ts
 ```
 
 Bootstrap tool for the two artifacts the authoring loop needs but that

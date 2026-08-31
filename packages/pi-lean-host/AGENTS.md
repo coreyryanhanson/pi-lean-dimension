@@ -40,7 +40,7 @@
   token domains with no guide, via the same store-domain seam as minting —
   `resolveProvisionedParentDomain` + `hostnameOf` in `core/auth.ts`);
   with `domain`/`apiHost` → combined per-domain report: provisioned vs
-  declared vs gap secret names, token slots rendered from `TokenSlotInfo`
+  declared vs gap secret names, token slots rendered from `TokenSlotMeta`
   (issuer, granted scope with an "(assumed)" RFC 6749 §5.1 fallback to the
   requested scopes, expiry, refreshable), and declared-slot gaps ("guide
   declares X via `tokenUrl`: no token minted" — the pointer to `oauth-mint`
@@ -299,6 +299,7 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `guide-picker.ts` (TUI `SelectList` for N-guide `/api verify` + `/api delete`,
   headless falls back to text menu), `helpers.ts` (built-in executor helpers),
   `local-helpers.ts` (user helper loader), `helpers-command.ts` (`/api helpers`),
+  `fs-0600.ts` (shared 0600 JSON writer — `secrets-store.ts` + `oauth-store.ts`),
   `secrets-store.ts` (per-domain secrets store — swappable `SecretStore`
   interface, 0600 file backend, lazy-mkdir-on-write-only, single-key +
   whole-domain delete), `secrets-command.ts` (`/api secrets`),
@@ -386,8 +387,10 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   summary, checklist picker toggle/Done/Esc), `bootstrap-command`
   (exact `sendUserMessage` args, brief contents, learn flip + notify-only-on-flip,
   focus-guard fail, usage errors, headless refusal), `guide-picker` (TUI gate + row
-  mapping), `ship-manifest` (tarball coverage + asserts `api-guides/` is
-  excluded from the npm tarball). Fixtures: `__tests__/fixtures/{axis,mediawiki,oai}/`.
+  mapping), `oauth-command` (init wizard + headless flag grammar,
+  `--redirect-uri`, guide-less `--status`/`--revoke`), `ship-manifest`
+  (tarball coverage + asserts `api-guides/` is excluded from the npm
+  tarball). Fixtures: `__tests__/fixtures/{axis,mediawiki,oai}/`.
 
 ## api-guides/ — synthetic axis guides (framework fixtures)
 

@@ -51,8 +51,9 @@
   stale guide warns non-blockingly in `api-guide`/`api-fetch`, never
   gating the load. v1 is **GET-read only** — no mutation helper.
 - **`api-learn` + `api-probe` + `api-scaffold` authoring loop** — `api-learn`
-  stages the working copy to `/tmp/pi-lean-host/<slug(shortName)>/` and saves
-  from a staged **directory** (`dir`), so the model never round-trips a giant
+  stages the working copy to `/tmp/pi-lean-host/<domain>/` for starter
+  templates (`new: true`) or `/<slug(shortName)>/` for fetched recipes, and
+  saves from a staged **directory** (`dir`), so the model never round-trips a giant
   recipe string. `domain` is required: `{domain, new: true}` stages a
   fail-closed starter template (only `domains` is real; the rest are
   `<placeholder>` values that reject until filled), and `{domain}` fetches an
