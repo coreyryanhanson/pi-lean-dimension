@@ -92,8 +92,7 @@ This kills two whole classes of recurring mistakes before they exist:
 
 - **Agents getting the same API wrong every session.** The reason they do is
   *they are the ones writing the calls.* Move call construction into a
-  reviewed tool + fixed helpers, and the agent never touches the auth
-  header, never hand-rolls pagination, never picks the wrong `Accept`.
+  reviewed tool + fixed helpers, and those mistakes disappear at the source.
 - **Arbitrary eval / egress safety.** Executable TS in a guide is a sandbox
   problem. Declarative recipes executed by a fixed tool are not — and because
   bundled recipes are inert, the only code that ever runs is code you
@@ -120,12 +119,10 @@ demand. A skill is pure text with no in-process eval, whereas a loaded
 |------|----------------|---------------|-------------------|-------|
 | Built-in helpers | package source (`core/`) | maintainers | yes | reviewed |
 | Local user helpers | `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/helper.ts` | you, or the agent in `/api learn` | no | user-owned |
-| Bundled recipes | `caritas` repo (`api-guides/<slug(shortName)>/`) | maintainers | no (reference) | **inert — never auto-executed** |
+| Bundled recipes | `caritas` repo (`api-guides/<slug(shortName)>/`) | maintainers | no — [Reference Recipes](#reference-recipes-caritas) | **inert — never auto-executed** |
 
 Built-in helpers cover the common 90%. Local user helpers cover the weird 10%
-(computed signatures, strange date transforms, custom auth). Bundled recipes
-are reference material — see [Reference Recipes (caritas)](#reference-recipes-caritas)
-for how to adopt one.
+(computed signatures, strange date transforms, custom auth).
 
 ---
 
@@ -241,8 +238,7 @@ as `api-fetch` — the sanctioned way to reach even WAF'd hosts), summarizes the
 JSON shape, and emits a **draft YAML operation block** to paste into a recipe.
 It only **suggests** — it never writes the guide, and a draft still needs
 confirming against the provider's docs (probe surfaces evidence, not
-authority). See
-[docs/authoring.md](docs/authoring.md#the-authoring-tools-in-detail).
+authority).
 
 ### 5. `api-scaffold` — Bootstrap `verify.json` / `helper.ts` (local write)
 
@@ -258,7 +254,6 @@ skip until you replace them; existing real values merge additively) and a
 commented-out `helper.ts` stub. Both staged to `/tmp` — never the guides
 dir, never overwriting an existing staged sibling. Save the guide **first**,
 then scaffold.
-Details: [docs/authoring.md](docs/authoring.md#the-authoring-tools-in-detail).
 
 ### 6. `api-store` — Inspect Both Credential Stores (local read, learn-gated)
 
@@ -287,8 +282,8 @@ Metadata only: `accessToken`/`refreshToken` are dropped at the collection
 boundary and secret values never enter the tool — they can't appear in the
 rendered text **or** the structured `details`. When a token's granted scope
 wasn't echoed by the provider, the requested scopes render with an
-"(assumed)" marker (RFC 6749 §5.1). Strictly read-only — mint via
-`oauth-mint`; refresh/revoke stay human-typed (`/api oauth`).
+"(assumed)" marker (RFC 6749 §5.1). Mint via `oauth-mint`; refresh/revoke
+stay human-typed (`/api oauth`).
 
 ### 7. `oauth-mint` — Human-in-the-Loop OAuth2 Mint (network write, consented)
 
@@ -332,9 +327,8 @@ The simplest case — a public API with no auth — end to end:
 Auth-gated API? Two additions, both handled before the guide will fetch
 successfully:
 
-- **Static key** — you provision the value once via `/api secrets <domain>`
-  (transcript-safely, names only in the transcript); the guide declares it
-  by name with `auth.kind: static-key`. See
+- **Static key** — you provision the value once via `/api secrets <domain>`;
+  the guide declares it by name with `auth.kind: static-key`. See
   [Authentication & Secrets](#authentication--secrets).
 - **OAuth2** — `/api bootstrap oauth <domain> <spec>` injects a research
   brief and the agent drives `oauth-mint`; you confirm the token URL, tick
@@ -465,7 +459,7 @@ enhancement for co-installs, not a host-only requirement. The on-demand path
 
 `api-fetch` is the guided path — the guide is the product. It has no
 ad-hoc bare-fetch mode on purpose: that would recreate the exact mistakes
-(hand-rolled auth, no pagination) the tool exists to prevent. The escape
+the tool exists to prevent. The escape
 hatches are `api-learn` (write a guide, then execute through it) and
 `web-fetch` (portal) for a one-off.
 
@@ -484,10 +478,7 @@ injects it in code.
 The secrets store is **plaintext JSON at rest** — mode `0600`, no encryption.
 That matches pi's own posture for its credentials (an API key in
 `settings.json` or the env). The threat this guards against is not another
-process reading the file; it's accidental **transcript exfiltration**. You
-provision a value once via `/api secrets`, it's written transcript-safely to
-the store, and `api-fetch` injects it in code — the agent sees the name, not
- the value.
+process reading the file; it's accidental **transcript exfiltration**.
 
 That containment is plugin discipline, not a vault. `read`/`cat` on the
 store file is one tool-call from the agent, which runs with your privileges,
@@ -524,10 +515,8 @@ Provisioning is interactive (`ctx.ui` dialogs — the value is captured
 **transcript-safely** and written straight to the store, never returned). On
 headless hosts there is no dialog, so `/api secrets` prints the direct
 file-write instructions instead — write the `0600` file yourself before pi
-starts (a one-line `install -m 600` + `cat >` step).
-
-Secrets persist at `~/.pi/agent/pi-lean-host/secrets/<domain>.json` (mode
-`0600`). **Only names are ever listed** — values never leave the store.
+starts (a one-line `install -m 600` + `cat >` step). Secrets persist at
+`~/.pi/agent/pi-lean-host/secrets/<domain>.json` (mode `0600`).
 
 ### The status footer
 
@@ -536,9 +525,6 @@ Every `api-guide` / `api-fetch` result on an auth-bearing guide (static-key
 `🔑 auth:` line — `ok`, `requires <name> — not provisioned`, or an optional
 state — showing name and presence only, never the value, so it's safe
 anywhere it renders.
-
-For the agent's learn-gated, read-only view of both credential stores, call
-`api-store` (see [All 7 Tools](#all-7-tools)).
 
 ## Security & Scope
 
@@ -570,8 +556,7 @@ channel stays closed.
 - **GET-read auth surface.** `auth.kind: static-key` (store-backed
   header/query-param secrets) and `auth.kind: oauth2` (`client_credentials`
   - paste-based `authorization_code`) are realized; cookie-login stays
-  deferred. Values live in the `0600` secrets store, never in a guide —
-  see [Authentication & Secrets](#authentication--secrets).
+  deferred. See [Authentication & Secrets](#authentication--secrets).
 - **No inferred-link discovery.** Declared links only in v1; inference is v2.
 
 ### Mission
