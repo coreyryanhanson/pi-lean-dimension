@@ -47,12 +47,11 @@
 4. [All 7 Tools](#all-7-tools)
 5. [Authoring Your First Guide](#authoring-your-first-guide)
 6. [Reference Recipes (caritas)](#reference-recipes-caritas)
-7. [`/api status` — Detailed Runtime Status](#api-status--detailed-runtime-status)
-8. [Configuration (`settings.json`)](#configuration-settingsjson)
-9. [Co-Installing with `pi-lean-portal`](#co-installing-with-pi-lean-portal)
-10. [Tips & Best Practices](#tips--best-practices)
-11. [Authentication & Secrets](#authentication--secrets)
-12. [Security & Scope](#security--scope)
+7. [Configuration (`settings.json`)](#configuration-settingsjson)
+8. [Co-Installing with `pi-lean-portal`](#co-installing-with-pi-lean-portal)
+9. [Tips & Best Practices](#tips--best-practices)
+10. [Authentication & Secrets](#authentication--secrets)
+11. [Security & Scope](#security--scope)
 
 ---
 
@@ -125,10 +124,8 @@ demand. A skill is pure text with no in-process eval, whereas a loaded
 
 Built-in helpers cover the common 90%. Local user helpers cover the weird 10%
 (computed signatures, strange date transforms, custom auth). Bundled recipes
-are inert reference material in the [`caritas`](https://github.com/coreyryanhanson/caritas)
-repo — the loader never reads `api-guides/` from the package. You adopt one by
-copying the whole domain folder into your own directory; only then does it
-load and execute.
+are reference material — see [Reference Recipes (caritas)](#reference-recipes-caritas)
+for how to adopt one.
 
 ---
 
@@ -140,7 +137,7 @@ load and execute.
 | `/api learn` | **API access + authoring** — adds `api-learn` + `api-probe` + `api-scaffold` + `api-store` + `oauth-mint` on top of `on`. The agent never authors guides unprompted — it must be in learn mode. |
 | `/api off` | **All API tools hidden** — removes `api-*` from the agent's context to save tokens on sessions that aren't doing API work. |
 | `/api` | Show current state and available sub-commands. |
-| `/api status` | Detailed runtime status — state, active guides, domains, helpers. |
+| `/api status` | Detailed runtime status — toggle state, active guide count, domain list, and helper health (disabled helpers surface with a `⚠`). |
 | `/api helpers` | List local user helpers (or `/api helpers <domain>` to view one's source). |
 | `/api secrets [<domain> [<name>]]` | Manage stored API secrets — list, provision, delete (see [Authentication & Secrets](#authentication--secrets)). |
 | `/api verify <domain> [guide] [--force]` | Run every runnable op against the live API and stamp `verified` on success — strict: any runnable-op failure → no stamp; skipped ops named in the report (see [Recipe drift](docs/authoring.md#recipe-drift)). |
@@ -395,37 +392,6 @@ A recipe may carry `operation.helper: true` plus an accompanying `helper.ts`
 in its domain subdir as a worked example. See caritas's `CONTRIBUTING.md`
 for contributing a recipe to the library; for authoring one for yourself,
 see [docs/authoring.md](docs/authoring.md).
-
-## `/api status` — Detailed Runtime Status
-
-```text
-/api status
-```
-
-```text
-📡 API status
-  State: on
-  Learn: ❌ off
-
-  Guides: 2 active
-  Domains: en.wikipedia.org, boe.es, www.boe.es
-  Helpers: 1 present
-  ⚠ Disabled: boe.es
-  Run /api helpers to list them.
-
-  /api on           enable api-guide + api-fetch
-  /api learn       enable all seven tools (adds api-learn + api-probe + api-scaffold + api-store + oauth-mint)
-  /api off         disable all API tools
-  /api verify      verify a guide's ops against its live API (stamps verified)
-  /api oauth       provision/inspect/revoke OAuth2 tokens (client_credentials + auth-code/PKCE)
-  /api bootstrap   agent-driven OAuth2 bootstrap (injects a research brief; enables learn)
-  /api delete      delete a guide directory (human-typed recovery gesture)
-```
-
-Covers toggle state, active guide count, the domain list, and helper health
-(disabled helpers surface with a `⚠`).
-
----
 
 ## Configuration (`settings.json`)
 
