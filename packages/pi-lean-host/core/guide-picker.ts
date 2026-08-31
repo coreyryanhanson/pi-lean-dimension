@@ -1,5 +1,6 @@
 /**
- * Interactive guide picker for the /api verify and /api delete commands.
+ * Interactive guide picker for the /api verify, /api delete, and /api oauth
+ * commands.
  *
  * When a domain claims N guides and no `guide` selector is supplied, the
  * commands show a two-column picker (shared `pickWithDescription` helper) —
@@ -18,7 +19,12 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { SelectItem } from "@earendil-works/pi-tui";
 import { GUIDE_SCHEMA_VERSION, type ApiGuide } from "./api-guide-types.js";
-import { isStaleSchema } from "./parse-api-guide.js";
+import {
+	formatGuideListings,
+	isStaleSchema,
+	selectGuideByShortName,
+	shortNameErrorText,
+} from "./parse-api-guide.js";
 import { pickWithDescription } from "./select-picker.js";
 
 /**
@@ -67,4 +73,53 @@ export async function pickGuide(
 
 	if (picked === undefined) return undefined;
 	return matches.find((m) => m.dirName === picked);
+}
+
+/**
+ * Shared notify-based guide selection for commands: 1 match → it wins; a
+ * selector → resolve by shortName (error + stop on no match); otherwise the
+ * interactive picker with the text-menu fallback. Returns undefined when the
+ * caller should stop (fallback menu shown or selection error notified).
+ * Callers keep their own 0-match branch — those messages genuinely differ.
+ * `ctx.ui.notify`-based only (the tool-channel sites — api-guide, api-learn,
+ * api-scaffold — keep their own skeletons).
+ */
+export async function pickGuideForCommand(
+	ctx: ExtensionCommandContext,
+	domain: string,
+	selector: string | undefined,
+	matches: { guide: ApiGuide; dirName: string }[],
+	command: string,
+	label = "API guides",
+): Promise<{ guide: ApiGuide; dirName: string } | undefined> {
+	if (matches.length === 1) return matches[0];
+	if (selector) {
+		const sel = selectGuideByShortName(matches, selector);
+		if (!sel.ok) {
+			ctx.ui.notify(
+				shortNameErrorText(
+					sel,
+					domain,
+					selector,
+					`Call ${command} ${domain} to see the menu.`,
+				),
+				"warning",
+			);
+			return undefined;
+		}
+		return sel;
+	}
+	// N guides, no selector → interactive pick (TUI) or the menu fallback
+	// (headless/RPC/print or cancelled), nothing run yet.
+	const picked = await pickGuide(ctx, matches);
+	if (picked) return picked;
+	ctx.ui.notify(
+		[
+			`${matches.length} ${label} for '${domain}':`,
+			formatGuideListings(matches),
+			`Call ${command} ${domain} <shortName> to pick one.`,
+		].join("\n"),
+		"info",
+	);
+	return undefined;
 }

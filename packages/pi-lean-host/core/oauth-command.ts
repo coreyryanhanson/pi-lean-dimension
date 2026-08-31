@@ -37,13 +37,8 @@
 
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { findGuidesByDomain } from "./guide-store.js";
-import { pickGuide } from "./guide-picker.js";
+import { pickGuideForCommand } from "./guide-picker.js";
 import { pickWithDescription, type PickerItem } from "./select-picker.js";
-import {
-	formatGuideListings,
-	selectGuideByShortName,
-	shortNameErrorText,
-} from "./parse-api-guide.js";
 import {
 	buildSyntheticOAuth2Auth,
 	canonicalStoreDomain,
@@ -69,7 +64,7 @@ import {
 import type { OAuthToken } from "./oauth-store.js";
 import { REDIRECT_URI, mintAuthCodeToken } from "./oauth-flow.js";
 import { listNames } from "./secrets-store.js";
-import type { ApiGuide, OAuth2Grant } from "./api-guide-types.js";
+import type { OAuth2Grant } from "./api-guide-types.js";
 
 /** Full usage + storage docs, surfaced by `--help`. */
 function helpText(): string {
@@ -373,41 +368,15 @@ export async function handleOauthSubcommand(
 		return;
 	}
 
-	let selected: { guide: ApiGuide; dirName: string };
-	if (matches.length === 1) {
-		selected = matches[0]!;
-	} else if (selector) {
-		const sel = selectGuideByShortName(matches, selector);
-		if (!sel.ok) {
-			ctx.ui.notify(
-				shortNameErrorText(
-					sel,
-					domain,
-					selector,
-					`Call /api oauth ${domain} to see the menu.`,
-				),
-				"warning",
-			);
-			return;
-		}
-		selected = sel;
-	} else {
-		// N oauth2 guides, no selector → interactive pick (TUI) or the menu
-		// fallback (headless/RPC/print or cancelled), nothing run yet.
-		const picked = await pickGuide(ctx, matches);
-		if (!picked) {
-			ctx.ui.notify(
-				[
-					`${matches.length} OAuth2 guides for '${domain}':`,
-					formatGuideListings(matches),
-					`Call /api oauth ${domain} <shortName> to pick one.`,
-				].join("\n"),
-				"info",
-			);
-			return;
-		}
-		selected = picked;
-	}
+	const selected = await pickGuideForCommand(
+		ctx,
+		domain,
+		selector,
+		matches,
+		"/api oauth",
+		"OAuth2 guides",
+	);
+	if (!selected) return;
 
 	const { guide } = selected;
 	const auth = guide.auth;

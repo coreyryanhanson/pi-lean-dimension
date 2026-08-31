@@ -41,14 +41,8 @@ import {
 	invalidateCache,
 	getUserGuidesDir,
 } from "./guide-store.js";
-import {
-	formatGuideListings,
-	selectGuideByShortName,
-	shortNameErrorText,
-	stampFrontmatterField,
-	TODAY,
-} from "./parse-api-guide.js";
-import { pickGuide } from "./guide-picker.js";
+import { stampFrontmatterField, TODAY } from "./parse-api-guide.js";
+import { pickGuideForCommand } from "./guide-picker.js";
 import {
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
@@ -62,7 +56,7 @@ import {
 	type RestGetResult,
 	type PaginateResult,
 } from "./helpers.js";
-import type { ApiGuide, Operation } from "./api-guide-types.js";
+import type { Operation } from "./api-guide-types.js";
 
 /** Usage + cost note, surfaced by `--help`. */
 function helpText(): string {
@@ -126,41 +120,14 @@ export async function handleVerifySubcommand(
 		return;
 	}
 
-	let selected: { guide: ApiGuide; dirName: string };
-	if (matches.length === 1) {
-		selected = matches[0]!;
-	} else if (guideSelector) {
-		const sel = selectGuideByShortName(matches, guideSelector);
-		if (!sel.ok) {
-			ctx.ui.notify(
-				shortNameErrorText(
-					sel,
-					domain,
-					guideSelector,
-					`Call /api verify ${domain} to see the menu.`,
-				),
-				"warning",
-			);
-			return;
-		}
-		selected = sel;
-	} else {
-		// N guides, no selector → interactive pick (TUI) or the menu
-		// fallback (headless/RPC/print or cancelled), nothing run yet.
-		const picked = await pickGuide(ctx, matches);
-		if (!picked) {
-			ctx.ui.notify(
-				[
-					`${matches.length} API guides for '${domain}':`,
-					formatGuideListings(matches),
-					`Call /api verify ${domain} <shortName> to pick one.`,
-				].join("\n"),
-				"info",
-			);
-			return;
-		}
-		selected = picked;
-	}
+	const selected = await pickGuideForCommand(
+		ctx,
+		domain,
+		guideSelector,
+		matches,
+		"/api verify",
+	);
+	if (!selected) return;
 
 	const { guide, dirName } = selected;
 	const storeDomain = canonicalStoreDomain(guide);

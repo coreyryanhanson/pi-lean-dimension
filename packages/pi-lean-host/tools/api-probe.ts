@@ -40,7 +40,7 @@ import {
 	scrubSecretValues,
 } from "../core/auth.js";
 import { readToken } from "../core/oauth-store.js";
-import { listDomains } from "../core/secrets-store.js";
+import { provisionedDomainsSuffix } from "../core/secrets-store.js";
 import { serverMessage, isPlanGated } from "../core/status-hint.js";
 import { appendFooter, contentText } from "./utils.js";
 import type {
@@ -493,11 +493,8 @@ const MISCONFIGURED_PREFIXES_NOTE =
  *  usually a domain-mismatch, not a missing secret. */
 function missNote(authCtx: ProbeAuthCtx, domain: string): string {
 	if (authCtx.missingNames.length === 0) return "";
-	const others = listDomains().filter((d) => d !== domain);
-	const tail =
-		others.length > 0
-			? ` — provisioned domains: ${others.join(", ")}; pass domain: <one> to use its secret`
-			: "";
+	const suffix = provisionedDomainsSuffix(domain);
+	const tail = suffix ? `${suffix}; pass domain: <one> to use its secret` : "";
 	return `secret "${authCtx.missingNames[0]}" not found in store for domain "${domain}"${tail}`;
 }
 
