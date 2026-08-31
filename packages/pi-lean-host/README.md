@@ -146,7 +146,7 @@ load and execute.
 | `/api secrets [<domain> [<name>]]` | Manage stored API secrets — list, provision, delete (see [Authentication & Secrets](#authentication--secrets)). |
 | `/api verify <domain> [guide] [--force]` | Run every runnable op against the live API and stamp `verified` on success — strict: any runnable-op failure → no stamp; skipped ops named in the report (see [Recipe drift](docs/authoring.md#recipe-drift)). |
 | `/api delete <domain> [guide]` | Remove a guide directory and invalidate the guide-store cache — a human-typed recovery gesture (no agent tool surface); interactive confirm for a whole-domain delete. |
-| `/api oauth <domain> …` | OAuth2 token management — `init` / mint / `--status` / `--refresh` / `--revoke` / `--code <code>` per token slot (human-typed; the agent's mint path is `oauth-mint`; `--redirect-uri <url>` overrides the default `http://127.0.0.1/callback` on init/mint — must match the provider app registration). `init` runs an interactive wizard (or headless flags) and finishes a paste-based auth-code flow via `/api oauth init <domain> … --code <code>`. |
+| `/api oauth <domain> …` | OAuth2 token management — `init` / mint / `--status` / `--refresh` / `--revoke` / `--code <code>` per token slot (human-typed; the agent's mint path is `oauth-mint`). `init` runs an interactive wizard (or headless flags — see `--help` for `--redirect-uri`, which must match the provider app registration) and finishes a paste-based auth-code flow via `/api oauth init <domain> … --code <code>`. |
 | `/api bootstrap oauth <domain> <spec>` | Agent-driven OAuth2 bootstrap — validates args, auto-enables learn when off, injects a research brief into the session, and exits; the agent then researches the provider and calls `oauth-mint` (the human is the trust root for the secret-bearing endpoint). Refused headless. |
 
 ### Persistence
@@ -331,7 +331,7 @@ The simplest case — a public API with no auth — end to end:
 4. **Use it** — from now on, just ask your agent for data from that API
    in plain language; it calls `api-fetch`, which discovers the guide by
    domain and handles URL construction, auth, and pagination. Then run
-   `/api verify arxiv.org` to check every op against the live API — a
+   `/api verify <your-domain>` to check every op against the live API — a
    passing run stamps `verified` on the guide.
 
 Auth-gated API? Two additions, both handled before the guide will fetch
@@ -402,8 +402,7 @@ see [docs/authoring.md](docs/authoring.md).
 
 A domain may claim **multiple guides** — each in its own directory (e.g.
 `internet-archive` + `wayback-availability`, both claiming the `archive.org`
-domain). `buildDomainMap` is multi-valued
-(`Record<string, string[]>`):
+domain):
 
 - `api-guide({domain})` shows a **disambiguation menu** and accepts a `guide`
   selector (resolved by `shortName`).
@@ -525,7 +524,6 @@ enhancement for co-installs, not a host-only requirement. The on-demand path
 |-----------------|-----------------|--------------------------|
 | An API you've guided | Discovering shape before authoring a guide | A one-off unguided fetch against a known URL |
 | Repeated/paginated pulls | Drafting an op block from a live endpoint | Reading docs to author a recipe |
-| You want auth/pagination handled for you | You're in `/api learn` | Host-only with an undocumented API (last resort) |
 
 `api-fetch` is the guided path — the guide is the product. It has no
 ad-hoc bare-fetch mode on purpose: that would recreate the exact mistakes
