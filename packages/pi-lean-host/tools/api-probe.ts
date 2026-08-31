@@ -18,6 +18,7 @@
  */
 
 import { defineTool } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { fetchUrl, redactSecretParams } from "../core/transport.js";
@@ -29,6 +30,7 @@ import {
 import {
 	buildSyntheticOAuth2Auth,
 	hostnameOf,
+	isTokenExpired,
 	resolveAccessToken,
 	resolveProvisionedParentDomain,
 	resolveSecretHeaders,
@@ -313,6 +315,7 @@ function flatToStaticKeyAuth(
 async function resolveProbeAuth(
 	auth: NonNullable<ProbeOptions["auth"]> | undefined,
 	domain: string,
+	ctx?: ExtensionContext,
 ): Promise<ProbeAuthCtx> {
 	// Computed before the hasRefs check so the flag survives both paths: a
 	// headerPrefixes-only block (hasRefs false → early return) and a
@@ -370,13 +373,28 @@ async function resolveProbeAuth(
 				? { tokenEndpointAuthMethod: auth!.tokenEndpointAuthMethod }
 				: {}),
 		});
-		try {
-			const result = await resolveAccessToken(oauthAuth, domain);
-			const bearer = result.authHeaders?.authorization;
-			if (bearer) tokenHeader["authorization"] = bearer;
-			else tokenNote = "oauth2 mint succeeded but produced no bearer header";
-		} catch (e) {
-			tokenNote = e instanceof Error ? e.message : "oauth2 mint failed";
+		// Interactive sessions re-gate the secret-bearing destination on the
+		// human (same trust root as oauth-mint). Headless has no gate — the
+		// agent-has-bash posture covers it; documented in AGENTS.md. Decline
+		// skips only the mint: tokenHeader stays empty and the shared return
+		// below reports the unauthenticated probe + any secret misses.
+		if (ctx?.hasUI) {
+			const ok = await ctx.ui.confirm(
+				`Confirm the token endpoint for '${domain}'`,
+				`Exchange credentials at ${auth!.tokenUrl} (client: '${auth!.clientId}')? The client secret is sent to this URL.`,
+			);
+			if (!ok)
+				tokenNote = `token-URL confirm declined for "${domain}"; probe proceeding unauthenticated`;
+		}
+		if (tokenNote === "") {
+			try {
+				const result = await resolveAccessToken(oauthAuth, domain);
+				const bearer = result.authHeaders?.authorization;
+				if (bearer) tokenHeader["authorization"] = bearer;
+				else tokenNote = "oauth2 mint succeeded but produced no bearer header";
+			} catch (e) {
+				tokenNote = e instanceof Error ? e.message : "oauth2 mint failed";
+			}
 		}
 	} else if (useTokenStore) {
 		// Slot-keyed store read: the slot derives from (grant, tokenUrl) — the
@@ -393,7 +411,7 @@ async function resolveProbeAuth(
 		const token = readToken(domain, auth.grant, auth.tokenUrl);
 		if (!token) {
 			tokenNote = `no cached token for "${domain}"; run /api oauth ${domain} to mint one`;
-		} else if (token.expiresAt !== undefined && token.expiresAt <= Date.now()) {
+		} else if (isTokenExpired(token)) {
 			tokenNote = `token for "${domain}" is expired; run /api oauth ${domain} --refresh`;
 		} else {
 			tokenHeader["authorization"] = `Bearer ${token.accessToken}`;
@@ -468,12 +486,13 @@ export async function probe(
 	path: string,
 	params: Record<string, unknown> = {},
 	opts: ProbeOptions = {},
+	ctx?: ExtensionContext,
 ): Promise<ProbeResult> {
 	const accept = opts.accept ?? "application/json";
 	const walkVersions = opts.walkVersions ?? true;
 	const domain =
 		opts.domain ?? resolveProvisionedParentDomain(hostnameOf(apiHost));
-	const authCtx = await resolveProbeAuth(opts.auth, domain);
+	const authCtx = await resolveProbeAuth(opts.auth, domain, ctx);
 
 	// Base case only carries the apiHost version prefix; a walk-hit draft
 	// embeds its walked version in the prefix passed to fetchOne.
@@ -930,7 +949,7 @@ export const apiProbeTool = defineTool({
 		),
 	}),
 
-	async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 		const { apiHost, path, walkVersions, auth, domain } = params as {
 			apiHost: string;
 			path: string;
@@ -950,11 +969,17 @@ export const apiProbeTool = defineTool({
 			| undefined;
 
 		try {
-			const result = await probe(apiHost, path, userParams ?? {}, {
-				...(walkVersions === undefined ? {} : { walkVersions }),
-				...(auth ? { auth } : {}),
-				...(domain ? { domain } : {}),
-			});
+			const result = await probe(
+				apiHost,
+				path,
+				userParams ?? {},
+				{
+					...(walkVersions === undefined ? {} : { walkVersions }),
+					...(auth ? { auth } : {}),
+					...(domain ? { domain } : {}),
+				},
+				ctx,
+			);
 			return {
 				content: [{ type: "text", text: formatProbeResult(result) }],
 				details: {

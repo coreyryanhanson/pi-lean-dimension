@@ -258,7 +258,10 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
     OAuth2 access token for the resolved domain from the token store and
     injects `Authorization: Bearer <token>` (absent/expired → a note nudging
     `/api oauth <domain>`, call proceeds unauthenticated — never fail-closed;
-    with mint fields present, the miss mints instead of nudging).
+    with mint fields present, the miss mints instead of nudging;
+    interactive sessions confirm the token URL once before the mint (same
+    trust root as `oauth-mint` — decline → probe proceeds unauthenticated;
+    headless mints directly, the agent-has-bash posture covers it)).
     Probe is pure shape discovery — for the pre-probe "what credentials
     exist" check, the agent calls `api-store` (learn-gated, both stores).
   - **`api-store`** (learn-gated): read-only combined report over both
