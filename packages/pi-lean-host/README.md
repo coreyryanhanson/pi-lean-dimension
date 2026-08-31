@@ -46,15 +46,14 @@
 3. [`/api` Command — API Toggle](#api-command--api-toggle)
 4. [All 7 Tools](#all-7-tools)
 5. [Authoring Your First Guide](#authoring-your-first-guide)
-6. [Bundled Reference Recipes](#bundled-reference-recipes)
+6. [Reference Recipes (caritas)](#reference-recipes-caritas)
 7. [Multi-Recipe Domains](#multi-recipe-domains)
-8. [What Host Ships Instead](#what-host-ships-instead)
-9. [`/api status` — Detailed Runtime Status](#api-status--detailed-runtime-status)
-10. [Configuration (`settings.json`)](#configuration-settingsjson)
-11. [Co-Installing with `pi-lean-portal`](#co-installing-with-pi-lean-portal)
-12. [Tips & Best Practices](#tips--best-practices)
-13. [Authentication & Secrets](#authentication--secrets)
-14. [Security & Scope](#security--scope)
+8. [`/api status` — Detailed Runtime Status](#api-status--detailed-runtime-status)
+9. [Configuration (`settings.json`)](#configuration-settingsjson)
+10. [Co-Installing with `pi-lean-portal`](#co-installing-with-pi-lean-portal)
+11. [Tips & Best Practices](#tips--best-practices)
+12. [Authentication & Secrets](#authentication--secrets)
+13. [Security & Scope](#security--scope)
 
 ---
 
@@ -75,8 +74,8 @@ From a fresh install you have no guides yet, so the next step is to get one:
   for the end-to-end workflow, including auth-gated APIs. The complete
   authoring manual (field reference, pagination styles, helper contracts)
   lives in [docs/authoring.md](docs/authoring.md).
-- **Or copy a bundled reference recipe** (see
-  [Bundled Reference Recipes](#bundled-reference-recipes)) into
+- **Or copy a reference recipe** (see
+  [Reference Recipes (caritas)](#reference-recipes-caritas)) into
   `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/` — it loads
   immediately.
 
@@ -210,8 +209,7 @@ api-fetch domain="wikipedia.org" operation="searchPages" params={srsearch:"clima
   per-op).
 
 `api-fetch` resolves every guide claiming `domain`, finds the named
-`operation` across them, and executes it against the matching guide (helper
-routed by directory name, not the routing `domain`). The agent never sees a
+`operation` across them, and executes it against the matching guide. The agent never sees a
 URL, never sees a header, never sees the auth scheme. Output is an inline
 preview (~4000 chars) with larger responses spilled to a temp file under
 `/tmp/pi-lean-host/` (overridable via `PI_HOST_TEMP_DIR`) — `read` it with
@@ -236,7 +234,7 @@ a fresh fail-closed starter
 template, an existing guide's raw recipe + siblings for
 direct editing, or a validated mirror-save of the staged dir into
 `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/`. Every staged pull
-is prepended with the authoring manual. Requires `/api learn`.
+is prepended with the authoring manual.
 Full staging, deletion-gate, and slug-collision semantics:
 [docs/authoring.md](docs/authoring.md#the-authoring-tools-in-detail).
 
@@ -248,7 +246,7 @@ as `api-fetch` — the sanctioned way to reach even WAF'd hosts), summarizes the
 JSON shape, and emits a **draft YAML operation block** to paste into a recipe.
 It only **suggests** — it never writes the guide, and a draft still needs
 confirming against the provider's docs (probe surfaces evidence, not
-authority). Requires `/api learn`. See
+authority). See
 [docs/authoring.md](docs/authoring.md#the-authoring-tools-in-detail).
 
 ### 5. `api-scaffold` — Bootstrap `verify.json` / `helper.ts` (local write)
@@ -264,7 +262,7 @@ Bootstrap tool for the two artifacts the authoring loop needs but that
 skip until you replace them; existing real values merge additively) and a
 commented-out `helper.ts` stub. Both staged to `/tmp` — never the guides
 dir, never overwriting an existing staged sibling. Save the guide **first**,
-then scaffold. Requires `/api learn`.
+then scaffold.
 Details: [docs/authoring.md](docs/authoring.md#the-authoring-tools-in-detail).
 
 ### 6. `api-store` — Inspect Both Credential Stores (local read, learn-gated)
@@ -295,8 +293,7 @@ boundary and secret values never enter the tool — they can't appear in the
 rendered text **or** the structured `details`. When a token's granted scope
 wasn't echoed by the provider, the requested scopes render with an
 "(assumed)" marker (RFC 6749 §5.1). Strictly read-only — mint via
-`oauth-mint`, refresh/revoke stay human-typed (`/api oauth`). Requires
-`/api learn`.
+`oauth-mint`; refresh/revoke stay human-typed (`/api oauth`).
 
 ### 7. `oauth-mint` — Human-in-the-Loop OAuth2 Mint (network write, consented)
 
@@ -311,7 +308,7 @@ the store names, then prompts the human — token-URL confirm (the human is
 the trust root for the secret-bearing endpoint), a ✓/○ scopes checklist,
 and a paste prompt for the redirect URL (which never enters the
 transcript). Any cancel prints the two-call `/api oauth init <domain> …
---code` escape-hatch hint. Requires `/api learn`.
+--code` escape-hatch hint.
 
 ---
 
@@ -354,7 +351,7 @@ in [docs/authoring.md](docs/authoring.md).
 
 ---
 
-## Bundled Reference Recipes
+## Reference Recipes (caritas)
 
 The comprehensive recipe library lives in the
 [**caritas**](https://github.com/coreyryanhanson/caritas) repo — real,
@@ -363,6 +360,12 @@ per-recipe `verified:`-date provenance and the perpetual drift disclaimer.
 They are inert reference material: nothing executes until you copy a recipe
 into your own `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/`
 directory.
+
+Host itself ships only a **synthetic axis-guide set** under `api-guides/` —
+minimal coverage fixtures (no `verified:` date, no live endpoints) that keep
+every guide-driven framework axis exercised via mocked transport. They are
+framework fixtures for host's own tests, not recipes for you to copy
+(membership pinned by `__tests__/axis-coverage.test.ts`).
 
 The domains caritas covers (a discoverability index, may drift from the live
 repo):
@@ -390,11 +393,10 @@ cp -r /tmp/caritas/api-guides/* ~/.pi/agent/pi-lean-host/api-guides/
 To grab a single domain instead of all of them, copy just its folder
 (e.g. `.../api-guides/wikipedia-rest`).
 
-Only then does it load and execute. A recipe may carry
-`operation.helper: true` plus an accompanying `helper.ts` in its domain
-subdir as a worked example — but it stays inert until you copy the folder.
-See caritas's `CONTRIBUTING.md` for contributing a recipe to the library;
-for authoring one for yourself, see [docs/authoring.md](docs/authoring.md).
+A recipe may carry `operation.helper: true` plus an accompanying `helper.ts`
+in its domain subdir as a worked example. See caritas's `CONTRIBUTING.md`
+for contributing a recipe to the library; for authoring one for yourself,
+see [docs/authoring.md](docs/authoring.md).
 
 ## Multi-Recipe Domains
 
@@ -415,17 +417,6 @@ Optional `organization:` (catalog grouping) and `description:` (≤200 chars,
 the primary disambiguation signal) fields help the catalog and menu stay
 legible when several guides share a domain. `api-learn` warns on collision so
 you know you're in disambiguation territory.
-
----
-
-## What Host Ships Instead
-
-Host itself ships only a **synthetic axis-guide set** under `api-guides/` —
-minimal coverage fixtures (no `verified:` date, no live endpoints) that keep
-every guide-driven framework axis exercised via mocked transport. They are
-framework fixtures for host's own tests, not recipes for you to copy. The
-membership is pinned by `__tests__/axis-coverage.test.ts` (which encodes the
-axis-set audit matrix).
 
 ---
 
@@ -610,16 +601,9 @@ Every `api-guide` / `api-fetch` result on an auth-bearing guide (static-key
 state — showing name and presence only, never the value, so it's safe
 anywhere it renders.
 
-### Store inspection for the agent: `api-store`
-
-`api-store` is the read-only agent view of both credential stores (the
-agent-facing counterpart of `/api secrets` + `/api oauth --status`). A bare
-call lists orphaned store domains (secrets or tokens with no matching
-guide); a `domain` (or `apiHost`) call renders the combined report —
-provisioned vs declared vs gap secret names, token slots (issuer, granted
-scope, expiry, refreshable), and declared-slot gaps pointing at `oauth-mint`
-for the not-yet-minted. Names and metadata only — secret and token values
-never leave the store. Requires `/api learn`.
+For the agent's read-only view of both credential stores, call `api-store`
+— the agent-facing counterpart of `/api secrets` + `/api oauth --status`
+(see [All 7 Tools](#all-7-tools)).
 
 ## Security & Scope
 
@@ -653,8 +637,6 @@ channel stays closed.
   - paste-based `authorization_code`) are realized; cookie-login stays
   deferred. Values live in the `0600` secrets store, never in a guide —
   see [Authentication & Secrets](#authentication--secrets).
-- **Bundled recipes are inert.** Nothing the package ships executes until you
-  place it in `~/.pi/agent/pi-lean-host/` and opt in.
 - **No inferred-link discovery.** Declared links only in v1; inference is v2.
 - **No guide suppression.** Both guide kinds surface by domain match when
   their toggle is on; host-first is a preference, not suppression.
