@@ -44,6 +44,7 @@
 		"core/transport.ts",
 		"core/helpers.ts",
 		"core/path-template.ts",
+		"core/fs-0600.ts",
 		"core/local-helpers.ts",
 		"core/helpers-command.ts",
 		"core/api-toggle.ts",

@@ -17,17 +17,9 @@
 
 import { join } from "node:path";
 import { homedir } from "node:os";
-import {
-	chmodSync,
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	readdirSync,
-	renameSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { assertSafeDomain } from "./path-template.js";
+import { writeJson0600 } from "./fs-0600.js";
 
 /** A secret store: read/write/delete one name, list domain/name indexes. */
 export interface SecretStore {
@@ -46,19 +38,6 @@ function assertSecretName(name: string): void {
 			`Invalid secret name '${name}': must be a single name with no '/', '\\', or NUL.`,
 		);
 	}
-}
-
-/** Write a 0600 JSON file atomically: tmp file + rename (atomic on POSIX),
- *  so a crash mid-write can't shred the domain's existing secrets. */
-function writeFileAtomic0600(p: string, data: unknown): void {
-	const tmp = `${p}.tmp`;
-	writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
-	try {
-		chmodSync(tmp, 0o600); // guard against umask overriding the mode
-	} catch {
-		// best-effort; rename still proceeds
-	}
-	renameSync(tmp, p);
 }
 
 /** File-backed store rooted at `dir` (one `<domain>.json` per domain). */
@@ -91,11 +70,10 @@ export function createFileStore(dir: string): SecretStore {
 		write(domain, name, value) {
 			const p = domainPath(domain); // also asserts domain safety
 			assertSecretName(name);
-			// Lazy mkdir on write only — never on read/list.
-			if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+			// Lazy mkdir on write only — never on read/list (writeJson0600 mkdirs).
 			const file = readFile(domain);
 			file[name] = value;
-			writeFileAtomic0600(p, file);
+			writeJson0600(p, file);
 		},
 		delete(domain, name) {
 			const p = domainPath(domain); // also asserts domain safety
@@ -108,7 +86,7 @@ export function createFileStore(dir: string): SecretStore {
 				// Prune the empty file so the domain drops out of listDomains.
 				rmSync(p, { force: true });
 			} else {
-				writeFileAtomic0600(p, file);
+				writeJson0600(p, file);
 			}
 		},
 		deleteDomain(domain) {

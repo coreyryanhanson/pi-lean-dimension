@@ -25,20 +25,12 @@
  * so no import cycle can form.
  */
 
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
-import {
-	chmodSync,
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	readdirSync,
-	renameSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { assertSafeDomain } from "./path-template.js";
+import { writeJson0600 } from "./fs-0600.js";
 
 /** A minted token set for one (domain, grant, tokenUrl) slot. */
 export interface OAuthToken {
@@ -106,20 +98,6 @@ function readJsonMap<T>(
 	} catch {
 		return {};
 	}
-}
-
-/** Write a JSON map 0600 atomically: lazy mkdir + tmp file + rename (atomic
- *  on POSIX), so a crash mid-write can't shred the file's existing entries. */
-function writeJson0600(p: string, data: unknown): void {
-	if (!existsSync(dirname(p))) mkdirSync(dirname(p), { recursive: true });
-	const tmp = `${p}.tmp`;
-	writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
-	try {
-		chmodSync(tmp, 0o600); // guard against umask overriding the mode
-	} catch {
-		// best-effort; rename still proceeds
-	}
-	renameSync(tmp, p);
 }
 
 /**
