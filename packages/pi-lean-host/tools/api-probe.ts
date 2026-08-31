@@ -358,6 +358,9 @@ async function resolveProbeAuth(
 	// mint-on-demand (inline tokenUrl + clientId — authoring bootstrap).
 	let tokenNote = "";
 	const tokenHeader: Record<string, string> = {};
+	// Raw (unprefixed) token value for the body scrub — a 401 body can echo
+	// the bare credential, not just the `Bearer <token>` header form.
+	let rawTokenValue = "";
 	if (hasMintFields) {
 		// Build a synthetic oauth2 auth and hand it straight to
 		// resolveAccessToken so the cache → refresh → mint → stamp machinery is
@@ -393,8 +396,10 @@ async function resolveProbeAuth(
 			try {
 				const result = await resolveAccessToken(oauthAuth, domain);
 				const bearer = result.authHeaders?.authorization;
-				if (bearer) tokenHeader["authorization"] = bearer;
-				else tokenNote = "oauth2 mint succeeded but produced no bearer header";
+				if (bearer) {
+					tokenHeader["authorization"] = bearer;
+					rawTokenValue = result.secretValues[0] ?? "";
+				} else tokenNote = "oauth2 mint succeeded but produced no bearer header";
 			} catch (e) {
 				tokenNote = e instanceof Error ? e.message : "oauth2 mint failed";
 			}
@@ -418,6 +423,7 @@ async function resolveProbeAuth(
 			tokenNote = `token for "${domain}" is expired; run /api oauth ${domain} --refresh`;
 		} else {
 			tokenHeader["authorization"] = `Bearer ${token.accessToken}`;
+			rawTokenValue = token.accessToken;
 		}
 	}
 	const headers = { ...headerRes.headers, ...tokenHeader };
@@ -431,6 +437,7 @@ async function resolveProbeAuth(
 			...Object.values(headers),
 			...headerRes.rawHeaderValues,
 			...Object.values(queryRes.queryParams),
+			...(rawTokenValue ? [rawTokenValue] : []),
 		],
 		missingNames: [
 			...headerRes.absentRequired,
@@ -612,6 +619,7 @@ async function fetchOne(
 			? {
 					hasQuerySecret,
 					secretHeaderNames: authCtx.secretHeaderNames,
+					secretQueryParamNames: authCtx.secretQueryParamNames,
 				}
 			: {}),
 	});

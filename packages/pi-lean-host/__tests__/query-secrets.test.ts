@@ -25,6 +25,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { restGet, paginate, HelperError } from "../core/helpers.js";
 import { parseApiGuide } from "../core/parse-api-guide.js";
+import { stripSecretQueryParams } from "../core/transport.js";
 import { writeSecret, setSecretsDir } from "../core/secrets-store.js";
 import { probe } from "../tools/api-probe.js";
 import type { ApiGuide, Operation } from "../core/api-guide-types.js";
@@ -462,5 +463,31 @@ describe("api-probe store-backed auth (authoring loop)", () => {
 		);
 		expect(result.raw).not.toContain("REALKEY");
 		expect(result.note).not.toContain("REALKEY");
+	});
+});
+
+describe("cross-domain redirect hop — secret query params", () => {
+	// Mirrors the stripSecretHeaders unit in auth.test.ts (case c): the
+	// guarded-redirect loop strips secret headers on cross-domain hops;
+	// secret query params need the same treatment because a relative
+	// redirect preserves the original query string.
+	it("drops secret params, keeps agent params and path", () => {
+		const out = stripSecretQueryParams(
+			"https://evil.test/path?apikey=REALKEY&chainid=1&page=2",
+			new Set(["apikey"]),
+		);
+		expect(out).toBe("https://evil.test/path?chainid=1&page=2");
+		expect(out).not.toContain("REALKEY");
+	});
+
+	it("leaves the URL untouched when no secret params are present", () => {
+		const url = "https://q.test/path?chainid=1";
+		expect(stripSecretQueryParams(url, new Set(["apikey"]))).toBe(url);
+	});
+
+	it("returns an unparseable URL unchanged (singleGet surfaces the real error)", () => {
+		expect(stripSecretQueryParams("not a url", new Set(["apikey"]))).toBe(
+			"not a url",
+		);
 	});
 });
