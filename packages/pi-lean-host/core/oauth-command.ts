@@ -240,6 +240,15 @@ export async function handleOauthSubcommand(
 	const selector = parsed.positional[1];
 
 	if (!domain) {
+		// Flags without a domain are usage errors, never a silent no-op: an
+		// unacknowledged `--code` paste would strand a live auth-code flow.
+		if (statusFlag || refreshFlag || revokeFlag || codeArg || redirectUriArg) {
+			ctx.ui.notify(
+				"Missing <domain> — usage: /api oauth <domain> [--status | --refresh | --revoke | --code <code>]",
+				"warning",
+			);
+			return;
+		}
 		// Bare `/api oauth` — list the token store (guide-independent).
 		const domains = listTokenDomains();
 		if (domains.length === 0) {
@@ -844,11 +853,11 @@ async function wizardFields(
 	const tokenEndpointAuthMethod: OAuth2TokenEndpointAuthMethod | undefined =
 		clientSecret === OMIT_SECRET
 			? "none"
-			: (await pickWithDescription(
+			: ((await pickWithDescription(
 					ctx,
 					"Token-endpoint auth method",
 					AUTH_METHOD_ITEMS,
-				)) as OAuth2TokenEndpointAuthMethod | undefined;
+				)) as OAuth2TokenEndpointAuthMethod | undefined);
 	if (tokenEndpointAuthMethod === undefined) {
 		await cancelled();
 		return undefined;

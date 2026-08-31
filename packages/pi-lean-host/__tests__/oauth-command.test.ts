@@ -586,6 +586,21 @@ describe("handleOauthSubcommand — slot-aware guide-less paths", () => {
 		expect(m.out()).toContain(TOKEN_URL);
 	});
 
+	it("flags without a domain are a usage error, never a silent no-op", async () => {
+		// An unacknowledged --code paste would strand a live auth-code flow.
+		for (const args of [
+			"--status",
+			"--refresh",
+			"--revoke",
+			"--code SOME_CODE",
+		]) {
+			const m = makeCtx();
+			await handleOauthSubcommand(args, m.ctx);
+			expect(m.out()).toContain("Missing <domain>");
+			expect(m.out()).not.toContain("token store");
+		}
+	});
+
 	it("guide-less --status with 2+ slots and no qualifier lists + refuses to guess", async () => {
 		const m = makeCtx();
 		await handleOauthSubcommand(`${ORPHAN} --status`, m.ctx);
