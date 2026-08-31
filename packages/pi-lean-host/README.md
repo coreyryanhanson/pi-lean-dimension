@@ -47,13 +47,12 @@
 4. [All 7 Tools](#all-7-tools)
 5. [Authoring Your First Guide](#authoring-your-first-guide)
 6. [Reference Recipes (caritas)](#reference-recipes-caritas)
-7. [Multi-Recipe Domains](#multi-recipe-domains)
-8. [`/api status` — Detailed Runtime Status](#api-status--detailed-runtime-status)
-9. [Configuration (`settings.json`)](#configuration-settingsjson)
-10. [Co-Installing with `pi-lean-portal`](#co-installing-with-pi-lean-portal)
-11. [Tips & Best Practices](#tips--best-practices)
-12. [Authentication & Secrets](#authentication--secrets)
-13. [Security & Scope](#security--scope)
+7. [`/api status` — Detailed Runtime Status](#api-status--detailed-runtime-status)
+8. [Configuration (`settings.json`)](#configuration-settingsjson)
+9. [Co-Installing with `pi-lean-portal`](#co-installing-with-pi-lean-portal)
+10. [Tips & Best Practices](#tips--best-practices)
+11. [Authentication & Secrets](#authentication--secrets)
+12. [Security & Scope](#security--scope)
 
 ---
 
@@ -204,7 +203,11 @@ api-fetch domain="wikipedia.org" operation="searchPages" params={srsearch:"clima
   per-op).
 
 `api-fetch` resolves every guide claiming `domain`, finds the named
-`operation` across them, and executes it against the matching guide. The agent never sees a
+`operation` across them, and executes it against the matching guide.
+Exactly one hit executes; zero hits lists the ops from all matching guides
+(a multi-guide domain — each guide in its own directory — so you can pick);
+an op name appearing in ≥2 guides is an ambiguous collision the guide
+authors must fix (re-author via `api-learn` to rename). The agent never sees a
 URL, never sees a header, never sees the auth scheme. Output is an inline
 preview (~4000 chars) with larger responses spilled to a temp file under
 `/tmp/pi-lean-host/` (overridable via `PI_HOST_TEMP_DIR`) — `read` it with
@@ -392,27 +395,6 @@ A recipe may carry `operation.helper: true` plus an accompanying `helper.ts`
 in its domain subdir as a worked example. See caritas's `CONTRIBUTING.md`
 for contributing a recipe to the library; for authoring one for yourself,
 see [docs/authoring.md](docs/authoring.md).
-
-## Multi-Recipe Domains
-
-A domain may claim **multiple guides** — each in its own directory (e.g.
-`internet-archive` + `wayback-availability`, both claiming the `archive.org`
-domain):
-
-- `api-guide({domain})` shows a **disambiguation menu** and accepts a `guide`
-  selector (resolved by `shortName`).
-- `api-fetch({domain, operation})` resolves the operation **by name across
-  all matching guides** — exactly one hit executes (helper routed by the
-  guide's directory name, not the routing `domain`); zero lists ops from all
-  matches; an op name appearing in ≥2 guides is an ambiguous collision the
-  authors must fix (re-author via `api-learn` to rename).
-
-Optional `organization:` (catalog grouping) and `description:` (≤200 chars,
-the primary disambiguation signal) fields help the catalog and menu stay
-legible when several guides share a domain. `api-learn` warns on collision so
-you know you're in disambiguation territory.
-
----
 
 ## `/api status` — Detailed Runtime Status
 
