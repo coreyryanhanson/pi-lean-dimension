@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startTestServer } from "../../pi-lean-portal/__tests__/helpers/test-server.js";
 import {
+	buildSyntheticOAuth2Auth,
 	resolveAccessToken,
 	resolveClientCredentials,
 	revokeAccessToken,
@@ -142,6 +143,31 @@ afterAll(() => {
 // ═══════════════════════════════════════════════════════════════════
 // resolveAccessToken — mint / cache / refresh / fail-closed
 // ═══════════════════════════════════════════════════════════════════
+
+describe("buildSyntheticOAuth2Auth", () => {
+	it("treats an empty-string --client-secret as absent (fails loudly for cc)", () => {
+		expect(() =>
+			buildSyntheticOAuth2Auth({
+				grant: "client_credentials",
+				tokenUrl: "https://token.example.com/oauth/token",
+				clientId: "client_id",
+				clientSecret: "",
+			}),
+		).toThrow(/requires --client-secret/);
+	});
+
+	it("keeps invariant messages stable (grant enum / method enum / cc rules)", () => {
+		expect(() =>
+			buildSyntheticOAuth2Auth({
+				grant: "client_credentials",
+				tokenUrl: "https://token.example.com/oauth/token",
+				clientId: "client_id",
+				clientSecret: "client_secret",
+				authorizeUrl: "https://auth.example.com/authorize",
+			}),
+		).toThrow(/--authorize-url is only valid with --grant authorization_code/);
+	});
+});
 
 describe("resolveAccessToken (client_credentials)", () => {
 	it("mints a token via the token endpoint and returns the Bearer header", async () => {

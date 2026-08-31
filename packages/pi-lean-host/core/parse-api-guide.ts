@@ -35,6 +35,11 @@ import {
 	type OAuth2Auth,
 	type OAuth2ParamStyle,
 	type OAuth2TokenEndpointAuthMethod,
+	isOAuth2Grant,
+	isOAuth2TokenEndpointAuthMethod,
+	oauth2GrantIssue,
+	OAUTH2_GRANTS,
+	OAUTH2_TOKEN_ENDPOINT_AUTH_METHODS,
 	type ExecutorVia,
 	type AcceptType,
 	type QueryParamSpec,
@@ -821,11 +826,11 @@ function validateOAuth2Auth(
 	fm: string,
 ): OAuth2Auth | ParseApiGuideResult {
 	const grant = a["grant"];
-	if (grant !== "client_credentials" && grant !== "authorization_code") {
+	if (!isOAuth2Grant(grant)) {
 		return fail(
 			file,
 			"auth.grant",
-			"client_credentials | authorization_code",
+			OAUTH2_GRANTS.join(" | "),
 			describeFound(grant),
 			{
 				fix: "grant: client_credentials (server-to-server, no browser) or grant: authorization_code (interactive, PKCE).",
@@ -936,15 +941,11 @@ function validateOAuth2Auth(
 	let tokenEndpointAuthMethod: OAuth2TokenEndpointAuthMethod | undefined;
 	if (a["tokenEndpointAuthMethod"] !== undefined) {
 		const m = a["tokenEndpointAuthMethod"];
-		if (
-			m !== "client_secret_basic" &&
-			m !== "client_secret_post" &&
-			m !== "none"
-		) {
+		if (!isOAuth2TokenEndpointAuthMethod(m)) {
 			return fail(
 				file,
 				"auth.tokenEndpointAuthMethod",
-				"client_secret_basic | client_secret_post | none",
+				OAUTH2_TOKEN_ENDPOINT_AUTH_METHODS.join(" | "),
 				describeFound(m),
 				{ snippet: snippetFor(fm, "auth") },
 			);
@@ -964,58 +965,67 @@ function validateOAuth2Auth(
 		revokeUrl = rv;
 	}
 
-	// tokenEndpointAuthMethod: none sends no client credentials (PKCE public
-	// clients) — a declared clientSecret alongside it is a contradiction.
-	if (tokenEndpointAuthMethod === "none" && clientSecret !== undefined) {
-		return fail(
-			file,
-			"auth.clientSecret",
-			"absent when tokenEndpointAuthMethod: none",
-			"present",
-			{
-				snippet: snippetFor(fm, "auth"),
-				fix: "Remove clientSecret — tokenEndpointAuthMethod: none sends no client credentials (PKCE public clients have no secret).",
-			},
-		);
-	}
-
-	// Grant-specific invariants.
-	if (grant === "client_credentials") {
-		if (clientSecret === undefined) {
-			return fail(
-				file,
-				"auth.clientSecret",
-				"a clientSecret ref for grant: client_credentials",
-				"missing",
-				{
-					snippet: snippetFor(fm, "auth"),
-					fix: "Add clientSecret: { secret: client_secret } — the store name provisioned via /api secrets <domain>.",
-				},
-			);
-		}
-		if (authorizeUrl !== undefined) {
-			return fail(
-				file,
-				"auth.authorizeUrl",
-				"absent for grant: client_credentials",
-				"authorizeUrl present",
-				{
-					fix: "Remove authorizeUrl — client_credentials is server-to-server with no browser flow.",
-				},
-			);
-		}
-	}
-	if (grant === "authorization_code") {
-		if (authorizeUrl === undefined) {
-			return fail(
-				file,
-				"auth.authorizeUrl",
-				"a URL for grant: authorization_code",
-				"missing",
-				{
-					fix: "Add authorizeUrl — the provider's authorization endpoint. The redirect URI is the runtime convention http://127.0.0.1/callback (RFC 8252 §7.3); register it on your OAuth app.",
-				},
-			);
+	// Grant invariants — the single shared statement of OAuth2 grant
+	// semantics (also enforced by buildSyntheticOAuth2Auth in core/auth.ts
+	// for the bootstrap surfaces). Adding a grant or invariant: edit
+	// oauth2GrantIssue, then extend both callers' message maps.
+	const issue = oauth2GrantIssue({
+		grant,
+		hasClientSecret: clientSecret !== undefined,
+		authorizeUrl,
+		tokenEndpointAuthMethod,
+	});
+	if (issue) {
+		switch (issue.code) {
+			case "noneWithSecret":
+				return fail(
+					file,
+					"auth.clientSecret",
+					"absent when tokenEndpointAuthMethod: none",
+					"present",
+					{
+						snippet: snippetFor(fm, "auth"),
+						fix: "Remove clientSecret — tokenEndpointAuthMethod: none sends no client credentials (PKCE public clients have no secret).",
+					},
+				);
+			case "ccRequiresSecret":
+				return fail(
+					file,
+					"auth.clientSecret",
+					"a clientSecret ref for grant: client_credentials",
+					"missing",
+					{
+						snippet: snippetFor(fm, "auth"),
+						fix: "Add clientSecret: { secret: client_secret } — the store name provisioned via /api secrets <domain>.",
+					},
+				);
+			case "ccRejectsAuthorizeUrl":
+				return fail(
+					file,
+					"auth.authorizeUrl",
+					"absent for grant: client_credentials",
+					"authorizeUrl present",
+					{
+						fix: "Remove authorizeUrl — client_credentials is server-to-server with no browser flow.",
+					},
+				);
+			case "acRequiresAuthorizeUrl":
+				return fail(
+					file,
+					"auth.authorizeUrl",
+					"a URL for grant: authorization_code",
+					"missing",
+					{
+						fix: "Add authorizeUrl — the provider's authorization endpoint. The redirect URI is the runtime convention http://127.0.0.1/callback (RFC 8252 §7.3); register it on your OAuth app.",
+					},
+				);
+			default: {
+				// Compile-time exhaustiveness tripwire: a new OAuth2GrantIssue
+				// code must extend this switch (the builder's message map is
+				// already forced via its return type). Unreachable at runtime.
+				const uncovered: never = issue.code;
+				throw new Error(`unhandled OAuth2 grant invariant: ${String(uncovered)}`);
+			}
 		}
 	}
 

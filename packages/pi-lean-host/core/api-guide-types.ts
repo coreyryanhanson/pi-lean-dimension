@@ -78,12 +78,67 @@ export interface StaticKeyAuth {
 	secretQueryRefs?: Record<string, SecretRef>;
 }
 
-export type OAuth2Grant = "client_credentials" | "authorization_code";
+export const OAUTH2_GRANTS = [
+	"client_credentials",
+	"authorization_code",
+] as const;
+export type OAuth2Grant = (typeof OAUTH2_GRANTS)[number];
+/** Boundary decoder: input is unvalidated (guide YAML / CLI flag). */
+export function isOAuth2Grant(v: unknown): v is OAuth2Grant {
+	return (OAUTH2_GRANTS as readonly unknown[]).includes(v);
+}
 export type OAuth2ParamStyle = "bearer-header" | "query";
+export const OAUTH2_TOKEN_ENDPOINT_AUTH_METHODS = [
+	"client_secret_basic",
+	"client_secret_post",
+	"none",
+] as const;
 export type OAuth2TokenEndpointAuthMethod =
-	| "client_secret_basic"
-	| "client_secret_post"
-	| "none";
+	(typeof OAUTH2_TOKEN_ENDPOINT_AUTH_METHODS)[number];
+export function isOAuth2TokenEndpointAuthMethod(
+	v: unknown,
+): v is OAuth2TokenEndpointAuthMethod {
+	return (OAUTH2_TOKEN_ENDPOINT_AUTH_METHODS as readonly unknown[]).includes(v);
+}
+
+/** Why a set of OAuth2 grant fields violates the grant invariants. */
+export interface OAuth2GrantIssue {
+	code:
+		| "noneWithSecret"
+		| "ccRequiresSecret"
+		| "ccRejectsAuthorizeUrl"
+		| "acRequiresAuthorizeUrl";
+}
+
+/**
+ * The single statement of the OAuth2 grant-semantics invariants — shared by
+ * the guide parser (`validateOAuth2Auth`) and the synthetic-auth builder
+ * (`buildSyntheticOAuth2Auth`) so a new grant or invariant edit lands in one
+ * place. Enum membership and URL/ref shape stay caller-side (each has its
+ * own richer error style); this encodes only the cross-field grant rules.
+ * Returns the first violation (precedence: noneWithSecret, then grant rules).
+ */
+export function oauth2GrantIssue(fields: {
+	grant: OAuth2Grant;
+	hasClientSecret: boolean;
+	authorizeUrl?: string | undefined;
+	tokenEndpointAuthMethod?: OAuth2TokenEndpointAuthMethod | undefined;
+}): OAuth2GrantIssue | null {
+	const { grant, hasClientSecret, authorizeUrl, tokenEndpointAuthMethod } =
+		fields;
+	// tokenEndpointAuthMethod: none sends no client credentials (PKCE public
+	// clients) — a declared clientSecret alongside it is a contradiction.
+	if (tokenEndpointAuthMethod === "none" && hasClientSecret) {
+		return { code: "noneWithSecret" };
+	}
+	if (grant === "client_credentials") {
+		if (!hasClientSecret) return { code: "ccRequiresSecret" };
+		if (authorizeUrl !== undefined) return { code: "ccRejectsAuthorizeUrl" };
+	} else if (authorizeUrl === undefined) {
+		return { code: "acRequiresAuthorizeUrl" };
+	}
+	return null;
+}
 
 export interface OAuth2Auth {
 	kind: "oauth2";

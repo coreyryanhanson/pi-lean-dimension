@@ -21,6 +21,14 @@ import type {
 	StaticKeyAuth,
 } from "./api-guide-types.js";
 import {
+	isOAuth2Grant,
+	isOAuth2TokenEndpointAuthMethod,
+	oauth2GrantIssue,
+	OAUTH2_GRANTS,
+	OAUTH2_TOKEN_ENDPOINT_AUTH_METHODS,
+	type OAuth2GrantIssue,
+} from "./api-guide-types.js";
+import {
 	listDomains,
 	listNames,
 	readSecret,
@@ -866,9 +874,9 @@ export interface SyntheticOAuth2Fields {
  * combinations throw instead of parsing loosely.
  */
 export function buildSyntheticOAuth2Auth(f: SyntheticOAuth2Fields): OAuth2Auth {
-	if (f.grant !== "client_credentials" && f.grant !== "authorization_code") {
+	if (!isOAuth2Grant(f.grant)) {
 		throw new Error(
-			`--grant must be client_credentials | authorization_code (got: ${String(f.grant)})`,
+			`--grant must be ${OAUTH2_GRANTS.join(" | ")} (got: ${String(f.grant)})`,
 		);
 	}
 	if (!isHttpUrl(f.tokenUrl)) {
@@ -879,28 +887,10 @@ export function buildSyntheticOAuth2Auth(f: SyntheticOAuth2Fields): OAuth2Auth {
 	}
 	if (
 		f.tokenEndpointAuthMethod !== undefined &&
-		f.tokenEndpointAuthMethod !== "client_secret_basic" &&
-		f.tokenEndpointAuthMethod !== "client_secret_post" &&
-		f.tokenEndpointAuthMethod !== "none"
+		!isOAuth2TokenEndpointAuthMethod(f.tokenEndpointAuthMethod)
 	) {
 		throw new Error(
-			`--token-endpoint-auth-method must be client_secret_basic | client_secret_post | none (got: ${f.tokenEndpointAuthMethod})`,
-		);
-	}
-	if (f.grant === "client_credentials") {
-		if (!f.clientSecret) {
-			throw new Error(
-				"grant client_credentials requires --client-secret (a provisioned store NAME).",
-			);
-		}
-		if (f.authorizeUrl !== undefined) {
-			throw new Error(
-				"--authorize-url is only valid with --grant authorization_code (client_credentials is server-to-server).",
-			);
-		}
-	} else if (!f.authorizeUrl) {
-		throw new Error(
-			"grant authorization_code requires --authorize-url (the provider's authorization endpoint).",
+			`--token-endpoint-auth-method must be ${OAUTH2_TOKEN_ENDPOINT_AUTH_METHODS.join(" | ")} (got: ${String(f.tokenEndpointAuthMethod)})`,
 		);
 	}
 	if (f.authorizeUrl !== undefined && !isHttpUrl(f.authorizeUrl)) {
@@ -908,27 +898,55 @@ export function buildSyntheticOAuth2Auth(f: SyntheticOAuth2Fields): OAuth2Auth {
 			`--authorize-url must be an http(s) URL (got: ${f.authorizeUrl})`,
 		);
 	}
-	if (f.tokenEndpointAuthMethod === "none" && f.clientSecret !== undefined) {
-		throw new Error(
-			"--token-endpoint-auth-method none sends no client credentials — drop --client-secret.",
-		);
+	// An empty-string secret is a mistyped flag, not a credential — treat it
+	// as absent so client_credentials fails loudly here (store resolution
+	// would only misreport it later).
+	const clientSecret = f.clientSecret || undefined;
+	// Grant invariants — shared with the guide parser (parse-api-guide.ts);
+	// one statement of the cross-field rules for both surfaces.
+	const issue = oauth2GrantIssue({
+		grant: f.grant,
+		hasClientSecret: clientSecret !== undefined,
+		authorizeUrl: f.authorizeUrl,
+		tokenEndpointAuthMethod: f.tokenEndpointAuthMethod,
+	});
+	if (issue) {
+		throw new Error(syntheticGrantIssueMessage(issue.code));
 	}
-	return {
+	const auth: OAuth2Auth = {
 		kind: "oauth2",
 		grant: f.grant,
 		tokenUrl: f.tokenUrl,
 		clientId: { secret: f.clientId },
-		...(f.clientSecret === undefined
-			? {}
-			: { clientSecret: { secret: f.clientSecret } }),
-		...(f.scopes !== undefined && f.scopes.length > 0
-			? { scopes: f.scopes }
-			: {}),
-		...(f.tokenEndpointAuthMethod === undefined
-			? {}
-			: { tokenEndpointAuthMethod: f.tokenEndpointAuthMethod }),
-		...(f.authorizeUrl === undefined ? {} : { authorizeUrl: f.authorizeUrl }),
 	};
+	if (clientSecret !== undefined) {
+		auth.clientSecret = { secret: clientSecret };
+	}
+	if (f.scopes !== undefined && f.scopes.length > 0) {
+		auth.scopes = f.scopes;
+	}
+	if (f.tokenEndpointAuthMethod !== undefined) {
+		auth.tokenEndpointAuthMethod = f.tokenEndpointAuthMethod;
+	}
+	if (f.authorizeUrl !== undefined) {
+		auth.authorizeUrl = f.authorizeUrl;
+	}
+	return auth;
+}
+
+/** CLI-flag phrasing of the shared grant-invariant codes for the
+ * bootstrap surfaces (`/api oauth init`, api-probe mint arm, oauth-mint). */
+function syntheticGrantIssueMessage(code: OAuth2GrantIssue["code"]): string {
+	switch (code) {
+		case "noneWithSecret":
+			return "--token-endpoint-auth-method none sends no client credentials — drop --client-secret.";
+		case "ccRequiresSecret":
+			return "grant client_credentials requires --client-secret (a provisioned store NAME).";
+		case "ccRejectsAuthorizeUrl":
+			return "--authorize-url is only valid with --grant authorization_code (client_credentials is server-to-server).";
+		case "acRequiresAuthorizeUrl":
+			return "grant authorization_code requires --authorize-url (the provider's authorization endpoint).";
+	}
 }
 
 function isHttpUrl(s: string): boolean {
