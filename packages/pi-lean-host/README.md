@@ -170,11 +170,6 @@ and `○ api` when off.
 under `/api on`; `api-learn`, `api-probe`, `api-scaffold`, `api-store`, and
 `oauth-mint` are added under `/api learn`.
 
-The seven tools split cleanly by side-effect boundary — one each for **local
-read**, **network read**, **local write**, **network read (exploratory)**,
-**local write (bootstrap)**, **store inspection (read-only)**, and
-**human-consented network write (mint)**:
-
 ### 1. `api-guide` — Inspect the Guide Store (local read)
 
 ```text
@@ -446,10 +441,7 @@ you know you're in disambiguation territory.
 ```
 
 Covers toggle state, active guide count, the domain list, and helper health
-(disabled helpers surface with a `⚠`). When `pi-lean-portal` and
-`pi-lean-search` are also installed, the status bar shows three independent
-glyphs: `● idle` (browser), `● searxng` (search), and `● api` (host — when
-`/api` is on).
+(disabled helpers surface with a `⚠`).
 
 ---
 
