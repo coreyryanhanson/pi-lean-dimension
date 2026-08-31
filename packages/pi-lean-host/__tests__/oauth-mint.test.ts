@@ -392,6 +392,7 @@ describe("oauth-mint — scopes picker", () => {
 			return tokenResponse({
 				access_token: "SECRET_TOKEN_VALUE",
 				expires_in: 3600,
+				scope: "read",
 			});
 		});
 		const m = makeToolCtx({ customResult: ["read"] });
@@ -453,6 +454,45 @@ describe("oauth-mint — scopes picker", () => {
 			m.ctx,
 		);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("provider echo narrower than requested → summary reports the echo, not the request", async () => {
+		writeSecret("mint.invalid", "client_id", "MY_CLIENT");
+		writeSecret("mint.invalid", "client_secret", "S3CRET");
+		stubTokenEndpoint(() =>
+			tokenResponse({ access_token: "CC", expires_in: 3600, scope: "read" }),
+		);
+		const m = makeToolCtx({ customResult: ["read", "write"] });
+		const result = await oauthMintTool.execute(
+			"test",
+			{ ...CC_PARAMS_DEFAULTS, scopes: SCOPES },
+			undefined,
+			undefined,
+			m.ctx,
+		);
+		const text = (result.content[0] as { text: string }).text;
+		expect(text).toContain("Granted scopes: read");
+		expect(text).not.toContain("write");
+		const details = result.details as { scopes?: string[] };
+		expect(details.scopes).toEqual(["read"]);
+	});
+
+	it("no provider echo → requested scopes reported as (assumed granted)", async () => {
+		writeSecret("mint.invalid", "client_id", "MY_CLIENT");
+		writeSecret("mint.invalid", "client_secret", "S3CRET");
+		stubTokenEndpoint(() =>
+			tokenResponse({ access_token: "CC", expires_in: 3600 }),
+		);
+		const m = makeToolCtx({ customResult: ["read"] });
+		const result = await oauthMintTool.execute(
+			"test",
+			{ ...CC_PARAMS_DEFAULTS, scopes: SCOPES },
+			undefined,
+			undefined,
+			m.ctx,
+		);
+		const text = (result.content[0] as { text: string }).text;
+		expect(text).toContain("Requested scopes (assumed granted): read");
 	});
 });
 // ═══════════════════════════════════════════════════════════════

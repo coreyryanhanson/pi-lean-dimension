@@ -244,10 +244,8 @@ export const oauthMintTool = defineTool({
 				if (entered === undefined) throw cancelledError(p.domain, fields);
 				if (entered !== "") redirectUri = entered;
 			}
-		} else {
-			if (!(await confirmTokenUrl(ctx, storeDomain, p.tokenUrl, p.clientId)))
-				throw cancelledError(p.domain, fields);
-		}
+		} else if (!(await confirmTokenUrl(ctx, storeDomain, p.tokenUrl, p.clientId)))
+			throw cancelledError(p.domain, fields);
 
 		// Scopes checklist — the human's affirmative grant. No scopes → skip.
 		let pickedScopes: string[] | undefined;
@@ -307,11 +305,32 @@ export const oauthMintTool = defineTool({
 			throw err;
 		}
 
-		const granted = pickedScopes ?? [];
-		const scopeLine =
-			granted.length > 0
-				? ` Granted scopes: ${granted.join(", ")}.`
-				: " No scopes requested.";
+		// Report what the provider actually echoed, not what was requested —
+		// a provider may grant a subset. Absent scope → requested scopes with
+		// an "(assumed)" marker (RFC 6749 §5.1, same convention as api-store).
+		const minted = readToken(
+			storeDomain,
+			finalSynthetic.grant,
+			finalSynthetic.tokenUrl,
+		);
+		const echo = minted?.scope?.split(/\s+/).filter(Boolean) ?? [];
+		const actualScopes = echo.length > 0 ? echo : undefined;
+		const requested = pickedScopes ?? [];
+		const scopeList = actualScopes ?? requested;
+		let scopeLine: string;
+		if (actualScopes !== undefined) {
+			scopeLine = ` Granted scopes: ${actualScopes.join(", ")}.`;
+		} else if (requested.length > 0) {
+			scopeLine = ` Requested scopes (assumed granted): ${requested.join(", ")}.`;
+		} else {
+			scopeLine = " No scopes requested.";
+		}
+		const details: Record<string, unknown> = {
+			mode: "minted",
+			domain: storeDomain,
+			grant: finalSynthetic.grant,
+		};
+		if (scopeList.length > 0) details.scopes = scopeList;
 		return {
 			content: [
 				{
@@ -321,12 +340,7 @@ export const oauthMintTool = defineTool({
 						`Report the granted scopes and store domain to the user.`,
 				},
 			],
-			details: {
-				mode: "minted",
-				domain: storeDomain,
-				grant: finalSynthetic.grant,
-				...(granted.length > 0 ? { scopes: granted } : {}),
-			},
+			details,
 		};
 	},
 

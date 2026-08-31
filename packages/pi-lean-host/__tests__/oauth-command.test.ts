@@ -138,6 +138,33 @@ describe("oauth init — headless flags, client_credentials", () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
+	it("--code / --redirect-uri on a client_credentials mint refuse loudly (no silent ignore)", async () => {
+		writeSecret("ccflags.invalid", "client_id", "MY_CLIENT");
+		writeSecret("ccflags.invalid", "client_secret", "S3CRET");
+		const fetchMock = stubTokenEndpoint(() =>
+			tokenResponse({ access_token: "X" }),
+		);
+		const base = `--grant client_credentials --token-url ${TOKEN_URL} --client-id client_id --client-secret client_secret`;
+		const m = makeCtx();
+		await handleOauthSubcommand(
+			`init ccflags.invalid ${base} --code SOME_CODE`,
+			m.ctx,
+		);
+		expect(m.out()).toContain("apply only to the authorization_code grant");
+		expect(
+			readToken("ccflags.invalid", "client_credentials", TOKEN_URL),
+		).toBeNull();
+		expect(fetchMock).not.toHaveBeenCalled();
+
+		const m2 = makeCtx();
+		await handleOauthSubcommand(
+			`init ccflags.invalid ${base} --redirect-uri https://app.invalid/cb`,
+			m2.ctx,
+		);
+		expect(m2.out()).toContain("apply only to the authorization_code grant");
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
 	it("invalid --token-endpoint-auth-method fails closed (no silent none)", async () => {
 		writeSecret("badmethod.invalid", "client_id", "MY_CLIENT");
 		writeSecret("badmethod.invalid", "client_secret", "S3CRET");

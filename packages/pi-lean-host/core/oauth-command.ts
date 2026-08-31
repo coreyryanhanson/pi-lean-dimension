@@ -417,6 +417,13 @@ export async function handleOauthSubcommand(
 	// call. authorization_code guides route through the paste flow (print the
 	// authorize URL, user consents in their own browser, pastes the redirect
 	// URL back); client_credentials stays pure HTTP.
+	if (
+		auth.grant !== "authorization_code" &&
+		(codeArg !== undefined || redirectUriArg !== undefined)
+	) {
+		ctx.ui.notify(authCodeOnlyFlagsNote(storeDomain, auth.grant), "warning");
+		return;
+	}
 	try {
 		if (auth.grant === "authorization_code") {
 			await mintAuthCodeToken(auth, storeDomain, ctx, {
@@ -499,6 +506,15 @@ const OMIT_SECRET = "(omit — PKCE public client)";
  * (longest provisioned parent in the SECRETS store); a normalized stamp is
  * called out so it doesn't go invisible to the eventual guide.
  */
+/** Shared refusal prose for auth-code-only flags on a pure-HTTP mint arm
+ *  (plain command + init wizard — one message, one place). */
+function authCodeOnlyFlagsNote(storeDomain: string, grant: string): string {
+	return (
+		"--code and --redirect-uri apply only to the authorization_code grant — " +
+		`'${storeDomain}' mints via ${grant} (pure HTTP, nothing to paste).`
+	);
+}
+
 async function handleOauthInit(
 	args: string,
 	ctx: ExtensionCommandContext,
@@ -642,6 +658,17 @@ async function handleOauthInit(
 		}
 		ctx.ui.notify(lines.join("\n"), "info");
 	};
+
+	// auth-code-only flags: --code / --redirect-uri do nothing on a
+	// client_credentials mint — refuse loudly instead of reporting success
+	// while the flag did nothing.
+	if (
+		synthetic.grant !== "authorization_code" &&
+		(codeArg !== undefined || flags["--redirect-uri"] !== undefined)
+	) {
+		ctx.ui.notify(authCodeOnlyFlagsNote(storeDomain, synthetic.grant), "warning");
+		return;
+	}
 
 	try {
 		if (codeArg !== undefined) {
