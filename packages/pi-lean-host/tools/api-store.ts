@@ -36,7 +36,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { appendFooter, contentText } from "./utils.js";
 import { listDomains, listNames } from "../core/secrets-store.js";
 import { listSlots, listTokenDomains, slotKey } from "../core/oauth-store.js";
-import { findGuidesByDomain } from "../core/guide-store.js";
+import { findGuidesByDomain, loadAllGuides } from "../core/guide-store.js";
 import { hostnameOf, resolveProvisionedParentDomain } from "../core/auth.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
 import type { ApiGuide } from "../core/api-guide-types.js";
@@ -213,7 +213,11 @@ function slotMeta(s: {
  *  the RFC 6749 §5.1 fallback when the provider echoed no scope. Empty for
  *  guide-less tokens (nothing requested on record). */
 function requestedScopesFor(grant: string, tokenUrl: string): string[] {
-	for (const { guide } of findGuidesByDomainAll()) {
+	// Declared-scope fallback is domain-agnostic: the same (grant, tokenUrl)
+	// identifies the guide's oauth2 block regardless of routing domain, so
+	// scan every loaded guide — including ones whose domain has no minted
+	// tokens yet (those were invisible to the old token-domain-derived scan).
+	for (const guide of Object.values(loadAllGuides().guides)) {
 		if (guide.auth.kind !== "oauth2") continue;
 		if (
 			guide.auth.grant === grant &&
@@ -224,20 +228,6 @@ function requestedScopesFor(grant: string, tokenUrl: string): string[] {
 		}
 	}
 	return [];
-}
-
-// ponytail: slot→guide scope lookup scans every guide per slot (O(guides),
-// single-digit counts) — index it only if multi-hundred-guide stores appear.
-function findGuidesByDomainAll(): { guide: ApiGuide; dirName: string }[] {
-	// Declared-scope fallback is domain-agnostic: the same (grant, tokenUrl)
-	// identifies the guide's oauth2 block regardless of routing domain.
-	const seen = new Map<string, { guide: ApiGuide; dirName: string }>();
-	for (const domain of listTokenDomains()) {
-		for (const match of findGuidesByDomain(domain)) {
-			seen.set(match.dirName, match);
-		}
-	}
-	return [...seen.values()];
 }
 
 /** Bare-call orphan view across both stores. Token orphan filtering matches

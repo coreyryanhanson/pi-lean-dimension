@@ -22,6 +22,7 @@ import type {
 } from "./api-guide-types.js";
 import {
 	listDomains,
+	listNames,
 	readSecret,
 	provisionedDomainsSuffix,
 } from "./secrets-store.js";
@@ -426,6 +427,20 @@ export function resolveClientCredentials(
 			? { clientSecret: { secret: clientSecret, refName: ref.secret } }
 			: { clientSecret: null }),
 	};
+}
+
+/**
+ * Which of the given secrets-store NAMES are not provisioned for `domain`.
+ * Shared by oauth-mint and /api oauth init — both mint paths key credentials
+ * on store NAMEs (values never enter the transcript), so both precheck the
+ * same store before touching any prompt or endpoint.
+ */
+export function missingCredentialNames(
+	domain: string,
+	names: string[],
+): string[] {
+	const provisioned = listNames(domain);
+	return names.filter((n) => !provisioned.includes(n));
 }
 
 /**

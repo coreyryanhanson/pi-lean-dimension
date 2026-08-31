@@ -48,6 +48,7 @@ import {
 	buildSyntheticOAuth2Auth,
 	canonicalStoreDomain,
 	isTokenExpired,
+	missingCredentialNames,
 	resolveAccessToken,
 	resolveProvisionedParentDomain,
 	revokeAccessToken,
@@ -612,12 +613,10 @@ async function handleOauthInit(
 	// Store-name rule (hard): every credential is a provisioned store NAME,
 	// resolved at flow time. A miss points at /api secrets — never a value
 	// prompt, never a free-typed literal.
-	const provisioned = listNames(storeDomain);
-	const requiredNames = [
+	const missing = missingCredentialNames(storeDomain, [
 		fields.clientId,
 		...(fields.clientSecret === undefined ? [] : [fields.clientSecret]),
-	];
-	const missing = requiredNames.filter((n) => !provisioned.includes(n));
+	]);
 	if (missing.length > 0) {
 		ctx.ui.notify(
 			`OAuth2 client credentials must be provisioned store NAMEs, but ${missing.map((n) => `'${n}'`).join(", ")} ` +

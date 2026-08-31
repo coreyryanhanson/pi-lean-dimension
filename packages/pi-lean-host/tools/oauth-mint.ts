@@ -31,10 +31,10 @@ import {
 	buildSyntheticOAuth2Auth,
 	resolveAccessToken,
 	resolveProvisionedParentDomain,
+	missingCredentialNames,
 	OAuthTokenMissingError,
 } from "../core/auth.js";
 import type { SyntheticOAuth2Fields } from "../core/auth.js";
-import { listNames } from "../core/secrets-store.js";
 import { readToken, deleteToken } from "../core/oauth-store.js";
 import { mintAuthCodeToken, REDIRECT_URI } from "../core/oauth-flow.js";
 import { pickChecklist } from "../core/select-picker.js";
@@ -200,12 +200,10 @@ export const oauthMintTool = defineTool({
 		const storeDomain = resolveProvisionedParentDomain(p.domain);
 
 		// Store-name precheck BEFORE any prompt (D1).
-		const provisioned = listNames(storeDomain);
-		const requiredNames = [
+		const missing = missingCredentialNames(storeDomain, [
 			fields.clientId,
 			...(fields.clientSecret === undefined ? [] : [fields.clientSecret]),
-		];
-		const missing = requiredNames.filter((n) => !provisioned.includes(n));
+		]);
 		if (missing.length > 0) {
 			throw new Error(
 				`OAuth2 client credentials must be provisioned secrets-store NAMES, but ${missing.map((n) => `'${n}'`).join(", ")} ` +
