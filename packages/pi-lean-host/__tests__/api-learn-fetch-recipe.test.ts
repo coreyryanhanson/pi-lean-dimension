@@ -32,7 +32,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiLearnTool, setStagingRoot } from "../tools/api-learn.js";
+import {
+	apiLearnTool,
+	setStagingRoot,
+	OAUTH2_CC_EXAMPLE,
+	OAUTH2_AC_EXAMPLE,
+} from "../tools/api-learn.js";
 import { contentText } from "../tools/utils.js";
 import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
 import { parseApiGuide } from "../core/parse-api-guide.js";
@@ -132,6 +137,24 @@ describe("api-learn fetch-recipe", () => {
 		// Fail-closed: the as-is template cannot save (placeholder apiHost
 		// is rejected by requireHttpUrl).
 		expect(parseApiGuide(draft, { filename: "fresh.example" }).ok).toBe(false);
+		// oauth2 shape taught in the template (commented authorization_code block).
+		expect(draft).toContain("grant: authorization_code");
+		expect(draft).toContain("authorizeUrl");
+	});
+
+	it("worked oauth2 manual examples parse as-is", () => {
+		for (const ex of [OAUTH2_CC_EXAMPLE, OAUTH2_AC_EXAMPLE]) {
+			// Dedent the 4-space manual indent to top-level YAML.
+			const auth = ex.replace(/^ {4}/gm, "");
+			const raw = `---\nkind: api\ndomains: [example.com]\napiHost: https://api.example.com\nshortName: ex\n${auth}\noperations:\n  - name: list\n    via: restGet\n    path: /items\n---\n`;
+			const res = parseApiGuide(raw, { filename: "example.com" });
+			if (!res.ok) {
+				throw new Error(
+					`worked oauth2 example failed to parse: ${res.error.field} — ${res.error.expected} (found: ${res.error.found})`,
+				);
+			}
+			expect(res.guide.auth.kind).toBe("oauth2");
+		}
 	});
 
 	it("1 guide → raw recipe staged; result surfaces path + dirName", async () => {
