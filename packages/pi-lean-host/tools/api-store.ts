@@ -281,7 +281,7 @@ export function formatDomainReport(r: DomainReport): string {
 	}
 	for (const t of r.tokens.slots) {
 		lines.push(`  ${t.slot}`);
-		lines.push(`    issuer:  ${t.issuer || "(unstamped — pre-2.9 record)"}`);
+		lines.push(`    issuer:  ${t.issuer}`);
 		lines.push(`    granted: ${t.granted}`);
 		lines.push(`    expires: ${t.expires}`);
 	}

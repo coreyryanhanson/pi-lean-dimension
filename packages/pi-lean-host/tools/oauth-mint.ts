@@ -293,7 +293,7 @@ export const oauthMintTool = defineTool({
 				// Bootstrap wants a fresh mint, not a cached token (mirrors the
 				// init wizard / --refresh path). Slot-scoped delete: a bare
 				// domain delete would leave a stale prior-grant/prior-issuer slot
-				// surviving the re-mint — the exact clobber class 2.9 fixes.
+				// surviving the re-mint — the exact clobber the slot keying fixes.
 				deleteToken(storeDomain, finalSynthetic.grant, finalSynthetic.tokenUrl);
 				await resolveAccessToken(finalSynthetic, storeDomain);
 			} else {

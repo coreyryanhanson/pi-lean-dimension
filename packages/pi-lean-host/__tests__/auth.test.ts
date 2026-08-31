@@ -464,6 +464,16 @@ body
 		if (!r.ok) expect(r.error.field).toBe("auth.clientSecret.optional");
 	});
 
+	it("prefix on clientSecret → ParseError (silently ignored at resolution time)", () => {
+		const r = parseAuthBlock(`  kind: oauth2
+  grant: client_credentials
+  tokenUrl: https://api.example.com/oauth/token
+  clientId: { secret: my_client }
+  clientSecret: { secret: client_secret, prefix: 'Bearer ' }`);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error.field).toBe("auth.clientSecret.prefix");
+	});
+
 	it("tokenEndpointAuthMethod: none with clientSecret → ParseError", () => {
 		const r = parseAuthBlock(`  kind: oauth2
   grant: authorization_code

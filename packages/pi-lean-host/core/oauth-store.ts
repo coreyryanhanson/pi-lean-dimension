@@ -47,11 +47,13 @@ export interface OAuthToken {
 	/** Epoch ms when the access token expires. Absent → treat as never-expiring. */
 	expiresAt?: number;
 	scope?: string;
-	/** Facts this token was minted under — stamped by `write()` so the store
-	 *  is self-describing (status rows render the real issuer, not the hash). */
-	grant?: string;
-	tokenUrl?: string;
 }
+
+/** A stored token with its mint facts. The store layer requires the stamp:
+ *  every entry must be self-describing, so slot enumeration can render real
+ *  grant/issuer and the orphan arms can round-trip a slot's key from its
+ *  record (unstamped/legacy records fail validation → ignored, re-minted). */
+export type StampedToken = OAuthToken & { grant: string; tokenUrl: string };
 
 /**
  * The token-slot key: `<grant>__<hash(tokenUrl)>`. Two tokens share a slot
@@ -79,12 +81,14 @@ export interface TokenSlotInfo {
 /**
  * A token store: read/write/delete one (domain, slot) token; enumerate a
  * domain's slots and the store's domains. One `<domain>.json` per domain
- * holding `Record<slot, OAuthToken>` — slot enumeration is `Object.keys` of
- * the file (the secrets store's `listNames` pattern), never filename parsing.
+ * holding `Record<slot, StampedToken>` — slot enumeration is `Object.keys`
+ * of the file (the secrets store's `listNames` pattern), never filename
+ * parsing. Writes require the stamp: every entry must carry the grant +
+ * tokenUrl it was minted under, so records are self-describing.
  */
 export interface TokenStore {
-	read(domain: string, slot: string): OAuthToken | null;
-	write(domain: string, slot: string, token: OAuthToken): void;
+	read(domain: string, slot: string): StampedToken | null;
+	write(domain: string, slot: string, token: StampedToken): void;
 	delete(domain: string, slot: string): void;
 	listSlots(domain: string): TokenSlotInfo[];
 	listDomains(): string[];
@@ -98,9 +102,10 @@ export function createTokenStore(dir: string): TokenStore {
 	};
 
 	// Read a domain file as a slot→token map. Missing/corrupt file → {}.
-	// (A legacy pre-2.9 flat token file has no valid slot→token entries, so it
-	// reads as empty — tokens are re-minted, no migration.)
-	const readFileMap = (domain: string): Record<string, OAuthToken> => {
+	// Entries must carry the write() stamp (grant + tokenUrl); anything else —
+	// a foreign or hand-edited file — fails the check and reads as empty.
+	// Tokens are re-minted, no migration.
+	const readFileMap = (domain: string): Record<string, StampedToken> => {
 		const p = domainPath(domain);
 		if (!existsSync(p)) return {};
 		try {
@@ -108,15 +113,17 @@ export function createTokenStore(dir: string): TokenStore {
 			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
 				return {};
 			}
-			const map: Record<string, OAuthToken> = {};
+			const map: Record<string, StampedToken> = {};
 			for (const [slot, value] of Object.entries(parsed)) {
 				if (
 					value &&
 					typeof value === "object" &&
 					!Array.isArray(value) &&
-					typeof (value as OAuthToken).accessToken === "string"
+					typeof (value as OAuthToken).accessToken === "string" &&
+					typeof (value as StampedToken).grant === "string" &&
+					typeof (value as StampedToken).tokenUrl === "string"
 				) {
-					map[slot] = value as OAuthToken;
+					map[slot] = value as StampedToken;
 				}
 			}
 			return map;
@@ -143,10 +150,10 @@ export function createTokenStore(dir: string): TokenStore {
 		renameSync(tmp, p);
 	};
 
-	const toSlotInfo = (slot: string, token: OAuthToken): TokenSlotInfo => ({
+	const toSlotInfo = (slot: string, token: StampedToken): TokenSlotInfo => ({
 		slot,
-		grant: token.grant ?? slot.slice(0, slot.indexOf("__")),
-		tokenUrl: token.tokenUrl ?? "",
+		grant: token.grant,
+		tokenUrl: token.tokenUrl,
 		token,
 	});
 

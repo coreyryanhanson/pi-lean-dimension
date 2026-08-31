@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import { rmSync, mkdtempSync } from "node:fs";
+import { rmSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleOauthSubcommand } from "../core/oauth-command.js";
@@ -28,6 +28,7 @@ import {
 	listTokenDomains,
 	listSlots,
 	setOAuthDir,
+	getOAuthDir,
 } from "../core/oauth-store.js";
 import { writeSecret, setSecretsDir } from "../core/secrets-store.js";
 
@@ -563,5 +564,24 @@ describe("handleOauthSubcommand — slot-aware guide-less paths", () => {
 		expect(readToken(domain, CC, TOKEN_URL)).toBeNull();
 		expect(readToken(domain, AC, TOKEN_URL)?.accessToken).toBe("USER");
 		expect(listSlots(domain)).toHaveLength(1);
+	});
+
+	it("guide-less --revoke ignores an UNSTAMPED record (store validation filters it, nothing to revoke)", async () => {
+		const domain = "unstamped.invalid";
+		// Raw hand-written slot-keyed record with no grant/tokenUrl stamp —
+		// the pre-release write shape that can no longer occur (every write
+		// stamps). The store's read validation filters it, so the orphan arm
+		// sees zero slots: revoke is a no-op and the domain file is untouched.
+		mkdirSync(getOAuthDir(), { recursive: true });
+		writeFileSync(
+			join(getOAuthDir(), `${domain}.json`),
+			JSON.stringify({
+				client_credentials__0123456789abcdef: { accessToken: "LEGACY" },
+			}),
+		);
+		const m = makeCtx();
+		await handleOauthSubcommand(`${domain} --revoke`, m.ctx);
+		expect(m.out()).toContain("no token.");
+		expect(listSlots(domain)).toHaveLength(0);
 	});
 });

@@ -872,6 +872,18 @@ function validateOAuth2Auth(
 			"auth.clientSecret",
 		);
 		if (isParseErr(cs)) return cs;
+		if (cs.prefix !== undefined) {
+			return fail(
+				file,
+				"auth.clientSecret.prefix",
+				"absent — the prefix would be silently ignored (the raw store value is sent as the client secret)",
+				JSON.stringify(cs.prefix),
+				{
+					snippet: snippetFor(fm, "auth"),
+					fix: "Remove prefix from clientSecret — keep clientSecret: { secret: <store name> }.",
+				},
+			);
+		}
 		if (cs.optional !== undefined && grant === "client_credentials") {
 			return fail(
 				file,

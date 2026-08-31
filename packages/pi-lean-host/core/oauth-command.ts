@@ -129,10 +129,7 @@ function slotRows(
 	slots: { grant: string; tokenUrl: string; token: OAuthToken }[],
 ): string {
 	return slots
-		.map(
-			(s) =>
-				`  · ${s.grant} · ${s.tokenUrl || "(unknown issuer)"} — ${tokenState(s.token)}`,
-		)
+		.map((s) => `  · ${s.grant} · ${s.tokenUrl} — ${tokenState(s.token)}`)
 		.join("\n");
 }
 
@@ -223,7 +220,7 @@ export async function handleOauthSubcommand(
 			}
 			for (const s of slots) {
 				lines.push(
-					`  ${d} · ${s.grant} · ${s.tokenUrl || "(unknown issuer)"} — ${tokenState(s.token)}, expires ${tokenExpiry(s.token)}`,
+					`  ${d} · ${s.grant} · ${s.tokenUrl} — ${tokenState(s.token)}, expires ${tokenExpiry(s.token)}`,
 				);
 			}
 		}
@@ -297,7 +294,7 @@ export async function handleOauthSubcommand(
 				ctx.ui.notify(
 					[
 						`🔑 OAuth2 for '${storeDomain}' (no guide) — slot ${slot.grant}`,
-						`  Token URL: ${slot.tokenUrl || "(unknown)"}`,
+						`  Token URL: ${slot.tokenUrl}`,
 						`  State: ${tokenState(slot.token)}`,
 						`  Expires: ${tokenExpiry(slot.token)}`,
 						...(slot.token.refreshToken ? ["  Refresh token: present"] : []),
@@ -309,6 +306,8 @@ export async function handleOauthSubcommand(
 				return;
 			}
 			// revoke — guide-less, so provider-side revocation isn't possible.
+			// The slot's record is stamped (grant + tokenUrl), so these facts
+			// round-trip the exact slot key the record was written under.
 			deletePendingFlow(storeDomain, slot.grant, slot.tokenUrl);
 			deleteToken(storeDomain, slot.grant, slot.tokenUrl);
 			ctx.ui.notify(
