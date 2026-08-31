@@ -237,7 +237,7 @@ const AUTHORING_MANUAL = [
 	`  \`apiHost\`       — base URL. Version in apiHost XOR in each path — never both (see Key defaults)`,
 	`  \`operations\`    — a LIST of operation mappings — at least one entry`,
 	`  \`operations[].name\`   — unique operation name`,
-	`  \`operations[].via\`    — "restGet" or "paginate"`,
+	`  \`operations[].via\`    — "restGet" or "paginate" — both issue GETs; the plugin is read-only by design (writes have no schema representation)`,
 	`  \`operations[].path\`   — path starting with /`,
 	"",
 	"## Key defaults",
