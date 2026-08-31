@@ -610,8 +610,6 @@ channel stays closed.
   deferred. Values live in the `0600` secrets store, never in a guide —
   see [Authentication & Secrets](#authentication--secrets).
 - **No inferred-link discovery.** Declared links only in v1; inference is v2.
-- **No guide suppression.** Both guide kinds surface by domain match when
-  their toggle is on; host-first is a preference, not suppression.
 
 ### Mission
 
