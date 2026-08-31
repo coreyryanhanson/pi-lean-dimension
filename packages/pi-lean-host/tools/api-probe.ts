@@ -966,13 +966,7 @@ export const apiProbeTool = defineTool({
 			path: string;
 			params?: Record<string, unknown>;
 			walkVersions?: boolean;
-			auth?: {
-				secretRefs?: Record<string, string>;
-				secretQueryRefs?: Record<string, string>;
-				headerPrefixes?: Record<string, string>;
-				useTokenStore?: boolean;
-				grant?: "client_credentials" | "authorization_code";
-			};
+			auth?: ProbeOptions["auth"];
 			domain?: string;
 		};
 		const userParams = (params as Record<string, unknown>)["params"] as
