@@ -273,7 +273,29 @@ export function isTokenExpired(
  * they touch different records; the store's synchronous read-modify-write
  * keeps them atomic wrt the event loop.
  */
-const tokenLocks = new Map<string, Promise<AccessTokenResult>>();
+const tokenLocks = new Map<string, Promise<unknown>>();
+
+/**
+ * Run `fn` while holding the per-slot lock — serializes any read-check-refresh-write
+ * sequence for `(storeDomain, slot)`, so `--refresh`/mint paths can't race an
+ * agent's `resolveAccessToken` into double-spending a rotated refresh token.
+ */
+async function withSlotLock<T>(
+	auth: OAuth2Auth,
+	domain: string,
+	fn: () => Promise<T>,
+): Promise<T> {
+	const lockKey = `${domain}:${slotKey(auth.grant, auth.tokenUrl)}`;
+	const inFlight = tokenLocks.get(lockKey);
+	if (inFlight) await inFlight.catch(() => {});
+	const p = fn();
+	tokenLocks.set(lockKey, p);
+	try {
+		return await p;
+	} finally {
+		tokenLocks.delete(lockKey);
+	}
+}
 
 /**
  * Resolve an access token for an oauth2 auth (guide-backed or synthetic):
@@ -286,16 +308,7 @@ export async function resolveAccessToken(
 	auth: OAuth2Auth,
 	domain: string,
 ): Promise<AccessTokenResult> {
-	const lockKey = `${domain}:${slotKey(auth.grant, auth.tokenUrl)}`;
-	const inFlight = tokenLocks.get(lockKey);
-	if (inFlight) return inFlight;
-	const p = resolveTokenUnlocked(auth, domain);
-	tokenLocks.set(lockKey, p);
-	try {
-		return await p;
-	} finally {
-		tokenLocks.delete(lockKey);
-	}
+	return withSlotLock(auth, domain, () => resolveTokenUnlocked(auth, domain));
 }
 
 async function resolveTokenUnlocked(
@@ -495,6 +508,15 @@ export async function exchangeAuthCode(
  * is no refresh token — the caller falls back to the interactive flow.
  */
 export async function forceRefreshToken(
+	auth: OAuth2Auth,
+	domain: string,
+): Promise<OAuthToken> {
+	return withSlotLock(auth, domain, () =>
+		forceRefreshTokenUnlocked(auth, domain),
+	);
+}
+
+async function forceRefreshTokenUnlocked(
 	auth: OAuth2Auth,
 	domain: string,
 ): Promise<OAuthToken> {
