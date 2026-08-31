@@ -25,6 +25,7 @@ import { join } from "node:path";
 import { startTestServer } from "../../pi-lean-portal/__tests__/helpers/test-server.js";
 import {
 	resolveAccessToken,
+	resolveClientCredentials,
 	revokeAccessToken,
 	isTokenExpired,
 	OAuthTokenMissingError,
@@ -301,6 +302,29 @@ describe("resolveAccessToken (client_credentials)", () => {
 		await expect(
 			resolveAccessToken(guide.auth, "oauth.missing"),
 		).rejects.toBeInstanceOf(OAuthTokenMissingError);
+	});
+
+	it("declared non-optional client_secret miss names the secret in the error", async () => {
+		writeSecret("oauth.named_miss", "client_id", "MY_CLIENT");
+		const guide = makeOAuthGuide("https://api.example.com", {
+			grant: "authorization_code",
+			authorizeUrl: "https://api.example.com/oauth/authorize",
+		});
+		expect(() =>
+			resolveClientCredentials(guide.auth, "oauth.named_miss"),
+		).toThrow(/client_secret.*provisioned.*oauth\.named_miss/);
+	});
+
+	it("optional client_secret miss degrades to a PKCE public client (no throw)", async () => {
+		writeSecret("oauth.pkce", "client_id", "MY_CLIENT");
+		const guide = makeOAuthGuide("https://api.example.com", {
+			grant: "authorization_code",
+			authorizeUrl: "https://api.example.com/oauth/authorize",
+			clientSecret: { secret: "client_secret", optional: true },
+		});
+		const creds = resolveClientCredentials(guide.auth, "oauth.pkce");
+		expect(creds.clientId).toBe("MY_CLIENT");
+		expect(creds.clientSecret).toBeNull();
 	});
 
 	it("fail-closed: authorization_code guide with no token → OAuthTokenMissingError", async () => {

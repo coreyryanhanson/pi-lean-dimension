@@ -50,7 +50,10 @@ function makeAuthCodeAuth(overrides: Partial<OAuth2Auth> = {}): OAuth2Auth {
 		tokenUrl: TOKEN_URL,
 		// Store-ref semantics — resolved per-user from the secrets store.
 		clientId: { secret: "client_id" },
-		clientSecret: { secret: "client_secret" },
+		// optional: true — tests below that don't provision the secret exercise
+		// the PKCE public-client path; oauth.exchange provisions it and asserts
+		// the confidential-client body.
+		clientSecret: { secret: "client_secret", optional: true },
 		authorizeUrl: AUTHORIZE_URL,
 		...overrides,
 	};

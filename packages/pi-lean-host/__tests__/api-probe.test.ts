@@ -802,6 +802,41 @@ describe("probe redirect handling (live localhost)", () => {
 			}
 		});
 
+		it("bad mint field combo (cc without client-secret) degrades to a note, not a throw", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-invalid-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			let tokenPosts = 0;
+			const server = http.createServer((req, res) => {
+				if (req.method === "POST") tokenPosts++;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				// client_credentials without clientSecret: buildSyntheticOAuth2Auth
+				// throws — but the probe's mint arm must ride the note instead.
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: { tokenUrl: `${base}/token`, clientId: "cid" },
+					},
+				);
+				expect(tokenPosts).toBe(0);
+				expect(result.ok).toBe(true);
+				expect(result.note ?? "").toContain("client-secret");
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
 		it("a fresh cached token short-circuits the mint (no POST)", async () => {
 			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-cache-"));
 			const prevDir = getOAuthDir();

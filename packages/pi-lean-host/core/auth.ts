@@ -405,7 +405,10 @@ function toAccessTokenResult(
  * guide bakes in no per-user registration). Null secret when the guide
  * declares no `clientSecret` (PKCE auth-code apps) or the store lacks it.
  * Throws `OAuthTokenMissingError` when the client id's store name is absent —
- * the token endpoint cannot be called without it.
+ * the token endpoint cannot be called without it — or when a declared,
+ * non-optional `clientSecret` is unprovisioned (fail closed with a naming
+ * nudge rather than silently degrading to an unauthenticated public client
+ * and a bare provider `invalid_client` at exchange time).
  */
 export function resolveClientCredentials(
 	auth: OAuth2Auth,
@@ -423,6 +426,13 @@ export function resolveClientCredentials(
 	}
 	const ref = auth.clientSecret;
 	const clientSecret = ref ? readSecret(domain, ref.secret) : null;
+	if (ref && clientSecret === null && !ref.optional) {
+		throw new OAuthTokenMissingError(
+			`OAuth2 client secret '${ref.secret}' is declared but not provisioned ` +
+				`for '${domain}'. Run /api secrets ${domain} ${ref.secret}, or mark ` +
+				`the ref optional to proceed as a PKCE public client.`,
+		);
+	}
 	return {
 		clientId,
 		...(clientSecret !== null && ref

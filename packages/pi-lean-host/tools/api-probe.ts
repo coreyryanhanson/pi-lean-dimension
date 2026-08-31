@@ -385,18 +385,9 @@ async function resolveProbeAuth(
 		// Build a synthetic oauth2 auth and hand it straight to
 		// resolveAccessToken so the cache → refresh → mint → stamp machinery is
 		// reused wholesale (incl. the per-domain refresh lock). Failures never
-		// fail-closed: the message rides the note and the probe proceeds
-		// unauthenticated.
-		const oauthAuth = buildSyntheticOAuth2Auth({
-			grant: "client_credentials",
-			tokenUrl: auth!.tokenUrl!,
-			clientId: auth!.clientId!,
-			...(auth!.clientSecret ? { clientSecret: auth!.clientSecret } : {}),
-			...(auth!.scopes?.length ? { scopes: auth!.scopes } : {}),
-			...(auth!.tokenEndpointAuthMethod
-				? { tokenEndpointAuthMethod: auth!.tokenEndpointAuthMethod }
-				: {}),
-		});
+		// fail-closed — validation throws included, since
+		// buildSyntheticOAuth2Auth runs inside the same try/catch — the message
+		// rides the note and the probe proceeds unauthenticated.
 		// Interactive sessions re-gate the secret-bearing destination on the
 		// human (same trust root as oauth-mint). Headless has no gate — the
 		// agent-has-bash posture covers it; documented in AGENTS.md. Decline
@@ -412,8 +403,20 @@ async function resolveProbeAuth(
 			if (!ok)
 				tokenNote = `token-URL confirm declined for "${domain}"; probe proceeding unauthenticated`;
 		}
+		// Decline skips only the mint (tokenHeader stays empty) — the note and
+		// unauthenticated probe are reported by the shared return below.
 		if (tokenNote === "") {
 			try {
+				const oauthAuth = buildSyntheticOAuth2Auth({
+					grant: "client_credentials",
+					tokenUrl: auth!.tokenUrl!,
+					clientId: auth!.clientId!,
+					...(auth!.clientSecret ? { clientSecret: auth!.clientSecret } : {}),
+					...(auth!.scopes?.length ? { scopes: auth!.scopes } : {}),
+					...(auth!.tokenEndpointAuthMethod
+						? { tokenEndpointAuthMethod: auth!.tokenEndpointAuthMethod }
+						: {}),
+				});
 				const result = await resolveAccessToken(oauthAuth, domain);
 				const bearer = result.authHeaders?.authorization;
 				if (bearer) {
