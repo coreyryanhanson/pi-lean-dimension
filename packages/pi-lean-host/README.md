@@ -268,12 +268,7 @@ as `api-fetch` — the sanctioned way to reach even WAF'd hosts), summarizes the
 JSON shape, and emits a **draft YAML operation block** to paste into a recipe.
 It only **suggests** — it never writes the guide, and a draft still needs
 confirming against the provider's docs (probe surfaces evidence, not
-authority). Requires `/api learn`.
-
-You won't call this tool yourself — the agent does, during authoring. Its
-full parameter contract (version-walk on 404, inline auth block, domain
-override) lives in the tool description and the authoring manual `api-learn`
-prepends to staged drafts, not here. See
+authority). Requires `/api learn`. See
 [docs/authoring.md](docs/authoring.md#the-authoring-tools-in-detail).
 
 ### 5. `api-scaffold` — Bootstrap `verify.json` / `helper.ts` (local write)
@@ -660,8 +655,6 @@ machine; the package does not aim to make that easy.
 
 > `pi-lean-host` is part of the
 > [pi-lean-dimension](https://github.com/coreyryanhanson/pi-lean-dimension)
-> web-tools suite. For the security model behind the secrets store (the
-> two-threat model and the output-channel audit), see
-> [Authentication & Secrets](#authentication--secrets).
+> web-tools suite.
 >
 > License: AGPL-3.0-only
