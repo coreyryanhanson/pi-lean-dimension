@@ -1,9 +1,8 @@
 /**
  * oauth-mint tool definition.
  *
- * The human-in-the-loop mint of the agent-driven OAuth2 bootstrap
- * (docs/design/oauth2-agent-bootstrap.md). The agent supplies all
- * researched parameters (grant, tokenUrl, authorizeUrl, scopes as
+ * The human-in-the-loop mint of the agent-driven OAuth2 bootstrap. The agent
+ * supplies all researched parameters (grant, tokenUrl, authorizeUrl, scopes as
  * {name, description} pairs, client credentials as STORE NAMES); the tool
  * does only what the agent cannot: fail-closed validation, store-name
  * precheck, the token-URL confirm prompt (the human is the trust root for the
@@ -36,7 +35,11 @@ import {
 } from "../core/auth.js";
 import type { SyntheticOAuth2Fields } from "../core/auth.js";
 import { readToken, deleteToken } from "../core/oauth-store.js";
-import { mintAuthCodeToken, REDIRECT_URI } from "../core/oauth-flow.js";
+import {
+	confirmTokenUrl,
+	mintAuthCodeToken,
+	REDIRECT_URI,
+} from "../core/oauth-flow.js";
 import { pickChecklist } from "../core/select-picker.js";
 import { appendFooter } from "./utils.js";
 
@@ -242,11 +245,8 @@ export const oauthMintTool = defineTool({
 				if (entered !== "") redirectUri = entered;
 			}
 		} else {
-			const confirmed = await ctx.ui.confirm(
-				`Confirm the token endpoint for '${storeDomain}'`,
-				`Exchange credentials at ${p.tokenUrl} (client: '${p.clientId}')? The client secret is sent to this URL.`,
-			);
-			if (!confirmed) throw cancelledError(p.domain, fields);
+			if (!(await confirmTokenUrl(ctx, storeDomain, p.tokenUrl, p.clientId)))
+				throw cancelledError(p.domain, fields);
 		}
 
 		// Scopes checklist — the human's affirmative grant. No scopes → skip.

@@ -234,10 +234,9 @@ const BOOTSTRAP_USAGE = [
 
 /**
  * The research brief injected via `pi.sendUserMessage(brief, {deliverAs:
- * "followUp"})` — from oauth2-agent-bootstrap.md (BRIEF), with
- * {domain} / {spec} filled from the command args, plus the doc's conditional
- * provisioned-secrets sentence when the store has names for the domain.
- * Inject-and-exit: the
+ * "followUp"})`, with {domain} / {spec} filled from the command args, plus
+ * the conditional provisioned-secrets sentence when the store has names for
+ * the domain. Inject-and-exit: the
  * command's entire output is this one message.
  */
 export function composeBootstrapBrief(

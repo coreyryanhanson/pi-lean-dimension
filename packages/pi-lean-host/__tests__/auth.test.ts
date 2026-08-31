@@ -243,7 +243,7 @@ function writeGuideForDomain(domain: string, yaml: string): void {
 
 // ═══════════════════════════════════════════════════════════════════
 // Schema / parser
-// ═════════════════════════════════════════════════════════════════���═
+// ═══════════════════════════════════════════════════════════════════
 
 describe("auth schema / parser", () => {
 	function parseAuthBlock(authYaml: string) {

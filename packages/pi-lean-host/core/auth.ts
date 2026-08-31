@@ -118,7 +118,7 @@ export function resolveSecretQueryParams(
  * Five static-key states (no-auth → undefined / ok / nudge-provision /
  * ok-optional / optional-not-provisioned) plus the oauth2 states (ok /
  * expired-but-refreshable / missing → nudge /api oauth). Never renders a
- * secret value ��� names only.
+ * secret value — names only.
  */
 export function authStatusLine(
 	auth: AuthConfig,
@@ -222,7 +222,7 @@ export function scrubSecretValues(
 	return text;
 }
 
-// ═════════════════════════════════════════════════��═════════════════
+// ═══════════════════════════════════════════════════════════════════
 // OAuth2 token resolution (client_credentials + lazy refresh)
 // ═══════════════════════════════════════════════════════════════════
 

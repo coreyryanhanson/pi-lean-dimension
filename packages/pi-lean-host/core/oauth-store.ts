@@ -2,7 +2,7 @@
  * OAuth2 token store — per-domain, per-slot token persistence.
  *
  * File backend: `~/.pi/agent/pi-lean-host/oauth/<domain>.json`, one file per
- * domain holding `Record<slot, OAuthToken>` — the secrets-store's per-domain
+ * domain holding `Record<slot, StampedToken>` — the secrets-store's per-domain
  * name-keyed shape, not a filename-as-database layout. The slot key derives
  * from `(grant, tokenUrl)` via `slotKey`: the same domain can
  * hold an app token and a user token (and tokens from two issuers) without
@@ -18,14 +18,14 @@
  *
  * Security posture mirrors secrets-store.ts: 0600 files, lazy-mkdir on write
  * only, names-only listing. The store is swappable (the `TokenStore`
- * interface + `setTokenStore`) so a deferred OS-keychain backend is a
+ * interface + `createTokenStore`) so a deferred OS-keychain backend is a
  * drop-in without touching callers.
  *
  * Kept free of any `auth.ts` import — the edge is one-way (auth.ts → here),
  * so no import cycle can form.
  */
 
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import {
@@ -78,6 +78,50 @@ export interface TokenSlotInfo {
 	token: OAuthToken;
 }
 
+/** Read a slot map file. Missing/corrupt file → {}; entries failing
+ *  `isEntry` are dropped. Shared by the token file and the pending-flow
+ *  scratch file — same read-parse-validate loop, one implementation. */
+function readJsonMap<T>(
+	p: string,
+	isEntry: (value: Record<string, unknown>) => boolean,
+): Record<string, T> {
+	if (!existsSync(p)) return {};
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(p, "utf-8"));
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+			return {};
+		}
+		const map: Record<string, T> = {};
+		for (const [key, value] of Object.entries(parsed)) {
+			if (
+				value &&
+				typeof value === "object" &&
+				!Array.isArray(value) &&
+				isEntry(value)
+			) {
+				map[key] = value as T;
+			}
+		}
+		return map;
+	} catch {
+		return {};
+	}
+}
+
+/** Write a JSON map 0600 atomically: lazy mkdir + tmp file + rename (atomic
+ *  on POSIX), so a crash mid-write can't shred the file's existing entries. */
+function writeJson0600(p: string, data: unknown): void {
+	if (!existsSync(dirname(p))) mkdirSync(dirname(p), { recursive: true });
+	const tmp = `${p}.tmp`;
+	writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+	try {
+		chmodSync(tmp, 0o600); // guard against umask overriding the mode
+	} catch {
+		// best-effort; rename still proceeds
+	}
+	renameSync(tmp, p);
+}
+
 /**
  * A token store: read/write/delete one (domain, slot) token; enumerate a
  * domain's slots and the store's domains. One `<domain>.json` per domain
@@ -105,50 +149,14 @@ export function createTokenStore(dir: string): TokenStore {
 	// Entries must carry the write() stamp (grant + tokenUrl); anything else —
 	// a foreign or hand-edited file — fails the check and reads as empty.
 	// Tokens are re-minted, no migration.
-	const readFileMap = (domain: string): Record<string, StampedToken> => {
-		const p = domainPath(domain);
-		if (!existsSync(p)) return {};
-		try {
-			const parsed: unknown = JSON.parse(readFileSync(p, "utf-8"));
-			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-				return {};
-			}
-			const map: Record<string, StampedToken> = {};
-			for (const [slot, value] of Object.entries(parsed)) {
-				if (
-					value &&
-					typeof value === "object" &&
-					!Array.isArray(value) &&
-					typeof (value as OAuthToken).accessToken === "string" &&
-					typeof (value as StampedToken).grant === "string" &&
-					typeof (value as StampedToken).tokenUrl === "string"
-				) {
-					map[slot] = value as StampedToken;
-				}
-			}
-			return map;
-		} catch {
-			return {};
-		}
-	};
-
-	// Write the whole slot map atomically: tmp file + rename (atomic on POSIX)
-	// so a crash mid-write can't shred every slot of the domain at once.
-	const writeFileMap = (
-		domain: string,
-		map: Record<string, OAuthToken>,
-	): void => {
-		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-		const p = domainPath(domain);
-		const tmp = `${p}.tmp`;
-		writeFileSync(tmp, JSON.stringify(map, null, 2) + "\n", { mode: 0o600 });
-		try {
-			chmodSync(tmp, 0o600); // guard against umask overriding the mode
-		} catch {
-			// best-effort; rename still proceeds
-		}
-		renameSync(tmp, p);
-	};
+	const readFileMap = (domain: string): Record<string, StampedToken> =>
+		readJsonMap(
+			domainPath(domain),
+			(v) =>
+				typeof v.accessToken === "string" &&
+				typeof v.grant === "string" &&
+				typeof v.tokenUrl === "string",
+		);
 
 	const toSlotInfo = (slot: string, token: StampedToken): TokenSlotInfo => ({
 		slot,
@@ -164,7 +172,7 @@ export function createTokenStore(dir: string): TokenStore {
 		write(domain, slot, token) {
 			const map = readFileMap(domain); // sync RMW: atomic wrt the event loop
 			map[slot] = token;
-			writeFileMap(domain, map);
+			writeJson0600(domainPath(domain), map);
 		},
 		delete(domain, slot) {
 			const map = readFileMap(domain);
@@ -174,7 +182,7 @@ export function createTokenStore(dir: string): TokenStore {
 				// Prune the empty file so the domain drops out of listDomains.
 				rmSync(domainPath(domain), { force: true });
 			} else {
-				writeFileMap(domain, map);
+				writeJson0600(domainPath(domain), map);
 			}
 		},
 		listSlots(domain) {
@@ -213,11 +221,6 @@ export function getOAuthDir(): string {
 export function setOAuthDir(dir: string): void {
 	_dir = dir;
 	_store = createTokenStore(dir);
-}
-
-/** Swap in a different store backend (e.g. OS-keychain, deferred). */
-export function setTokenStore(store: TokenStore): void {
-	_store = store;
 }
 
 // Convenience API (delegates to the active store). Slot derivation is
@@ -287,29 +290,10 @@ function pendingPath(domain: string): string {
 }
 
 function readPendingMap(domain: string): Record<string, PendingAuthCodeFlow> {
-	const p = pendingPath(domain);
-	if (!existsSync(p)) return {};
-	try {
-		const parsed: unknown = JSON.parse(readFileSync(p, "utf-8"));
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-			return {};
-		}
-		const map: Record<string, PendingAuthCodeFlow> = {};
-		for (const [slot, value] of Object.entries(parsed)) {
-			if (
-				value &&
-				typeof value === "object" &&
-				!Array.isArray(value) &&
-				typeof (value as PendingAuthCodeFlow).verifier === "string" &&
-				typeof (value as PendingAuthCodeFlow).redirectUri === "string"
-			) {
-				map[slot] = value as PendingAuthCodeFlow;
-			}
-		}
-		return map;
-	} catch {
-		return {};
-	}
+	return readJsonMap(
+		pendingPath(domain),
+		(v) => typeof v.verifier === "string" && typeof v.redirectUri === "string",
+	);
 }
 
 export function writePendingFlow(
@@ -318,16 +302,9 @@ export function writePendingFlow(
 	tokenUrl: string,
 	flow: PendingAuthCodeFlow,
 ): void {
-	const p = pendingPath(domain);
-	if (!existsSync(_dir)) mkdirSync(_dir, { recursive: true });
 	const map = readPendingMap(domain);
 	map[slotKey(grant, tokenUrl)] = flow;
-	writeFileSync(p, JSON.stringify(map, null, 2) + "\n", { mode: 0o600 });
-	try {
-		chmodSync(p, 0o600); // guard against umask overriding the mode
-	} catch {
-		// best-effort; file was already written
-	}
+	writeJson0600(pendingPath(domain), map);
 }
 
 export function readPendingFlow(
@@ -352,11 +329,6 @@ export function deletePendingFlow(
 	if (Object.keys(map).length === 0) {
 		rmSync(p, { force: true });
 	} else {
-		writeFileSync(p, JSON.stringify(map, null, 2) + "\n", { mode: 0o600 });
-		try {
-			chmodSync(p, 0o600);
-		} catch {
-			// best-effort; file was already written
-		}
+		writeJson0600(p, map);
 	}
 }

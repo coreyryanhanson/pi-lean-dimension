@@ -329,7 +329,7 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   extracts the server's reason, `isPlanGated` flags plan/subscription
   limitations; one implementation used by both `api-probe` and
   `api-fetch`/`/api verify`), `response-spill.ts`, `api-toggle.ts` (`/api` toggle —
-  dispatches all 9 subcommands, incl. the `bootstrap` inject-and-exit arm:
+  dispatches all 10 subcommands, incl. the `bootstrap` inject-and-exit arm:
   brief composition + `sendUserMessage` followUp + learn flip + notify),
   `select-picker.ts` (two-column picker + the ✓/○ checklist multi-select),
   `portal-projection.ts`,
@@ -412,8 +412,7 @@ oauth2). The `oauth2` axis is carried by the sibling pair `twitch`
 no-refresh re-mint) + `twitch-user` (authorization_code — fail-closed
 `oauth_token_missing`, multi-grant slot coexistence) on the shared
 `twitch.tv` store domain: compressed twins of the live-verified caritas
-recipes, grounded in real provider facts but never fetched live
-(see [`docs/design/oauth2-axis-guides.md`](docs/design/oauth2-axis-guides.md)).
+recipes, grounded in real provider facts but never fetched live.
 No `_shared/`, `WAF-NOTES.md`, or `CONTRIBUTING.md` remain here — those moved
 to caritas along with the real recipes.
 

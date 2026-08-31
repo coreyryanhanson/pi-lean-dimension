@@ -11,8 +11,8 @@
  *   read-only `$HOME` doesn't get a `secrets/` dir created under it.
  * - Listing surfaces names only, never values.
  *
- * The store is swappable (the `SecretStore` interface + `setStore`) so the
- * deferred OS-keychain backend is a drop-in without touching callers.
+ * The store is swappable (the `SecretStore` interface + `createFileStore`)
+ * so the deferred OS-keychain backend is a drop-in without touching callers.
  */
 
 import { join } from "node:path";
@@ -23,6 +23,7 @@ import {
 	mkdirSync,
 	readFileSync,
 	readdirSync,
+	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -45,6 +46,19 @@ function assertSecretName(name: string): void {
 			`Invalid secret name '${name}': must be a single name with no '/', '\\', or NUL.`,
 		);
 	}
+}
+
+/** Write a 0600 JSON file atomically: tmp file + rename (atomic on POSIX),
+ *  so a crash mid-write can't shred the domain's existing secrets. */
+function writeFileAtomic0600(p: string, data: unknown): void {
+	const tmp = `${p}.tmp`;
+	writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
+	try {
+		chmodSync(tmp, 0o600); // guard against umask overriding the mode
+	} catch {
+		// best-effort; rename still proceeds
+	}
+	renameSync(tmp, p);
 }
 
 /** File-backed store rooted at `dir` (one `<domain>.json` per domain). */
@@ -81,12 +95,7 @@ export function createFileStore(dir: string): SecretStore {
 			if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 			const file = readFile(domain);
 			file[name] = value;
-			writeFileSync(p, JSON.stringify(file, null, 2) + "\n", { mode: 0o600 });
-			try {
-				chmodSync(p, 0o600); // guard against umask overriding the mode
-			} catch {
-				// best-effort; file was already written
-			}
+			writeFileAtomic0600(p, file);
 		},
 		delete(domain, name) {
 			const p = domainPath(domain); // also asserts domain safety
@@ -99,12 +108,7 @@ export function createFileStore(dir: string): SecretStore {
 				// Prune the empty file so the domain drops out of listDomains.
 				rmSync(p, { force: true });
 			} else {
-				writeFileSync(p, JSON.stringify(file, null, 2) + "\n", { mode: 0o600 });
-				try {
-					chmodSync(p, 0o600);
-				} catch {
-					// best-effort; file was already written
-				}
+				writeFileAtomic0600(p, file);
 			}
 		},
 		deleteDomain(domain) {
@@ -142,11 +146,6 @@ export function getSecretsDir(): string {
 export function setSecretsDir(dir: string): void {
 	_dir = dir;
 	_store = createFileStore(dir);
-}
-
-/** Swap in a different store backend (e.g. OS-keychain, deferred). */
-export function setStore(store: SecretStore): void {
-	_store = store;
 }
 
 // Convenience API (delegates to the active store).

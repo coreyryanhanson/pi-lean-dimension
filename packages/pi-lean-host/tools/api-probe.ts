@@ -19,6 +19,7 @@
 
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { confirmTokenUrl } from "../core/oauth-flow.js";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { fetchUrl, redactSecretParams } from "../core/transport.js";
@@ -379,9 +380,11 @@ async function resolveProbeAuth(
 		// skips only the mint: tokenHeader stays empty and the shared return
 		// below reports the unauthenticated probe + any secret misses.
 		if (ctx?.hasUI) {
-			const ok = await ctx.ui.confirm(
-				`Confirm the token endpoint for '${domain}'`,
-				`Exchange credentials at ${auth!.tokenUrl} (client: '${auth!.clientId}')? The client secret is sent to this URL.`,
+			const ok = await confirmTokenUrl(
+				ctx,
+				domain,
+				auth!.tokenUrl!,
+				auth!.clientId!,
 			);
 			if (!ok)
 				tokenNote = `token-URL confirm declined for "${domain}"; probe proceeding unauthenticated`;

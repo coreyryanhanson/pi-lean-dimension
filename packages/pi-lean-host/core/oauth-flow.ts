@@ -188,6 +188,24 @@ export interface AuthCodeMintOptions {
 }
 
 /**
+ * The human trust-gate for the secret-bearing token endpoint — the one
+ * message every mint-on-demand path must confirm before exchanging
+ * credentials there (the human is the trust root for agent-researched
+ * token URLs). Shared by oauth-mint and api-probe's inline mint.
+ */
+export async function confirmTokenUrl(
+	ctx: ExtensionContext,
+	domain: string,
+	tokenUrl: string,
+	clientId: string,
+): Promise<boolean> {
+	return ctx.ui.confirm(
+		`Confirm the token endpoint for '${domain}'`,
+		`Exchange credentials at ${tokenUrl} (client: '${clientId}')? The client secret is sent to this URL.`,
+	);
+}
+
+/**
  * Mint (or refresh) a token for an authorization_code guide. Order:
  * 1. `--code` → parse the pasted redirect URL / code and complete the
  *    pending flow (headless scripting; interactive users get an inline

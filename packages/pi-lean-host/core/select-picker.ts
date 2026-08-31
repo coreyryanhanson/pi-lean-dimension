@@ -74,12 +74,10 @@ export async function pickWithDescription(
 	});
 }
 
-// ═══════════════════════════════════════════════════════════════
 // Checklist multi-select (✓/○ toggle + Done row) — the one new UI
-// component of the agent-driven OAuth2 bootstrap (oauth2-agent-bootstrap.md
-// branch C1). Same ctx.ui.custom + SelectList scaffolding as above; Enter on
-// a row toggles ✓/○, Enter on the Done row proceeds, Esc cancels.
-// ═══════════════════════════════════════════════════════════════
+// component of the agent-driven OAuth2 bootstrap. Same ctx.ui.custom +
+// SelectList scaffolding as above; Enter on a row toggles ✓/○, Enter on the
+// Done row proceeds, Esc cancels.
 
 const DONE_VALUE = "__done__";
 

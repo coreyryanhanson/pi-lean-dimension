@@ -339,7 +339,7 @@ describe("output-channel audit — params channel / passthrough guard", () => {
 
 // ═══════════════════════════════════════════════════════════════════
 // Error-path URL redaction
-// ══════════════════���════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 
 describe("output-channel audit — error-path URL redaction", () => {
 	it("a HelperError from restGet carries the REDACTED url on err.url", async () => {

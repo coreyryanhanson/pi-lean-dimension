@@ -67,7 +67,7 @@ import {
 import type { OAuthToken } from "./oauth-store.js";
 import { REDIRECT_URI, mintAuthCodeToken } from "./oauth-flow.js";
 import { listNames } from "./secrets-store.js";
-import type { ApiGuide } from "./api-guide-types.js";
+import type { ApiGuide, OAuth2Grant } from "./api-guide-types.js";
 
 /** Full usage + storage docs, surfaced by `--help`. */
 function helpText(): string {
@@ -118,8 +118,7 @@ function tokenExpiry(token: OAuthToken): string {
 }
 
 /** The grant qualifier accepted after a domain in `--status`/`--revoke`. */
-type GrantQualifier = "client_credentials" | "authorization_code";
-const GRANT_QUALIFIERS: readonly GrantQualifier[] = [
+const GRANT_QUALIFIERS: readonly OAuth2Grant[] = [
 	"client_credentials",
 	"authorization_code",
 ];
@@ -241,7 +240,7 @@ export async function handleOauthSubcommand(
 			const qualifier = tokens[1];
 			if (
 				qualifier !== undefined &&
-				!GRANT_QUALIFIERS.includes(qualifier as GrantQualifier)
+				!GRANT_QUALIFIERS.includes(qualifier as OAuth2Grant)
 			) {
 				ctx.ui.notify(
 					`Unknown grant qualifier '${qualifier}' — use client_credentials or authorization_code.`,
