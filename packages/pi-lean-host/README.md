@@ -45,14 +45,15 @@
 2. [The Big Idea: Recipes, Not a Runtime](#the-big-idea-recipes-not-a-runtime)
 3. [`/api` Command — API Toggle](#api-command--api-toggle)
 4. [All 7 Tools](#all-7-tools)
-5. [Multi-Recipe Domains](#multi-recipe-domains)
+5. [Authoring Your First Guide](#authoring-your-first-guide)
 6. [Bundled Reference Recipes](#bundled-reference-recipes)
-7. [`/api status` — Detailed Runtime Status](#api-status--detailed-runtime-status)
-8. [Configuration (`settings.json`)](#configuration-settingsjson)
-9. [Co-Installing with `pi-lean-portal`](#co-installing-with-pi-lean-portal)
-10. [Authentication & Secrets](#authentication--secrets)
-11. [Tips & Best Practices](#tips--best-practices)
-12. [Security & Scope](#security--scope)
+7. [Multi-Recipe Domains](#multi-recipe-domains)
+8. [`/api status` — Detailed Runtime Status](#api-status--detailed-runtime-status)
+9. [Configuration (`settings.json`)](#configuration-settingsjson)
+10. [Co-Installing with `pi-lean-portal`](#co-installing-with-pi-lean-portal)
+11. [Authentication & Secrets](#authentication--secrets)
+12. [Tips & Best Practices](#tips--best-practices)
+13. [Security & Scope](#security--scope)
 
 ---
 
@@ -335,25 +336,42 @@ transcript). Any cancel prints the two-call `/api oauth init <domain> …
 
 ---
 
-## Multi-Recipe Domains
+## Authoring Your First Guide
 
-A domain may claim **multiple guides** — each in its own directory (e.g.
-`internet-archive` + `wayback-availability`, both claiming the `archive.org`
-domain). `buildDomainMap` is multi-valued
-(`Record<string, string[]>`):
+The unauthenticated happy path, end to end:
 
-- `api-guide({domain})` shows a **disambiguation menu** and accepts a `guide`
-  selector (resolved by `shortName`).
-- `api-fetch({domain, operation})` resolves the operation **by name across
-  all matching guides** — exactly one hit executes (helper routed by the
-  guide's directory name, not the routing `domain`); zero lists ops from all
-  matches; an op name appearing in ≥2 guides is an ambiguous collision the
-  authors must fix (re-author via `api-learn` to rename).
+1. **`/api learn`** — enable the authoring tools.
+2. **Ask your agent to author a guide** — point it at the API's
+   documentation (a saved spec document or an online docs URL) and say
+   which endpoints you want. The agent stages a starter template
+   (`api-learn({domain, new: true})`), fills in the recipe — `apiHost`,
+   one operation to start, no pagination needed for a single flat
+   endpoint — and confirms every op block against the spec you supplied.
+   For an endpoint that isn't documented, the agent calls `api-probe` on
+   the live URL to draft the YAML op block for your review.
+3. **Review and save** — the agent validates the draft and saves it to
+   `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/guide.md`
+   (via `api-learn({domain, dir: …})`).
+4. **Use it** — from now on, just ask your agent for data from that API
+   in plain language; it calls `api-fetch`, which discovers the guide by
+   domain and handles URL construction, auth, and pagination. Then run
+   `/api verify example.org` to check every op against the live API — a
+   passing run stamps `verified` on the guide.
 
-Optional `organization:` (catalog grouping) and `description:` (≤200 chars,
-the primary disambiguation signal) fields help the catalog and menu stay
-legible when several guides share a domain. `api-learn` warns on collision so
-you know you're in disambiguation territory.
+Auth-gated API? Two additions, both handled before the guide will fetch
+successfully:
+
+- **Static key** — you provision the value once via `/api secrets <domain>`
+  (transcript-safely, names only in the transcript); the guide declares it
+  by name with `auth.kind: static-key`. See
+  [Authentication & Secrets](#authentication--secrets).
+- **OAuth2** — `/api bootstrap oauth <domain> <spec>` injects a research
+  brief and the agent drives `oauth-mint`; you confirm the token URL, tick
+  the scopes, and paste the redirect URL back. See the `/api bootstrap` row
+  in the [command table](#api-command--api-toggle).
+
+The complete field reference, pagination styles, and helper contracts live
+in [docs/authoring.md](docs/authoring.md).
 
 ---
 
@@ -400,7 +418,29 @@ subdir as a worked example — but it stays inert until you copy the folder.
 See caritas's `CONTRIBUTING.md` for contributing a recipe to the library;
 for authoring one for yourself, see [docs/authoring.md](docs/authoring.md).
 
-### What host ships instead
+## Multi-Recipe Domains
+
+A domain may claim **multiple guides** — each in its own directory (e.g.
+`internet-archive` + `wayback-availability`, both claiming the `archive.org`
+domain). `buildDomainMap` is multi-valued
+(`Record<string, string[]>`):
+
+- `api-guide({domain})` shows a **disambiguation menu** and accepts a `guide`
+  selector (resolved by `shortName`).
+- `api-fetch({domain, operation})` resolves the operation **by name across
+  all matching guides** — exactly one hit executes (helper routed by the
+  guide's directory name, not the routing `domain`); zero lists ops from all
+  matches; an op name appearing in ≥2 guides is an ambiguous collision the
+  authors must fix (re-author via `api-learn` to rename).
+
+Optional `organization:` (catalog grouping) and `description:` (≤200 chars,
+the primary disambiguation signal) fields help the catalog and menu stay
+legible when several guides share a domain. `api-learn` warns on collision so
+you know you're in disambiguation territory.
+
+---
+
+## What Host Ships Instead
 
 Host itself ships only a **synthetic axis-guide set** under `api-guides/` —
 minimal coverage fixtures (no `verified:` date, no live endpoints) that keep
