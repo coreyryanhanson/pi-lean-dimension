@@ -37,7 +37,11 @@ import { appendFooter, contentText } from "./utils.js";
 import { listDomains, listNames } from "../core/secrets-store.js";
 import { listSlots, listTokenDomains, slotKey } from "../core/oauth-store.js";
 import { findGuidesByDomain, loadAllGuides } from "../core/guide-store.js";
-import { hostnameOf, resolveProvisionedParentDomain } from "../core/auth.js";
+import {
+	grantedScopes,
+	hostnameOf,
+	resolveProvisionedParentDomain,
+} from "../core/auth.js";
 import { isApiLearnEnabled } from "../core/api-toggle.js";
 import type { ApiGuide } from "../core/api-guide-types.js";
 
@@ -142,16 +146,16 @@ function expiresLine(
 	return refreshable ? `${base} (refreshable)` : base;
 }
 
-/** Granted scope: what the provider echoed at mint; absent → the guide's
- *  requested scopes with "(assumed)" (RFC 6749 §5.1 — granted = requested).
- *  Live revocation is RFC 7662 territory — deferred. */
+/** Granted scope line from the shared kernel (RFC 6749 §5.1 fallback). */
 function grantedLine(scope: string | undefined, requested: string[]): string {
-	if (scope) {
-		const granted = scope.split(/\s+/).filter(Boolean).join(", ");
-		return requested.length > 0 ? `${granted} (per mint)` : granted;
-	}
-	if (requested.length > 0) return `${requested.join(", ")} (assumed)`;
-	return "(none recorded)";
+	const { scopes, assumed } = grantedScopes(scope, requested);
+	if (scopes.length === 0) return "(none recorded)";
+	const list = scopes.join(", ");
+	return assumed
+		? `${list} (assumed)`
+		: requested.length > 0
+			? `${list} (per mint)`
+			: list;
 }
 
 /** Combined per-domain view: secrets (provisioned/declared/gaps) + token

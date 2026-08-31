@@ -255,6 +255,18 @@ export interface AccessTokenResult {
 	secretValues: string[];
 }
 
+/** Granted scopes for a minted token: what the provider echoed at mint;
+ *  absent → the requested scopes with `assumed: true` (RFC 6749 §5.1 —
+ *  granted = requested). Empty when neither is on record. */
+export function grantedScopes(
+	scope: string | undefined,
+	requested: string[],
+): { scopes: string[]; assumed: boolean } {
+	const echo = scope?.split(/\s+/).filter(Boolean) ?? [];
+	if (echo.length > 0) return { scopes: echo, assumed: false };
+	return { scopes: requested, assumed: requested.length > 0 };
+}
+
 /** Refresh the access token one round trip before real expiry. */
 const EXPIRY_SKEW_MS = 60_000;
 

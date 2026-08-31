@@ -29,6 +29,7 @@ import { Text } from "@earendil-works/pi-tui";
 import {
 	buildSyntheticOAuth2Auth,
 	credentialNameGap,
+	grantedScopes,
 	mintFreshClientCredentials,
 	resolveProvisionedParentDomain,
 	slotOverwriteWarning,
@@ -298,13 +299,14 @@ export const oauthMintTool = defineTool({
 			finalSynthetic.grant,
 			finalSynthetic.tokenUrl,
 		);
-		const echo = minted?.scope?.split(/\s+/).filter(Boolean) ?? [];
-		const actualScopes = echo.length > 0 ? echo : undefined;
 		const requested = pickedScopes ?? [];
-		const scopeList = actualScopes ?? requested;
+		const { scopes: scopeList, assumed } = grantedScopes(
+			minted?.scope,
+			requested,
+		);
 		let scopeLine: string;
-		if (actualScopes !== undefined) {
-			scopeLine = ` Granted scopes: ${actualScopes.join(", ")}.`;
+		if (!assumed && scopeList.length > 0) {
+			scopeLine = ` Granted scopes: ${scopeList.join(", ")}.`;
 		} else if (requested.length > 0) {
 			scopeLine = ` Requested scopes (assumed granted): ${requested.join(", ")}.`;
 		} else {
