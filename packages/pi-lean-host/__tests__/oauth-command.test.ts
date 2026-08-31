@@ -6,7 +6,9 @@
  *    parent-normalized store domain, with the domains[0] ordering note.
  *  - Headless flags, authorization_code: start persists the pending flow and
  *    teaches the init-owned completion; the two-call `init … --code <paste>`
- *    completes it; state mismatch survives for a retry.
+ *    completes it. (State-mismatch/survival semantics are proven once at the
+ *    flow layer — __tests__/oauth-flow.test.ts "--code accepts the full
+ *    redirect URL and validates the state".)
  *  - Store-name rule: unprovisioned client-id nudges /api secrets, no fetch.
  *  - Interactive wizard (mocked ctx.ui): both grants, store-NAME pickers
  *    (values never offered), omit-secret → public PKCE client (method none),
@@ -342,27 +344,6 @@ describe("oauth init — headless flags, authorization_code", () => {
 		expect(
 			readToken("acow.invalid", "authorization_code", TOKEN_URL)?.accessToken,
 		).toBe("NEW");
-	});
-
-	it("state mismatch rejects the paste; the pending flow survives for a retry", async () => {
-		writeSecret("acstate.invalid", "client_id", "MY_CLIENT");
-		const start = makeCtx();
-		await handleOauthSubcommand(
-			`init acstate.invalid --token-url ${TOKEN_URL} --authorize-url ${AUTHORIZE_URL} --client-id client_id`,
-			start.ctx,
-		);
-		expect(
-			readPendingFlow("acstate.invalid", "authorization_code", TOKEN_URL),
-		).not.toBeNull();
-		const m = makeCtx();
-		await handleOauthSubcommand(
-			`init acstate.invalid --token-url ${TOKEN_URL} --authorize-url ${AUTHORIZE_URL} --client-id client_id --code "http://127.0.0.1/callback?code=X&state=WRONG"`,
-			m.ctx,
-		);
-		expect(m.out()).toContain("state mismatch");
-		expect(
-			readPendingFlow("acstate.invalid", "authorization_code", TOKEN_URL),
-		).not.toBeNull();
 	});
 
 	it("--redirect-uri override: authorize URL + pending record carry it; completion exchanges with the same URI", async () => {
