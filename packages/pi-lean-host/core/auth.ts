@@ -737,6 +737,7 @@ async function oauthPost(
 		// answers (mirrors singleGet's abort scope in transport.ts).
 		const res = await fetch(url, {
 			method: "POST",
+			redirect: "error", // token endpoints never redirect; a 3xx must not forward secret-bearing bodies
 			headers: {
 				"content-type": "application/x-www-form-urlencoded",
 				...headers,
