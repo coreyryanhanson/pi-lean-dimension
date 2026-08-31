@@ -192,6 +192,19 @@ describe("emitDraft (marker → style guess)", () => {
 		// author doesn't fall back to restGet just to avoid guessing (issue #3).
 		expect(draft).toContain("base: 1 for 1-based `start` APIs like CMC");
 	});
+
+	it("bare top-level array draft carries a commented paginate block with required itemsPath", () => {
+		const shape = summarize([1, 2, 3]);
+		expect(shape.suggestedVia).toBe("restGet");
+		expect(shape.topLevel).toBe("array");
+		const draft = emitDraft("/items", {}, shape);
+		expect(draft).toContain("via: restGet");
+		expect(draft).toContain("itemsPath is REQUIRED on paginate ops");
+		expect(draft).toContain("# via: paginate");
+		expect(draft).toContain("#   itemsPath: $");
+		// The active block stays restGet — the paginate arm is commented.
+		expect(draft).not.toMatch(/^    pagination:/m);
+	});
 });
 
 describe("#4 probe draft carries the verified version", () => {

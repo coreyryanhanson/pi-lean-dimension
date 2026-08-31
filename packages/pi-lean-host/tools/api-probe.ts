@@ -837,6 +837,21 @@ export function emitDraft(
 			"    # array response with no pagination markers — if the API documents paging, prefer paginate:",
 			"    #   offset-limit advances the page param by pageSize each page (use base: 1 for 1-based `start` APIs like CMC); page increments the page param by 1.",
 		);
+		if (shape.topLevel === "array") {
+			// Bare top-level array — the author would have to hand-convert, and
+			// `itemsPath` is parser-required on paginate ops but invisible here.
+			// Emit the ready-to-uncomment block so the conversion can't drop it.
+			lines.push(
+				"    # bare top-level array — the paginate equivalent (itemsPath is REQUIRED on paginate ops):",
+				"    # via: paginate",
+				"    # pagination:",
+				"    #   style: offset-limit",
+				`    #   itemsPath: ${shape.suggestedItemsPath}`,
+				"    #   pageParam: offset",
+				"    #   pageSizeParam: limit",
+				"    #   pageSize: 30",
+			);
+		}
 	}
 	if (queryParamKeys.length > 0) {
 		lines.push("    params:");
