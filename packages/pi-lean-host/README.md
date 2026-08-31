@@ -48,12 +48,13 @@
 5. [Authoring Your First Guide](#authoring-your-first-guide)
 6. [Bundled Reference Recipes](#bundled-reference-recipes)
 7. [Multi-Recipe Domains](#multi-recipe-domains)
-8. [`/api status` — Detailed Runtime Status](#api-status--detailed-runtime-status)
-9. [Configuration (`settings.json`)](#configuration-settingsjson)
-10. [Co-Installing with `pi-lean-portal`](#co-installing-with-pi-lean-portal)
-11. [Authentication & Secrets](#authentication--secrets)
+8. [What Host Ships Instead](#what-host-ships-instead)
+9. [`/api status` — Detailed Runtime Status](#api-status--detailed-runtime-status)
+10. [Configuration (`settings.json`)](#configuration-settingsjson)
+11. [Co-Installing with `pi-lean-portal`](#co-installing-with-pi-lean-portal)
 12. [Tips & Best Practices](#tips--best-practices)
-13. [Security & Scope](#security--scope)
+13. [Authentication & Secrets](#authentication--secrets)
+14. [Security & Scope](#security--scope)
 
 ---
 
@@ -316,7 +317,7 @@ transcript). Any cancel prints the two-call `/api oauth init <domain> …
 
 ## Authoring Your First Guide
 
-The unauthenticated happy path, end to end:
+The simplest case — a public API with no auth — end to end:
 
 1. **`/api learn`** — enable the authoring tools.
 2. **Ask your agent to author a guide** — point it at the API's
@@ -333,7 +334,7 @@ The unauthenticated happy path, end to end:
 4. **Use it** — from now on, just ask your agent for data from that API
    in plain language; it calls `api-fetch`, which discovers the guide by
    domain and handles URL construction, auth, and pagination. Then run
-   `/api verify example.org` to check every op against the live API — a
+   `/api verify arxiv.org` to check every op against the live API — a
    passing run stamps `verified` on the guide.
 
 Auth-gated API? Two additions, both handled before the guide will fetch
@@ -361,8 +362,7 @@ verified recipes spanning the no-auth **and keyed** axes, each with a
 per-recipe `verified:`-date provenance and the perpetual drift disclaimer.
 They are inert reference material: nothing executes until you copy a recipe
 into your own `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/`
-directory — the folder name must match `slug(shortName)` or it routes to
-**malformed** (see the 0.4.0 breaking-change note above).
+directory.
 
 The domains caritas covers (a discoverability index, may drift from the live
 repo):
@@ -388,7 +388,7 @@ cp -r /tmp/caritas/api-guides/* ~/.pi/agent/pi-lean-host/api-guides/
 ```
 
 To grab a single domain instead of all of them, copy just its folder
-(e.g. `.../api-guides/en.wikipedia.org`).
+(e.g. `.../api-guides/wikipedia-rest`).
 
 Only then does it load and execute. A recipe may carry
 `operation.helper: true` plus an accompanying `helper.ts` in its domain
