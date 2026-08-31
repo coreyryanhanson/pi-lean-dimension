@@ -451,8 +451,11 @@ export function hasUsableTokenPath(auth: OAuth2Auth, domain: string): boolean {
 /**
  * Attach client authentication to a token-endpoint request (RFC 6749 §2.3):
  * `client_secret_basic` → Basic Authorization header, `client_secret_post`
- * (the default) → `client_secret` form field, `none` → nothing. Mutates
- * `form` / `headers`. No-op without a client secret (PKCE public clients).
+ * (the default) → `client_secret` form field. Mutates `form` / `headers`.
+ * No-op without a client secret (PKCE public clients). Returns extra values
+ * callers must add to their `secretValues` scrub set — the Basic credential
+ * (`base64(clientId:secret)`, and its full header form) is a secret a
+ * token-endpoint error body can echo, just like the raw secret.
  */
 function applyClientAuth(
 	auth: OAuth2Auth,
@@ -460,16 +463,19 @@ function applyClientAuth(
 	clientSecret: { secret: string } | null,
 	form: Record<string, string>,
 	headers: Record<string, string>,
-): void {
-	if (!clientSecret) return;
+): string[] {
+	if (!clientSecret) return [];
 	const method = auth.tokenEndpointAuthMethod ?? "client_secret_post";
 	if (method === "client_secret_basic") {
-		headers["authorization"] =
-			"Basic " +
-			Buffer.from(`${clientId}:${clientSecret.secret}`).toString("base64");
+		const cred = Buffer.from(`${clientId}:${clientSecret.secret}`).toString(
+			"base64",
+		);
+		headers["authorization"] = "Basic " + cred;
+		return [cred, `Basic ${cred}`];
 	} else if (method === "client_secret_post") {
 		form["client_secret"] = clientSecret.secret;
 	}
+	return [];
 }
 
 /**
@@ -494,10 +500,17 @@ export async function exchangeAuthCode(
 		code_verifier: verifier,
 	};
 	const headers: Record<string, string> = {};
-	applyClientAuth(auth, clientId, clientSecret, form, headers);
+	const clientAuthValues = applyClientAuth(
+		auth,
+		clientId,
+		clientSecret,
+		form,
+		headers,
+	);
 	const data = await oauthPost(auth.tokenUrl, form, headers, [
 		code,
 		...(clientSecret ? [clientSecret.secret] : []),
+		...clientAuthValues,
 	]);
 	return tokenFromResponse(data);
 }
@@ -554,8 +567,10 @@ async function oauthPost(
 	});
 	const text = await res.text();
 	if (!res.ok) {
+		// Scrub before slicing — a secret straddling the cut would otherwise
+		// leave its prefix unredacted.
 		throw new Error(
-			`OAuth2 endpoint ${res.status}: ${scrubSecretValues(text.slice(0, 300), secretValues)}`,
+			`OAuth2 endpoint ${res.status}: ${scrubSecretValues(text, secretValues).slice(0, 300)}`,
 		);
 	}
 	try {
@@ -606,12 +621,19 @@ async function mintClientCredentialsToken(
 		client_id: clientId,
 	};
 	const headers: Record<string, string> = {};
-	applyClientAuth(auth, clientId, clientSecret, form, headers);
+	const clientAuthValues = applyClientAuth(
+		auth,
+		clientId,
+		clientSecret,
+		form,
+		headers,
+	);
 	if (auth.scopes && auth.scopes.length > 0) {
 		form["scope"] = auth.scopes.join(" ");
 	}
 	const data = await oauthPost(auth.tokenUrl, form, headers, [
 		clientSecret.secret,
+		...clientAuthValues,
 	]);
 	return tokenFromResponse(data);
 }
@@ -629,10 +651,17 @@ async function refreshAccessToken(
 		client_id: clientId,
 	};
 	const headers: Record<string, string> = {};
-	applyClientAuth(auth, clientId, clientSecret, form, headers);
+	const clientAuthValues = applyClientAuth(
+		auth,
+		clientId,
+		clientSecret,
+		form,
+		headers,
+	);
 	const data = await oauthPost(auth.tokenUrl, form, headers, [
 		refreshToken,
 		...(clientSecret ? [clientSecret.secret] : []),
+		...clientAuthValues,
 	]);
 	return tokenFromResponse(data);
 }
@@ -651,8 +680,18 @@ export async function revokeAccessToken(
 			const { clientId, clientSecret } = resolveClientCredentials(auth, domain);
 			const form: Record<string, string> = { token: token.accessToken };
 			const headers: Record<string, string> = {};
-			applyClientAuth(auth, clientId, clientSecret, form, headers);
-			await oauthPost(auth.revokeUrl, form, headers, [token.accessToken]);
+			const clientAuthValues = applyClientAuth(
+				auth,
+				clientId,
+				clientSecret,
+				form,
+				headers,
+			);
+			await oauthPost(auth.revokeUrl, form, headers, [
+				token.accessToken,
+				...(clientSecret ? [clientSecret.secret] : []),
+				...clientAuthValues,
+			]);
 		} catch {
 			// best-effort — the local store is cleared regardless
 		}

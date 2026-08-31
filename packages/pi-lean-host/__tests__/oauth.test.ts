@@ -281,6 +281,26 @@ describe("resolveAccessToken (client_credentials)", () => {
 		expect(res.authHeaders).toEqual({ authorization: "Bearer BASIC" });
 	});
 
+	it("client_secret_basic scrubs the Basic credential from a token-endpoint error body", async () => {
+		provisionCreds("oauth.basic401");
+		const guide = makeOAuthGuide("https://api.example.com", {
+			tokenEndpointAuthMethod: "client_secret_basic",
+		});
+		const basicCred = Buffer.from("MY_CLIENT:S3CRET").toString("base64");
+		// Token endpoint 500s echoing the Authorization header back (WAF
+		// diagnostics do this) — neither the base64 credential nor the raw
+		// secret may leak into the surfaced error.
+		stubTokenEndpoint(() =>
+			tokenResponse({ error: `bad auth: Basic ${basicCred}` }, 500),
+		);
+		const err = await resolveAccessToken(guide.auth, "oauth.basic401").catch(
+			(e: unknown) => e,
+		);
+		const msg = err instanceof Error ? err.message : String(err);
+		expect(msg).not.toContain(basicCred);
+		expect(msg).not.toContain("S3CRET");
+	});
+
 	it("query style returns the token as a redactable query param", async () => {
 		provisionCreds("oauth.query");
 		const guide = makeOAuthGuide("https://api.example.com", {

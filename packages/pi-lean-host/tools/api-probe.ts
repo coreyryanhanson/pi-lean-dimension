@@ -594,9 +594,10 @@ async function fetchOne(
 			: {}),
 	});
 	// Probe-local body scrub: the probe bypasses checkResponseStatus, so
-	// scrub known secret values from the raw slice directly — a 401 body
-	// echoing the key must not leak it into agent context.
-	const raw = scrubSecretValues(res.body.slice(0, 800), authCtx.secretValues);
+	// scrub known secret values from the full body directly — a 401 body
+	// echoing the key must not leak it into agent context. Scrub before
+	// slicing so a secret straddling the cut can't leave a partial prefix.
+	const raw = scrubSecretValues(res.body, authCtx.secretValues).slice(0, 800);
 	const finalUrl = redactSecretParams(
 		res.finalUrl ?? rawUrl,
 		authCtx.secretQueryParamNames,
