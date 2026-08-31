@@ -615,6 +615,25 @@ describe("handleOauthSubcommand — slot-aware guide-less paths", () => {
 		expect(m.out()).toContain("State: valid");
 	});
 
+	it("guide-less --status with exactly one slot reports it without a qualifier", async () => {
+		const domain = "single.invalid";
+		writeToken(domain, CC, TOKEN_URL, {
+			accessToken: "T",
+			expiresAt: Date.now() + 3_600_000,
+		});
+		const m = makeCtx();
+		await handleOauthSubcommand(`${domain} --status`, m.ctx);
+		expect(m.out()).toContain("no guide");
+		expect(m.out()).toContain("State: valid");
+	});
+
+	it("guide-less --revoke with no token says so (no guide error)", async () => {
+		const m = makeCtx();
+		await handleOauthSubcommand("never-provisioned.invalid --revoke", m.ctx);
+		expect(m.out()).toContain("no token");
+		expect(m.out()).not.toContain("No API guide");
+	});
+
 	it("guide-less --revoke with an unknown qualifier says so", async () => {
 		const m = makeCtx();
 		await handleOauthSubcommand(`${ORPHAN} bogus_grant --revoke`, m.ctx);
