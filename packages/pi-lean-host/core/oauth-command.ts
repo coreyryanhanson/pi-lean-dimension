@@ -117,6 +117,16 @@ function tokenExpiry(token: OAuthToken): string {
 		: new Date(token.expiresAt).toISOString();
 }
 
+/** State/Expires/Refresh/Scope detail lines shared by both --status arms. */
+function tokenDetailLines(token: OAuthToken): string[] {
+	return [
+		`  State: ${tokenState(token)}`,
+		`  Expires: ${tokenExpiry(token)}`,
+		...(token.refreshToken ? ["  Refresh token: present"] : []),
+		...(token.scope ? [`  Scope: ${token.scope}`] : []),
+	];
+}
+
 /** The grant qualifier accepted after a domain in `--status`/`--revoke`. */
 const GRANT_QUALIFIERS: readonly OAuth2Grant[] = [
 	"client_credentials",
@@ -294,10 +304,7 @@ export async function handleOauthSubcommand(
 					[
 						`🔑 OAuth2 for '${storeDomain}' (no guide) — slot ${slot.grant}`,
 						`  Token URL: ${slot.tokenUrl}`,
-						`  State: ${tokenState(slot.token)}`,
-						`  Expires: ${tokenExpiry(slot.token)}`,
-						...(slot.token.refreshToken ? ["  Refresh token: present"] : []),
-						...(slot.token.scope ? [`  Scope: ${slot.token.scope}`] : []),
+						...tokenDetailLines(slot.token),
 						...(pending ? ["  Pending flow: awaiting --code paste"] : []),
 					].join("\n"),
 					"info",
@@ -399,11 +406,8 @@ export async function handleOauthSubcommand(
 		}
 		const lines = [
 			`🔑 OAuth2 for '${storeDomain}' (grant ${auth.grant})`,
-			`  State: ${tokenState(token)}`,
-			`  Expires: ${tokenExpiry(token)}`,
+			...tokenDetailLines(token),
 		];
-		if (token.refreshToken) lines.push(`  Refresh token: present`);
-		if (token.scope) lines.push(`  Scope: ${token.scope}`);
 		ctx.ui.notify(lines.join("\n"), "info");
 		return;
 	}
