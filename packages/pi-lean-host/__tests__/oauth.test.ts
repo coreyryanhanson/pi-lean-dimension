@@ -259,6 +259,35 @@ describe("resolveAccessToken (client_credentials)", () => {
 		expect(readToken("oauth.locked", CC, TT)?.refreshToken).toBe("RT-2");
 	});
 
+	it("a hung token endpoint times out at 30s instead of hanging the command", async () => {
+		// oauthPost must abort like the GET transport does — a dead tokenUrl
+		// otherwise holds the per-slot lock (and every queued caller) until
+		// undici's much longer default timeouts give up.
+		provisionCreds("oauth.hang");
+		const guide = makeOAuthGuide("https://api.example.com");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(
+				(_url: unknown, init?: RequestInit) =>
+					new Promise<Response>((_resolve, reject) => {
+						// Fetch's abort contract: reject with the signal's reason.
+						init?.signal?.addEventListener("abort", () =>
+							reject(init?.signal?.reason ?? new Error("aborted")),
+						);
+					}),
+			),
+		);
+		vi.useFakeTimers();
+		try {
+			const pending = resolveAccessToken(guide.auth, "oauth.hang");
+			const assertion = expect(pending).rejects.toThrow("timeout");
+			await vi.advanceTimersByTimeAsync(30_000);
+			await assertion;
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("expired token without a refresh token → re-mint (client_credentials)", async () => {
 		provisionCreds("oauth.remint");
 		const guide = makeOAuthGuide("https://api.example.com");

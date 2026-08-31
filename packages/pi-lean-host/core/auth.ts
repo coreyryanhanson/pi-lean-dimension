@@ -628,28 +628,48 @@ async function oauthPost(
 	headers: Record<string, string>,
 	secretValues: string[],
 ): Promise<Record<string, unknown>> {
-	const res = await fetch(url, {
-		method: "POST",
-		headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
-		body: new URLSearchParams(form).toString(),
-	});
-	const text = await res.text();
-	if (!res.ok) {
-		// Scrub before slicing — a secret straddling the cut would otherwise
-		// leave its prefix unredacted.
-		throw new Error(
-			`OAuth2 endpoint ${res.status}: ${scrubSecretValues(text, secretValues).slice(0, 300)}`,
-		);
-	}
+	// ponytail: fixed 30s matching transport's DEFAULT_TIMEOUT — configurable
+	// only if a provider ever needs more. Without this, a hung token endpoint
+	// holds the per-slot lock (and the user's command) until undici's 300s
+	// headersTimeout finally gives up.
+	const ac = new AbortController();
+	const timer = setTimeout(
+		() => ac.abort(new Error("OAuth2 endpoint timeout (30s)")),
+		30_000,
+	);
 	try {
-		const data = JSON.parse(text);
-		if (data && typeof data === "object" && !Array.isArray(data)) {
-			return data as Record<string, unknown>;
+		// The timer spans headers AND the body read — a server that sends
+		// headers then stalls mid-body is hung just as hard as one that never
+		// answers (mirrors singleGet's abort scope in transport.ts).
+		const res = await fetch(url, {
+			method: "POST",
+			headers: {
+				"content-type": "application/x-www-form-urlencoded",
+				...headers,
+			},
+			body: new URLSearchParams(form).toString(),
+			signal: ac.signal,
+		});
+		const text = await res.text();
+		if (!res.ok) {
+			// Scrub before slicing — a secret straddling the cut would otherwise
+			// leave its prefix unredacted.
+			throw new Error(
+				`OAuth2 endpoint ${res.status}: ${scrubSecretValues(text, secretValues).slice(0, 300)}`,
+			);
 		}
-	} catch {
-		// empty / non-JSON body — valid for revocation (RFC 7009)
+		try {
+			const data = JSON.parse(text);
+			if (data && typeof data === "object" && !Array.isArray(data)) {
+				return data as Record<string, unknown>;
+			}
+		} catch {
+			// empty / non-JSON body — valid for revocation (RFC 7009)
+		}
+		return {};
+	} finally {
+		clearTimeout(timer);
 	}
-	return {};
 }
 
 function tokenFromResponse(data: Record<string, unknown>): OAuthToken {
