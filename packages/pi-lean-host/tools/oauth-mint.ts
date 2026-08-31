@@ -36,12 +36,13 @@ import {
 	OAuthTokenMissingError,
 } from "../core/auth.js";
 import type { SyntheticOAuth2Fields } from "../core/auth.js";
-import { readToken } from "../core/oauth-store.js";
+import { initFlagsFromFields } from "../core/oauth-command.js";
 import {
 	confirmTokenUrl,
 	mintAuthCodeToken,
 	REDIRECT_URI,
 } from "../core/oauth-flow.js";
+import { readToken } from "../core/oauth-store.js";
 import { pickChecklist } from "../core/select-picker.js";
 import { appendFooter } from "./utils.js";
 
@@ -50,20 +51,7 @@ export function escapeHatchCommand(
 	domain: string,
 	fields: SyntheticOAuth2Fields,
 ): string {
-	const flags = [
-		`--grant ${fields.grant}`,
-		`--token-url ${fields.tokenUrl}`,
-		...(fields.authorizeUrl === undefined
-			? []
-			: [`--authorize-url ${fields.authorizeUrl}`]),
-		`--client-id ${fields.clientId}`,
-		...(fields.clientSecret === undefined
-			? []
-			: [`--client-secret ${fields.clientSecret}`]),
-		...(fields.tokenEndpointAuthMethod === undefined
-			? []
-			: [`--token-endpoint-auth-method ${fields.tokenEndpointAuthMethod}`]),
-	];
+	const flags = initFlagsFromFields(fields);
 	return `/api oauth init ${domain} ${flags.join(" ")} --code <redirect-url-or-code>`;
 }
 

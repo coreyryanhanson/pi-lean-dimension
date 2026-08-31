@@ -522,6 +522,28 @@ const INIT_FLAG_NAMES: readonly string[] = [
 	"--code",
 ];
 
+/**
+ * Serialize SyntheticOAuth2Fields into the init flag grammar above. Lives
+ * next to INIT_FLAG_NAMES so a flag rename here can't silently drift the
+ * escape-hatch hint oauth-mint emits.
+ */
+export function initFlagsFromFields(fields: SyntheticOAuth2Fields): string[] {
+	return [
+		`--grant ${fields.grant}`,
+		`--token-url ${fields.tokenUrl}`,
+		...(fields.authorizeUrl === undefined
+			? []
+			: [`--authorize-url ${fields.authorizeUrl}`]),
+		`--client-id ${fields.clientId}`,
+		...(fields.clientSecret === undefined
+			? []
+			: [`--client-secret ${fields.clientSecret}`]),
+		...(fields.tokenEndpointAuthMethod === undefined
+			? []
+			: [`--token-endpoint-auth-method ${fields.tokenEndpointAuthMethod}`]),
+	];
+}
+
 /** Wizard picker option meaning "no client secret" (PKCE public client). */
 const OMIT_SECRET = "(omit — PKCE public client)";
 
