@@ -94,15 +94,6 @@ Or skip the authoring and **copy a bundled reference recipe** (see
 immediately. The folder name must match `slug(shortName)` (see the
 0.4.0 breaking-change note above).
 
-> **Host-only is a first-class install.** `pi-lean-host` declares
-> `pi-lean-portal` as an *optional* peer dependency and has zero static
-> imports from it. The core loop — authoring via docs/example, on-demand
-> discovery, guided execution — runs with no browser package installed.
-> Co-installing portal is planned to unlock two additive features
-> (navigate-footer surfacing and probe-authoring via `web-fetch`) in a
-> **future release**. Host-side projection code is present but inert
-> until portal ships the receiving global (`__piLeanPortalRegisterGuideProvider`).
-
 ---
 
 ## The Big Idea: Recipes, Not a Runtime
