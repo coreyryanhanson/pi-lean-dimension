@@ -760,6 +760,48 @@ describe("probe redirect handling (live localhost)", () => {
 			}
 		});
 
+		it("mint fields + non-cc grant → loud note, no mint, no slot stamp", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-grant-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			let tokenPosts = 0;
+			const server = http.createServer((req, res) => {
+				if (req.method === "POST") tokenPosts++;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: {
+							useTokenStore: true,
+							grant: "authorization_code",
+							tokenUrl: `${base}/token`,
+							clientId: "cid",
+						},
+					},
+				);
+				expect(tokenPosts).toBe(0);
+				expect(result.note ?? "").toContain("client_credentials-only");
+				expect(result.note ?? "").toContain("authorization_code");
+				// No cc slot was stamped behind the caller's back.
+				expect(
+					readToken("example.com", "client_credentials", `${base}/token`) ?? null,
+				).toBeNull();
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
 		it("a fresh cached token short-circuits the mint (no POST)", async () => {
 			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-cache-"));
 			const prevDir = getOAuthDir();

@@ -335,6 +335,26 @@ async function resolveProbeAuth(
 	const useTokenStore = !!auth?.useTokenStore;
 	// Inline mint fields imply the token path even without useTokenStore.
 	const hasMintFields = !!auth?.tokenUrl && !!auth?.clientId;
+	// tokenUrl is load-bearing for both arms (mint destination AND store slot
+	// key), so mint fields + any non-cc grant is an ambiguous mix — refuse
+	// loudly instead of silently minting a client_credentials token that
+	// overwrites the intent (and stamps a cc slot nobody asked for).
+	if (hasMintFields && auth?.grant && auth.grant !== "client_credentials") {
+		return {
+			hasAuthBlock: true,
+			headers: {},
+			queryParams: {},
+			secretHeaderNames: new Set(),
+			secretQueryParamNames: new Set(),
+			secretValues: [],
+			missingNames: [],
+			misconfiguredPrefixes,
+			tokenNote:
+				`mint fields (tokenUrl + clientId) are client_credentials-only; ` +
+				`drop auth.grant ("${auth.grant}") or omit the mint fields and set ` +
+				`auth.useTokenStore to read the existing ${auth.grant} slot`,
+		};
+	}
 	if (!hasRefs && !useTokenStore && !hasMintFields) {
 		return {
 			hasAuthBlock: false,
