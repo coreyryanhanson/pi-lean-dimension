@@ -173,6 +173,12 @@ describe("parsePastedRedirect", () => {
 		).toThrow("access_denied — User cancelled");
 	});
 
+	it("treats a bare base64-padded code as a code, not a query", () => {
+		expect(parsePastedRedirect("AQBBx9f-_2a==")).toEqual({
+			code: "AQBBx9f-_2a==",
+		});
+	});
+
 	it("rejects a query with no code", () => {
 		expect(() => parsePastedRedirect("state=ST")).toThrow("no `code`");
 	});

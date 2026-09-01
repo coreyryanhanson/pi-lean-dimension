@@ -120,7 +120,9 @@ export function parsePastedRedirect(input: string): PastedAuthResult {
 	if (!trimmed) {
 		throw new Error("Pasted OAuth2 authorization result is empty.");
 	}
-	if (trimmed.includes("=")) {
+	// Only treat as query-ish when it actually carries an OAuth param —
+	// a bare base64-padded code contains `=` but is not a query.
+	if (/(^|[?&])(code|error|state)=/.test(trimmed)) {
 		// Query-ish: after a "?" if present, else the whole string.
 		const qs = trimmed.includes("?")
 			? trimmed.slice(trimmed.indexOf("?") + 1)
