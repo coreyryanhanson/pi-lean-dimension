@@ -344,7 +344,7 @@ async function handleBootstrapSubcommand(
 		ctx.ui.notify(
 			`Usage: /api bootstrap oauth <domain> <spec> — both required, domain first.\n` +
 				`  <spec> is any provider docs URL or file for the agent to research.\n` +
-				`  Example: /api bootstrap oauth openstreetmap.org https://wiki.openstreetmap.org/wiki/API OAuth`,
+				`  Example: /api bootstrap oauth openstreetmap.org https://wiki.openstreetmap.org/wiki/OAuth`,
 			"warning",
 		);
 		return;
@@ -419,7 +419,7 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 	pi.registerCommand("api", {
 		description:
 			"Enable/disable API tools. " +
-			"Usage: /api on | off | learn | status | helpers [domain] | secrets [domain [name] | --help] | verify <domain> [guide] [--force] | delete <domain> [guide] | bootstrap oauth <domain> <spec>",
+			"Usage: /api on | off | learn | status | helpers [domain] | secrets [domain [name] | --help] | verify <domain> [guide] [--force] | delete <domain> [guide] | oauth <domain> … | bootstrap oauth <domain> <spec>",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const trimmed = args.trim();
 			const parts = trimmed.split(/\s+/);

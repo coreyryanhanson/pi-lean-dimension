@@ -11,9 +11,10 @@
  * successful executor result or a structured non-run outcome.
  *
  * Throws `HelperError` / transport errors up to the caller (both call sites
- * catch); returns a non-`ok` result only for the two conditions that are
- * *not* run failures: a session-disabled local helper (skip, not fail) and
- * a fail-closed missing `requires` secret (short-circuit before dispatch).
+ * catch); returns a non-`ok` result only for the conditions that are
+ * *not* run failures: a session-disabled local helper (skip, not fail), a
+ * fail-closed missing `requires` secret, and a fail-closed missing OAuth
+ * token (both short-circuit before dispatch).
  */
 
 import {
