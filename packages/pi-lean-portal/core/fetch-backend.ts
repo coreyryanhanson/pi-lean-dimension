@@ -54,10 +54,7 @@ function detectNeedsJavaScript(root: ReturnType<typeof parseHtml>): boolean {
 		const noscriptText = noscripts
 			.map((n) => n.textContent?.trim() || "")
 			.join("");
-		if (
-			noscriptText.length > 0 &&
-			noscriptText.length > bodyText.length * 0.5
-		) {
+		if (noscriptText.length > 0 && noscriptText.length > bodyText.length * 0.5) {
 			return true;
 		}
 	}
@@ -104,8 +101,7 @@ async function performFetch(
 			signal: controller.signal,
 			headers: {
 				"User-Agent": DEFAULT_USER_AGENT,
-				Accept:
-					"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+				Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 				"Accept-Language": "en-US,en;q=0.5",
 			},
 			redirect: "follow",
@@ -145,8 +141,7 @@ function htmlToMarkdown(root: ReturnType<typeof parseHtml>): string {
 			el.getAttribute("aria-label") || el.getAttribute("title") || "";
 		const role = el.getAttribute("role") || "";
 		const img = el.querySelector("image") || el.querySelector("img");
-		const alt =
-			img?.getAttribute("aria-label") || img?.getAttribute("alt") || "";
+		const alt = img?.getAttribute("aria-label") || img?.getAttribute("alt") || "";
 		const label = ariaLabel || alt || role || "";
 		if (label) {
 			el.replaceWith(`[SVG: ${label.trim()}]`);
@@ -410,7 +405,7 @@ export async function webFetch(
 	);
 	if (botDetected)
 		lines.push(
-			"⚠ Bot detection triggered — the page may be blocking automation. Try browser-navigate with a stealth backend instead if one is configured.",
+			"⚠ Bot detection triggered, the page may be blocking automation. Try browser-navigate instead, ideally with a stealth backend if one is configured.",
 		);
 	lines.push(statusCode ? `HTTP ${statusCode}` : "");
 	lines.push("");

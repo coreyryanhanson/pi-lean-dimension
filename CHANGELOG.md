@@ -178,6 +178,12 @@
 
 ### Changed
 
+- **`web-fetch` 4xx failures now suggest `browser-navigate`** — when a
+  plain HTTP fetch is rejected with a 4xx status (bot/UA gates, auth
+  walls), the tool result appends a tip to steer the agent toward
+  `browser-navigate`, which a real browser often passes where a bare
+  fetch is refused. 404s are exempt (a browser hits the same wall) and
+  5xx is out of scope (server-side, not a fetch-vs-browser gap).
 - **Crash events now surface in navigate results** — `DialogEvent`
   gained a `"crash"` type and `handledAs` became optional (absent for
   non-dialog events). The router renders these under a renamed

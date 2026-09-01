@@ -58,11 +58,18 @@ export const webFetchTool = defineTool({
 		const result = await webFetch(fetchOptions);
 
 		if (!result.success) {
+			const httpHint =
+				result.statusCode !== undefined &&
+				result.statusCode >= 400 &&
+				result.statusCode < 500 &&
+				result.statusCode !== 404
+					? "\nTip: some sites block plain HTTP fetches but allow real browsers. If the page should be public, try browser-navigate instead."
+					: "";
 			return {
 				content: [
 					{
 						type: "text",
-						text: `Fetch failed: ${result.error ?? "unknown error"}`,
+						text: `Fetch failed: ${result.error ?? "unknown error"}${httpHint}`,
 					},
 				],
 				details: {
@@ -82,7 +89,7 @@ export const webFetchTool = defineTool({
 				? "⚠ This page appears to need JavaScript for full rendering."
 				: "",
 			result.botDetected
-				? "⚠ Bot detection triggered — the page may be blocking automation. Try browser-navigate with a stealth backend instead if one is configured."
+				? "⚠ Bot detection triggered, the page may be blocking automation. Try browser-navigate instead, ideally with a stealth backend if one is configured."
 				: "",
 			"",
 			result.content,
