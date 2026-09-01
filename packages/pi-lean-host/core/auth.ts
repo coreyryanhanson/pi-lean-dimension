@@ -778,7 +778,10 @@ function tokenFromResponse(data: Record<string, unknown>): OAuthToken {
 	if (typeof data["refresh_token"] === "string") {
 		token.refreshToken = data["refresh_token"];
 	}
-	const expiresIn = data["expires_in"];
+	// Some providers return a string despite RFC 6749 §5.1 — coerce or the
+	// token is cached as eternal (isTokenExpired treats missing expiresAt as fresh).
+	const raw = data["expires_in"];
+	const expiresIn = typeof raw === "string" ? Number(raw) : raw;
 	if (typeof expiresIn === "number" && Number.isFinite(expiresIn)) {
 		token.expiresAt = Date.now() + expiresIn * 1000;
 	}
