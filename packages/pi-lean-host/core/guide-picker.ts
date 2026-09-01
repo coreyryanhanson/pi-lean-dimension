@@ -1,12 +1,13 @@
 /**
- * Interactive guide picker for the /api verify and /api delete commands.
+ * Interactive guide picker for the /api verify, /api delete, and /api oauth
+ * commands.
  *
  * When a domain claims N guides and no `guide` selector is supplied, the
- * commands show a `SelectList` (from @earendil-works/pi-tui, already a peer
- * dep) with the shortName in the primary column and the guide description in
- * a second column — the user picks with ↑↓/enter instead of retyping the
- * command with a shortName. `value` is the dirName (unique, unlike shortName,
- * which can be ambiguous across sibling guides).
+ * commands show a two-column picker (shared `pickWithDescription` helper) —
+ * shortName in the primary column, guide description in the second. The user
+ * picks with ↑↓/enter instead of retyping the command with a shortName.
+ * `value` is the dirName (unique, unlike shortName, which can be ambiguous
+ * across sibling guides).
  *
  * Terminal-only: `ctx.mode === "tui"` (custom components don't exist in
  * RPC/print). In headless/RPC/print `pickGuide` returns undefined and the
@@ -16,14 +17,15 @@
  */
 
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import {
-	Container,
-	type SelectItem,
-	SelectList,
-	Text,
-} from "@earendil-works/pi-tui";
+import type { SelectItem } from "@earendil-works/pi-tui";
 import { GUIDE_SCHEMA_VERSION, type ApiGuide } from "./api-guide-types.js";
-import { isStaleSchema } from "./parse-api-guide.js";
+import {
+	formatGuideListings,
+	isStaleSchema,
+	selectGuideByShortName,
+	shortNameErrorText,
+} from "./parse-api-guide.js";
+import { pickWithDescription } from "./select-picker.js";
 
 /**
  * Build the picker rows: `value` = dirName (unique), `label` = shortName (with
@@ -52,10 +54,10 @@ export function buildGuidePickerItems(
 }
 
 /**
- * Let the user pick one of a domain's guides interactively (TUI only).
- * Returns the selected `{ guide, dirName }`, or undefined when the picker is
- * unavailable (not TUI mode) or the user cancelled — the caller then renders
- * its own text menu fallback.
+ * Let the user pick one of a domain's guides interactively (TUI gets the
+ * two-column SelectList; other modes return undefined so the caller renders
+ * its own text menu fallback). Returns the selected `{ guide, dirName }`, or
+ * undefined when the picker is unavailable or the user cancelled.
  */
 export async function pickGuide(
 	ctx: ExtensionCommandContext,
@@ -63,42 +65,61 @@ export async function pickGuide(
 ): Promise<{ guide: ApiGuide; dirName: string } | undefined> {
 	if (ctx.mode !== "tui") return undefined;
 
-	const items = buildGuidePickerItems(matches);
-
-	const picked = await ctx.ui.custom<string | undefined>(
-		(tui, theme, _kb, done) => {
-			const container = new Container();
-			container.addChild(
-				new Text(theme.fg("accent", theme.bold("Select API guide"))),
-			);
-			const list = new SelectList(items, Math.min(items.length, 10), {
-				selectedPrefix: (text) => theme.fg("accent", text),
-				selectedText: (text) => theme.fg("accent", text),
-				description: (text) => theme.fg("muted", text),
-				scrollInfo: (text) => theme.fg("dim", text),
-				noMatch: (text) => theme.fg("warning", text),
-			});
-			list.onSelect = (item) => done(item.value);
-			list.onCancel = () => done(undefined);
-			container.addChild(list);
-			container.addChild(
-				new Text(theme.fg("dim", "↑↓ navigate • enter select • esc cancel")),
-			);
-			return {
-				render(width: number) {
-					return container.render(width);
-				},
-				invalidate() {
-					container.invalidate();
-				},
-				handleInput(data: string) {
-					list.handleInput(data);
-					tui.requestRender();
-				},
-			};
-		},
+	const picked = await pickWithDescription(
+		ctx,
+		"Select API guide",
+		buildGuidePickerItems(matches),
 	);
 
 	if (picked === undefined) return undefined;
 	return matches.find((m) => m.dirName === picked);
+}
+
+/**
+ * Shared notify-based guide selection for commands: 1 match → it wins; a
+ * selector → resolve by shortName (error + stop on no match); otherwise the
+ * interactive picker with the text-menu fallback. Returns undefined when the
+ * caller should stop (fallback menu shown or selection error notified).
+ * Callers keep their own 0-match branch — those messages genuinely differ.
+ * `ctx.ui.notify`-based only (the tool-channel sites — api-guide, api-learn,
+ * api-scaffold — keep their own skeletons).
+ */
+export async function pickGuideForCommand(
+	ctx: ExtensionCommandContext,
+	domain: string,
+	selector: string | undefined,
+	matches: { guide: ApiGuide; dirName: string }[],
+	command: string,
+	label = "API guides",
+): Promise<{ guide: ApiGuide; dirName: string } | undefined> {
+	if (matches.length === 1) return matches[0];
+	if (selector) {
+		const sel = selectGuideByShortName(matches, selector);
+		if (!sel.ok) {
+			ctx.ui.notify(
+				shortNameErrorText(
+					sel,
+					domain,
+					selector,
+					`Call ${command} ${domain} to see the menu.`,
+				),
+				"warning",
+			);
+			return undefined;
+		}
+		return sel;
+	}
+	// N guides, no selector → interactive pick (TUI) or the menu fallback
+	// (headless/RPC/print or cancelled), nothing run yet.
+	const picked = await pickGuide(ctx, matches);
+	if (picked) return picked;
+	ctx.ui.notify(
+		[
+			`${matches.length} ${label} for '${domain}':`,
+			formatGuideListings(matches),
+			`Call ${command} ${domain} <shortName> to pick one.`,
+		].join("\n"),
+		"info",
+	);
+	return undefined;
 }

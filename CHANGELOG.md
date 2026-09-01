@@ -13,16 +13,18 @@
   re-derived each session. Guides live at
   `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/` and only files you
   place there execute — bundled recipes are inert reference material.
-  Ships 5 tools (`api-guide`, `api-fetch`, `api-learn`, `api-probe`,
-  `api-scaffold`)
+  Ships 7 tools (`api-guide`, `api-fetch`, `api-learn`, `api-probe`,
+  `api-scaffold`, `api-store`, `oauth-mint`)
   and the `/api` command. The package declares `pi-lean-portal` as an
   **optional peer dependency** — host-only installs are valid.
 - **`/api` toggle — independent peer of `/web`** — `on|off|learn|status`
-  plus `helpers`, `secrets`, `verify`, and `delete` subcommands. The two
+  plus `helpers`, `secrets`, `verify`, `delete`, `oauth`, and `bootstrap`
+  subcommands. The two
   toggles compose freely: each owns its own toolset and status-bar glyph, and
   `/api on` + `/web off` yields a pure **api-only** context with zero
   `browser-*` noise for batch structured-data pulls. Three states
-  (`on`, `learn`, `off`) with `api-learn`/`api-probe` gated behind
+  (`on`, `learn`, `off`) with the authoring tools (`api-learn`,
+  `api-probe`, `api-scaffold`, `api-store`, `oauth-mint`) gated behind
   `learn`; starts **on**. State persists via `pi-tool-masking`
   (`persistKey: toolset-state:pi-lean-dimension.api` / `.api-learn`),
   with defaults overridable through the `toolsetDefaults` settings tier.
@@ -33,7 +35,9 @@
   (any runnable-op failure → no stamp; skipped ops named; `--force` is
   human-typed only); `/api delete <domain> [guide]` removes a guide
   directory and invalidates the guide-store cache (human-typed recovery
-  gesture, no agent tool surface).
+  gesture, no agent tool surface). `/api oauth <domain> …` (init / mint /
+  `--status` / `--refresh` / `--revoke` / `--code <code>` per token slot)
+  manages OAuth2 tokens.
 - **Recipe schema and fixed executor** — `via: restGet|paginate` per
   operation; `responseShape.format: json|xml|text` with an IANA
   `charset` fallback (header charset always wins). Six pagination styles
@@ -47,8 +51,9 @@
   stale guide warns non-blockingly in `api-guide`/`api-fetch`, never
   gating the load. v1 is **GET-read only** — no mutation helper.
 - **`api-learn` + `api-probe` + `api-scaffold` authoring loop** — `api-learn`
-  stages the working copy to `/tmp/pi-lean-host/<slug(shortName)>/` and saves
-  from a staged **directory** (`dir`), so the model never round-trips a giant
+  stages the working copy to `/tmp/pi-lean-host/<domain>/` for starter
+  templates (`new: true`) or `/<slug(shortName)>/` for fetched recipes, and
+  saves from a staged **directory** (`dir`), so the model never round-trips a giant
   recipe string. `domain` is required: `{domain, new: true}` stages a
   fail-closed starter template (only `domains` is real; the rest are
   `<placeholder>` values that reject until filled), and `{domain}` fetches an
@@ -82,18 +87,21 @@
   save/validate cycle instead of one per line. Authoring is spec-first,
   probe-second; the agent never authors guides unprompted outside
   `/api learn`.
-- **Static-key auth and per-domain secrets store** — `auth.kind:
-  static-key` realizes store-backed `secretRefs` (header injection),
-  `secretQueryRefs` (query-param injection), `requires`/`optional`
-  secret sets (parser-enforced to coincide with the refs), and an
-  optional `headerPrefixes` map (`headerName -> prefix`) prepended to
-  the resolved secret value at fetch time, so the store holds the raw
-  credential while the guide declares how it is presented (e.g.
-  `Authorization: "Bearer "`) — without it, the token-scheme prefix
-  was smuggled into every user's secret store. `api-fetch` resolves
-  and injects values in code — the value never enters agent context; a
-  missing `requires` secret **fails closed before the request**.
-  Secrets persist at
+- **Auth: v1 union schema and per-domain secrets store** — `auth.kind` is
+  a `NoneAuth | StaticKeyAuth | OAuth2Auth` discriminated union and every
+  secret reference is a nested `SecretRef` — `{ secret, prefix?, optional? }`,
+  where `secret` is the store name, `prefix` is prepended to the resolved
+  value at fetch time (e.g. `Authorization: "Bearer "`), and `optional: true`
+  means absent → proceed unauthenticated (otherwise the ref is hard-required
+  and absent → `api-fetch` **fails closed before the request**). Availability
+  and prefix are properties of each ref — the old flat rosters
+  (`requires`/`optional`/`headerPrefixes`) are gone. `static-key` realizes
+  `secretRefs` (header injection) + `secretQueryRefs` (query-param injection,
+  collision with any op's `params` rejected at parse); `oauth2` is realized
+  at runtime (see the OAuth2 bullet below). Guides authoring against earlier
+  snapshots of the flat shape should be migrated per
+  `docs/migration-v1.md`. `api-fetch` resolves and injects values in
+  code — the value never enters agent context. Secrets persist at
   `~/.pi/agent/pi-lean-host/secrets/<domain>.json` (mode `0600`,
   lazy-mkdir-on-write-only), provisioned transcript-safely via
   `/api secrets` (names only, never values; headless hosts get direct
@@ -102,9 +110,27 @@
   `details.headers`, redacts query-param secrets to `?param=***` on
   every surfaced URL, and forces any auth-bearing call through the
   SSRF-guarded redirect loop with injected secrets stripped on
-  cross-domain hops. `oauth2` is a declared-but-unrealized seam
-  (rejected at parse); an OS-keychain at-rest backend is deferred (the
+  cross-domain hops. An OS-keychain at-rest backend is deferred (the
   `0600` file stays the honest default).
+- **OAuth2 token flows and `api-store` inspection** — `auth.kind: oauth2`
+  is realized: `client_credentials` mints/caches/lazily-refreshes via
+  `resolveAccessToken` (per-slot lock + skew buffer), and the auth-code
+  flow is headless paste-based (authorize URL printed, the user consents
+  in their own browser and pastes the redirect URL back — RFC 8252 §7.3
+  `http://127.0.0.1/callback` convention). Token slots are keyed by
+  `(storeDomain, grant, tokenUrl)` so one domain can hold multiple grants
+  and issuers without clobbering. `/api oauth` init / mint / `--status` /
+  `--refresh` / `--revoke` / `--code <code>` per slot (human-typed);
+  `/api bootstrap oauth <domain> <spec>` injects an agent-driven research
+  brief; `oauth-mint` is the learn-gated human-in-the-loop mint tool (the
+  agent supplies researched params; the human confirms the token URL, picks
+  scopes, and pastes the redirect URL — it never enters the transcript).
+  The learn-gated `api-store` tool is the agent's read-only combined view
+  of both credential stores: bare call → orphan view (unscoped secret
+  domains + guideless token domains); with a domain → provisioned vs
+  declared vs gap secret names, token slots (issuer, granted scope, expiry,
+  refreshable), and declared-slot gaps pointing at `oauth-mint` — metadata
+  only, values never leave the stores.
 - **Local user helpers** — a `helper.ts` alongside a guide runs
   in-process via `import()` under a load/call guard that disables the
   helper for the session on any in-frame throw (pi keeps running). The

@@ -15,29 +15,29 @@
  * dev/discovery aid.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
 	summarize,
 	emitDraft,
 	probe,
 	formatProbeResult,
 	MAX_VERSION_WALK,
-	resolveProbeStoreDomain,
 } from "../tools/api-probe.js";
+import { resolveProvisionedParentDomain as resolveProbeStoreDomain } from "../core/auth.js";
 import { apiProbeTool } from "../tools/index.js";
-import { contentText } from "../tools/utils.js";
 import { Check } from "typebox/value";
 import {
 	writeSecret,
 	setSecretsDir,
 	getSecretsDir,
 } from "../core/secrets-store.js";
-import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
 import {
-	_setToggleStateForTest,
-	_resetToggleStateForTest,
-} from "../core/api-toggle.js";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+	readToken,
+	writeToken,
+	setOAuthDir,
+	getOAuthDir,
+} from "../core/oauth-store.js";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import http from "node:http";
@@ -191,6 +191,19 @@ describe("emitDraft (marker → style guess)", () => {
 		// The no-marker note must explain how paginate would advance, so the
 		// author doesn't fall back to restGet just to avoid guessing (issue #3).
 		expect(draft).toContain("base: 1 for 1-based `start` APIs like CMC");
+	});
+
+	it("bare top-level array draft carries a commented paginate block with required itemsPath", () => {
+		const shape = summarize([1, 2, 3]);
+		expect(shape.suggestedVia).toBe("restGet");
+		expect(shape.topLevel).toBe("array");
+		const draft = emitDraft("/items", {}, shape);
+		expect(draft).toContain("via: restGet");
+		expect(draft).toContain("itemsPath is REQUIRED on paginate ops");
+		expect(draft).toContain("# via: paginate");
+		expect(draft).toContain("#   itemsPath: $");
+		// The active block stays restGet — the paginate arm is commented.
+		expect(draft).not.toMatch(/^    pagination:/m);
 	});
 });
 
@@ -531,6 +544,447 @@ describe("probe redirect handling (live localhost)", () => {
 		});
 	});
 
+	// OAuth2 store-read injection: useTokenStore reads the token
+	// store — the value never enters the transcript; miss/expiry nudge /api oauth.
+	describe("probe useTokenStore (oauth2 bearer injection)", () => {
+		it("injects Authorization: Bearer from the token store; value never surfaces", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-ok-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			writeToken(
+				"example.com",
+				"client_credentials",
+				"https://token.example.test/oauth/token",
+				{
+					accessToken: "tok_secret_value",
+					expiresAt: Date.now() + 600_000,
+				},
+			);
+			let seenAuth: string | undefined;
+			const server = http.createServer((req, res) => {
+				seenAuth = req.headers.authorization;
+				// Echo the header back so the scrub path is exercised too.
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ auth: req.headers.authorization ?? null }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: {
+							useTokenStore: true,
+							grant: "client_credentials",
+							tokenUrl: "https://token.example.test/oauth/token",
+						},
+					},
+				);
+				expect(seenAuth).toBe("Bearer tok_secret_value");
+				expect(result.ok).toBe(true);
+				// Output-channel audit: echoed token scrubbed from the raw slice.
+				expect(result.raw).not.toContain("tok_secret_value");
+				expect(result.note ?? "").not.toContain("tok_secret_value");
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("a missing token proceeds unauthenticated and nudges /api oauth", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-miss-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			let sawAuthHeader = false;
+			const server = http.createServer((req, res) => {
+				sawAuthHeader = req.headers.authorization !== undefined;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: {
+							useTokenStore: true,
+							grant: "client_credentials",
+							tokenUrl: "https://token.example.test/oauth/token",
+						},
+					},
+				);
+				// Probe misses are never fail-closed: request went out, no header.
+				expect(sawAuthHeader).toBe(false);
+				expect(result.ok).toBe(true);
+				expect(result.note ?? "").toContain(
+					'no cached token for "example.com"; run /api oauth example.com to mint one',
+				);
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("an expired token is not injected; the note nudges --refresh", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-exp-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			writeToken(
+				"example.com",
+				"client_credentials",
+				"https://token.example.test/oauth/token",
+				{
+					accessToken: "tok_stale",
+					expiresAt: Date.now() - 1_000,
+				},
+			);
+			let sawAuthHeader = false;
+			const server = http.createServer((req, res) => {
+				sawAuthHeader = req.headers.authorization !== undefined;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: {
+							useTokenStore: true,
+							grant: "client_credentials",
+							tokenUrl: "https://token.example.test/oauth/token",
+						},
+					},
+				);
+				// A stale token is not sent (a 401 from it would mislead the author).
+				expect(sawAuthHeader).toBe(false);
+				expect(result.note ?? "").toContain(
+					'token for "example.com" is expired; run /api oauth example.com --refresh',
+				);
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("useTokenStore without grant + tokenUrl is a loud validation error, not a silent miss", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-badkey-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			try {
+				await expect(
+					probe(
+						"https://example.com",
+						"/me",
+						{},
+						{
+							domain: "example.com",
+							auth: { useTokenStore: true },
+						},
+					),
+				).rejects.toThrow(/auth\.useTokenStore requires auth\.grant/);
+			} finally {
+				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("a static Authorization secretRef alongside the token is a loud validation error", async () => {
+			// secretRefs: { Authorization } + a store token would emit two
+			// same-named headers (case-split keys) — fetch merges them into one
+			// garbled header. Loud validation, same posture as the slot-key check.
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-clash-"));
+			const prevDir = getOAuthDir();
+			const prevSecrets = getSecretsDir();
+			setOAuthDir(join(tmp, "oauth"));
+			setSecretsDir(join(tmp, "secrets"));
+			writeSecret("example.com", "api_key", "K");
+			writeToken(
+				"example.com",
+				"client_credentials",
+				"https://token.example.test/oauth/token",
+				{ accessToken: "tok", expiresAt: Date.now() + 600_000 },
+			);
+			try {
+				await expect(
+					probe(
+						"https://example.com",
+						"/me",
+						{},
+						{
+							domain: "example.com",
+							auth: {
+								secretRefs: { Authorization: "api_key" },
+								useTokenStore: true,
+								grant: "client_credentials",
+								tokenUrl: "https://token.example.test/oauth/token",
+							},
+						},
+					),
+				).rejects.toThrow(/collides with the static 'Authorization' header/);
+			} finally {
+				setOAuthDir(prevDir);
+				setSecretsDir(prevSecrets);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+	});
+
+	// Mint-on-demand (client-credentials authoring bootstrap): inline tokenUrl
+	// + clientId mints when the store has no usable token, stamps it, and
+	// injects the fresh Bearer. Failures ride the note — never fail-closed.
+	describe("probe mint-on-demand (client-credentials bootstrap)", () => {
+		it("absent token + mint fields → POSTs tokenUrl, stamps the store, injects the Bearer", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-ok-"));
+			const prevDir = getOAuthDir();
+			const prevSecrets = getSecretsDir();
+			setOAuthDir(tmp);
+			setSecretsDir(tmp);
+			writeSecret("example.com", "client_id", "cid_value");
+			writeSecret("example.com", "client_secret", "cs_value");
+			let tokenPosts = 0;
+			let seenAuth: string | undefined;
+			const server = http.createServer((req, res) => {
+				if (req.method === "POST" && req.url === "/token") {
+					tokenPosts++;
+					res.writeHead(200, { "Content-Type": "application/json" });
+					res.end(
+						JSON.stringify({
+							access_token: "minted_tok",
+							token_type: "Bearer",
+							expires_in: 3600,
+						}),
+					);
+					return;
+				}
+				seenAuth = req.headers.authorization;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: {
+							tokenUrl: `${base}/token`,
+							clientId: "client_id",
+							clientSecret: "client_secret",
+						},
+					},
+				);
+				expect(tokenPosts).toBe(1);
+				expect(seenAuth).toBe("Bearer minted_tok");
+				// The mint stamped the token store for the rest of the loop.
+				expect(
+					readToken("example.com", "client_credentials", `${base}/token`)
+						?.accessToken,
+				).toBe("minted_tok");
+				expect(result.ok).toBe(true);
+				// Output-channel audit: the minted token never surfaces.
+				expect(result.raw).not.toContain("minted_tok");
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				setSecretsDir(prevSecrets);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("mint fields + non-cc grant → loud note, no mint, no slot stamp", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-grant-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			let tokenPosts = 0;
+			const server = http.createServer((req, res) => {
+				if (req.method === "POST") tokenPosts++;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: {
+							useTokenStore: true,
+							grant: "authorization_code",
+							tokenUrl: `${base}/token`,
+							clientId: "cid",
+						},
+					},
+				);
+				expect(tokenPosts).toBe(0);
+				expect(result.note ?? "").toContain("client_credentials-only");
+				expect(result.note ?? "").toContain("authorization_code");
+				// No cc slot was stamped behind the caller's back.
+				expect(
+					readToken("example.com", "client_credentials", `${base}/token`) ?? null,
+				).toBeNull();
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("bad mint field combo (cc without client-secret) degrades to a note, not a throw", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-invalid-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			let tokenPosts = 0;
+			const server = http.createServer((req, res) => {
+				if (req.method === "POST") tokenPosts++;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				// client_credentials without clientSecret: buildSyntheticOAuth2Auth
+				// throws — but the probe's mint arm must ride the note instead.
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: { tokenUrl: `${base}/token`, clientId: "cid" },
+					},
+				);
+				expect(tokenPosts).toBe(0);
+				expect(result.ok).toBe(true);
+				expect(result.note ?? "").toContain("client-secret");
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("a fresh cached token short-circuits the mint (no POST)", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-cache-"));
+			const prevDir = getOAuthDir();
+			setOAuthDir(tmp);
+			let tokenPosts = 0;
+			let seenAuth: string | undefined;
+			const server = http.createServer((req, res) => {
+				if (req.method === "POST") {
+					tokenPosts++;
+					res.writeHead(200, { "Content-Type": "application/json" });
+					res.end(JSON.stringify({ access_token: "x" }));
+					return;
+				}
+				seenAuth = req.headers.authorization;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				// Same slot the mint stamps: (client_credentials, ${base}/token).
+				writeToken("example.com", "client_credentials", `${base}/token`, {
+					accessToken: "cached_tok",
+					expiresAt: Date.now() + 600_000,
+				});
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: {
+							tokenUrl: `${base}/token`,
+							clientId: "client_id",
+							clientSecret: "client_secret",
+						},
+					},
+				);
+				expect(tokenPosts).toBe(0);
+				expect(seenAuth).toBe("Bearer cached_tok");
+				expect(result.ok).toBe(true);
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+
+		it("mint failure rides the note; the probe proceeds unauthenticated", async () => {
+			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-miss-"));
+			const prevDir = getOAuthDir();
+			const prevSecrets = getSecretsDir();
+			setOAuthDir(tmp);
+			setSecretsDir(tmp); // isolated empty store — clientId will miss
+			let sawAuthHeader = false;
+			const server = http.createServer((req, res) => {
+				if (req.method === "POST") {
+					res.writeHead(200, { "Content-Type": "application/json" });
+					res.end(JSON.stringify({ access_token: "x" }));
+					return;
+				}
+				sawAuthHeader = req.headers.authorization !== undefined;
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ data: [{ id: 1 }] }));
+			});
+			await new Promise<void>((r) => server.listen(0, r));
+			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+			try {
+				const result = await probe(
+					base,
+					"/me",
+					{},
+					{
+						domain: "example.com",
+						auth: {
+							tokenUrl: `${base}/token`,
+							clientId: "client_id",
+							clientSecret: "client_secret",
+						},
+					},
+				);
+				expect(sawAuthHeader).toBe(false);
+				expect(result.ok).toBe(true);
+				expect(result.note ?? "").toContain("client id 'client_id'");
+			} finally {
+				server.close();
+				server.closeAllConnections?.();
+				setOAuthDir(prevDir);
+				setSecretsDir(prevSecrets);
+				rmSync(tmp, { recursive: true, force: true });
+			}
+		});
+	});
+
 	// The probe infers the store domain from apiHost; a secret filed under the
 	// registrable domain must be found when the probe hits an api subdomain.
 	describe("resolveProbeStoreDomain (secret-domain fallback)", () => {
@@ -538,11 +992,9 @@ describe("probe redirect handling (live localhost)", () => {
 			const tmp = mkdtempSync(join(tmpdir(), "host-probe-fallback-secrets-"));
 			const prevDir = getSecretsDir();
 			setSecretsDir(tmp);
-			writeSecret("coinmarketcap.com", "api_key", "K");
+			writeSecret("example.dev", "api_key", "K");
 			try {
-				expect(resolveProbeStoreDomain("pro-api.coinmarketcap.com")).toBe(
-					"coinmarketcap.com",
-				);
+				expect(resolveProbeStoreDomain("pro-api.example.dev")).toBe("example.dev");
 			} finally {
 				setSecretsDir(prevDir);
 				rmSync(tmp, { recursive: true, force: true });
@@ -1071,261 +1523,5 @@ describe("api-probe headerPrefixes without secretRefs", () => {
 			setSecretsDir(prevDir);
 			rmSync(tmp, { recursive: true, force: true });
 		}
-	});
-});
-
-// ═══════════════════════════════════════════════════════════════════
-// List mode — learn-gated secrets discovery (the bootstrap-gap closure)
-// ═══════════════════════════════════════════════════════════════════
-
-const EXAMPLE_RECIPE = `---
-domains: [example.com]
-apiHost: https://api.example.com/v2/api
-auth:
-  kind: static-key
-  secretQueryRefs:
-    apikey: api_key
-  requires:
-    - api_key
-responseShape:
-  format: json
-operations:
-  - name: ping
-    via: restGet
-    path: /
-    accept: json
-    params: {}
----
-`;
-
-let listTmpSecrets: string;
-let listTmpGuides: string;
-
-beforeAll(() => {
-	listTmpSecrets = mkdtempSync(join(tmpdir(), "host-probe-secrets-"));
-	listTmpGuides = mkdtempSync(join(tmpdir(), "host-probe-guides-"));
-	setSecretsDir(listTmpSecrets);
-	setUserGuidesDir(listTmpGuides);
-	// Learn mode on for the discovery tests (reset per test where needed).
-	_setToggleStateForTest(true, true);
-	// Provision the key + register a guide that declares it (routing domain example.com).
-	writeSecret("example.com", "api_key", "REALKEY");
-	const dir = join(listTmpGuides, "example-com");
-	mkdirSync(dir, { recursive: true });
-	writeFileSync(join(dir, "guide.md"), EXAMPLE_RECIPE);
-	// A hostname-routable secret for the domain-default test (host == domain).
-	writeSecret("api.github.com", "gh_token", "GHKEY");
-	invalidateCache();
-});
-
-afterAll(() => {
-	rmSync(listTmpSecrets, { recursive: true, force: true });
-	rmSync(listTmpGuides, { recursive: true, force: true });
-	_resetToggleStateForTest();
-});
-
-function runList(
-	params: Record<string, unknown>,
-): Promise<Awaited<ReturnType<typeof apiProbeTool.execute>>> {
-	return apiProbeTool.execute(
-		"t",
-		params,
-		undefined,
-		undefined,
-		undefined as any,
-	);
-}
-
-describe("api-probe listSecrets mode (the bootstrap-gap closure)", () => {
-	it("tool + param descriptions advertise the bare-call orphan view", () => {
-		const params = apiProbeTool.parameters as unknown as {
-			properties?: {
-				listSecrets?: { description?: string };
-			};
-		};
-		const listDesc = params.properties?.listSecrets?.description ?? "";
-		// Both modes named, incl. the no-domain bootstrap view + gaps.
-		expect(listDesc).toContain("provisioned-but-guideless");
-		expect(listDesc).toContain("authoring-bootstrap");
-		expect(listDesc).toContain("declared-vs-stored gaps");
-		// Tool description directs the author to call it empty first in learn mode.
-		expect(apiProbeTool.description).toContain("listSecrets: true");
-		expect(apiProbeTool.description).toContain("store-miss round-trip");
-	});
-	it("in learn mode returns provisioned + declared names, no fetch fields", async () => {
-		const res = await runList({
-			apiHost: "https://api.example.com/v2/api",
-			path: "/",
-			domain: "example.com", // routing domain — hostname (api.example.com) differs
-			listSecrets: true,
-		});
-		const d = res.details as Record<string, unknown>;
-		const secrets = d.secrets as {
-			domain: string;
-			provisioned: string[];
-			declared?: string[];
-		};
-		expect(secrets.domain).toBe("example.com");
-		expect(secrets.provisioned).toEqual(["api_key"]);
-		expect(secrets.declared).toContain("api_key");
-		// Fetch fields are empty in list mode.
-		expect(d.url).toBeUndefined();
-		expect(d.status).toBeUndefined();
-		expect(d.raw).toBeUndefined();
-		expect(d.shape).toBeUndefined();
-	});
-
-	it("domain defaults to apiHost's hostname", async () => {
-		const res = await runList({
-			apiHost: "https://api.github.com",
-			path: "/repos",
-			listSecrets: true,
-		});
-		const secrets = (res.details as Record<string, unknown>).secrets as {
-			domain: string;
-			provisioned: string[];
-		};
-		expect(secrets.domain).toBe("api.github.com");
-		expect(secrets.provisioned).toContain("gh_token");
-	});
-
-	it("apiHost without domain falls back to the provisioned parent domain in the report", async () => {
-		// Isolated store: the secret lives under the registrable domain; the
-		// apiHost is the api subdomain. listSecrets must report the parent.
-		const tmp = mkdtempSync(join(tmpdir(), "host-probe-list-fallback-"));
-		const prevDir = getSecretsDir();
-		setSecretsDir(tmp);
-		writeSecret("coinmarketcap.com", "api_key", "CMC-KEY");
-		try {
-			const res = await runList({
-				apiHost: "https://pro-api.coinmarketcap.com",
-				path: "/v1/cryptocurrency/map",
-				listSecrets: true,
-			});
-			const secrets = (res.details as Record<string, unknown>).secrets as {
-				domain: string;
-				provisioned: string[];
-			};
-			expect(secrets.domain).toBe("coinmarketcap.com");
-			expect(secrets.provisioned).toEqual(["api_key"]);
-			expect(contentText(res)).not.toContain("CMC-KEY"); // names only
-		} finally {
-			setSecretsDir(prevDir);
-			rmSync(tmp, { recursive: true, force: true });
-		}
-	});
-
-	it("names only — never emits a secret value", async () => {
-		const res = await runList({
-			apiHost: "https://api.example.com/v2/api",
-			path: "/",
-			domain: "example.com",
-			listSecrets: true,
-		});
-		expect(contentText(res)).not.toContain("REALKEY");
-	});
-
-	it("declared is omitted when no guide is registered for the domain", async () => {
-		const res = await runList({
-			apiHost: "https://api.unknown.test",
-			path: "/",
-			listSecrets: true,
-			domain: "api.unknown.test",
-		});
-		const secrets = (res.details as Record<string, unknown>).secrets as {
-			provisioned: string[];
-			declared?: string[];
-		};
-		expect(secrets.provisioned).toEqual([]);
-		expect(secrets.declared).toBeUndefined();
-	});
-
-	it("learn gate: refused under /api on (non-learn), does not touch the store", async () => {
-		_setToggleStateForTest(true, false); // /api on — learn off
-		try {
-			const res = await runList({
-				apiHost: "https://api.example.com/v2/api",
-				path: "/",
-				domain: "example.com",
-				listSecrets: true,
-			});
-			const d = res.details as Record<string, unknown>;
-			expect(d.error).toBe("learn_mode_only");
-			expect(d.secrets).toBeUndefined(); // no discovery happened
-			expect(contentText(res)).toContain("learn mode only");
-		} finally {
-			_setToggleStateForTest(true, true);
-		}
-	});
-
-	it("bare listSecrets (no domain, no apiHost) lists unscoped store domains only", async () => {
-		const res = await runList({ listSecrets: true });
-		const d = res.details as Record<string, unknown>;
-		const unscoped = d.unscoped as string[];
-		expect(unscoped).toContain("api.github.com"); // provisioned, no guide
-		expect(unscoped).not.toContain("example.com"); // scoped to a guide
-		expect(d.secrets).toBeUndefined(); // no per-domain view
-		const text = contentText(res);
-		expect(text).toContain("unscoped store domains");
-		expect(text).not.toContain("REALKEY"); // names only
-		// bare call: nothing suppressed, so no note
-		expect(text).not.toContain("probe suppressed");
-	});
-
-	it("bare listSecrets: true is schema-legal and reaches the orphan view (through the schema)", async () => {
-		// The documented bootstrap call is rejected by the schema when apiHost/
-		// path are required — the regression runList's direct execute bypasses.
-		expect(Check(apiProbeTool.parameters, { listSecrets: true })).toBe(true);
-		const res = await runList({ listSecrets: true });
-		const d = res.details as Record<string, unknown>;
-		const unscoped = d.unscoped as string[];
-		expect(unscoped).toContain("api.github.com");
-		expect(d.secrets).toBeUndefined();
-	});
-
-	it("missing apiHost/path (non-listSecrets) returns the guard error, not a throw", async () => {
-		const res = await runList({ path: "/items" });
-		const d = res.details as Record<string, unknown>;
-		expect(d.error).toBe("missing_apiHost_or_path");
-		expect(contentText(res)).toContain("apiHost and path are required");
-	});
-
-	it("apiHost without domain lists unscoped first, then the per-domain view", async () => {
-		const res = await runList({
-			apiHost: "https://api.github.com",
-			path: "/repos",
-			listSecrets: true,
-		});
-		const d = res.details as Record<string, unknown>;
-		const secrets = d.secrets as { domain: string; provisioned: string[] };
-		const unscoped = d.unscoped as string[];
-		expect(unscoped).toContain("api.github.com");
-		expect(secrets.domain).toBe("api.github.com");
-		expect(secrets.provisioned).toContain("gh_token");
-		const text = contentText(res);
-		// orphan list first, then the per-domain view
-		expect(text.indexOf("unscoped store domains")).toBeLessThan(
-			text.indexOf("secrets for api.github.com"),
-		);
-		// apiHost present means a real probe was suppressed — say so
-		expect(text).toContain("probe suppressed because listSecrets: true");
-	});
-
-	it("domain present: per-domain view unchanged, no unscoped section", async () => {
-		const res = await runList({
-			apiHost: "https://api.example.com/v2/api",
-			path: "/",
-			domain: "example.com",
-			listSecrets: true,
-		});
-		const d = res.details as Record<string, unknown>;
-		expect(d.unscoped).toBeUndefined();
-		expect(contentText(res)).not.toContain("unscoped store domains");
-		const secrets = d.secrets as { domain: string };
-		expect(secrets.domain).toBe("example.com");
-		// domain present also suppresses the probe
-		expect(contentText(res)).toContain(
-			"probe suppressed because listSecrets: true",
-		);
 	});
 });

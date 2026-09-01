@@ -69,8 +69,11 @@ describe("github static-key auth (mocked transport)", () => {
 	it("parses as static-key with the declared ref shape", async () => {
 		const { guide } = await setupRecipe();
 		expect(guide.auth.kind).toBe("static-key");
-		expect(guide.auth.secretRefs).toEqual({ Authorization: "api_key" });
-		expect(guide.auth.optional).toEqual(["api_key"]);
+		if (guide.auth.kind === "static-key") {
+			expect(guide.auth.secretRefs).toEqual({
+				Authorization: { secret: "api_key", optional: true },
+			});
+		}
 	});
 
 	it("restGet forwards the injected Authorization header to the transport", async () => {

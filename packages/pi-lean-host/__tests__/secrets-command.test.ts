@@ -163,9 +163,8 @@ apiHost: https://d.example
 auth:
   kind: static-key
   secretRefs:
-    x-cg-demo-api-key: api_key
-  requires:
-    - api_key
+    x-cg-demo-api-key:
+      secret: api_key
 operations:
   - name: ping
     via: restGet
@@ -208,11 +207,9 @@ apiHost: https://d.example
 auth:
   kind: static-key
   secretRefs:
-    Authorization: api_key
-  headerPrefixes:
-    Authorization: "Bearer "
-  requires:
-    - api_key
+    Authorization:
+      secret: api_key
+      prefix: "Bearer "
 operations:
   - name: ping
     via: restGet

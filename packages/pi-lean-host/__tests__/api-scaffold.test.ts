@@ -447,7 +447,7 @@ describe("api-scaffold TUI rendering", () => {
 			mockTheme,
 			undefined as any,
 		);
-		expect(out.text).toContain("🛠");
+		expect((out as unknown as { text: string }).text).toContain("🛠");
 	});
 
 	it("renderResult labels a disambiguation menu with the domain", () => {
@@ -460,8 +460,8 @@ describe("api-scaffold TUI rendering", () => {
 			mockTheme,
 			undefined as any,
 		);
-		expect(out.text).toContain("menu");
-		expect(out.text).toContain("multi.example");
+		expect((out as unknown as { text: string }).text).toContain("menu");
+		expect((out as unknown as { text: string }).text).toContain("multi.example");
 	});
 
 	it("renderResult labels a success result with dirName + staged dir", () => {
@@ -479,7 +479,9 @@ describe("api-scaffold TUI rendering", () => {
 			mockTheme,
 			undefined as any,
 		);
-		expect(out.text).toContain("scaff");
-		expect(out.text).toContain(stagedDir("scaff"));
+		expect((out as unknown as { text: string }).text).toContain("scaff");
+		expect((out as unknown as { text: string }).text).toContain(
+			stagedDir("scaff"),
+		);
 	});
 });

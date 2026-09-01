@@ -353,18 +353,22 @@ function buildUrl(
  * `paginate` call site and the guide schema.
  */
 function checkAuth(auth: ApiGuide["auth"]): void {
-	const kind = auth.kind;
-	if (kind === "none" || kind === "static-key") return;
-
-	// oauth2 — unrealized seam. A parsed guide can't reach here (oauth2 is
-	// rejected at parse), but guard for hand-constructed guides/tests.
-	throw new HelperError(
-		"auth.kind",
-		`Auth kind "${kind}" is not supported in this version`,
-		"one of: none | static-key",
-		kind,
-		"OAuth2 is not yet implemented. Use kind: none or kind: static-key.",
-	);
+	switch (auth.kind) {
+		case "none":
+		case "static-key":
+		case "oauth2":
+			return;
+		default: {
+			// Exhaustiveness: a future fourth kind is a compile error here.
+			const _exhaustive: never = auth;
+			throw new HelperError(
+				"auth.kind",
+				`Auth kind "${_exhaustive}" is not supported in this version`,
+				"one of: none | static-key | oauth2",
+				String(_exhaustive),
+			);
+		}
+	}
 }
 
 /**
@@ -379,6 +383,7 @@ function fetchWithOpts(
 	fallbackCharset?: string,
 	secretHeaderNames?: Set<string>,
 	hasQuerySecret?: boolean,
+	secretQueryParamNames?: Set<string>,
 ): ReturnType<typeof fetchUrl> {
 	const opts: FetchOptions = { headers: { accept, ...extraHeaders } };
 	if (fresh !== undefined) opts.fresh = fresh;
@@ -386,6 +391,7 @@ function fetchWithOpts(
 	if (fallbackCharset) opts.fallbackCharset = fallbackCharset;
 	if (secretHeaderNames) opts.secretHeaderNames = secretHeaderNames;
 	if (hasQuerySecret) opts.hasQuerySecret = true;
+	if (secretQueryParamNames) opts.secretQueryParamNames = secretQueryParamNames;
 	return fetchUrl(url, opts);
 }
 
@@ -500,8 +506,12 @@ export async function restGet(
 	checkAuth(guide.auth);
 
 	// Merge store-injected secret headers with literal auth.headers. The
-	// injected names are tracked for cross-domain redirect stripping.
-	const extraHeaders = { ...guide.auth.headers, ...opts?.authHeaders };
+	// injected names are tracked for cross-domain redirect stripping. oauth2
+	// carries no literal headers (the resolved Bearer token arrives via
+	// opts.authHeaders).
+	const literalHeaders =
+		guide.auth.kind === "oauth2" ? undefined : guide.auth.headers;
+	const extraHeaders = { ...literalHeaders, ...opts?.authHeaders };
 
 	// 4. Build URL. Secret query params are injected BELOW the
 	// agent-supplied map — never into it — so the returned `params` stays
@@ -532,6 +542,7 @@ export async function restGet(
 		shape.charset,
 		opts?.secretHeaderNames,
 		hasQuerySecret,
+		opts?.secretQueryParamNames,
 	);
 
 	// 7. Check HTTP status before attempting to parse the body.
@@ -646,8 +657,11 @@ export async function paginate(
 
 	// Merge store-injected secret headers with literal auth.headers once,
 	// reused for every page. Injected names are tracked for cross-domain
-	// redirect stripping.
-	const extraHeaders = { ...guide.auth.headers, ...opts?.authHeaders };
+	// redirect stripping. oauth2 carries no literal headers (the resolved
+	// Bearer token arrives via opts.authHeaders).
+	const literalHeaders =
+		guide.auth.kind === "oauth2" ? undefined : guide.auth.headers;
+	const extraHeaders = { ...literalHeaders, ...opts?.authHeaders };
 
 	// State for the styles.
 	let cursor: string | undefined;
@@ -777,6 +791,7 @@ export async function paginate(
 			shape.charset,
 			opts?.secretHeaderNames,
 			hasQuerySecret,
+			opts?.secretQueryParamNames,
 		);
 
 		// Check HTTP status before attempting to parse. Secret values scrubbed

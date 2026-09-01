@@ -11,22 +11,15 @@
  *   read-only `$HOME` doesn't get a `secrets/` dir created under it.
  * - Listing surfaces names only, never values.
  *
- * The store is swappable (the `SecretStore` interface + `setStore`) so the
- * deferred OS-keychain backend is a drop-in without touching callers.
+ * The store is swappable (the `SecretStore` interface + `createFileStore`)
+ * so the deferred OS-keychain backend is a drop-in without touching callers.
  */
 
 import { join } from "node:path";
 import { homedir } from "node:os";
-import {
-	chmodSync,
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	readdirSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { assertSafeDomain } from "./path-template.js";
+import { readJsonObject, writeJson0600 } from "./fs-0600.js";
 
 /** A secret store: read/write/delete one name, list domain/name indexes. */
 export interface SecretStore {
@@ -54,20 +47,10 @@ export function createFileStore(dir: string): SecretStore {
 		return join(dir, `${domain}.json`);
 	};
 
-	// Read a domain file as a flat name→value map. Missing/corrupt file → {}.
-	// Never touches the filesystem's dir structure (no mkdir).
-	const readFile = (domain: string): Record<string, string> => {
-		const p = domainPath(domain);
-		if (!existsSync(p)) return {};
-		try {
-			const parsed = JSON.parse(readFileSync(p, "utf-8"));
-			return parsed && typeof parsed === "object"
-				? (parsed as Record<string, string>)
-				: {};
-		} catch {
-			return {};
-		}
-	};
+	// Read a domain file as a flat name→value map; corrupt entries (non-string
+	// values) drop out at the `read` boundary. Never mkdirs.
+	const readFile = (domain: string): Record<string, string> =>
+		readJsonObject(domainPath(domain)) as Record<string, string>;
 
 	return {
 		read(domain, name) {
@@ -77,16 +60,10 @@ export function createFileStore(dir: string): SecretStore {
 		write(domain, name, value) {
 			const p = domainPath(domain); // also asserts domain safety
 			assertSecretName(name);
-			// Lazy mkdir on write only — never on read/list.
-			if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+			// Lazy mkdir on write only — never on read/list (writeJson0600 mkdirs).
 			const file = readFile(domain);
 			file[name] = value;
-			writeFileSync(p, JSON.stringify(file, null, 2) + "\n", { mode: 0o600 });
-			try {
-				chmodSync(p, 0o600); // guard against umask overriding the mode
-			} catch {
-				// best-effort; file was already written
-			}
+			writeJson0600(p, file);
 		},
 		delete(domain, name) {
 			const p = domainPath(domain); // also asserts domain safety
@@ -99,12 +76,7 @@ export function createFileStore(dir: string): SecretStore {
 				// Prune the empty file so the domain drops out of listDomains.
 				rmSync(p, { force: true });
 			} else {
-				writeFileSync(p, JSON.stringify(file, null, 2) + "\n", { mode: 0o600 });
-				try {
-					chmodSync(p, 0o600);
-				} catch {
-					// best-effort; file was already written
-				}
+				writeJson0600(p, file);
 			}
 		},
 		deleteDomain(domain) {
@@ -142,11 +114,6 @@ export function getSecretsDir(): string {
 export function setSecretsDir(dir: string): void {
 	_dir = dir;
 	_store = createFileStore(dir);
-}
-
-/** Swap in a different store backend (e.g. OS-keychain, deferred). */
-export function setStore(store: SecretStore): void {
-	_store = store;
 }
 
 // Convenience API (delegates to the active store).

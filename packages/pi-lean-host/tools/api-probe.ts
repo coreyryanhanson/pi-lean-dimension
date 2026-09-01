@@ -18,6 +18,8 @@
  */
 
 import { defineTool } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { confirmTokenUrl } from "../core/oauth-flow.js";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { fetchUrl, redactSecretParams } from "../core/transport.js";
@@ -27,15 +29,25 @@ import {
 	joinUrl,
 } from "../core/path-template.js";
 import {
+	assertNoBearerCollision,
+	buildSyntheticOAuth2Auth,
+	hostnameOf,
+	isTokenExpired,
+	resolveAccessToken,
+	resolveProvisionedParentDomain,
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
 	scrubSecretValues,
 } from "../core/auth.js";
-import { listDomains, listNames } from "../core/secrets-store.js";
-import { findGuidesByDomain } from "../core/guide-store.js";
-import { isApiLearnEnabled } from "../core/api-toggle.js";
+import { readToken } from "../core/oauth-store.js";
+import { provisionedDomainsSuffix } from "../core/secrets-store.js";
 import { serverMessage, isPlanGated } from "../core/status-hint.js";
 import { appendFooter, contentText } from "./utils.js";
+import type {
+	SecretRef,
+	StaticKeyAuth,
+	OAuth2Grant,
+} from "../core/api-guide-types.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Types
@@ -93,6 +105,43 @@ export interface ProbeOptions {
 		 * is API knowledge. Keys must be present in `secretRefs`.
 		 */
 		headerPrefixes?: Record<string, string>;
+		/**
+		 * Read the OAuth2 access token from the token store (the domain the
+		 * probe resolved) and inject `Authorization: Bearer <token>` — values
+		 * never enter the transcript. Bearer-header only (ponytail: query
+		 * paramStyle waits for a recipe that needs it). No/expired token →
+		 * the note nudges `/api oauth <domain>` and the probe proceeds
+		 * unauthenticated (probe misses are never fail-closed). With mint
+		 * fields below, the miss mints instead of nudging. Requires `grant` +
+		 * `tokenUrl` (the slot key) — omitting either is a validation error.
+		 */
+		useTokenStore?: boolean;
+		/**
+		 * The token slot to read: slots are keyed `(domain, grant, tokenUrl)`,
+		 * so a store read needs the same grant + token endpoint facts the mint
+		 * arm already carries. Required with useTokenStore — a call without
+		 * them is a loud validation error, not a silent store miss.
+		 */
+		grant?: OAuth2Grant;
+		/**
+		 * Mint-on-demand (client-credentials authoring bootstrap): when the
+		 * token store has no usable token, the probe POSTs `tokenUrl` once
+		 * (client-credentials grant), stamps the token store, and injects the
+		 * fresh Bearer. `clientId`/`clientSecret` are secrets-store NAMES —
+		 * values resolve from the store, never the transcript. Implies
+		 * useTokenStore. auth-code cannot be inlined (needs the interactive
+		 * paste dance) — save a draft guide and use `/api oauth` for that.
+		 * `tokenUrl` is load-bearing beyond minting: it keys the token-store
+		 * slot read (with `grant`).
+		 */
+		tokenUrl?: string;
+		clientId?: string;
+		clientSecret?: string;
+		scopes?: string[];
+		tokenEndpointAuthMethod?:
+			| "client_secret_basic"
+			| "client_secret_post"
+			| "none";
 	};
 	/** Domain for secrets-store lookups; defaults to apiHost's hostname (or its provisioned parent domain). */
 	domain?: string;
@@ -225,6 +274,37 @@ interface ProbeAuthCtx {
 	/** headerPrefixes declared but no secretRefs to apply them to — the
 	 *  prefixes would be silently dropped. Surfaced as a note, not an error. */
 	misconfiguredPrefixes: boolean;
+	/** useTokenStore declared but no usable token (absent or expired) — the
+	 *  nudge text, composed into the 401/403 note. Empty when fine/unused. */
+	tokenNote: string;
+}
+
+/**
+ * Convert the probe's flat inline `auth` block (tool param — injection
+ * fields only) into a nested `StaticKeyAuth` for the shared resolvers.
+ * `headerPrefixes` fold inline onto each ref's `prefix`.
+ */
+function flatToStaticKeyAuth(
+	auth: NonNullable<ProbeOptions["auth"]>,
+): StaticKeyAuth {
+	const secretRefs: Record<string, SecretRef> = {};
+	for (const [header, secretName] of Object.entries(auth.secretRefs ?? {})) {
+		secretRefs[header] = {
+			secret: secretName,
+			...(auth.headerPrefixes?.[header] === undefined
+				? {}
+				: { prefix: auth.headerPrefixes[header] }),
+		};
+	}
+	const secretQueryRefs: Record<string, SecretRef> = {};
+	for (const [param, secretName] of Object.entries(auth.secretQueryRefs ?? {})) {
+		secretQueryRefs[param] = { secret: secretName };
+	}
+	return {
+		kind: "static-key",
+		...(Object.keys(secretRefs).length > 0 ? { secretRefs } : {}),
+		...(Object.keys(secretQueryRefs).length > 0 ? { secretQueryRefs } : {}),
+	};
 }
 
 /**
@@ -234,10 +314,11 @@ interface ProbeAuthCtx {
  * omitted. `requires`/`optional` are absent from the probe's injection-only
  * block, so every miss lands in the report list.
  */
-function resolveProbeAuth(
+async function resolveProbeAuth(
 	auth: NonNullable<ProbeOptions["auth"]> | undefined,
 	domain: string,
-): ProbeAuthCtx {
+	ctx?: ExtensionContext,
+): Promise<ProbeAuthCtx> {
 	// Computed before the hasRefs check so the flag survives both paths: a
 	// headerPrefixes-only block (hasRefs false → early return) and a
 	// secretQueryRefs block with prefixes but no secretRefs (hasRefs true →
@@ -252,7 +333,30 @@ function resolveProbeAuth(
 		!!auth &&
 		(Object.keys(auth.secretRefs ?? {}).length > 0 ||
 			Object.keys(auth.secretQueryRefs ?? {}).length > 0);
-	if (!hasRefs) {
+	const useTokenStore = !!auth?.useTokenStore;
+	// Inline mint fields imply the token path even without useTokenStore.
+	const hasMintFields = !!auth?.tokenUrl && !!auth?.clientId;
+	// tokenUrl is load-bearing for both arms (mint destination AND store slot
+	// key), so mint fields + any non-cc grant is an ambiguous mix — refuse
+	// loudly instead of silently minting a client_credentials token that
+	// overwrites the intent (and stamps a cc slot nobody asked for).
+	if (hasMintFields && auth?.grant && auth.grant !== "client_credentials") {
+		return {
+			hasAuthBlock: true,
+			headers: {},
+			queryParams: {},
+			secretHeaderNames: new Set(),
+			secretQueryParamNames: new Set(),
+			secretValues: [],
+			missingNames: [],
+			misconfiguredPrefixes,
+			tokenNote:
+				`mint fields (tokenUrl + clientId) are client_credentials-only; ` +
+				`drop auth.grant ("${auth.grant}") or omit the mint fields and set ` +
+				`auth.useTokenStore to read the existing ${auth.grant} slot`,
+		};
+	}
+	if (!hasRefs && !useTokenStore && !hasMintFields) {
 		return {
 			hasAuthBlock: false,
 			headers: {},
@@ -262,35 +366,108 @@ function resolveProbeAuth(
 			secretValues: [],
 			missingNames: [],
 			misconfiguredPrefixes,
+			tokenNote: "",
 		};
 	}
-	const headerRes = resolveSecretHeaders(
-		{
-			kind: "static-key",
-			...(auth!.secretRefs ? { secretRefs: auth!.secretRefs } : {}),
-			...(auth!.headerPrefixes ? { headerPrefixes: auth!.headerPrefixes } : {}),
-		},
-		domain,
-	);
-	const queryRes = resolveSecretQueryParams(
-		{
-			kind: "static-key",
-			...(auth!.secretQueryRefs ? { secretQueryRefs: auth!.secretQueryRefs } : {}),
-		},
-		domain,
-	);
+	const staticKeyAuth = flatToStaticKeyAuth(auth!);
+	const headerRes = resolveSecretHeaders(staticKeyAuth, domain);
+	const queryRes = resolveSecretQueryParams(staticKeyAuth, domain);
+	// OAuth2 token injection: the token rides the same ctx as secret headers
+	// (scrub + redirect-strip cover it). Bearer-header only (ponytail: query
+	// paramStyle injection waits for a recipe that needs it). Two modes:
+	// store-read-only (useTokenStore, nudge /api oauth on miss) and
+	// mint-on-demand (inline tokenUrl + clientId — authoring bootstrap).
+	let tokenNote = "";
+	const tokenHeader: Record<string, string> = {};
+	// Raw (unprefixed) token value for the body scrub — a 401 body can echo
+	// the bare credential, not just the `Bearer <token>` header form.
+	let rawTokenValue = "";
+	if (hasMintFields) {
+		// Build a synthetic oauth2 auth and hand it straight to
+		// resolveAccessToken so the cache → refresh → mint → stamp machinery is
+		// reused wholesale (incl. the per-domain refresh lock). Failures never
+		// fail-closed — validation throws included, since
+		// buildSyntheticOAuth2Auth runs inside the same try/catch — the message
+		// rides the note and the probe proceeds unauthenticated.
+		// Interactive sessions re-gate the secret-bearing destination on the
+		// human (same trust root as oauth-mint). Headless has no gate — the
+		// agent-has-bash posture covers it; documented in AGENTS.md. Decline
+		// skips only the mint: tokenHeader stays empty and the shared return
+		// below reports the unauthenticated probe + any secret misses.
+		if (ctx?.hasUI) {
+			const ok = await confirmTokenUrl(
+				ctx,
+				domain,
+				auth!.tokenUrl!,
+				auth!.clientId!,
+			);
+			if (!ok)
+				tokenNote = `token-URL confirm declined for "${domain}"; probe proceeding unauthenticated`;
+		}
+		// Decline skips only the mint (tokenHeader stays empty) — the note and
+		// unauthenticated probe are reported by the shared return below.
+		if (tokenNote === "") {
+			try {
+				const oauthAuth = buildSyntheticOAuth2Auth({
+					grant: "client_credentials",
+					tokenUrl: auth!.tokenUrl!,
+					clientId: auth!.clientId!,
+					...(auth!.clientSecret ? { clientSecret: auth!.clientSecret } : {}),
+					...(auth!.scopes?.length ? { scopes: auth!.scopes } : {}),
+					...(auth!.tokenEndpointAuthMethod
+						? { tokenEndpointAuthMethod: auth!.tokenEndpointAuthMethod }
+						: {}),
+				});
+				const result = await resolveAccessToken(oauthAuth, domain);
+				const bearer = result.authHeaders?.authorization;
+				if (bearer) {
+					tokenHeader["authorization"] = bearer;
+					rawTokenValue = result.secretValues[0] ?? "";
+				} else tokenNote = "oauth2 mint succeeded but produced no bearer header";
+			} catch (e) {
+				tokenNote = e instanceof Error ? e.message : "oauth2 mint failed";
+			}
+		}
+	} else if (useTokenStore) {
+		// Slot-keyed store read: the slot derives from (grant, tokenUrl) — the
+		// same facts the mint arm carries. Without them the read would target a
+		// slot that never exists; that misconfiguration is a LOUD validation
+		// error (the caller's try/catch surfaces it), not a misleading
+		// "run /api oauth" note on an unauthenticated fetch.
+		if (!auth?.grant || !auth?.tokenUrl) {
+			throw new Error(
+				"auth.useTokenStore requires auth.grant (client_credentials | authorization_code) " +
+					"and auth.tokenUrl — token slots are keyed by (domain, grant, token endpoint).",
+			);
+		}
+		const token = readToken(domain, auth.grant, auth.tokenUrl);
+		if (!token) {
+			tokenNote = `no cached token for "${domain}"; run /api oauth ${domain} to mint one`;
+		} else if (isTokenExpired(token)) {
+			tokenNote = `token for "${domain}" is expired; run /api oauth ${domain} --refresh`;
+		} else {
+			tokenHeader["authorization"] = `Bearer ${token.accessToken}`;
+			rawTokenValue = token.accessToken;
+		}
+	}
+	if (Object.keys(tokenHeader).length > 0) {
+		assertNoBearerCollision(
+			headerRes.headers,
+			"the probe auth block's secretRefs",
+		);
+	}
+	const headers = { ...headerRes.headers, ...tokenHeader };
 	return {
 		hasAuthBlock: true,
-		headers: headerRes.headers,
+		headers,
 		queryParams: queryRes.queryParams,
-		secretHeaderNames: new Set(
-			Object.keys(headerRes.headers).map((h) => h.toLowerCase()),
-		),
+		secretHeaderNames: new Set(Object.keys(headers).map((h) => h.toLowerCase())),
 		secretQueryParamNames: new Set(Object.keys(queryRes.queryParams)),
 		secretValues: [
-			...Object.values(headerRes.headers),
+			...Object.values(headers),
 			...headerRes.rawHeaderValues,
 			...Object.values(queryRes.queryParams),
+			...(rawTokenValue ? [rawTokenValue] : []),
 		],
 		missingNames: [
 			...headerRes.absentRequired,
@@ -299,6 +476,7 @@ function resolveProbeAuth(
 			...queryRes.absentOptional,
 		],
 		misconfiguredPrefixes,
+		tokenNote,
 	};
 }
 
@@ -315,35 +493,18 @@ const MISCONFIGURED_PREFIXES_NOTE =
  *  usually a domain-mismatch, not a missing secret. */
 function missNote(authCtx: ProbeAuthCtx, domain: string): string {
 	if (authCtx.missingNames.length === 0) return "";
-	const others = listDomains().filter((d) => d !== domain);
-	const tail =
-		others.length > 0
-			? ` — provisioned domains: ${others.join(", ")}; pass domain: <one> to use its secret`
-			: "";
+	const suffix = provisionedDomainsSuffix(domain);
+	const tail = suffix ? `${suffix}; pass domain: <one> to use its secret` : "";
 	return `secret "${authCtx.missingNames[0]}" not found in store for domain "${domain}"${tail}`;
 }
 
-/** Resolve the secrets-store domain for a probe: the apiHost hostname when it
- *  is itself provisioned, else the longest provisioned parent domain
- *  (pro-api.coinmarketcap.com → coinmarketcap.com), else the hostname as-is.
- *  ponytail: parent-suffix match against the store, not a public-suffix list —
- *  no dep, and the store is the source of truth for where secrets live. */
-export function resolveProbeStoreDomain(hostname: string): string {
-	const domains = listDomains();
-	if (domains.includes(hostname)) return hostname;
-	const parent = domains
-		.filter((d) => hostname.endsWith(`.${d}`))
-		.sort((a, b) => b.length - a.length)[0];
-	return parent ?? hostname;
-}
-
-/** Hostname of an apiHost URL (falls back to the raw string). */
-function hostnameOf(apiHost: string): string {
-	try {
-		return new URL(apiHost).hostname;
-	} catch {
-		return apiHost;
-	}
+/** missNote + the token-store note, joined — the one miss renderer used at
+ *  every note site, so a useTokenStore nudge rides along wherever a secret
+ *  miss would. */
+function authMissNote(authCtx: ProbeAuthCtx, domain: string): string {
+	return [missNote(authCtx, domain), authCtx.tokenNote]
+		.filter(Boolean)
+		.join(" — ");
 }
 
 /** Trailing path of an apiHost URL (e.g. `/v3`), or `""` when empty/root.
@@ -362,11 +523,13 @@ export async function probe(
 	path: string,
 	params: Record<string, unknown> = {},
 	opts: ProbeOptions = {},
+	ctx?: ExtensionContext,
 ): Promise<ProbeResult> {
 	const accept = opts.accept ?? "application/json";
 	const walkVersions = opts.walkVersions ?? true;
-	const domain = opts.domain ?? resolveProbeStoreDomain(hostnameOf(apiHost));
-	const authCtx = resolveProbeAuth(opts.auth, domain);
+	const domain =
+		opts.domain ?? resolveProvisionedParentDomain(hostnameOf(apiHost));
+	const authCtx = await resolveProbeAuth(opts.auth, domain, ctx);
 
 	// Base case only carries the apiHost version prefix; a walk-hit draft
 	// embeds its walked version in the prefix passed to fetchOne.
@@ -420,7 +583,7 @@ async function walkBackward(
 	},
 	start: number,
 ): Promise<ProbeResult | null> {
-	const miss = missNote(ctx.authCtx, ctx.domain);
+	const miss = authMissNote(ctx.authCtx, ctx.domain);
 	const floor = Math.max(start - MAX_VERSION_WALK, 1);
 	for (let k = start - 1; k >= floor; k--) {
 		const tried = await fetchOne(
@@ -437,7 +600,7 @@ async function walkBackward(
 			// draft carries /v${k} while the body came from elsewhere — flag
 			// it so the agent checks finalUrl instead of trusting the prefix.
 			const redirected = tried.finalUrl !== tried.url;
-			tried.note = `${miss ? miss + " — " : ""}404 on /v${start}${ctx.path}; version walk → /v${k}${redirected ? " — verify finalUrl (redirect target)" : ""}`;
+			tried.note = `${miss ? `${miss} — ` : ""}404 on /v${start}${ctx.path}; version walk → /v${k}${redirected ? " — verify finalUrl (redirect target)" : ""}`;
 			return tried;
 		}
 	}
@@ -458,8 +621,8 @@ function withVersion(apiHost: string, k: number): string {
 
 /** The gate-excluded 404 note (bare / non-integer / subdomain version hosts). */
 function walkSkipNote(authCtx: ProbeAuthCtx, domain: string): string {
-	const miss = missNote(authCtx, domain);
-	return `${miss ? miss + " — " : ""}404 — no version walk (apiHost has no /vN prefix)`;
+	const miss = authMissNote(authCtx, domain);
+	return `${miss ? `${miss} — ` : ""}404 — no version walk (apiHost has no /vN prefix)`;
 }
 
 async function fetchOne(
@@ -483,13 +646,15 @@ async function fetchOne(
 			? {
 					hasQuerySecret,
 					secretHeaderNames: authCtx.secretHeaderNames,
+					secretQueryParamNames: authCtx.secretQueryParamNames,
 				}
 			: {}),
 	});
 	// Probe-local body scrub: the probe bypasses checkResponseStatus, so
-	// scrub known secret values from the raw slice directly — a 401 body
-	// echoing the key must not leak it into agent context.
-	const raw = scrubSecretValues(res.body.slice(0, 800), authCtx.secretValues);
+	// scrub known secret values from the full body directly — a 401 body
+	// echoing the key must not leak it into agent context. Scrub before
+	// slicing so a secret straddling the cut can't leave a partial prefix.
+	const raw = scrubSecretValues(res.body, authCtx.secretValues).slice(0, 800);
 	const finalUrl = redactSecretParams(
 		res.finalUrl ?? rawUrl,
 		authCtx.secretQueryParamNames,
@@ -500,7 +665,7 @@ async function fetchOne(
 		// (gated endpoint, or bad/missing credentials), distinct from other
 		// 4xx/5xx statuses. The name is deliberate: it covers 403 too.
 		const isAuthError = res.status === 401 || res.status === 403;
-		const miss = missNote(authCtx, domain);
+		const miss = authMissNote(authCtx, domain);
 		let note: string;
 		if (!authCtx.hasAuthBlock) {
 			// No auth injected — a 401/403 means the endpoint is gated and the
@@ -568,7 +733,7 @@ async function fetchOne(
 	}
 
 	const shape = summarize(data);
-	const miss = missNote(authCtx, domain);
+	const miss = authMissNote(authCtx, domain);
 	const draft = emitDraft(path, params, shape, prefix);
 	let note: string | undefined = miss;
 	if (authCtx.misconfiguredPrefixes) {
@@ -627,16 +792,16 @@ export function emitDraft(
 ): string {
 	// Idempotent: only prepend when the path doesn't already carry the prefix,
 	// so `apiHost: .../v3` + `path: /v3/items` doesn't become `/v3/v3/items`.
-	if (prefix && !path.startsWith(prefix)) path = prefix + path;
-	const name = suggestName(path);
-	const pathTokens = extractPathTokens(path);
+	const fullPath = prefix && !path.startsWith(prefix) ? prefix + path : path;
+	const name = suggestName(fullPath);
+	const pathTokens = extractPathTokens(fullPath);
 	const queryParamKeys = Object.keys(params).filter(
 		(k) => !pathTokens.includes(k),
 	);
 	const lines: string[] = [
 		`  - name: ${name}`,
 		`    via: ${shape.suggestedVia}`,
-		`    path: ${path}`,
+		`    path: ${fullPath}`,
 		`    accept: json`,
 	];
 
@@ -672,6 +837,21 @@ export function emitDraft(
 			"    # array response with no pagination markers — if the API documents paging, prefer paginate:",
 			"    #   offset-limit advances the page param by pageSize each page (use base: 1 for 1-based `start` APIs like CMC); page increments the page param by 1.",
 		);
+		if (shape.topLevel === "array") {
+			// Bare top-level array — the author would have to hand-convert, and
+			// `itemsPath` is parser-required on paginate ops but invisible here.
+			// Emit the ready-to-uncomment block so the conversion can't drop it.
+			lines.push(
+				"    # bare top-level array — the paginate equivalent (itemsPath is REQUIRED on paginate ops):",
+				"    # via: paginate",
+				"    # pagination:",
+				"    #   style: offset-limit",
+				`    #   itemsPath: ${shape.suggestedItemsPath}`,
+				"    #   pageParam: offset",
+				"    #   pageSizeParam: limit",
+				"    #   pageSize: 30",
+			);
+		}
 	}
 	if (queryParamKeys.length > 0) {
 		lines.push("    params:");
@@ -711,9 +891,9 @@ export const apiProbeTool = defineTool({
 		"It only suggests — it never writes the guide, and the operation must still be " +
 		"traceable to your plan source. Pre-guide: pass apiHost + path. After a guide " +
 		"exists, use api-guide({domain}) to get apiHost, or api-fetch to execute. " +
-		"Before the first auth-gated probe, call with listSecrets: true (and no domain) " +
-		"to list every provisioned store domain and which already have guides — pass that " +
-		"domain up front so a store-miss round-trip is avoided. " +
+		"Before the first auth-gated probe, use api-store (learn mode) to check what " +
+		"credentials exist for the domain — pass that domain up front so a store-miss " +
+		"round-trip is avoided. " +
 		"Before authoring a new guide, read the provider's docs index (llms.txt, " +
 		"openapi.json at the API root, or the docs page) to learn the current API " +
 		"version — then probe that version explicitly. Do not default the version from " +
@@ -722,23 +902,19 @@ export const apiProbeTool = defineTool({
 		"but cannot detect a stale-but-working one. ",
 
 	parameters: Type.Object({
-		apiHost: Type.Optional(
-			Type.String({
-				description:
-					"Base URL including the API's current version prefix, e.g. " +
-					"'https://api.example.com/v3'. Find the latest version before probing: " +
-					"check the API's docs page, openapi.json/swagger.json at the API root, " +
-					"or llms.txt. Supply the newest version you can verify — if it 404s, the " +
-					"probe walks backward (v3→v2→v1) to recover. Do not default to /v1 from " +
-					"memory; a stale version that still returns 200 is not detected as old.",
-			}),
-		),
-		path: Type.Optional(
-			Type.String({
-				description:
-					"Templated path, e.g. '/repos/{owner}/{repo}/branches'. {token} placeholders are filled from params.",
-			}),
-		),
+		apiHost: Type.String({
+			description:
+				"Base URL including the API's current version prefix, e.g. " +
+				"'https://api.example.com/v3'. Find the latest version before probing: " +
+				"check the API's docs page, openapi.json/swagger.json at the API root, " +
+				"or llms.txt. Supply the newest version you can verify — if it 404s, the " +
+				"probe walks backward (v3→v2→v1) to recover. Do not default to /v1 from " +
+				"memory; a stale version that still returns 200 is not detected as old.",
+		}),
+		path: Type.String({
+			description:
+				"Templated path, e.g. '/repos/{owner}/{repo}/branches'. {token} placeholders are filled from params.",
+		}),
 		params: Type.Optional(
 			Type.Record(Type.String(), Type.Unknown(), {
 				description:
@@ -757,10 +933,60 @@ export const apiProbeTool = defineTool({
 					secretRefs: Type.Optional(Type.Record(Type.String(), Type.String())),
 					secretQueryRefs: Type.Optional(Type.Record(Type.String(), Type.String())),
 					headerPrefixes: Type.Optional(Type.Record(Type.String(), Type.String())),
+					useTokenStore: Type.Optional(
+						Type.Boolean({
+							description:
+								"Inject the OAuth2 access token from the token store as 'Authorization: Bearer <token>' (mint it first via /api oauth <domain>). Requires auth.grant + auth.tokenUrl (the token-slot key). Values never enter the transcript; absent/expired token → the note nudges /api oauth and the probe proceeds unauthenticated.",
+						}),
+					),
+					grant: Type.Optional(
+						Type.Union(
+							[Type.Literal("client_credentials"), Type.Literal("authorization_code")],
+							{
+								description:
+									"The token slot's grant — token slots are keyed (domain, grant, tokenUrl). Required with useTokenStore; the mint arm always uses client_credentials.",
+							},
+						),
+					),
+					tokenUrl: Type.Optional(
+						Type.String({
+							description:
+								"Token endpoint URL — load-bearing beyond minting: it keys the token-store slot read (with grant). When the token store has no usable token and mint fields are present, the probe POSTs client-credentials once, stamps the store, and injects the fresh Bearer.",
+						}),
+					),
+					clientId: Type.Optional(
+						Type.String({
+							description:
+								"Mint-on-demand: secrets-store NAME of the client id (value resolves from the store, never the transcript). Requires tokenUrl.",
+						}),
+					),
+					clientSecret: Type.Optional(
+						Type.String({
+							description: "Mint-on-demand: secrets-store NAME of the client secret.",
+						}),
+					),
+					scopes: Type.Optional(
+						Type.Array(Type.String(), {
+							description: "Mint-on-demand: scopes for the token request.",
+						}),
+					),
+					tokenEndpointAuthMethod: Type.Optional(
+						Type.Union(
+							[
+								Type.Literal("client_secret_basic"),
+								Type.Literal("client_secret_post"),
+								Type.Literal("none"),
+							],
+							{
+								description:
+									"Mint-on-demand: token-endpoint auth method (default client_secret_post).",
+							},
+						),
+					),
 				},
 				{
 					description:
-						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Accepts only secretRefs, secretQueryRefs, and headerPrefixes. Values resolve from the secrets store and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
+						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Accepts secretRefs, secretQueryRefs, headerPrefixes, useTokenStore (+ grant + tokenUrl, the token-slot key), and client-credentials mint-on-demand fields (tokenUrl + clientId [+ clientSecret, scopes, tokenEndpointAuthMethod]) for bootstrapping a guide-less authoring loop. Values resolve from the secrets/token stores and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
 					// Tight: unknown keys (e.g. a stray `domain`) are rejected before execute runs.
 					// The description above names the allowed fields explicitly — keep it in
 					// sync when adding/renaming a field here, or the prose lies to agents.
@@ -774,102 +1000,33 @@ export const apiProbeTool = defineTool({
 					"Domain for secrets-store lookups; defaults to apiHost's hostname (or its provisioned parent domain).",
 			}),
 		),
-		listSecrets: Type.Optional(
-			Type.Boolean({
-				description:
-					"Names only, never values. Two modes: with no domain/apiHost, lists " +
-					"provisioned-but-guideless store domains (authoring-bootstrap view — " +
-					"call this empty first to see what's provisioned); with a domain (or " +
-					"apiHost), lists provisioned secret names for that domain, with " +
-					"declared-vs-stored gaps when a guide exists.",
-			}),
-		),
 	}),
 
-	async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-		const { apiHost, path, walkVersions, auth, domain, listSecrets } = params as {
-			apiHost?: string;
-			path?: string;
+	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		const { apiHost, path, walkVersions, auth, domain } = params as {
+			apiHost: string;
+			path: string;
 			params?: Record<string, unknown>;
 			walkVersions?: boolean;
-			auth?: {
-				secretRefs?: Record<string, string>;
-				secretQueryRefs?: Record<string, string>;
-				headerPrefixes?: Record<string, string>;
-			};
+			auth?: ProbeOptions["auth"];
 			domain?: string;
-			listSecrets?: boolean;
 		};
 		const userParams = (params as Record<string, unknown>)["params"] as
 			| Record<string, unknown>
 			| undefined;
 
-		// Learn-gated secrets discovery — short-circuits the fetch entirely.
-		// The agent's only programmatic path to the secrets store; /api secrets is
-		// user-typed only. Names only, never values.
-		if (listSecrets === true) {
-			if (!isApiLearnEnabled()) {
-				return {
-					content: [
-						{
-							type: "text",
-							text:
-								"api-probe: listSecrets: true is learn mode only — run /api learn first.",
-						},
-					],
-					details: { error: "learn_mode_only" },
-				};
-			}
-			// Bare call (no domain, no apiHost): orphan list only. apiHost present:
-			// orphan list first, then the per-domain view. domain present: unchanged.
-			const unscoped = domain ? undefined : unscopedStoreDomains();
-			const blocks: string[] = [];
-			if (unscoped !== undefined) blocks.push(formatUnscopedDomains(unscoped));
-			const target =
-				domain ??
-				(apiHost ? resolveProbeStoreDomain(hostnameOf(apiHost)) : undefined);
-			if (target !== undefined) {
-				const secrets = listDomainSecrets(target);
-				blocks.push(formatSecretsResult(secrets));
-				// apiHost/domain present means a real probe was suppressed by
-				// listSecrets: true — say so, or the author silently loses the probe.
-				blocks.push(
-					"probe suppressed because listSecrets: true — drop listSecrets to probe.",
-				);
-				return {
-					content: [{ type: "text", text: blocks.join("\n\n") }],
-					details: unscoped === undefined ? { secrets } : { secrets, unscoped },
-				};
-			}
-			return {
-				content: [{ type: "text", text: blocks.join("\n\n") }],
-				details: { unscoped: unscoped! },
-			};
-		}
-
-		// apiHost/path are optional in the schema so the bare listSecrets call is
-		// legal; every real probe needs both. The schema no longer enforces it,
-		// so guard here before falling through to probe(). (The listSecrets:true
-		// branch always returns above, so this guard only sees non-listSecrets.)
-		if (!apiHost || !path) {
-			return {
-				content: [
-					{
-						type: "text",
-						text:
-							"api-probe: apiHost and path are required unless listSecrets: true.",
-					},
-				],
-				details: { error: "missing_apiHost_or_path" },
-			};
-		}
-
 		try {
-			const result = await probe(apiHost, path, userParams ?? {}, {
-				...(walkVersions === undefined ? {} : { walkVersions }),
-				...(auth ? { auth } : {}),
-				...(domain ? { domain } : {}),
-			});
+			const result = await probe(
+				apiHost,
+				path,
+				userParams ?? {},
+				{
+					...(walkVersions === undefined ? {} : { walkVersions }),
+					...(auth ? { auth } : {}),
+					...(domain ? { domain } : {}),
+				},
+				ctx,
+			);
 			return {
 				content: [{ type: "text", text: formatProbeResult(result) }],
 				details: {
@@ -910,42 +1067,6 @@ export const apiProbeTool = defineTool({
 		const d = result.details as Record<string, unknown> | undefined;
 		if (d?.error) {
 			return new Text(theme.fg("error", `⚠ ${contentText(result, "?")}`), 0, 0);
-		}
-		// Secrets first: the domain-scoped view is the primary output and is present
-		// for both the per-domain and combined (apiHost-no-domain) shapes. Only the
-		// bare call (no domain/apiHost) carries unscoped alone.
-		const secrets = d?.secrets as
-			| { domain: string; provisioned: string[] }
-			| undefined;
-		if (secrets) {
-			const text = theme.fg("accent", theme.bold("🔑 api-probe"));
-			return new Text(
-				appendFooter(
-					text +
-						` — secrets for ${secrets.domain} · ${secrets.provisioned.length} provisioned`,
-					expanded,
-					result,
-					theme,
-					1000,
-				),
-				0,
-				0,
-			);
-		}
-		const unscoped = d?.unscoped as string[] | undefined;
-		if (unscoped) {
-			const text = theme.fg("accent", theme.bold("🔑 api-probe"));
-			return new Text(
-				appendFooter(
-					text + ` — ${unscoped.length} unscoped domains`,
-					expanded,
-					result,
-					theme,
-					1000,
-				),
-				0,
-				0,
-			);
 		}
 		const status = d?.status as number | undefined;
 		const shape = d?.shape as ShapeSummary | null | undefined;
@@ -1002,61 +1123,5 @@ export function formatProbeResult(r: ProbeResult): string {
 	}
 	lines.push("");
 	lines.push(`  ${DOCS_NUDGE.join("\n  ")}`);
-	return lines.join("\n");
-}
-
-/** Store domains that are provisioned but not scoped to any guide.
- *  Authoring-loop diagnostic: surfaces bootstrap + migration-orphan
- *  secrets. Names only. */
-function unscopedStoreDomains(): string[] {
-	return listDomains().filter((d) => findGuidesByDomain(d).length === 0);
-}
-
-function formatUnscopedDomains(domains: string[]): string {
-	const lines: string[] = ["🗂 unscoped store domains (provisioned, no guide)"];
-	lines.push(`  ${domains.length > 0 ? domains.join(", ") : "(none)"}`);
-	lines.push("  (names only — values never leave the store)");
-	return lines.join("\n");
-}
-
-/** List mode: provisioned secret names for a domain (names only). */
-function listDomainSecrets(domain: string): {
-	domain: string;
-	provisioned: string[];
-	declared?: string[];
-} {
-	const provisioned = listNames(domain);
-	const matches = findGuidesByDomain(domain);
-	if (matches.length === 0) return { domain, provisioned };
-	const declaredSet = new Set<string>();
-	for (const { guide } of matches) {
-		for (const n of [
-			...(guide.auth.requires ?? []),
-			...(guide.auth.optional ?? []),
-		]) {
-			declaredSet.add(n);
-		}
-	}
-	const declared = [...declaredSet].sort();
-	return { domain, provisioned, declared };
-}
-
-function formatSecretsResult(s: {
-	domain: string;
-	provisioned: string[];
-	declared?: string[];
-}): string {
-	const lines: string[] = [`🔑 secrets for ${s.domain}`];
-	lines.push(
-		`  provisioned: ${s.provisioned.length > 0 ? s.provisioned.join(", ") : "(none)"}`,
-	);
-	if (s.declared !== undefined) {
-		lines.push(
-			`  declared: ${s.declared.length > 0 ? s.declared.join(", ") : "(none)"}`,
-		);
-		const gaps = s.declared.filter((d) => !s.provisioned.includes(d));
-		if (gaps.length > 0) lines.push(`  gaps: ${gaps.join(", ")}`);
-	}
-	lines.push("  (names only — values never leave the store)");
 	return lines.join("\n");
 }

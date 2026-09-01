@@ -29,7 +29,8 @@
 		"./core/local-helpers.js": "./core/local-helpers.ts",
 		"./core/api-guide-types.js": "./core/api-guide-types.ts",
 		"./core/transport.js": "./core/transport.ts",
-		"./core/auth.js": "./core/auth.ts"
+		"./core/auth.js": "./core/auth.ts",
+		"./core/resolve-op.js": "./core/resolve-op.ts"
 	},
 	"files": [
 		"index.ts",
@@ -43,6 +44,7 @@
 		"core/transport.ts",
 		"core/helpers.ts",
 		"core/path-template.ts",
+		"core/fs-0600.ts",
 		"core/local-helpers.ts",
 		"core/helpers-command.ts",
 		"core/api-toggle.ts",
@@ -53,14 +55,20 @@
 		"core/response-spill.ts",
 		"core/resolve-op.ts",
 		"core/guide-picker.ts",
+		"core/select-picker.ts",
 		"core/verify-command.ts",
 		"core/delete-command.ts",
+		"core/oauth-store.ts",
+		"core/oauth-command.ts",
+		"core/oauth-flow.ts",
 		"core/verify-ship-manifest.ts",
 		"tools/index.ts",
 		"tools/api-guide.ts",
 		"tools/api-fetch.ts",
 		"tools/api-learn.ts",
 		"tools/api-scaffold.ts",
+		"tools/api-store.ts",
+		"tools/oauth-mint.ts",
 		"tools/api-probe.ts",
 		"tools/utils.ts",
 		"README.md"

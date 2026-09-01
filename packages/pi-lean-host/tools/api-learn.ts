@@ -113,14 +113,25 @@ const SIBLING_NAMES = [
 const DESCRIPTION_MAX = 200;
 
 /** Commented static-key auth block — the issue-#5 auth-wiring teaching,
- * API-agnostic, kept after the worked example retired. */
+ * API-agnostic, kept after the worked example retired. Nested SecretRef
+ * shape (v1): each ref is self-contained (secret + optional prefix/optional). */
 const STATIC_KEY_BLOCK = `  # Keyed API? Use kind: static-key — values live in the secrets store (/api secrets), never in the recipe:
   #   kind: static-key
-  #   requires: [<secret-name>]
   #   secretRefs:
-  #     Authorization: <secret-name>   # header name → secret name (must match the name provisioned via /api secrets)
-  #   headerPrefixes:
-  #     Authorization: "Bearer "`;
+  #     Authorization:                # header name
+  #       secret: <secret-name>       # store name (must match /api secrets)
+  #       prefix: "Bearer "           # optional — prepended at fetch time
+  #       optional: false             # optional refs don't fail closed when absent`;
+
+/** Commented oauth2 authorization_code block — mirrors the manual's worked
+ * example so the fresh template teaches the interactive-grant shape without
+ * the agent having to grep a sibling guide for the field names. */
+const OAUTH2_AC_BLOCK = `  # OAuth2 API? Use kind: oauth2 — credentials are store names (/api secrets), minting via /api oauth <domain>:
+  #   grant: authorization_code        # or client_credentials (server-to-server: adds clientSecret, drops authorizeUrl)
+  #   tokenUrl: https://…/oauth/token
+  #   authorizeUrl: https://…/oauth/authorize   # REQUIRED for authorization_code
+  #   clientId: { secret: client_id }
+  #   scopes: [read]`;
 
 /** Placeholder starter template — only `domains:` is real (the requested
  * domain). Every other field is a placeholder the agent fills (op blocks
@@ -143,6 +154,7 @@ gatherAllMax: 1000           # omitted → 1000
 auth:
   kind: none
 ${STATIC_KEY_BLOCK}
+${OAUTH2_AC_BLOCK}
 
 pagination:
   style: offset-limit
@@ -176,15 +188,40 @@ responseShape:
 
 /** Save-summary auth line — names the header→secret mapping (names only,
  * never values: values live in the store). e.g.
- * `static-key · Authorization ← secret apiKey (Bearer )`. */
+ * `static-key · Authorization ← secret apiKey (Bearer )` or
+ * `oauth2 · grant client_credentials · clientId ← secret client_id`. */
 function authSummary(auth: AuthConfig): string {
 	const parts: string[] = [];
-	for (const [header, secretName] of Object.entries(auth.secretRefs ?? {})) {
-		const prefix = auth.headerPrefixes?.[header];
-		parts.push(`${header} ← secret ${secretName}${prefix ? ` (${prefix})` : ""}`);
-	}
-	for (const [param, secretName] of Object.entries(auth.secretQueryRefs ?? {})) {
-		parts.push(`?${param} ← secret ${secretName}`);
+	switch (auth.kind) {
+		case "static-key":
+			for (const [header, ref] of Object.entries(auth.secretRefs ?? {})) {
+				parts.push(
+					`${header} ← secret ${ref.secret}${ref.prefix ? ` (${ref.prefix})` : ""}`,
+				);
+			}
+			for (const [param, ref] of Object.entries(auth.secretQueryRefs ?? {})) {
+				parts.push(`?${param} ← secret ${ref.secret}`);
+			}
+			break;
+		case "oauth2":
+			parts.push(
+				`grant ${auth.grant} · clientId ← secret ${auth.clientId.secret}` +
+					(auth.clientSecret
+						? ` · clientSecret ← secret ${auth.clientSecret.secret}`
+						: ""),
+			);
+			for (const [header, ref] of Object.entries(auth.secretRefs ?? {})) {
+				parts.push(
+					`${header} ← secret ${ref.secret}${ref.prefix ? ` (${ref.prefix})` : ""}`,
+				);
+			}
+			break;
+		case "none":
+			break;
+		default: {
+			const _exhaustive: never = auth;
+			throw new Error(`Unhandled auth kind: ${_exhaustive}`);
+		}
 	}
 	return parts.length === 0
 		? `Auth: ${auth.kind}`
@@ -194,6 +231,31 @@ function authSummary(auth: AuthConfig): string {
 // ═══════════════════════════════════════════════════════════════════
 // Authoring manual + templates
 // ═══════════════════════════════════════════════════════════════════
+
+/** Worked oauth2 examples shown in the authoring manual — exported so the
+ * parse test proves they parse as-is (the teaching can't rot silently).
+ * Field semantics mirror validateOAuth2Auth's grant invariants. */
+export const OAUTH2_CC_EXAMPLE = `    # client_credentials — server-to-server, no browser:
+    auth:
+      kind: oauth2
+      grant: client_credentials
+      tokenUrl: https://api.example.com/oauth/token
+      clientId: { secret: client_id }
+      clientSecret: { secret: client_secret }   # parser-required for this grant
+      # scopes: [read]
+      # secretRefs:                              # extra headers beside the Bearer token
+      #   Client-Id:
+      #     secret: client_id`;
+
+export const OAUTH2_AC_EXAMPLE = `    # authorization_code — interactive; human consents in their browser and pastes the redirect (/api oauth):
+    auth:
+      kind: oauth2
+      grant: authorization_code
+      tokenUrl: https://api.example.com/oauth/token
+      authorizeUrl: https://example.com/oauth/authorize   # REQUIRED for this grant; rejected for client_credentials
+      clientId: { secret: client_id }
+      # clientSecret: { secret: client_secret }  # confidential clients only; PKCE public clients omit it
+      scopes: [read]`;
 
 /** The field reference + defaults + semantics manual. Travels with the
  * pull-to-/tmp action — prepended to every staged draft (template or
@@ -211,7 +273,7 @@ const AUTHORING_MANUAL = [
 	`  \`apiHost\`       — base URL. Version in apiHost XOR in each path — never both (see Key defaults)`,
 	`  \`operations\`    — a LIST of operation mappings — at least one entry`,
 	`  \`operations[].name\`   — unique operation name`,
-	`  \`operations[].via\`    — "restGet" or "paginate"`,
+	`  \`operations[].via\`    — "restGet" or "paginate" — both issue GETs; the plugin is read-only by design (writes have no schema representation)`,
 	`  \`operations[].path\`   — path starting with /`,
 	"",
 	"## Key defaults",
@@ -240,11 +302,24 @@ const AUTHORING_MANUAL = [
 	"",
 	"## Auth",
 	`  \`kind: static-key\` — keyed-header auth mode (values live in the secrets store, never in the recipe):`,
-	`  \`requires\` = fail-closed if unprovisioned; \`optional\` = proceeds unauthenticated if absent. Both are names only — values live in the secrets store, and each name must match exactly the one passed to /api secrets. Each \`requires\` / \`optional\` name must also appear as a secretRefs/secretQueryRefs value (parser-enforced).`,
+	`  \`kind: oauth2\` — OAuth2 (client_credentials / authorization_code); token minting via /api oauth <domain>. ALL oauth2 credentials are store names, never literals — a shippable guide must not bake in one app's registration:`,
+	`    \`clientId\`        — { secret: <store name> } — the client id's secrets-store name (e.g. clientId: { secret: client_id })`,
+	`    \`clientSecret\`    — { secret: <store name> } — parser-required for client_credentials; absent for authorization_code (PKCE public clients)`,
+	`    \`secretRefs\`      — { <request header>: { secret: <store name>, prefix?, optional? } } — headers merged alongside the Bearer token (e.g. Twitch's Client-Id)`,
+	`    \`scopes\`          — optional static scope list (e.g. scopes: [read])`,
+	`    \`tokenEndpointAuthMethod\` — client_secret_post (default) | client_secret_basic | none — how the client authenticates at the token endpoint; none = PKCE public client (no clientSecret)`,
+	`    \`paramStyle\`      — bearer-header (default) | query (sends ?access_token=…)`,
+	`    \`revokeUrl\`       — optional revocation endpoint`,
+	"",
+	"  Worked examples — copy one and edit; store names must match /api secrets <domain>:",
+	OAUTH2_CC_EXAMPLE,
+	"",
+	OAUTH2_AC_EXAMPLE,
+	"",
 	"  static-key (keyed APIs):",
-	`    \`secretRefs\`      — { <header name>: <secret name> }  ← header → secret direction`,
-	`    \`headerPrefixes\`  — { <header>: "Bearer " }  ← scheme prefix; store holds the raw token`,
-	`    \`requires\`        — [<secret-name>]  ← fail-closed if unprovisioned (literal name, must match the store)`,
+	`    \`secretRefs\`      — { <header name>: { secret: <store name>, prefix?, optional? } }  ← self-contained ref`,
+	`    \`secretQueryRefs\` — { <query param>: { secret: <store name>, optional? } }  ← query-param injection`,
+	`    \`optional: true\` on a ref → proceeds unauthenticated if absent; default (required) → fail-closed. Values live in the secrets store; the store name must match /api secrets exactly.`,
 	"",
 	"## Executor semantics",
 	"  Pagination:",

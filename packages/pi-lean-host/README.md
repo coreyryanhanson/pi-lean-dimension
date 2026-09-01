@@ -44,20 +44,14 @@
 1. [Quick Start](#quick-start)
 2. [The Big Idea: Recipes, Not a Runtime](#the-big-idea-recipes-not-a-runtime)
 3. [`/api` Command — API Toggle](#api-command--api-toggle)
-4. [All 5 Tools](#all-5-tools)
-5. [Guide Recipes (the `recipe` block)](#guide-recipes-the-recipe-block)
-6. [Authoring a Guide](#authoring-a-guide)
-7. [Local User Helpers](#local-user-helpers)
-8. [Pagination Styles](#pagination-styles)
-9. [Response Shapes (`parseResponse`)](#response-shapes-parseresponse)
-10. [Multi-Recipe Domains](#multi-recipe-domains)
-11. [Bundled Reference Recipes](#bundled-reference-recipes)
-12. [`/api status` — Detailed Runtime Status](#api-status--detailed-runtime-status)
-13. [Configuration (`settings.json`)](#configuration-settingsjson)
-14. [Co-Installing with `pi-lean-portal`](#co-installing-with-pi-lean-portal)
-15. [Authentication & Secrets](#authentication--secrets)
-16. [Tips & Best Practices](#tips--best-practices)
-17. [Security & Scope](#security--scope)
+4. [All 7 Tools](#all-7-tools)
+5. [Authoring Your First Guide](#authoring-your-first-guide)
+6. [Reference Recipes (caritas)](#reference-recipes-caritas)
+7. [Configuration (`settings.json`)](#configuration-settingsjson)
+8. [Co-Installing with `pi-lean-portal`](#co-installing-with-pi-lean-portal)
+9. [Tips & Best Practices](#tips--best-practices)
+10. [Authentication & Secrets](#authentication--secrets)
+11. [Security & Scope](#security--scope)
 
 ---
 
@@ -70,33 +64,18 @@ pi install npm:pi-lean-host
 No browser binaries, no server, no setup wizard. The host tools are **enabled
 by default** — you'll see:
 
-> 📡 API tools enabled. /api learn to make api-learn + api-probe + api-scaffold available.
+> 📡 API tools enabled. /api learn to make api-learn + api-probe + api-scaffold + api-store + oauth-mint available.
 
-From a fresh install you have no guides yet, so the workflow is:
+From a fresh install you have no guides yet, so the next step is to get one:
 
-1. **`/api learn`** — enable the authoring tools (`api-learn` + `api-probe` +
-   `api-scaffold`).
-2. **`api-probe({apiHost, path})`** — discover the shape of a not-yet-guided
-   endpoint; it drafts a YAML operation block to paste into a recipe.
-3. **`api-learn({domain, dir})`** — validate the staged draft(s) and write
-   the guide to
-   `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/guide.md`.
-4. **`api-fetch({domain, operation})`** — execute and verify.
-
-Or skip the authoring and **copy a bundled reference recipe** (see
-[Bundled Reference Recipes](#bundled-reference-recipes)) into
-`~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/` — it loads
-immediately. The folder name must match `slug(shortName)` (see the
-0.4.0 breaking-change note above).
-
-> **Host-only is a first-class install.** `pi-lean-host` declares
-> `pi-lean-portal` as an *optional* peer dependency and has zero static
-> imports from it. The core loop — authoring via docs/example, on-demand
-> discovery, guided execution — runs with no browser package installed.
-> Co-installing portal is planned to unlock two additive features
-> (navigate-footer surfacing and probe-authoring via `web-fetch`) in a
-> **future release**. Host-side projection code is present but inert
-> until portal ships the receiving global (`__piLeanPortalRegisterGuideProvider`).
+- **Author one** — see [Authoring Your First Guide](#authoring-your-first-guide)
+  for the end-to-end workflow, including auth-gated APIs. The complete
+  authoring manual (field reference, pagination styles, helper contracts)
+  lives in [docs/authoring.md](docs/authoring.md).
+- **Or copy a reference recipe** (see
+  [Reference Recipes (caritas)](#reference-recipes-caritas)) into
+  `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/` — it loads
+  immediately.
 
 ---
 
@@ -113,8 +92,7 @@ This kills two whole classes of recurring mistakes before they exist:
 
 - **Agents getting the same API wrong every session.** The reason they do is
   *they are the ones writing the calls.* Move call construction into a
-  reviewed tool + fixed helpers, and the agent never touches the auth
-  header, never hand-rolls pagination, never picks the wrong `Accept`.
+  reviewed tool + fixed helpers, and those mistakes disappear at the source.
 - **Arbitrary eval / egress safety.** Executable TS in a guide is a sandbox
   problem. Declarative recipes executed by a fixed tool are not — and because
   bundled recipes are inert, the only code that ever runs is code you
@@ -141,44 +119,28 @@ demand. A skill is pure text with no in-process eval, whereas a loaded
 |------|----------------|---------------|-------------------|-------|
 | Built-in helpers | package source (`core/`) | maintainers | yes | reviewed |
 | Local user helpers | `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/helper.ts` | you, or the agent in `/api learn` | no | user-owned |
-| Bundled recipes | `caritas` repo (`api-guides/<domain>/`) | maintainers | no (reference) | **inert — never auto-executed** |
+| Bundled recipes | `caritas` repo (`api-guides/<slug(shortName)>/`) | maintainers | no — [Reference Recipes](#reference-recipes-caritas) | **inert — never auto-executed** |
 
 Built-in helpers cover the common 90%. Local user helpers cover the weird 10%
-(computed signatures, strange date transforms, custom auth). Bundled recipes
-are inert reference material in the [`caritas`](https://github.com/coreyryanhanson/caritas)
-repo — the loader never reads `api-guides/` from the package. You adopt one by
-copying the whole domain folder into your own directory; only then does it
-load and execute.
+(computed signatures, strange date transforms, custom auth).
 
 ---
 
 ## `/api` Command — API Toggle
 
-`/api` is an **independent peer** of `/web`, not a child. They compose
-freely: each owns its own tool set and its own status-bar slot, and neither
-touches the other's tools.
-
 | Command | Effect |
 |---------|--------|
 | `/api on` | **API access** — `api-guide` + `api-fetch` available. Authoring tools hidden. (Default for new sessions.) |
-| `/api learn` | **API access + authoring** — adds `api-learn` + `api-probe` + `api-scaffold` on top of `on`. The agent never authors guides unprompted — it must be in learn mode. |
+| `/api learn` | **API access + authoring** — adds `api-learn` + `api-probe` + `api-scaffold` + `api-store` + `oauth-mint` on top of `on`. The agent never authors guides unprompted — it must be in learn mode. |
 | `/api off` | **All API tools hidden** — removes `api-*` from the agent's context to save tokens on sessions that aren't doing API work. |
 | `/api` | Show current state and available sub-commands. |
-| `/api status` | Detailed runtime status — state, active guides, domains, helpers. |
+| `/api status` | Detailed runtime status — toggle state, active guide count, domain list, and helper health (disabled helpers surface with a `⚠`). |
 | `/api helpers` | List local user helpers (or `/api helpers <domain>` to view one's source). |
 | `/api secrets [<domain> [<name>]]` | Manage stored API secrets — list, provision, delete (see [Authentication & Secrets](#authentication--secrets)). |
-| `/api verify <domain> [guide] [--force]` | Run every runnable op against the live API and stamp `verified` on success — strict: any runnable-op failure → no stamp; skipped ops named in the report (see [Recipe drift](#recipe-drift)). |
+| `/api verify <domain> [guide] [--force]` | Run every runnable op against the live API and stamp `verified` on success — strict: any runnable-op failure → no stamp; skipped ops named in the report (see [Recipe drift](docs/authoring.md#recipe-drift)). |
 | `/api delete <domain> [guide]` | Remove a guide directory and invalidate the guide-store cache — a human-typed recovery gesture (no agent tool surface); interactive confirm for a whole-domain delete. |
-
-### Why a peer toggle?
-
-The concrete win is **api-only mode**: `/api on` + `/web off` turns off every
-`browser-*` tool while keeping structured API access live. That's the workflow
-that pays for the machinery — batch structured-data pulls against a known API
-(paginating a JSON endpoint to exhaustion, querying a documented read API
-across many dates) where the browser tools are pure context noise you want
-gone, but API access must stay on. A `/web`-child toggle cannot give you
-that — `/web off` would kill both together.
+| `/api oauth <domain> …` | OAuth2 token management — `init` / mint / `--status` / `--refresh` / `--revoke` / `--code <code>` per token slot (human-typed; the agent's mint path is `oauth-mint`). `init` runs an interactive wizard (or headless flags — see `--help` for `--redirect-uri`, which must match the provider app registration) and finishes a paste-based auth-code flow via `/api oauth init <domain> … --code <code>`. |
+| `/api bootstrap oauth <domain> <spec>` | Agent-driven OAuth2 bootstrap — validates args, auto-enables learn when off, injects a research brief into the session, and exits; the agent then researches the provider and calls `oauth-mint` (the human is the trust root for the secret-bearing endpoint). Refused headless. |
 
 ### Persistence
 
@@ -187,7 +149,7 @@ library (`persistKey: toolset-state:pi-lean-dimension.api`), surviving
 `/reload`, `/resume`, `/fork`, and `/tree` navigation. A fresh conversation
 starts from the `toolsetDefaults` block in merged Pi settings (see
 [Configuration](#configuration-settingsjson)), falling back to the packaged
-default (`on` for `api`, `off` for `api-learn`).
+defaults.
 
 The status bar shows an `api` glyph (independent of the `browser`/`search`
 slots). It reads `● api` when `/api` is on (colored to reflect learn state)
@@ -195,15 +157,11 @@ and `○ api` when off.
 
 ---
 
-## All 5 Tools
+## All 7 Tools
 
-`pi-lean-host` registers 5 tools. `api-guide` and `api-fetch` are available
-under `/api on`; `api-learn`, `api-probe`, and `api-scaffold` are added under
-`/api learn`.
-
-The five tools split cleanly by side-effect boundary — one each for **local
-read**, **network read**, **local write**, **network read (exploratory)**, and
-**local write (bootstrap)**:
+`pi-lean-host` registers 7 tools. `api-guide` and `api-fetch` are available
+under `/api on`; `api-learn`, `api-probe`, `api-scaffold`, `api-store`, and
+`oauth-mint` are added under `/api learn`.
 
 ### 1. `api-guide` — Inspect the Guide Store (local read)
 
@@ -239,8 +197,11 @@ api-fetch domain="wikipedia.org" operation="searchPages" params={srsearch:"clima
   per-op).
 
 `api-fetch` resolves every guide claiming `domain`, finds the named
-`operation` across them, and executes it against the matching guide (helper
-routed by directory name, not the routing `domain`). The agent never sees a
+`operation` across them, and executes it against the matching guide.
+Exactly one hit executes; zero hits lists the ops from all matching guides
+(a multi-guide domain — each guide in its own directory — so you can pick);
+an op name appearing in ≥2 guides is an ambiguous collision the guide
+authors must fix (re-author via `api-learn` to rename). The agent never sees a
 URL, never sees a header, never sees the auth scheme. Output is an inline
 preview (~4000 chars) with larger responses spilled to a temp file under
 `/tmp/pi-lean-host/` (overridable via `PI_HOST_TEMP_DIR`) — `read` it with
@@ -258,338 +219,128 @@ api-learn domain="arxiv.org"                    → fetches an existing guide's 
 api-learn domain="arxiv.org" dir="/tmp/pi-lean-host/arxiv.org"  → validates + mirror-saves the staged dir to disk
 ```
 
-- `{domain, new: true}` → a fresh starter template with `domains: [<domain>]`
-  **staged to `/tmp/pi-lean-host/<domain>/guide.md`**. Only `domains` is real;
-  the other fields are `<placeholder>` values that **fail closed**, so a
-  pasted template cannot save until you fill it in.
-- `{domain}` (no `dir`) → fetch the current raw recipe of an existing guide
-  **and its present siblings** (`helper.ts`, `verify.json`) into the staged
-  dir (surfacing the guide's `dirName` so you know which folder it lives in);
-  a disambiguation menu if several guides claim the domain.
-- Every staged pull (template or fetched recipe) is prepended with the
-  authoring manual — the field reference + defaults + semantics the author
-  needs at the moment of authoring.
-- `{domain, dir}` → reads every staged file, validates the guide **before**
-  touching disk, then **mirror-saves** the staged dir to
-  `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/` — the folder is
-  derived from the guide's own `shortName`, not the `domain` arg, so a
-  re-save naturally lands back in the same folder. Present staged files
-  overwrite their guides-dir counterparts; a sibling present in the guides dir
-  but absent from the staged dir would be deleted, so save **refuses and
-  names the doomed files** until you re-call with `confirmDeletions: true`
-  (that flag is discovered only via the refusal message). A fail-closed
-  guard refuses to overwrite an existing `guide.md` whose `shortName`
-  differs from the incoming guide — a slug collision (two shortNames that
-  slug to the same folder, e.g. `cmc_full` / `cmc-full`); a same-`shortName`
-  save is a legitimate update. On a structural error it names the field, the
-  expected shape, and what was found — the file on disk is left untouched (no
-  half-written guide). Requires `/api learn`.
-
-The working copy is staged at `/tmp/pi-lean-host/<domain>/` (`/tmp`
-self-cleans, so drafts don't accumulate) — fetch/template calls write the
-draft there and you edit that file between saves; saving reads the staged dir
-and publishes to the guides dir. No session-held state, no `/api save`.
+The working copy is staged under `/tmp/pi-lean-host/` (`/tmp`
+self-cleans, so drafts don't accumulate; `<domain>/` for starter
+templates (`new: true`), `<slug(shortName)>/` for fetched recipes) —
+a fresh fail-closed starter
+template, an existing guide's raw recipe + siblings for
+direct editing, or a validated mirror-save of the staged dir into
+`~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/`. Every staged pull
+is prepended with the authoring manual.
+Full staging, deletion-gate, and slug-collision semantics:
+[docs/authoring.md](docs/authoring.md#the-authoring-tools-in-detail).
 
 ### 4. `api-probe` — Discover an Endpoint's Shape (network read, exploratory)
 
-```text
-api-probe apiHost="https://api.github.com" path="/repos/{owner}/{repo}/branches" params={owner:"torvalds", repo:"linux"}
-```
-
-Shape-discovery for the authoring loop. Fetches a templated path over the
-real transport (same UA, charset, 429-retry, ETag cache as `api-fetch` — the
-sanctioned way to reach even WAF'd hosts), summarizes the JSON shape, suggests
-`via` / `itemsPath` / pagination style, echoes a representative record id, and
-emits a **draft YAML operation block** to paste straight into a recipe. On 404
-it walks the `apiHost` version backward (e.g. `/v3` → `/v2` → `/v1`) to recover
-an over-claimed version; a draft carries the version prefix that was actually
-fetched (disable with `walkVersions=false`). A stale version that still
-returns 200 is not detected as old — read the provider's docs to supply the
-newest version up front.
-
-`api-probe` only **suggests** — it never writes the guide. The operation must
-still be traceable to your plan source (the API docs or a working curl
-example); this tool surfaces evidence, not authority. Requires `/api learn`.
+Agent-driven shape discovery for the authoring loop. Fetches a not-yet-guided
+endpoint over the real transport (same UA, charset, retry, and ETag handling
+as `api-fetch` — the sanctioned way to reach even WAF'd hosts), summarizes the
+JSON shape, and emits a **draft YAML operation block** to paste into a recipe.
+It only **suggests** — it never writes the guide, and a draft still needs
+confirming against the provider's docs (probe surfaces evidence, not
+authority).
 
 ### 5. `api-scaffold` — Bootstrap `verify.json` / `helper.ts` (local write)
 
 ```text
-api-scaffold domain="arxiv.org" verify=true   → writes a starter verify.json with "__FILL_ME__" sentinels to /tmp/pi-lean-host/arxiv.org/verify.json
-api-scaffold domain="arxiv.org" helper=true  → writes a commented-out helper.ts stub to /tmp/pi-lean-host/arxiv.org/helper.ts
+api-scaffold domain="arxiv.org" verify=true   → writes a starter verify.json with "__FILL_ME__" sentinels to /tmp/pi-lean-host/<slug(shortName)>/verify.json
+api-scaffold domain="arxiv.org" helper=true  → writes a commented-out helper.ts stub to /tmp/pi-lean-host/<slug(shortName)>/helper.ts
 ```
 
 Bootstrap tool for the two artifacts the authoring loop needs but that
-`api-learn` can't draft from the recipe alone:
+`api-learn` can't draft from the recipe alone: a `verify.json` with
+`"__FILL_ME__"` sentinels for every op with unsatisfiable params (sentinels
+skip until you replace them; existing real values merge additively) and a
+commented-out `helper.ts` stub. Both staged to `/tmp` — never the guides
+dir, never overwriting an existing staged sibling. Save the guide **first**,
+then scaffold.
 
-- `{domain, verify: true}` → for every op with unsatisfiable params (path
-  `{token}`, required query with no default, `requiresAnyOf` group), writes
-  `{ "<opName>": { "<param>": "__FILL_ME__" } }` to the staged
-  `/tmp/pi-lean-host/<slug(shortName)>/verify.json`. `"__FILL_ME__"` is a
-  sentinel: treated as unsupplied, so the op skips until you replace it. If a
-  `verify.json` exists in the guides dir, its real values are **additively
-  merged** (preserved; sentinels added only for newly-unsatisfiable params).
-- `{domain, helper: true}` → writes a commented-out `helper.ts` stub (both
-  `default` and `transform` exports, with doc comments) to the same staged
-  dir.
-- At least one of `verify`/`helper` must be `true`. The tool **never
-  overwrites** an existing staged sibling — delete it from `/tmp` first, then
-  re-call. Staging is keyed by `slug(shortName)` (same pattern as
-  `api-learn`), so a scaffolded `verify.json`/`helper.ts` lands in the same
-  dir `api-learn` saves from. Save the guide **first**, then scaffold —
-  `api-scaffold` reads the saved guide. Requires `/api learn`.
+### 6. `api-store` — Inspect Both Credential Stores (local read, learn-gated)
 
----
-
-## Guide Recipes (the `recipe` block)
-
-A guide is one markdown file: YAML frontmatter carries the structured recipe
-(the executable contract), and a prose body carries orientation for the
-agent (advisory). `api-fetch` reads the recipe slice and executes against it;
-`api-guide` reads the detail slice for introspection. **The prose is
-advisory, the frontmatter is authoritative.**
-
-### File shape
-
-A `guide.md` opens with a `---`-delimited YAML frontmatter block and
-closes it with a second `---`; the prose body follows. An operation can
-override the guide-level `pagination` / `responseShape` with its own block
-in the frontmatter.
-
-The fastest way to a first guide is to let the tools draft it:
-`api-learn({domain, new: true})` returns a fail-closed starter template,
-`api-probe` drafts real op blocks from a live endpoint — fill the
-placeholders, then save with `api-learn`. For
-**complete worked recipes** (real endpoints, `verified:` provenance,
-auth-in-place, helper examples), see the [Caritas](#bundled-reference-recipes)
-recipe library and copy a domain folder that matches your target.
-
-### Field reference
-
-| Field | Level | Default | Purpose |
-|---|---|---|---|
-| `kind` | guide | `"api"` | the guide type; defaults to `"api"` and is omittable. Values like `"web"` are rejected for API guides. |
-| `domains` | guide | — | discovery keys (plural bare aliases) |
-| `icon` / `shortName` / `updated` | guide | `📖` / filename / today | presentation slice (portal + `api-guide`) |
-| `apiHost` | guide | — | execution root: scheme + host + base path; the version prefix lives here |
-| `organization` | guide | — | optional org identity (registrable domain); catalog grouping + disambiguation. Recipe-slice only |
-| `description` | guide | — | optional one-line summary (≤200 chars); primary disambiguation signal for multi-guide domains |
-| `docs` | guide | — | optional canonical API documentation URL (http/https); surfaced in api-guide detail |
-| `verified` | guide | creation date | drift signal — **defaulted, not enforced**; stamped on success by `/api verify` |
-| `schemaVersion` | guide | `0` (floor) | breaking-change detection — stamped on save by `api-learn`; a stale guide (`< current`) gets a non-blocking `⚠` warning in `api-guide`/`api-fetch`, **never a gate** |
-| `gatherAllMax` | guide / op | `1000` | `gatherAll` ceiling; an op can override |
-| `auth.kind` | guide | `none` | `none` \| `static-key` (store-backed header/query secrets). `oauth2` is a declared-but-unrealized seam (rejected at parse) |
-| `auth.headers` | guide | — | literal extra headers merged into every request (e.g. X-Api-Key: DEMO_KEY) — **literal values only**, never the path for real credentials |
-| `auth.secretRefs` | guide | — | `Record<headerName, secretName>` — store-backed header injection (`static-key`) |
-| `auth.headerPrefixes` | guide | — | `Record<headerName, prefix>` — prefix prepended to a secretRefs header value, e.g. `Authorization: "Bearer "` (store holds the raw credential) |
-| `auth.secretQueryRefs` | guide | — | `Record<paramName, secretName>` — store-backed query-param injection (`static-key`) |
-| `auth.requires` | guide | — | secret names the guide hard-requires; absent → `api-fetch` fails closed before the request |
-| `auth.optional` | guide | — | secret names used if present, skipped if absent (e.g. GitHub rate-limit token) |
-| `pagination.style` | guide / op | required when `via: paginate` | `offset-limit` \| `nextLink` \| `cursor` \| `page` \| `resumptionToken` \| `tokenBag` |
-| `pagination.itemsPath` | guide / op | — | JSON path to the items array in the body |
-| `pagination.totalCountPath` | guide / op | — | optional, any style → server-reported total surfaced as `serverTotal` / `server total: N` |
-| `responseShape.format` | guide / op | `json` | `json` \| `xml` \| `text` → drives `parseResponse` (`text` is raw passthrough) |
-| `responseShape.charset` | guide / op | `utf-8` | `utf-8` or any IANA charset name (e.g. `iso-8859-1`); used as a fallback when the response's Content-Type header omits a charset — an explicit header charset wins |
-| `operations[].name` | op | — | the `operation` arg `api-fetch` takes |
-| `operations[].via` | op | — | executor: `restGet` \| `paginate` |
-| `operations[].path` | op | — | relative path; `{token}` = inferred path param (no re-declaration) |
-| `operations[].accept` | op | `json` | `json` \| `xml` \| `<any media-type string>` — request-side `Accept` header (distinct from `responseShape.format`) |
-| `operations[].params` | op | `{}` | query params; `{ required?, default?, description? }` per key |
-| `operations[].dateParams` | op | — | optional `{param: format}` → normalizes ISO dates to `iso8601` \| `yyyymmdd` \| `yyyy-mm-dd` (query params only) |
-| `operations[].helper` | op | `false` | `true` runs this domain's local helper for the op |
-| `operations[].transform` | op | `false` | `true` runs the helper's `transform` export on the parsed response (graceful — a throw returns raw data, never disables the op) |
-| `operations[].requiresAnyOf` | op | — | `[param, ...]` — at least one of these params must be supplied (single group per op, v1; members are plain optional params — not `required: true`, not `default`-bearing: both rejected at parse) |
-| `operations[].passthrough` | op | `false` | `true` forwards undeclared caller params onto the query string (for open-param APIs) |
-| `operations[].parse` | op | inherits `responseShape` | op-level override of format/charset |
-| `operations[].pagination` | op | inherits top-level | op-level override of pagination |
-
-### Built-in helpers (the fixed executor set)
-
-Three helpers, for v1. The agent never calls these directly — `api-fetch`
-routes each operation through the one its `via` names:
-
-- **`restGet`** — path templating, query params, Accept negotiation
-  (JSON/XML), and auth injection for `auth.kind: static-key` guides
-  (store-backed `secretRefs` / `secretQueryRefs`). See [Authentication &
-  Secrets](#authentication--secrets).
-- **`paginate`** — wraps a list operation. The guide declares the style; the
-  helper follows it. Returns `{items, next?, serverTotal?}` so the agent can
-  stop or continue, plus a `gatherAll` flag for the "just get me everything"
-  case with a hard ceiling.
-- **`parseResponse`** — XML→JSON, declared per-endpoint (charset decoding happens in the transport).
-  Agents mangle encodings constantly; fix it once here.
-
-`restPost`/mutations are **not** in scope for v1 — the target APIs are
-overwhelmingly GET-read.
-
-### Recipe drift
-
-A prose guide degrades gracefully; a declarative recipe with a wrong endpoint
-fails **hard**. v1 treats drift as a signal the agent reads, not a gate the
-loader enforces:
-
-- The `verified` frontmatter date records when a guide was last verified
-  against the live API (defaulted to creation date, **never enforced**). It's
-  rendered in the guide-detail footer alongside the current date — the agent
-  reads both and judges. `/api verify <domain>` runs every runnable op
-  against the live API and stamps `verified` on success (strict: any
-  runnable-op failure → no stamp; skipped ops named in the report; `--force`
-  is human-typed only, no agent tool surface).
-- The **live HTTP response is the actual drift signal.** A 401 on a no-auth
-  guide, a 404 on a pinned path, a changed response shape — the agent reads
-  those directly. The `verified` date is predictive; the response is actual.
-
----
-
-## Authoring a Guide
-
-The authoring model is **spec-first, probe-second**: read the contract and
-encode it, then verify the encoding. The trial-and-error lives at the
-*verification* step, not the discovery step. The loop is:
-
-```
-api-learn (write)  →  api-fetch (verify)  →  api-learn (fix)  →  api-fetch (verify)
+```text
+api-store → orphan view: unscoped secret domains + token domains with no guide
+api-store domain="api.github.com" → combined secrets + tokens report for the domain
 ```
 
-exactly like the browser's `web-learn → browser-navigate → web-learn` loop,
-just at the recipe layer. `api-learn`'s return message nudges this
-("guide saved; call `api-fetch(...)` to verify"). A guide on disk that has
-been successfully executed against *is* verified.
+Read-only inspection of **both credential stores in one call** — the
+agent-facing view of `/api secrets` + `/api oauth --status`. The authoring
+question is never "show me tokens" in isolation; it is what credentials exist
+for a domain, what's declared vs provisioned vs minted, what's expired, and
+what needs minting next.
 
-### Authoring paths, prioritized
+- Bare call → the authoring-bootstrap (orphan) view: unscoped secret domains
+  and token domains with no guide. Token domains resolve through the same
+  store-domain seam minting uses, so an `api.`-subdomain token maps to its
+  parent's guides instead of false-positive as guideless.
+- With `domain` (or `apiHost`, resolved the same way) → the combined
+  per-domain report: provisioned/declared/gap secret names, token slots
+  (issuer, granted scope, expiry, refreshable), and **declared-slot gaps** —
+  "guide declares client_credentials via `tokenUrl`: no token minted" — the
+  pointer to `oauth-mint` that replaces a trial-and-error 401.
 
-1. **Documentation-driven (primary, works host-only).** Read the API's docs
-   — via `web-fetch` (portal) or pasted/filepath (host-only) — encode them as
-   a recipe via `api-learn`, verify with `api-fetch`. The docs *are* the
-   affordance; this is the natural default.
-2. **Example-generalization (works host-only).** Paste a working curl command
-   or code sample; the agent generalizes from the one example to a recipe.
-   A single working call teaches the base URL, the Accept header, the
-   response shape.
-3. **Probe-and-verify (needs portal, last resort).** Use `api-probe` (or
-   portal's `web-fetch`) to hit endpoints, read responses, build a candidate
-   recipe. Possible, but reading the docs is cheaper than probing.
-4. **OpenAPI/Swagger import (deferred).** A spec→recipe transformer is
-   mechanical when a machine-readable spec exists; build it when a second
-   guide with a spec arrives.
+Metadata only: `accessToken`/`refreshToken` are dropped at the collection
+boundary and secret values never enter the tool — they can't appear in the
+rendered text **or** the structured `details`. When a token's granted scope
+wasn't echoed by the provider, the requested scopes render with an
+"(assumed)" marker (RFC 6749 §5.1). Mint via `oauth-mint`; refresh/revoke
+stay human-typed (`/api oauth`).
 
-**Known limitation — api-only is a known-domains mode.** If your request
-doesn't name a domain and no guide in the catalog matches, the agent can't
-discover a brand-new API from scratch in api-only mode. That requires web
-tools (to search/browse and find the API) or you supplying the domain. It's
-an inherent trade-off of a clean api-only context, not a design flaw.
+### 7. `oauth-mint` — Human-in-the-Loop OAuth2 Mint (network write, consented)
 
----
+```text
+oauth-mint domain="github.com" grant="authorization_code" tokenUrl="https://github.com/login/oauth/access_token" ... → prompts the human, then mints + stamps the token store
+```
 
-## Local User Helpers
-
-For sites that need a computed signature, a strange date transform, or a
-custom auth flow a declarative recipe can't express — one local user helper
-per guide:
-
-- **Location:** `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/helper.ts`
-  (alongside the guide's `guide.md`).
-- **Authoring gate:** `/api learn` (the explicit opt-in, mirroring `/web
-  learn`). **Execution gate:** `/api on` only — a persisted helper runs on
-  later sessions whenever a guide references it, even outside learn mode.
-- **Pre-call contract:** `(params, ctx) => params | Promise<params>` — a
-  transform that receives the resolved param map (path + query merged,
-  defaults filled) and returns the final map the executor templates and sends.
-- **Post-response transform (gated):** an optional `transform(data, ctx)`
-  *named export* from the same `helper.ts`, run when an op declares
-  `transform: true`. Graceful by contract — a throw is caught per-call and
-  the agent gets the raw untransformed data with a warning, never a disabled
-  op. Cannot inspect response headers.
-
-### Safety model
-
-Local helpers run **in-process** via `import()` with the agent's privileges —
-no process boundary. This is a deliberately new isolation profile in the
-codebase: stealth backends run as out-of-process Python subprocesses (a crash
-is caught; pi keeps running), whereas local helpers load in-process. The
-mitigations:
-
-- A load/call guard wraps both `import()` and each call in `try/catch`. Any
-  in-frame throw (syntax error, missing dep, throw during execution) rejects
-  the promise — it does **not** crash pi. On failure the helper is marked
-  disabled for the session and surfaced via `/api status` (and the status-bar
-  glyph). pi keeps running; only that one helper is dead until you fix it and
-  reload.
-- The one case the guard **cannot** catch is a helper that registers a
-  *background* callback (`setTimeout`, `setInterval`, `process.on(...)`) and
-  throws from it later — that escapes the call frame as an
-  `uncaughtException` and can take pi down. **The helper-author rule:
-  synchronous-pure or fully awaited, no background work.** That covers every
-  realistic v1 helper (format a query string, sign a header, compute a date).
-  If a real keyed guide ever needs background work, isolation (worker thread
-  or subprocess) gets revisited then.
-- A persisted helper can make arbitrary network calls on later sessions. The
-  mitigation is user ownership and review, not a sandbox.
-
-View helpers with `/api helpers` (list) or `/api helpers <domain>` (source).
-Authoring: scaffold a starter `helper.ts` stub via `api-scaffold({domain, helper: true})` (writes to the staged `/tmp` dir — never the guides dir), uncomment the export you need, then save via `api-learn({domain, dir})`. Edit a staged helper the same way; avoid hand-editing the file in the guides dir directly.
+The learn-gated mint half of the agent-driven OAuth2 bootstrap. The agent
+supplies researched params (grant, token/authorize URLs, scopes, client
+credentials as **store NAMES**); the tool validates fail-closed, prechecks
+the store names, then prompts the human — token-URL confirm (the human is
+the trust root for the secret-bearing endpoint), a ✓/○ scopes checklist,
+and a paste prompt for the redirect URL (which never enters the
+transcript). Any cancel prints the two-call `/api oauth init <domain> …
+--code` escape-hatch hint.
 
 ---
 
-## Pagination Styles
+## Authoring Your First Guide
 
-`paginate` follows the style declared in the recipe. Six styles cover the
-patterns the recipe library (caritas) pressure-tested:
+The simplest case — a public API with no auth — end to end:
 
-| Style | What it sends | Key fields |
-|-------|---------------|------------|
-| `offset-limit` | absolute offset + page size | `pageParam`, `pageSizeParam`, `pageSize`, `base`, `itemsPath` |
-| `page` | 1-based page number + page size | same fields as `offset-limit` (semantic difference only) |
-| `nextLink` | follows a URL from the response body | `nextLinkPath`, `itemsPath` — the **only** SSRF-guarded path (see [Security](#security--scope)) |
-| `cursor` | echoes an opaque cursor query param | `cursorParam`, `cursorPath`, `itemsPath` |
-| `resumptionToken` | OAI-PMH opaque single-token cursor | `tokenParam`, `tokenPath`, `itemsPath` |
-| `tokenBag` | Wikimedia-style multi-key continuation dict | `continuationParams[]`, `itemsPath` |
+1. **`/api learn`** — enable the authoring tools.
+2. **Ask your agent to author a guide** — point it at the API's
+   documentation (a saved spec document or an online docs URL) and say
+   which endpoints you want. The agent stages a starter template
+   (`api-learn({domain, new: true})`), fills in the recipe — `apiHost`,
+   one operation to start, no pagination needed for a single flat
+   endpoint — and confirms every op block against the spec you supplied.
+   For an endpoint that isn't documented, the agent calls `api-probe` on
+   the live URL to draft the YAML op block for your review.
+3. **Review and save** — the agent validates the draft and saves it to
+   `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/guide.md`
+   (via `api-learn({domain, dir: …})`).
+4. **Use it** — from now on, just ask your agent for data from that API
+   in plain language; it calls `api-fetch`, which discovers the guide by
+   domain and handles URL construction, auth, and pagination. Then run
+   `/api verify <your-domain>` to check every op against the live API — a
+   passing run stamps `verified` on the guide.
 
-`totalCountPath` is optional on any style — a JSON path to the server's
-reported total, surfaced as `serverTotal` in the `paginate` result and as
-`server total: N` / `remaining: …` in the `api-fetch` footer. Omit it when
-the API exposes no total.
+Auth-gated API? Two additions, both handled before the guide will fetch
+successfully:
 
-`pagination` and `responseShape` are top-level defaults; an individual
-operation overrides them with its own block.
+- **Static key** — you provision the value once via `/api secrets <domain>`;
+  the guide declares it by name with `auth.kind: static-key`. See
+  [Authentication & Secrets](#authentication--secrets).
+- **OAuth2** — `/api bootstrap oauth <domain> <spec>` injects a research
+  brief and the agent drives `oauth-mint`; you confirm the token URL, tick
+  the scopes, and paste the redirect URL back. See the `/api bootstrap` row
+  in the [command table](#api-command--api-toggle).
 
----
-
-## Response Shapes (`parseResponse`)
-
-Agents mangle encodings constantly; `parseResponse` fixes it once. Declared
-per-guide (top-level `responseShape`) and overridable per-op (`parse:`):
-
-- `format: json | xml | text` — XML is converted to JSON via `fast-xml-parser`; `text` is raw passthrough.
-- `charset: utf-8 | <IANA name>` — the transport decodes using the response's Content-Type charset, falling back to this value when the header omits one (essential for Latin-1 / ISO-8859-1 APIs that serve bytes without a charset parameter). An explicit header charset always wins.
-- `accept` (request-side, on each operation) is declared **independently**
-  from `responseShape.format` (response-side) — they usually match but an API
-  may return XML regardless of `Accept`, so they're separate fields.
-
----
-
-## Multi-Recipe Domains
-
-A domain may claim **multiple guides** — each in its own directory (e.g.
-`internet-archive` + `wayback-availability`, both claiming the `archive.org`
-domain). `buildDomainMap` is multi-valued
-(`Record<string, string[]>`):
-
-- `api-guide({domain})` shows a **disambiguation menu** and accepts a `guide`
-  selector (resolved by `shortName`).
-- `api-fetch({domain, operation})` resolves the operation **by name across
-  all matching guides** — exactly one hit executes (helper routed by the
-  guide's directory name, not the routing `domain`); zero lists ops from all
-  matches; an op name appearing in ≥2 guides is an ambiguous collision the
-  authors must fix (re-author via `api-learn` to rename).
-
-Optional `organization:` (catalog grouping) and `description:` (≤200 chars,
-the primary disambiguation signal) fields help the catalog and menu stay
-legible when several guides share a domain. `api-learn` warns on collision so
-you know you're in disambiguation territory.
+The complete field reference, pagination styles, and helper contracts live
+in [docs/authoring.md](docs/authoring.md).
 
 ---
 
-## Bundled Reference Recipes
+## Reference Recipes (caritas)
 
 The comprehensive recipe library lives in the
 [**caritas**](https://github.com/coreyryanhanson/caritas) repo — real,
@@ -597,8 +348,13 @@ verified recipes spanning the no-auth **and keyed** axes, each with a
 per-recipe `verified:`-date provenance and the perpetual drift disclaimer.
 They are inert reference material: nothing executes until you copy a recipe
 into your own `~/.pi/agent/pi-lean-host/api-guides/<slug(shortName)>/`
-directory — the folder name must match `slug(shortName)` or it routes to
-**malformed** (see the 0.4.0 breaking-change note above).
+directory.
+
+Host itself ships only a **synthetic axis-guide set** under `api-guides/` —
+minimal coverage fixtures (no `verified:` date, no live endpoints) that keep
+every guide-driven framework axis exercised via mocked transport. They are
+framework fixtures for host's own tests, not recipes for you to copy
+(membership pinned by `__tests__/axis-coverage.test.ts`).
 
 The domains caritas covers (a discoverability index, may drift from the live
 repo):
@@ -624,53 +380,12 @@ cp -r /tmp/caritas/api-guides/* ~/.pi/agent/pi-lean-host/api-guides/
 ```
 
 To grab a single domain instead of all of them, copy just its folder
-(e.g. `.../api-guides/en.wikipedia.org`).
+(e.g. `.../api-guides/wikipedia-rest`).
 
-Only then does it load and execute. A recipe may carry
-`operation.helper: true` plus an accompanying `helper.ts` in its domain
-subdir as a worked example — but it stays inert until you copy the folder.
-See caritas's `CONTRIBUTING.md` for authoring a recipe.
-
-### What host ships instead
-
-Host itself ships only a **synthetic axis-guide set** under `api-guides/` —
-minimal coverage fixtures (no `verified:` date, no live endpoints) that keep
-every guide-driven framework axis exercised via mocked transport. They are
-framework fixtures for host's own tests, not recipes for you to copy. The
-membership is pinned by `__tests__/axis-coverage.test.ts` (which encodes the
-axis-set audit matrix).
-
----
-
-## `/api status` — Detailed Runtime Status
-
-```text
-/api status
-```
-
-```text
-📡 API status
-  State: on
-  Learn: ❌ off
-
-  Guides: 2 active
-  Domains: en.wikipedia.org, boe.es, www.boe.es
-  Helpers: 1 present
-  ⚠ Disabled: boe.es
-  Run /api helpers to list them.
-
-  /api on      enable api-guide + api-fetch
-  /api learn   enable all five tools (adds api-learn + api-probe + api-scaffold)
-  /api off     disable all API tools
-```
-
-Covers toggle state, active guide count, the domain list, and helper health
-(disabled helpers surface with a `⚠`). When `pi-lean-portal` and
-`pi-lean-search` are also installed, the status bar shows three independent
-glyphs: `● idle` (browser), `● searxng` (search), and `● api` (host — when
-`/api` is on).
-
----
+A recipe may carry `operation.helper: true` plus an accompanying `helper.ts`
+in its domain subdir as a worked example. See caritas's `CONTRIBUTING.md`
+for contributing a recipe to the library; for authoring one for yourself,
+see [docs/authoring.md](docs/authoring.md).
 
 ## Configuration (`settings.json`)
 
@@ -698,8 +413,6 @@ the toolset's packaged default:
 - The `api-learn` toolset `requires` `api`, so enabling learn cascades api on;
   disabling api cascades learn off.
 
-### No other settings keys
-
 There is no `host.*` settings block. The transport layer (per-domain undici
 `Agent` with retry-on-429, redirect policy, timeouts, ETag/`Cache-Control`
 caching) is configured internally; `apiHost` and operation paths live **in
@@ -710,11 +423,6 @@ the recipe frontmatter**, not in settings. Credentials are **not** stored in
 ---
 
 ## Co-Installing with `pi-lean-portal`
-
-> **Planned for a future release.** Portal integration is not yet shipped:
-> the projection and navigate-footer surfacing described below are what that
-> release delivers. Host-side projection code is present but inert until
-> portal ships the receiving global (`__piLeanPortalRegisterGuideProvider`).
 
 Portal is fully optional. When co-installed, host registers a **projection**
 of its user-authored `ApiGuide`s with portal's guide-source registry at load
@@ -748,29 +456,12 @@ enhancement for co-installs, not a host-only requirement. The on-demand path
 |-----------------|-----------------|--------------------------|
 | An API you've guided | Discovering shape before authoring a guide | A one-off unguided fetch against a known URL |
 | Repeated/paginated pulls | Drafting an op block from a live endpoint | Reading docs to author a recipe |
-| You want auth/pagination handled for you | You're in `/api learn` | Host-only with an undocumented API (last resort) |
 
 `api-fetch` is the guided path — the guide is the product. It has no
 ad-hoc bare-fetch mode on purpose: that would recreate the exact mistakes
-(hand-rolled auth, no pagination) the tool exists to prevent. The escape
+the tool exists to prevent. The escape
 hatches are `api-learn` (write a guide, then execute through it) and
 `web-fetch` (portal) for a one-off.
-
-### Authoring discipline
-
-- Keep the prose body concise — it orients the agent; the frontmatter is the
-  executable contract.
-- Cite the source for every operation (docs URL or working example). `api-probe`
-  surfaces evidence, not authority — confirm the shape against the docs.
-- Fill `verified:` when you verify; it's defaulted to today, not enforced.
-- Use `description:` when a domain has multiple guides — it's the primary
-  disambiguation signal.
-
-### `gatherAll` ceilings
-
-A misconfigured `gatherAll` against a 100k-item paginator is a self-DoS. Set
-`gatherAllMax` per-guide (or per-op) to the endpoint's real ceiling when you
-know it. The global fallback (`1000`) bounds undeclared guides.
 
 ---
 
@@ -787,10 +478,7 @@ injects it in code.
 The secrets store is **plaintext JSON at rest** — mode `0600`, no encryption.
 That matches pi's own posture for its credentials (an API key in
 `settings.json` or the env). The threat this guards against is not another
-process reading the file; it's accidental **transcript exfiltration**. You
-provision a value once via `/api secrets`, it's written transcript-safely to
-the store, and `api-fetch` injects it in code — the agent sees the name, not
- the value.
+process reading the file; it's accidental **transcript exfiltration**.
 
 That containment is plugin discipline, not a vault. `read`/`cat` on the
 store file is one tool-call from the agent, which runs with your privileges,
@@ -802,41 +490,16 @@ plugin is GET-only, so a read-only key is always enough for what it does.
 
 ### Guide-side: declare the name, never the value
 
-In `guide.md`, set `auth.kind: static-key` and point at store secrets by name.
-The value never lives in the guide (a real key committed there would be one
-`cat` from the agent's context).
+In `guide.md`, set `auth.kind: static-key` and point at store secrets by name
+— the value never lives in the guide (a real key committed there would be one
+`cat` from the agent's context). The full guide-side YAML (`secretRefs` /
+`secretQueryRefs`, `prefix`, `optional`, and the parser-enforced invariants)
+is documented in
+[docs/authoring.md](docs/authoring.md#static-key-auth-in-the-guide).
 
-```yaml
-auth:
-  kind: static-key
-  secretRefs:
-    x-cg-demo-api-key: api_key   # headerName: secretName
-  requires: [api_key]            # absent → api-fetch fails closed
-# secretQueryRefs: { apikey: api_key }  # query-param injection (?key=)
-# optional: [api_key]            # used if present, skipped if absent
-# headerPrefixes:                # headerName → prefix for scheme-style headers
-#   Authorization: "Bearer "       #   (GitHub/GitLab) — the store holds the
-#                                 #   RAW token; the guide adds the prefix
-```
-
-- **`auth.secretRefs`** — `Record<headerName, secretName>`: inject the store
-  value into that request header.
-- **`auth.headerPrefixes`** — `Record<headerName, prefix>`: prepend a scheme
-  prefix to the resolved value for that header (e.g. `Authorization: "Bearer "`).
-  The store holds the **raw credential**; the guide declares how it is
-  presented. Absent = verbatim value. Every key must also be a `secretRefs`
-  header (parser-enforced).
-- **`auth.secretQueryRefs`** — `Record<paramName, secretName>`: inject the
-  store value as that query param.
-- **`auth.requires`** — names the guide **hard-requires**. If one is absent
-  from the store, `api-fetch` **fails closed before the request** — no silent
-  unauthenticated fetch that could return partial data the agent mistakes for
-  complete.
-- **`auth.optional`** — names usable-if-present. Absent → `api-fetch` proceeds
-  unauthenticated (e.g. GitHub: 60 req/hr unauth, 5000 with a token); present
-  → injected like a required secret.
-- **`auth.headers`** stays **literal-only** (demo keys, committed rate-limit
-  tokens) — it is not the path for real credentials.
+Migrating a guide from the old flat shape (`requires`/`optional` rosters,
+`headerPrefixes` map, bare-string refs)? See
+[docs/migration-v1.md](docs/migration-v1.md).
 
 ### Provisioning
 
@@ -852,27 +515,16 @@ Provisioning is interactive (`ctx.ui` dialogs — the value is captured
 **transcript-safely** and written straight to the store, never returned). On
 headless hosts there is no dialog, so `/api secrets` prints the direct
 file-write instructions instead — write the `0600` file yourself before pi
-starts (a one-line `install -m 600` + `cat >` step).
-
-Secrets persist at `~/.pi/agent/pi-lean-host/secrets/<domain>.json` (mode
-`0600`). **Only names are ever listed** — values never leave the store.
+starts (a one-line `install -m 600` + `cat >` step). Secrets persist at
+`~/.pi/agent/pi-lean-host/secrets/<domain>.json` (mode `0600`).
 
 ### The status footer
 
-Every `api-guide` / `api-fetch` result on an auth-bearing guide (`secretRefs`
-or `secretQueryRefs`) ends with a `🔑 auth:` line — `ok`, `requires <name>
-— not provisioned`, or an optional state — showing name and presence only,
-never the value, so it's safe anywhere it renders.
-
-### Authoring keyed guides
-
-`api-probe` accepts an inline `auth` block (injection fields only) plus a
-`domain` selector, so you can prove a keyed shape before writing the guide —
-a store miss reports the name and fetches unauthenticated (authoring is
-human-in-the-loop, not fail-closed). A learn-gated `listSecrets: true` mode
-lists provisioned secret names (names only) to close the authoring bootstrap
-gap; a bare `listSecrets` call (no `domain`, no `apiHost`) lists
-provisioned-but-guideless store domains first.
+Every `api-guide` / `api-fetch` result on an auth-bearing guide (static-key
+`secretRefs`/`secretQueryRefs`, or an `oauth2` token slot) ends with a
+`🔑 auth:` line — `ok`, `requires <name> — not provisioned`, or an optional
+state — showing name and presence only, never the value, so it's safe
+anywhere it renders.
 
 ## Security & Scope
 
@@ -901,15 +553,10 @@ channel stays closed.
 - **GET-read only.** No mutation helper. Add one only when a real *retrieval*
   guide needs it (e.g. a search-then-fetch POST), behind a real auth-review
   gate.
-- **Static-key auth only.** `auth.kind: static-key` is realized (store-backed
-  header/query-param secrets, `requires`/`optional`); `oauth2` and cookie-login
-  stay deferred. Values live in the `0600` secrets store, never in a guide —
-  see [Authentication & Secrets](#authentication--secrets).
-- **Bundled recipes are inert.** Nothing the package ships executes until you
-  place it in `~/.pi/agent/pi-lean-host/` and opt in.
-- **No inferred-link discovery.** Declared links only in v1; inference is v2.
-- **No guide suppression.** Both guide kinds surface by domain match when
-  their toggle is on; host-first is a preference, not suppression.
+- **GET-read auth surface.** `auth.kind: static-key` (store-backed
+  header/query-param secrets) and `auth.kind: oauth2` (`client_credentials`
+  - paste-based `authorization_code`) are realized; cookie-login stays
+  deferred. See [Authentication & Secrets](#authentication--secrets).
 
 ### Mission
 
@@ -925,8 +572,6 @@ machine; the package does not aim to make that easy.
 
 > `pi-lean-host` is part of the
 > [pi-lean-dimension](https://github.com/coreyryanhanson/pi-lean-dimension)
-> web-tools suite. For the security model behind the secrets store (the
-> two-threat model and the output-channel audit), see
-> [Authentication & Secrets](#authentication--secrets).
+> web-tools suite.
 >
 > License: AGPL-3.0-only

@@ -1,0 +1,338 @@
+/**
+ * oauth-mint tool definition.
+ *
+ * The human-in-the-loop mint of the agent-driven OAuth2 bootstrap. The agent
+ * supplies all researched parameters (grant, tokenUrl, authorizeUrl, scopes as
+ * {name, description} pairs, client credentials as STORE NAMES); the tool
+ * does only what the agent cannot: fail-closed validation, store-name
+ * precheck, the token-URL confirm prompt (the human is the trust root for the
+ * secret-bearing destination) with the redirect-URI edit folded in as a
+ * third action (auth-code select: Confirm / Change redirect URI / Esc), the
+ * scopes checklist picker, the paste prompt
+ * (the redirect URL never enters the transcript), and the mint/stamp via the
+ * existing `mintAuthCodeToken` / `resolveAccessToken` machinery.
+ *
+ * Prompt order is deliberate (cheapest-to-cancel first): confirm/select →
+ * picker → paste. A cancel at the confirm/select, redirect-URI input, or
+ * picker never discards a completed browser
+ * authorization. Any cancel throws with the two-call `init … --code`
+ * escape-hatch hint (plain `/api oauth <domain> --code` cannot complete
+ * guide-less; bootstrap is guide-less by definition).
+ *
+ * Learn-gated: rides the existing `pi-lean-dimension.api-learn` ToolsetSpec —
+ * no new spec, no runtime re-gate (masking is the gate).
+ */
+
+import { defineTool } from "@earendil-works/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai";
+import { Text } from "@earendil-works/pi-tui";
+import {
+	buildSyntheticOAuth2Auth,
+	credentialNameGap,
+	grantedScopes,
+	mintFreshClientCredentials,
+	resolveProvisionedParentDomain,
+	slotOverwriteWarning,
+	OAuthTokenMissingError,
+} from "../core/auth.js";
+import type { SyntheticOAuth2Fields } from "../core/auth.js";
+import { initFlagsFromFields } from "../core/oauth-command.js";
+import {
+	confirmTokenUrl,
+	mintAuthCodeToken,
+	REDIRECT_URI,
+} from "../core/oauth-flow.js";
+import { readToken } from "../core/oauth-store.js";
+import { pickChecklist } from "../core/select-picker.js";
+import { appendFooter } from "./utils.js";
+
+/** The exact two-call completion command for the escape-hatch hint (D1). */
+export function escapeHatchCommand(
+	domain: string,
+	fields: SyntheticOAuth2Fields,
+): string {
+	const flags = initFlagsFromFields(fields);
+	return `/api oauth init ${domain} ${flags.join(" ")} --code <redirect-url-or-code>`;
+}
+
+function cancelledError(domain: string, fields: SyntheticOAuth2Fields): Error {
+	return new Error(
+		`OAuth2 mint cancelled — nothing was provisioned. ` +
+			`Stop and ask the user how to proceed (a re-call starts a FRESH authorization). ` +
+			`If they already authorized in their browser, they can finish without re-consenting via: ` +
+			escapeHatchCommand(domain, fields),
+	);
+}
+
+export const oauthMintTool = defineTool({
+	name: "oauth-mint",
+	label: "OAuth Mint",
+	description:
+		"Mint an OAuth2 token for a domain and stamp the token store — call AFTER you have researched " +
+		"the provider's OAuth2 shape; this tool performs no discovery. Prompts the human to confirm " +
+		"the token endpoint, select scopes, and paste the redirect URL; returns granted scopes + store domain.",
+
+	promptGuidelines: [
+		"The agent researches the provider's OAuth2 shape; this tool does no discovery — supply grant, tokenUrl, authorizeUrl, scopes, and credentials from your research.",
+		"Never for static-key / API-key providers — use api-probe's inline auth or /api secrets instead.",
+		"clientId / clientSecret are secrets-store NAMES, never literal values.",
+		"If the user cancels a prompt, STOP and ask how to proceed — never auto-re-call. A re-call starts a fresh authorization; the cancel error prints the /api oauth init … --code two-call form to finish without re-consenting.",
+	],
+
+	parameters: Type.Object({
+		domain: Type.String({
+			description:
+				"Token-store domain (e.g. 'openstreetmap.org'). Normalized against provisioned secrets; the token stamps there.",
+		}),
+		grant: Type.Union(
+			[Type.Literal("client_credentials"), Type.Literal("authorization_code")],
+			{
+				description:
+					"OAuth2 grant. authorization_code = interactive paste dance (PKCE).",
+			},
+		),
+		tokenUrl: Type.String({
+			description:
+				"The provider's token endpoint (exchanges credentials/codes for tokens).",
+		}),
+		clientId: Type.String({
+			description:
+				"client-id STORE NAME from the secrets store — never a literal value.",
+		}),
+		clientSecret: Type.Optional(
+			Type.String({
+				description:
+					"client-secret STORE NAME; required for client_credentials, omit for PKCE public clients.",
+			}),
+		),
+		authorizeUrl: Type.Optional(
+			Type.String({
+				description: "Authorization endpoint (authorization_code only).",
+			}),
+		),
+		scopes: Type.Optional(
+			Type.Array(
+				Type.Object({
+					name: Type.String({
+						description: "Scope name as the provider defines it.",
+					}),
+					description: Type.Optional(
+						Type.String({
+							description:
+								"One line on what granting it allows — shown in the picker.",
+						}),
+					),
+				}),
+				{
+					description:
+						"Scopes to offer the human as a ✓/○ checklist (research what each means).",
+				},
+			),
+		),
+		tokenEndpointAuthMethod: Type.Optional(
+			Type.Union(
+				[
+					Type.Literal("client_secret_basic"),
+					Type.Literal("client_secret_post"),
+					Type.Literal("none"),
+				],
+				{
+					description:
+						"How the client authenticates at the token endpoint (default client_secret_post).",
+				},
+			),
+		),
+		redirectUri: Type.Optional(
+			Type.String({
+				description:
+					"Redirect URI registered in the user's OAuth app (authorization_code only; default http://127.0.0.1/callback). Some providers constrain the spelling (Twitch: https or localhost; OSM: unencrypted must be 127.0.0.1) — supply the user's registered URI when it differs from the default. Proposed in the combined endpoint-confirm dialog; the human can change it inline there.",
+			}),
+		),
+	}),
+
+	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		const p = params as {
+			domain: string;
+			grant: "client_credentials" | "authorization_code";
+			tokenUrl: string;
+			clientId: string;
+			clientSecret?: string;
+			authorizeUrl?: string;
+			scopes?: { name: string; description?: string }[];
+			tokenEndpointAuthMethod?:
+				| "client_secret_basic"
+				| "client_secret_post"
+				| "none";
+			redirectUri?: string;
+		};
+
+		// H1 — one guard at the top; no degraded half-flow.
+		if (!ctx.hasUI) {
+			throw new Error(
+				"oauth-mint requires an interactive session — use the `/api oauth init <domain> --grant … --token-url …` flags instead, or run pi interactively.",
+			);
+		}
+
+		// Fail-closed validation of ALL params before any prompt (throws on any
+		// invalid combination — the return value is rebuilt after scope picking).
+		const fields: SyntheticOAuth2Fields = {
+			grant: p.grant,
+			tokenUrl: p.tokenUrl,
+			clientId: p.clientId,
+			...(p.clientSecret === undefined ? {} : { clientSecret: p.clientSecret }),
+			...(p.authorizeUrl === undefined ? {} : { authorizeUrl: p.authorizeUrl }),
+			...(p.scopes === undefined ? {} : { scopes: p.scopes.map((s) => s.name) }),
+			...(p.tokenEndpointAuthMethod === undefined
+				? {}
+				: { tokenEndpointAuthMethod: p.tokenEndpointAuthMethod }),
+		};
+		buildSyntheticOAuth2Auth(fields);
+
+		// Token-store keying: same longest-provisioned-parent normalization the
+		// init wizard and probe use (matched against the SECRETS store).
+		const storeDomain = resolveProvisionedParentDomain(p.domain);
+
+		// Store-name precheck BEFORE any prompt (D1).
+		const gap = credentialNameGap(
+			storeDomain,
+			fields.clientId,
+			fields.clientSecret,
+		);
+		if (gap !== null) throw new Error(gap);
+
+		// Token-URL confirm — the FIRST prompt, both grants, before any
+		// exchange: tokenUrl is the one agent-supplied parameter that receives
+		// secret values, and the agent's research source is untrusted.
+		//
+		// Redirect URI — human-editable override of the RFC 8252 loopback
+		// default (auth-code only). The human owns their OAuth app
+		// registration, so while the agent proposes a value, the human can
+		// correct it inline before consenting — it decides where the provider
+		// sends the auth code (same trust class as the token endpoint).
+		// Auth-code folds both into ONE select: "Confirm" accepts endpoint +
+		// redirect URI as proposed (the common case — no extra dialog);
+		// "Change redirect URI" drops to an input, then loops back so the
+		// updated value is visible before consenting. Esc/undefined cancels.
+		let redirectUri = p.redirectUri ?? REDIRECT_URI;
+		if (p.grant === "authorization_code") {
+			for (;;) {
+				const choice = await ctx.ui.select(
+					`Confirm the token endpoint for '${storeDomain}' — exchange credentials at ${p.tokenUrl} (client: '${p.clientId}'; the client secret is sent to this URL). Redirect URI: ${redirectUri}`,
+					["Confirm", "Change redirect URI"],
+				);
+				if (choice === undefined) throw cancelledError(p.domain, fields);
+				if (choice === "Confirm") break;
+				const entered = await ctx.ui.input(
+					`Redirect URI for '${storeDomain}' — where the provider sends the auth code (must match your app registration). Proposed: ${redirectUri}`,
+					`Enter to keep ${redirectUri}, or type an override`,
+				);
+				if (entered === undefined) throw cancelledError(p.domain, fields);
+				if (entered !== "") redirectUri = entered;
+			}
+		} else if (!(await confirmTokenUrl(ctx, storeDomain, p.tokenUrl, p.clientId)))
+			throw cancelledError(p.domain, fields);
+
+		// Scopes checklist — the human's affirmative grant. No scopes → skip.
+		let pickedScopes: string[] | undefined;
+		if (p.scopes !== undefined && p.scopes.length > 0) {
+			const picked = await pickChecklist(
+				ctx,
+				`Scopes to grant for '${storeDomain}'`,
+				p.scopes.map((s) => ({
+					value: s.name,
+					label: s.name,
+					...(s.description === undefined ? {} : { description: s.description }),
+				})),
+			);
+			if (picked === undefined) throw cancelledError(p.domain, fields);
+			pickedScopes = picked;
+		}
+
+		const finalFields: SyntheticOAuth2Fields = {
+			...fields,
+			...(pickedScopes === undefined ? {} : { scopes: pickedScopes }),
+		};
+		const finalSynthetic = buildSyntheticOAuth2Auth(finalFields);
+
+		try {
+			if (finalSynthetic.grant === "client_credentials") {
+				// Mint-time overwrite warning (shared mitigation — see
+				// slotOverwriteWarning): mintFreshClientCredentials is ui-free,
+				// so the caller renders it. The auth-code arm warns inside
+				// mintAuthCodeToken instead — do not double-warn here.
+				const overwrite = slotOverwriteWarning(finalSynthetic, storeDomain);
+				if (overwrite) ctx.ui.notify(overwrite, "warning");
+				// Bootstrap wants a fresh mint, not a cached token (mirrors the
+				// init wizard / --refresh path). Slot-scoped delete inside the
+				// shared helper: a bare domain delete would leave a stale
+				// prior-grant/prior-issuer slot surviving the re-mint — the exact
+				// clobber the slot keying fixes.
+				await mintFreshClientCredentials(finalSynthetic, storeDomain);
+			} else {
+				// Prints the authorize URL + paste prompt (retry loop inside);
+				// cancel lands in the OAuthTokenMissingError handler below.
+				await mintAuthCodeToken(finalSynthetic, storeDomain, ctx, { redirectUri });
+			}
+		} catch (err) {
+			if (err instanceof OAuthTokenMissingError)
+				throw cancelledError(p.domain, fields);
+			throw err;
+		}
+
+		// Report what the provider actually echoed, not what was requested —
+		// a provider may grant a subset. Absent scope → requested scopes with
+		// an "(assumed)" marker (RFC 6749 §5.1, same convention as api-store).
+		const minted = readToken(
+			storeDomain,
+			finalSynthetic.grant,
+			finalSynthetic.tokenUrl,
+		);
+		const requested = pickedScopes ?? [];
+		const { scopes: scopeList, assumed } = grantedScopes(
+			minted?.scope,
+			requested,
+		);
+		let scopeLine: string;
+		if (!assumed && scopeList.length > 0) {
+			scopeLine = ` Granted scopes: ${scopeList.join(", ")}.`;
+		} else if (requested.length > 0) {
+			scopeLine = ` Requested scopes (assumed granted): ${requested.join(", ")}.`;
+		} else {
+			scopeLine = " No scopes requested.";
+		}
+		const details: Record<string, unknown> = {
+			mode: "minted",
+			domain: storeDomain,
+			grant: finalSynthetic.grant,
+		};
+		if (scopeList.length > 0) details.scopes = scopeList;
+		return {
+			content: [
+				{
+					type: "text",
+					text:
+						`🔑 OAuth2 token minted for '${storeDomain}' (grant ${finalSynthetic.grant}).${scopeLine}\n` +
+						`Report the granted scopes and store domain to the user.`,
+				},
+			],
+			details,
+		};
+	},
+
+	renderCall(args, theme, _context) {
+		const parts = [theme.fg("toolTitle", theme.bold("oauth-mint "))];
+		const a = args as { domain?: string; grant?: string };
+		parts.push(theme.fg("accent", `"${a.domain ?? "?"}"`));
+		if (a.grant) parts.push(theme.fg("dim", a.grant));
+		return new Text(parts.join(" "), 0, 0);
+	},
+
+	renderResult(result, { expanded }, theme, _context) {
+		const d = result.details as Record<string, unknown> | undefined;
+		const grant = d?.grant as string | undefined;
+		const text =
+			theme.fg("accent", theme.bold("🔑 minted")) +
+			theme.fg("dim", ` — ${d?.domain ?? "?"} (${grant ?? "?"})`);
+		return new Text(appendFooter(text, expanded, result, theme, 400), 0, 0);
+	},
+});

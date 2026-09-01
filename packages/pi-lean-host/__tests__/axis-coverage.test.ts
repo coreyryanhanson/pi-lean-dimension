@@ -10,12 +10,11 @@
  * axis set keeps host green by construction).
  *
  * It encodes the axis-set audit matrix:
- *  - the kept set has exactly the finalized 7 synthetic guides;
- *  - the union covers all nine guide-driven axes;
+ *  - the kept set has exactly the finalized 9 synthetic guides;
+ *  - the union covers all ten guide-driven axes;
  *  - all six pagination styles are present (offset-limit, page, nextLink,
  *    cursor, resumptionToken, tokenBag);
- *  - both `transform: true × via` combos (restGet AND paginate) and both
- *    auth kinds appear.
+ *  - all three realized auth kinds appear (none, static-key, oauth2).
  *
  * Reading an axis guide's ops and matching them to axes — a guide can
  * declare a flag while the behavior is malformed; only the
@@ -46,6 +45,8 @@ const AXIS_DIRS = [
 	"wayback-availability",
 	"dnb",
 	"wikimedia-action",
+	"twitch",
+	"twitch-user",
 ];
 
 const GUIDES: Record<string, ApiGuide> =
@@ -67,7 +68,7 @@ describe("axis-coverage — kept synthetic axis set", () => {
 	it(`is exactly the finalized ${AXIS_DIRS.length} guides (no drift from the audit)`, () => {
 		const found = Object.keys(GUIDES).sort();
 		expect(found).toEqual([...AXIS_DIRS].sort());
-		expect(found.length).toBe(7);
+		expect(found.length).toBe(9);
 	});
 
 	it("loads with no malformed guides", () => {
@@ -99,10 +100,11 @@ describe("axis-coverage — kept synthetic axis set", () => {
 		expect(paginateOps.some((o) => o.transform === true)).toBe(true);
 	});
 
-	it("covers both realized auth kinds (none + static-key)", () => {
+	it("covers all three realized auth kinds (none + static-key + oauth2)", () => {
 		const kinds = new Set(Object.values(GUIDES).map((g) => g.auth.kind));
 		expect(kinds.has("none")).toBe(true);
 		expect(kinds.has("static-key")).toBe(true);
+		expect(kinds.has("oauth2")).toBe(true);
 	});
 });
 
@@ -142,6 +144,16 @@ describe("axis-coverage — every guide-driven axis is covered by ≥1 guide", (
 		expect(Object.values(GUIDES).some((g) => g.auth.kind === "static-key")).toBe(
 			true,
 		);
+	});
+
+	it("oauth2-auth (a client_credentials AND an authorization_code guide)", () => {
+		const grants = new Set(
+			Object.values(GUIDES)
+				.filter((g) => g.auth.kind === "oauth2")
+				.map((g) => (g.auth as { grant?: string }).grant),
+		);
+		expect(grants.has("client_credentials")).toBe(true);
+		expect(grants.has("authorization_code")).toBe(true);
 	});
 
 	it("transport (any guide exercises the fetch pipeline)", () => {
@@ -219,5 +231,24 @@ describe("axis-coverage — single-coverage guide ownership", () => {
 		for (const g of domains) {
 			expect(g.domains?.includes("archive.org")).toBe(true);
 		}
+	});
+
+	it("oauth2-client-credentials is owned by twitch", () => {
+		expect(GUIDES["twitch"]?.auth.kind).toBe("oauth2");
+		if (GUIDES["twitch"]?.auth.kind === "oauth2") {
+			expect(GUIDES["twitch"].auth.grant).toBe("client_credentials");
+		}
+	});
+
+	it("oauth2-auth-code + multi-grant slot coexistence are owned by the twitch-user guide", () => {
+		const auth = GUIDES["twitch-user"]?.auth;
+		expect(auth?.kind).toBe("oauth2");
+		if (auth?.kind === "oauth2") {
+			expect(auth.grant).toBe("authorization_code");
+		}
+		// The pair shares the twitch.tv store domain with distinct grants —
+		// the fixture-level non-clobber precondition.
+		expect(GUIDES["twitch"]?.domains?.includes("twitch.tv")).toBe(true);
+		expect(GUIDES["twitch-user"]?.domains?.includes("twitch.tv")).toBe(true);
 	});
 });

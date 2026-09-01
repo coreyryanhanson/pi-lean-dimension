@@ -11,9 +11,10 @@
  * successful executor result or a structured non-run outcome.
  *
  * Throws `HelperError` / transport errors up to the caller (both call sites
- * catch); returns a non-`ok` result only for the two conditions that are
- * *not* run failures: a session-disabled local helper (skip, not fail) and
- * a fail-closed missing `requires` secret (short-circuit before dispatch).
+ * catch); returns a non-`ok` result only for the conditions that are
+ * *not* run failures: a session-disabled local helper (skip, not fail), a
+ * fail-closed missing `requires` secret, and a fail-closed missing OAuth
+ * token (both short-circuit before dispatch).
  */
 
 import {
@@ -26,10 +27,10 @@ import { callHelper, loadTransform } from "./local-helpers.js";
 import {
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
+	resolveAccessToken,
 	authStatusLine,
 	canonicalStoreDomain,
-	type SecretResolution,
-	type QuerySecretResolution,
+	OAuthTokenMissingError,
 } from "./auth.js";
 import type { ApiGuide, ExecutorVia, Operation } from "./api-guide-types.js";
 
@@ -77,6 +78,12 @@ export type ResolveOpResult =
 			reason: "auth_required_not_provisioned";
 			/** The secret names a `requires` block wants but the store lacks. */
 			missing: string[];
+	  }
+	| {
+			ok: false;
+			reason: "oauth_token_missing";
+			/** Human-readable nudge (points at /api oauth <domain>). */
+			message: string;
 	  };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -126,51 +133,77 @@ export async function resolveOpForExecution(
 		);
 	}
 
-	// 3. Auth resolution (kind: static-key) — resolve store-injected headers
-	//    AND query params up front so a missing required secret fails closed
-	//    BEFORE any request. Values never leave this scope — only header/param
-	//    and secret NAMES ever surface to the caller.
-	let headerRes: SecretResolution | undefined;
-	let queryRes: QuerySecretResolution | undefined;
-	if (guide.auth.kind === "static-key") {
-		headerRes = resolveSecretHeaders(guide.auth, storeDomain);
-		queryRes = resolveSecretQueryParams(guide.auth, storeDomain);
-		const missingRequired = [
-			...(headerRes.absentRequired ?? []),
-			...(queryRes.absentRequired ?? []),
-		];
-		if (missingRequired.length > 0) {
-			return {
-				ok: false,
-				reason: "auth_required_not_provisioned",
-				missing: missingRequired,
+	// 3. Auth resolution — resolve store-injected headers/query params
+	//    (static-key) or an OAuth2 access token (oauth2) up front so a
+	//    missing required secret / unmintable token fails closed BEFORE any
+	//    request. Values never leave this scope — only header/param and
+	//    secret NAMES ever surface to the caller.
+	let authOpts: AuthOpts = {};
+	switch (guide.auth.kind) {
+		case "none":
+			break;
+		case "static-key": {
+			const headerRes = resolveSecretHeaders(guide.auth, storeDomain);
+			const queryRes = resolveSecretQueryParams(guide.auth, storeDomain);
+			const missingRequired = [
+				...headerRes.absentRequired,
+				...queryRes.absentRequired,
+			];
+			if (missingRequired.length > 0) {
+				return {
+					ok: false,
+					reason: "auth_required_not_provisioned",
+					missing: missingRequired,
+				};
+			}
+			const headerValues = [
+				...Object.values(headerRes.headers),
+				...headerRes.rawHeaderValues,
+			];
+			const queryValues = Object.values(queryRes.queryParams);
+			authOpts = {
+				...(Object.keys(headerRes.headers).length > 0
+					? {
+							authHeaders: headerRes.headers,
+							secretHeaderNames: new Set(
+								Object.keys(headerRes.headers).map((h) => h.toLowerCase()),
+							),
+						}
+					: {}),
+				...(Object.keys(queryRes.queryParams).length > 0
+					? {
+							secretQueryParams: queryRes.queryParams,
+							secretQueryParamNames: new Set(Object.keys(queryRes.queryParams)),
+						}
+					: {}),
+				secretValues: [...headerValues, ...queryValues],
 			};
+			break;
+		}
+		case "oauth2": {
+			try {
+				authOpts = await resolveAccessToken(guide.auth, storeDomain);
+			} catch (err) {
+				if (err instanceof OAuthTokenMissingError) {
+					return {
+						ok: false,
+						reason: "oauth_token_missing",
+						message: err.message,
+					};
+				}
+				throw err;
+			}
+			break;
+		}
+		default: {
+			const _exhaustive: never = guide.auth;
+			throw new Error(`Unhandled auth kind: ${_exhaustive}`);
 		}
 	}
-	const headerValues = headerRes
-		? [...Object.values(headerRes.headers), ...headerRes.rawHeaderValues]
-		: [];
-	const queryValues = queryRes ? Object.values(queryRes.queryParams) : [];
-	const authOpts: AuthOpts =
-		headerRes || queryRes
-			? {
-					...(headerRes
-						? {
-								authHeaders: headerRes.headers,
-								secretHeaderNames: new Set(
-									Object.keys(headerRes.headers).map((h) => h.toLowerCase()),
-								),
-							}
-						: {}),
-					...(queryRes
-						? {
-								secretQueryParams: queryRes.queryParams,
-								secretQueryParamNames: new Set(Object.keys(queryRes.queryParams)),
-							}
-						: {}),
-					secretValues: [...headerValues, ...queryValues],
-				}
-			: {};
+
+	// Post-resolution footer: an oauth2 auto-mint inside the switch writes the
+	// token store, so the footer must be computed AFTER resolution to report
+	// the post-mint state (not the stale pre-mint "no token").
 	const authFooter = authStatusLine(guide.auth, storeDomain);
 
 	// 4. Execute via the declared executor.

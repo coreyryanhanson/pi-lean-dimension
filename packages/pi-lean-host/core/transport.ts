@@ -59,6 +59,15 @@ export interface FetchOptions {
 	 */
 	secretHeaderNames?: Set<string>;
 	/**
+	 * Query-param names whose values are secrets injected from the secrets
+	 * store (static-key `secretQueryRefs` or oauth2 `paramStyle: query`).
+	 * Stripped from the URL on cross-domain redirect hops — a relative
+	 * redirect preserves the original query, so a secret param would
+	 * otherwise ride the hop to another host. Only honored while the
+	 * guarded-redirect path is active (same condition as secretHeaderNames).
+	 */
+	secretQueryParamNames?: Set<string>;
+	/**
 	 * True when this request carries a store-injected query-param secret
 	 * (kind: static-key). Broadens `hasAuth` to cover query-secret-only
 	 * guides (header-secret callers never set this): the response becomes
@@ -323,6 +332,34 @@ export function stripSecretHeaders(
 }
 
 /**
+ * Remove secret query params from a URL (cross-domain redirect hops only).
+ * A relative redirect (new URL("?x", current)) preserves the original query
+ * string, so injected secrets would survive onto the next host.
+ */
+export function stripSecretQueryParams(
+	url: string,
+	secretQueryParamNames?: Set<string>,
+): string {
+	if (!secretQueryParamNames || secretQueryParamNames.size === 0) return url;
+	// ponytail: URL() throws on malformed input; pass through unmodified —
+	// singleGet will surface the real fetch error anyway.
+	let u: URL;
+	try {
+		u = new URL(url);
+	} catch {
+		return url;
+	}
+	let changed = false;
+	for (const name of secretQueryParamNames) {
+		if (u.searchParams.has(name)) {
+			u.searchParams.delete(name);
+			changed = true;
+		}
+	}
+	return changed ? u.toString() : url;
+}
+
+/**
  * Follow redirects manually, SSRF-checking each target. Used for
  * server-supplied URLs (paginate nextLink) and — forced — any auth-bearing
  * request. GET-only, so method is preserved across 301/302/303/307/308
@@ -336,6 +373,7 @@ async function getWithGuardedRedirects(
 	startTime: number,
 	timeoutMs: number,
 	secretHeaderNames?: Set<string>,
+	secretQueryParamNames?: Set<string>,
 ): Promise<{
 	status: number;
 	headers: Record<string, string>;
@@ -347,18 +385,26 @@ async function getWithGuardedRedirects(
 	for (let hops = 0; hops <= MAX_REDIRECTS; hops++) {
 		// Strip store-injected secrets (and Authorization) once a hop leaves
 		// the request's original host — a secret must never cross domains.
-		const hopHeaders =
-			hostOf(current) === originalHost
-				? reqHeaders
-				: stripSecretHeaders(reqHeaders, secretHeaderNames);
+		// Query secrets need the same treatment: a relative redirect preserves
+		// the original query string, so secret query params would ride the hop.
+		const crossDomain = hostOf(current) !== originalHost;
+		const hopHeaders = crossDomain
+			? stripSecretHeaders(reqHeaders, secretHeaderNames)
+			: reqHeaders;
+		const hopUrl = crossDomain
+			? stripSecretQueryParams(current, secretQueryParamNames)
+			: current;
 		const remaining = timeoutMs - (Date.now() - startTime);
-		const res = await singleGet(current, hopHeaders, remaining, noRedirectAgent);
+		const res = await singleGet(hopUrl, hopHeaders, remaining, noRedirectAgent);
 		const isRedirect =
 			res.status >= 300 && res.status < 400 && res.status !== 304;
 		if (!isRedirect || hops === MAX_REDIRECTS) return res;
 		const loc = res.headers["location"];
 		if (!loc) return res; // redirect with no Location — return as-is
-		const next = new URL(loc, current).toString();
+		// Resolve against hopUrl, not current — a relative redirect inherits
+		// the base's query string, and current still carries the secret params
+		// that were just stripped for this hop's fetch.
+		const next = new URL(loc, hopUrl).toString();
 		const guard = ssrfGuard(next);
 		if (!guard.ok) {
 			// Security-control failure is not transient — don't retry.
@@ -467,6 +513,7 @@ export async function fetchUrl(
 						startTime,
 						timeout,
 						opts?.secretHeaderNames,
+						opts?.secretQueryParamNames,
 					)
 				: await singleGet(url, reqHeaders, remaining, redirectAgent);
 

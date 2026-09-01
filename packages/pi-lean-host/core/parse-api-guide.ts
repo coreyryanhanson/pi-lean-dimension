@@ -30,6 +30,16 @@ import {
 	type ResponseCharset,
 	type AuthConfig,
 	type AuthKind,
+	type SecretRef,
+	type StaticKeyAuth,
+	type OAuth2Auth,
+	type OAuth2ParamStyle,
+	type OAuth2TokenEndpointAuthMethod,
+	isOAuth2Grant,
+	isOAuth2TokenEndpointAuthMethod,
+	oauth2GrantIssue,
+	OAUTH2_GRANTS,
+	OAUTH2_TOKEN_ENDPOINT_AUTH_METHODS,
 	type ExecutorVia,
 	type AcceptType,
 	type QueryParamSpec,
@@ -99,22 +109,27 @@ const VALID_PAGINATION_STYLE: ReadonlySet<string> = new Set([
 	"tokenBag",
 ]);
 
-// Strict auth schema: the only keys validateAuth reads. Any other key
-// under `auth` is rejected at parse — the parser used to silently drop
-// unknowns, so a wrong-but-plausible shape (e.g. `name`/`secret`) saved a
-// guide the executor then silently couldn't honor.
-const KNOWN_AUTH_KEYS: ReadonlySet<string> = new Set([
-	"kind",
-	"headers",
-	"secretRefs",
-	"secretQueryRefs",
-	"requires",
-	"optional",
-	"headerPrefixes",
-]);
-// Set insertion order — used to render the known-key list in error strings
-// (expected + fallback fix) so they can't drift from the set.
-const KNOWN_AUTH_KEYS_LIST = [...KNOWN_AUTH_KEYS].join(", ");
+// Per-variant auth field allowlists — each kind rejects fields not legal for
+// it (stricter than the old single global set: a `tokenUrl` on a static-key
+// block or a `headerPrefixes` on an oauth2 block now fails at parse). The old
+// `none`-kind field-presence check is subsumed by the NoneAuth allowlist.
+const AUTH_ALLOWLISTS: Record<AuthKind, ReadonlySet<string>> = {
+	none: new Set(["kind", "headers"]),
+	"static-key": new Set(["kind", "headers", "secretRefs", "secretQueryRefs"]),
+	oauth2: new Set([
+		"kind",
+		"grant",
+		"tokenUrl",
+		"clientId",
+		"clientSecret",
+		"secretRefs",
+		"scopes",
+		"paramStyle",
+		"tokenEndpointAuthMethod",
+		"authorizeUrl",
+		"revokeUrl",
+	]),
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // Error helper
@@ -590,7 +605,7 @@ function validateAuth(
 			"a string",
 			kindRaw === undefined ? "missing" : describeFound(kindRaw),
 			{
-				fix: "kind is one of: none | static-key — use `kind: none` (public) or `kind: static-key` (keyed header); or call api-learn({domain, new: true}) for a full skeleton",
+				fix: "kind is one of: none | static-key | oauth2 — use `kind: none` (public), `kind: static-key` (keyed header), or `kind: oauth2`; or call api-learn({domain, new: true}) for a full skeleton",
 			},
 		);
 	}
@@ -600,35 +615,175 @@ function validateAuth(
 			"auth.kind",
 			"one of: none | static-key | oauth2",
 			kindRaw,
-			{ fix: "Use `kind: none` (public) or `kind: static-key` (keyed header)" },
+			{
+				fix: "Use `kind: none` (public), `kind: static-key` (keyed header), or `kind: oauth2`.",
+			},
 		);
 	}
-	// oauth2 is a declared seam, not realized — reject at parse so a recipe
-	// can't load an auth mode the transport can't honor.
-	if (kindRaw === "oauth2") {
-		return fail(file, "auth.kind", "one of: none | static-key", "oauth2", {
-			fix: "OAuth2 is not yet implemented. Use kind: none (public) or kind: static-key (keyed header) for now.",
-		});
-	}
-	// Strict auth schema — reject unknown keys. The parser used to
-	// silently drop unknown keys (a wrong-but-plausible shape like
-	// `name`/`secret` saved a guide the executor then silently couldn't
-	// honor). Reject, don't infer: `expected` already lists the known keys
-	// and `found` names the offenders — no separate fix needed.
-	const unknownKeys = Object.keys(a).filter((k) => !KNOWN_AUTH_KEYS.has(k));
+	const kind = kindRaw as AuthKind;
+	// Per-variant allowlist — reject keys not legal for this kind (a
+	// `tokenUrl` on a static-key block or a `headerPrefixes` on an oauth2
+	// block fails here, not silently downstream).
+	const allowlist = AUTH_ALLOWLISTS[kind];
+	const unknownKeys = Object.keys(a).filter((k) => !allowlist.has(k));
 	if (unknownKeys.length > 0) {
 		const first = unknownKeys[0]!;
 		return fail(
 			file,
 			`auth.${first}`,
-			`a known auth key (${KNOWN_AUTH_KEYS_LIST})`,
+			`a known auth key for kind: ${kind} (${[...allowlist].join(", ")})`,
 			`unknown key(s): ${unknownKeys.join(", ")}`,
 			{
 				snippet: snippetFor(fm, "auth"),
 			},
 		);
 	}
-	// Parse optional headers (per-kind extra headers, e.g. X-Api-Key for DEMO_KEY).
+
+	switch (kind) {
+		case "none": {
+			let headers: Record<string, string> | undefined;
+			if (a["headers"] !== undefined) {
+				const hr = parseStringRecord(
+					a["headers"],
+					file,
+					fm,
+					"auth.headers",
+					"a YAML mapping of string → string",
+				);
+				if (isParseErr(hr)) return hr;
+				headers = hr;
+			}
+			return { kind: "none", ...(headers === undefined ? {} : { headers }) };
+		}
+		case "static-key": {
+			return validateStaticKeyAuth(a, file, fm);
+		}
+		case "oauth2": {
+			return validateOAuth2Auth(a, file, fm);
+		}
+		default: {
+			const never: never = kind;
+			throw new Error(`Unhandled auth kind: ${never}`);
+		}
+	}
+}
+
+/**
+ * Parse a nested `Record<string, SecretRef>` (header/form-field name → ref).
+ * Each ref is self-contained: `secret` (store name), optional `prefix`, and
+ * optional `optional`. The old three-field consistency checks (ref→declared,
+ * declared→ref, prefix→ref) are structurally impossible here — there is no
+ * `requires`/`optional` roster to diverge from, and `prefix` lives on the ref
+ * it applies to.
+ */
+function parseSecretRefs(
+	raw: unknown,
+	file: string | undefined,
+	fm: string,
+	field: string,
+): Record<string, SecretRef> | ParseApiGuideResult {
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+		return fail(
+			file,
+			field,
+			"a YAML mapping of name → { secret: <store name>, prefix?, optional? }",
+			describeFound(raw),
+			{ snippet: snippetFor(fm, "auth") },
+		);
+	}
+	const out: Record<string, SecretRef> = {};
+	for (const [name, v] of Object.entries(raw)) {
+		const r = parseSecretRefValue(v, file, fm, `${field}.${name}`);
+		if (isParseErr(r)) return r;
+		out[name] = r;
+	}
+	return out;
+}
+
+/**
+ * Parse a single self-contained `SecretRef` value ({ secret, prefix?,
+ * optional? }). Used per-entry by `parseSecretRefs` and directly for the
+ * oauth2 named `clientId` / `clientSecret` fields.
+ */
+function parseSecretRefValue(
+	raw: unknown,
+	file: string | undefined,
+	fm: string,
+	field: string,
+): SecretRef | ParseApiGuideResult {
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+		return fail(
+			file,
+			field,
+			"a mapping with secret: <store name>",
+			describeFound(raw),
+			{ snippet: snippetFor(fm, "auth") },
+		);
+	}
+	const ref = raw as Record<string, unknown>;
+	const unknownRefKeys = Object.keys(ref).filter(
+		(k) => !["secret", "prefix", "optional"].includes(k),
+	);
+	if (unknownRefKeys.length > 0) {
+		return fail(
+			file,
+			field,
+			"a mapping with only secret/prefix/optional keys",
+			`unknown key(s): ${unknownRefKeys.join(", ")}`,
+			{ snippet: snippetFor(fm, "auth") },
+		);
+	}
+	const secret = ref["secret"];
+	if (typeof secret !== "string" || secret.length === 0) {
+		return fail(
+			file,
+			`${field}.secret`,
+			"a non-empty store name",
+			describeFound(secret),
+			{ snippet: snippetFor(fm, "auth") },
+		);
+	}
+	let prefix: string | undefined;
+	if (ref["prefix"] !== undefined) {
+		if (
+			typeof ref["prefix"] !== "string" ||
+			/^\{[a-zA-Z0-9_]+\}$/.test(ref["prefix"])
+		) {
+			return fail(
+				file,
+				`${field}.prefix`,
+				"a string prefix (empty allowed; not a bare {placeholder})",
+				describeFound(ref["prefix"]),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		prefix = ref["prefix"];
+	}
+	let optional: boolean | undefined;
+	if (ref["optional"] !== undefined) {
+		if (typeof ref["optional"] !== "boolean") {
+			return fail(
+				file,
+				`${field}.optional`,
+				"a boolean",
+				describeFound(ref["optional"]),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		optional = ref["optional"];
+	}
+	return {
+		secret,
+		...(prefix === undefined ? {} : { prefix }),
+		...(optional === undefined ? {} : { optional }),
+	};
+}
+
+function validateStaticKeyAuth(
+	a: Record<string, unknown>,
+	file: string | undefined,
+	fm: string,
+): StaticKeyAuth | ParseApiGuideResult {
 	let headers: Record<string, string> | undefined;
 	if (a["headers"] !== undefined) {
 		const hr = parseStringRecord(
@@ -641,202 +796,253 @@ function validateAuth(
 		if (isParseErr(hr)) return hr;
 		headers = hr;
 	}
-
-	// static-key reference fields (secretRefs/requires/optional).
-	let secretRefs: Record<string, string> | undefined;
+	let secretRefs: Record<string, SecretRef> | undefined;
 	if (a["secretRefs"] !== undefined) {
-		const sr = parseStringRecord(
-			a["secretRefs"],
-			file,
-			fm,
-			"auth.secretRefs",
-			"a YAML mapping of header name → secret name",
-		);
+		const sr = parseSecretRefs(a["secretRefs"], file, fm, "auth.secretRefs");
 		if (isParseErr(sr)) return sr;
 		secretRefs = sr;
 	}
-
-	// Query-param secrets: maps query param name → secret store name.
-	// Same shape + consistency rules as secretRefs; the collision-with-op-`params`
-	// rule is enforced in parseApiGuide (auth is parsed before operations).
-	let secretQueryRefs: Record<string, string> | undefined;
+	let secretQueryRefs: Record<string, SecretRef> | undefined;
 	if (a["secretQueryRefs"] !== undefined) {
-		const qr = parseStringRecord(
+		const qr = parseSecretRefs(
 			a["secretQueryRefs"],
 			file,
 			fm,
 			"auth.secretQueryRefs",
-			"a YAML mapping of query param name → secret name",
 		);
 		if (isParseErr(qr)) return qr;
 		secretQueryRefs = qr;
 	}
+	const result: StaticKeyAuth = { kind: "static-key" };
+	if (headers !== undefined) result.headers = headers;
+	if (secretRefs !== undefined) result.secretRefs = secretRefs;
+	if (secretQueryRefs !== undefined) result.secretQueryRefs = secretQueryRefs;
+	return result;
+}
 
-	let requires: string[] | undefined;
-	const reqRaw = a["requires"];
-	if (reqRaw !== undefined) {
-		if (
-			!Array.isArray(reqRaw) ||
-			reqRaw.length === 0 ||
-			reqRaw.some((v) => typeof v !== "string")
-		) {
-			return fail(
-				file,
-				"auth.requires",
-				"a non-empty list of secret names",
-				describeFound(reqRaw),
-				{ snippet: snippetFor(fm, "auth") },
-			);
-		}
-		requires = reqRaw as string[];
-	}
-
-	let optional: string[] | undefined;
-	const optRaw = a["optional"];
-	if (optRaw !== undefined) {
-		if (
-			!Array.isArray(optRaw) ||
-			optRaw.length === 0 ||
-			optRaw.some((v) => typeof v !== "string")
-		) {
-			return fail(
-				file,
-				"auth.optional",
-				"a non-empty list of secret names",
-				describeFound(optRaw),
-				{ snippet: snippetFor(fm, "auth") },
-			);
-		}
-		optional = optRaw as string[];
-	}
-
-	// static-key header prefixes: header name → prefix string prepended to the
-	// resolved secret value (empty allowed — a bare-key header like CMC's
-	// X-CMC_PRO_API_KEY has no scheme). Same mapping shape as secretRefs; every
-	// key must also be a secretRefs header (a prefix for a non-secret header is
-	// a mistake).
-	let headerPrefixes: Record<string, string> | undefined;
-	if (a["headerPrefixes"] !== undefined) {
-		const hp = parseStringRecord(
-			a["headerPrefixes"],
-			file,
-			fm,
-			"auth.headerPrefixes",
-			"a YAML mapping of header name → prefix string (empty allowed for bare-key headers)",
-			(v) => typeof v === "string" && !/^\{[a-zA-Z0-9_]+\}$/.test(v),
-		);
-		if (isParseErr(hp)) return hp;
-		headerPrefixes = hp;
-	}
-
-	// Fail-closed consistency rules.
-	if (
-		kindRaw === "none" &&
-		(secretRefs || secretQueryRefs || requires || optional || headerPrefixes)
-	) {
+function validateOAuth2Auth(
+	a: Record<string, unknown>,
+	file: string | undefined,
+	fm: string,
+): OAuth2Auth | ParseApiGuideResult {
+	const grant = a["grant"];
+	if (!isOAuth2Grant(grant)) {
 		return fail(
 			file,
-			"auth.secretRefs",
-			"absent when auth.kind is none",
-			"secretRefs/secretQueryRefs/requires/optional with kind: none",
+			"auth.grant",
+			OAUTH2_GRANTS.join(" | "),
+			describeFound(grant),
 			{
-				fix: "Use auth.kind: static-key to reference stored secrets, or remove the auth fields for a public API.",
+				fix: "grant: client_credentials (server-to-server, no browser) or grant: authorization_code (interactive, PKCE).",
 			},
 		);
 	}
-	if (requires || optional || secretRefs || secretQueryRefs) {
-		const declared = new Set([...(requires ?? []), ...(optional ?? [])]);
-		const refNames = new Set([
-			...Object.values(secretRefs ?? {}),
-			...Object.values(secretQueryRefs ?? {}),
-		]);
-		const checkRefs = (
-			refs: Record<string, string>,
-			field: string,
-		): ParseApiGuideResult | null => {
-			for (const outName of Object.keys(refs)) {
-				const secretName = refs[outName]!;
-				if (!declared.has(secretName)) {
-					return fail(
-						file,
-						`${field}.${outName}`,
-						"a secret name declared in auth.requires or auth.optional",
-						`"${secretName}" is not in requires/optional`,
-						{
-							fix: `Add "${secretName}" to auth.requires or auth.optional (or fix the reference).`,
-						},
-					);
-				}
-			}
-			return null;
-		};
-		const r1 = checkRefs(secretRefs ?? {}, "auth.secretRefs");
-		if (r1) return r1;
-		const r2 = checkRefs(secretQueryRefs ?? {}, "auth.secretQueryRefs");
-		if (r2) return r2;
-		const both = (requires ?? []).filter((n) => (optional ?? []).includes(n));
-		if (both.length > 0) {
+	const tokenUrl = requireHttpUrl(a["tokenUrl"], "auth.tokenUrl", file, fm, {
+		protocolFix: "Use https:// as the scheme",
+		invalidFix: "Include the scheme, e.g. https://api.example.com/oauth/token",
+	});
+	if (typeof tokenUrl !== "string") return tokenUrl;
+	if (a["clientId"] === undefined) {
+		return fail(
+			file,
+			"auth.clientId",
+			"a secret ref ({ secret: <store name> })",
+			"missing",
+			{
+				snippet: snippetFor(fm, "auth"),
+				fix: "Add clientId: { secret: client_id } — the store name provisioned via /api secrets <domain>. A shippable guide must not bake in one app's client id.",
+			},
+		);
+	}
+	const clientId = parseSecretRefValue(a["clientId"], file, fm, "auth.clientId");
+	if (isParseErr(clientId)) return clientId;
+	if (clientId.prefix !== undefined || clientId.optional !== undefined) {
+		return fail(
+			file,
+			"auth.clientId",
+			"a ref with only { secret } — prefix/optional are meaningless on the client id (it is always required and always used verbatim)",
+			JSON.stringify(clientId),
+			{
+				snippet: snippetFor(fm, "auth"),
+				fix: "Remove prefix/optional from clientId — keep clientId: { secret: <store name> }.",
+			},
+		);
+	}
+	let clientSecret: SecretRef | undefined;
+	if (a["clientSecret"] !== undefined) {
+		const cs = parseSecretRefValue(
+			a["clientSecret"],
+			file,
+			fm,
+			"auth.clientSecret",
+		);
+		if (isParseErr(cs)) return cs;
+		if (cs.prefix !== undefined) {
 			return fail(
 				file,
-				"auth.requires",
-				"secret names not duplicated across requires and optional",
-				`in both: ${both.join(", ")}`,
+				"auth.clientSecret.prefix",
+				"absent — the prefix would be silently ignored (the raw store value is sent as the client secret)",
+				JSON.stringify(cs.prefix),
 				{
-					fix: `Move "${both[0]}" to either requires or optional, not both.`,
+					snippet: snippetFor(fm, "auth"),
+					fix: "Remove prefix from clientSecret — keep clientSecret: { secret: <store name> }.",
 				},
 			);
 		}
-		const checkDeclared = (
-			names: string[],
-			field: string,
-		): ParseApiGuideResult | null => {
-			for (const name of names) {
-				if (!refNames.has(name)) {
-					return fail(
-						file,
-						field,
-						"a secret name referenced by auth.secretRefs or auth.secretQueryRefs",
-						`"${name}" is declared here but not referenced by any header/query ref`,
-						{
-							fix: `Reference "${name}" from auth.secretRefs or auth.secretQueryRefs, or remove it from ${field}.`,
-						},
-					);
-				}
-			}
-			return null;
-		};
-		const r3 = checkDeclared(requires ?? [], "auth.requires");
-		if (r3) return r3;
-		const r4 = checkDeclared(optional ?? [], "auth.optional");
-		if (r4) return r4;
+		if (cs.optional !== undefined && grant === "client_credentials") {
+			return fail(
+				file,
+				"auth.clientSecret.optional",
+				"absent for grant: client_credentials (clientSecret is parser-required there; optional can never fire)",
+				"optional: true",
+				{
+					snippet: snippetFor(fm, "auth"),
+					fix: "Remove optional from clientSecret — keep clientSecret: { secret: <store name> }.",
+				},
+			);
+		}
+		clientSecret = cs;
 	}
-	// Every headerPrefixes key must target a secret-injected header; a prefix
-	// for a header that isn't in secretRefs is a mistake. Checked outside the
-	// secretRefs/requires/optional block so a headerPrefixes-only guide fails
-	// too (the prefix would otherwise be dead at fetch time silently).
-	if (headerPrefixes) {
-		for (const headerName of Object.keys(headerPrefixes)) {
-			if (!secretRefs || !(headerName in secretRefs)) {
+	let secretRefs: Record<string, SecretRef> | undefined;
+	if (a["secretRefs"] !== undefined) {
+		const sr = parseSecretRefs(a["secretRefs"], file, fm, "auth.secretRefs");
+		if (isParseErr(sr)) return sr;
+		secretRefs = sr;
+	}
+	let scopes: string[] | undefined;
+	if (a["scopes"] !== undefined) {
+		if (
+			!Array.isArray(a["scopes"]) ||
+			a["scopes"].some((s) => typeof s !== "string")
+		) {
+			return fail(
+				file,
+				"auth.scopes",
+				"a list of scope strings",
+				describeFound(a["scopes"]),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		scopes = a["scopes"] as string[];
+	}
+	let paramStyle: OAuth2ParamStyle | undefined;
+	if (a["paramStyle"] !== undefined) {
+		if (a["paramStyle"] !== "bearer-header" && a["paramStyle"] !== "query") {
+			return fail(
+				file,
+				"auth.paramStyle",
+				"bearer-header | query",
+				describeFound(a["paramStyle"]),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		paramStyle = a["paramStyle"];
+	}
+	let tokenEndpointAuthMethod: OAuth2TokenEndpointAuthMethod | undefined;
+	if (a["tokenEndpointAuthMethod"] !== undefined) {
+		const m = a["tokenEndpointAuthMethod"];
+		if (!isOAuth2TokenEndpointAuthMethod(m)) {
+			return fail(
+				file,
+				"auth.tokenEndpointAuthMethod",
+				OAUTH2_TOKEN_ENDPOINT_AUTH_METHODS.join(" | "),
+				describeFound(m),
+				{ snippet: snippetFor(fm, "auth") },
+			);
+		}
+		tokenEndpointAuthMethod = m;
+	}
+	let authorizeUrl: string | undefined;
+	if (a["authorizeUrl"] !== undefined) {
+		const au = requireHttpUrl(a["authorizeUrl"], "auth.authorizeUrl", file, fm);
+		if (typeof au !== "string") return au;
+		authorizeUrl = au;
+	}
+	let revokeUrl: string | undefined;
+	if (a["revokeUrl"] !== undefined) {
+		const rv = requireHttpUrl(a["revokeUrl"], "auth.revokeUrl", file, fm);
+		if (typeof rv !== "string") return rv;
+		revokeUrl = rv;
+	}
+
+	// Grant invariants — the single shared statement of OAuth2 grant
+	// semantics (also enforced by buildSyntheticOAuth2Auth in core/auth.ts
+	// for the bootstrap surfaces). Adding a grant or invariant: edit
+	// oauth2GrantIssue, then extend both callers' message maps.
+	const issue = oauth2GrantIssue({
+		grant,
+		hasClientSecret: clientSecret !== undefined,
+		authorizeUrl,
+		tokenEndpointAuthMethod,
+	});
+	if (issue) {
+		switch (issue.code) {
+			case "noneWithSecret":
 				return fail(
 					file,
-					`auth.headerPrefixes.${headerName}`,
-					"a header name present in auth.secretRefs",
-					`"${headerName}" is not a secret-injected header`,
+					"auth.clientSecret",
+					"absent when tokenEndpointAuthMethod: none",
+					"present",
 					{
-						fix: `Add "${headerName}" to auth.secretRefs (or remove the prefix).`,
+						snippet: snippetFor(fm, "auth"),
+						fix: "Remove clientSecret — tokenEndpointAuthMethod: none sends no client credentials (PKCE public clients have no secret).",
 					},
 				);
+			case "ccRequiresSecret":
+				return fail(
+					file,
+					"auth.clientSecret",
+					"a clientSecret ref for grant: client_credentials",
+					"missing",
+					{
+						snippet: snippetFor(fm, "auth"),
+						fix: "Add clientSecret: { secret: client_secret } — the store name provisioned via /api secrets <domain>.",
+					},
+				);
+			case "ccRejectsAuthorizeUrl":
+				return fail(
+					file,
+					"auth.authorizeUrl",
+					"absent for grant: client_credentials",
+					"authorizeUrl present",
+					{
+						fix: "Remove authorizeUrl — client_credentials is server-to-server with no browser flow.",
+					},
+				);
+			case "acRequiresAuthorizeUrl":
+				return fail(
+					file,
+					"auth.authorizeUrl",
+					"a URL for grant: authorization_code",
+					"missing",
+					{
+						fix: "Add authorizeUrl — the provider's authorization endpoint. The redirect URI is the runtime convention http://127.0.0.1/callback (RFC 8252 §7.3); register it on your OAuth app.",
+					},
+				);
+			default: {
+				// Compile-time exhaustiveness tripwire: a new OAuth2GrantIssue
+				// code must extend this switch (the builder's message map is
+				// already forced via its return type). Unreachable at runtime.
+				const uncovered: never = issue.code;
+				throw new Error(`unhandled OAuth2 grant invariant: ${String(uncovered)}`);
 			}
 		}
 	}
 
-	const result: AuthConfig = { kind: kindRaw as AuthKind };
-	if (headers !== undefined) result.headers = headers;
+	const result: OAuth2Auth = {
+		kind: "oauth2",
+		grant,
+		tokenUrl,
+		clientId,
+		...(clientSecret === undefined ? {} : { clientSecret }),
+	};
 	if (secretRefs !== undefined) result.secretRefs = secretRefs;
-	if (headerPrefixes !== undefined) result.headerPrefixes = headerPrefixes;
-	if (secretQueryRefs !== undefined) result.secretQueryRefs = secretQueryRefs;
-	if (requires !== undefined) result.requires = requires;
-	if (optional !== undefined) result.optional = optional;
+	if (scopes !== undefined) result.scopes = scopes;
+	if (paramStyle !== undefined) result.paramStyle = paramStyle;
+	if (tokenEndpointAuthMethod !== undefined)
+		result.tokenEndpointAuthMethod = tokenEndpointAuthMethod;
+	if (authorizeUrl !== undefined) result.authorizeUrl = authorizeUrl;
+	if (revokeUrl !== undefined) result.revokeUrl = revokeUrl;
 	return result;
 }
 

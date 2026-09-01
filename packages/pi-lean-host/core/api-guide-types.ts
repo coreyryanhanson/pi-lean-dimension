@@ -23,57 +23,163 @@ export const GATHER_ALL_MAX_FALLBACK = 1000;
  * The schema version of the guide recipe format. Metadata-only attribution:
  * it is surfaced on the parsed guide but NEVER gates/warns/alters parse
  * (see __tests__/schema-version.test.ts). Absent frontmatter defaults to the
- * semantic 0. Bumped to 1 at lockstep (a label change, not a break).
+ * semantic 0. Bumped to 1 at the v1 auth-type reshape (0.5.0) — a breaking
+ * TS-type + YAML-shape change to `AuthConfig`, not a parse-behavior break.
  */
-export const GUIDE_SCHEMA_VERSION = 0 as const;
+export const GUIDE_SCHEMA_VERSION = 1 as const;
 
-/** Auth strategies recognized by the schema (the seam). v1 realizes `none` and `static-key`; `oauth2` is rejected at parse. */
+/** Auth strategies recognized by the schema (the seam). v1 realizes `none`, `static-key`, and `oauth2`. */
 export const KNOWN_AUTH_KINDS: ReadonlySet<string> = new Set([
 	"none",
 	"static-key",
 	"oauth2",
 ]);
 
-// ═══════════════════════════════════════════════════════════════════
-// Auth
-// ═══════════════════════════════════════════════════════════════════
-
 export type AuthKind = "none" | "static-key" | "oauth2";
 
-export interface AuthConfig {
-	kind: AuthKind;
+/**
+ * A single secret reference — self-contained. Availability is a property of
+ * THIS ref (default: required, fail-closed when absent), not a separate
+ * roster. `prefix` folds the old top-level `headerPrefixes` inline. Shared by
+ * `StaticKeyAuth` and `OAuth2Auth` with the SAME semantics (map key = request
+ * header name).
+ */
+export interface SecretRef {
+	/** Store name (provisioned via /api secrets <domain>). */
+	secret: string;
+	/** Prefix prepended to the stored value at resolution time (e.g. "Bearer "). */
+	prefix?: string;
+	/** Default false — absent → fail-closed before the request. */
+	optional?: boolean;
+}
+
+export interface NoneAuth {
+	kind: "none";
+	/** Extra headers merged into every request (e.g. `X-Api-Key: DEMO_KEY`). */
+	headers?: Record<string, string>;
+}
+
+export interface StaticKeyAuth {
+	kind: "static-key";
 	/** Extra headers merged into every request (e.g. `X-Api-Key: DEMO_KEY`). */
 	headers?: Record<string, string>;
 	/**
-	 * static-key only: maps request header name → secret store name. Values
-	 * are injected at fetch time from the secrets store; the value never
-	 * enters agent context. Every referenced name must also appear in
-	 * `requires` or `optional` (parser-enforced).
+	 * Maps request header name → secret ref. Values are injected at fetch
+	 * time from the secrets store; the value never enters agent context.
 	 */
-	secretRefs?: Record<string, string>;
+	secretRefs?: Record<string, SecretRef>;
 	/**
-	 * static-key only: maps request header name → prefix string prepended to
-	 * the stored secret value before it is sent. The store holds the raw
-	 * credential; the guide declares how it is presented (e.g.
-	 * `Authorization: "Bearer "`). Absent = verbatim value. Every key must
-	 * also appear in `secretRefs` (parser-enforced).
+	 * Maps query param name → secret ref. Values are injected below the
+	 * agent-supplied params map at fetch time (never into it) and redacted
+	 * from every surfaced URL. A param name colliding with any operation's
+	 * `params` map is a parse error — the agent must not be able to supply a
+	 * secretly-injected param.
 	 */
-	headerPrefixes?: Record<string, string>;
-	/**
-	 * static-key only: maps query param name → secret store name.
-	 * Values are injected below the agent-supplied params map at fetch time
-	 * (never into it) and redacted from every surfaced URL. A param name
-	 * colliding with any operation's `params` map is a parse error — the
-	 * agent must not be able to supply a secretly-injected param. Every
-	 * referenced name must also appear in `requires` or `optional`
-	 * (parser-enforced, same rule as `secretRefs`).
-	 */
-	secretQueryRefs?: Record<string, string>;
-	/** static-key: secret names whose absence fails the request closed before it is sent. */
-	requires?: string[];
-	/** static-key: secret names that add value when present but are not required. */
-	optional?: string[];
+	secretQueryRefs?: Record<string, SecretRef>;
 }
+
+export const OAUTH2_GRANTS = [
+	"client_credentials",
+	"authorization_code",
+] as const;
+export type OAuth2Grant = (typeof OAUTH2_GRANTS)[number];
+/** Boundary decoder: input is unvalidated (guide YAML / CLI flag). */
+export function isOAuth2Grant(v: unknown): v is OAuth2Grant {
+	return (OAUTH2_GRANTS as readonly unknown[]).includes(v);
+}
+export type OAuth2ParamStyle = "bearer-header" | "query";
+export const OAUTH2_TOKEN_ENDPOINT_AUTH_METHODS = [
+	"client_secret_basic",
+	"client_secret_post",
+	"none",
+] as const;
+export type OAuth2TokenEndpointAuthMethod =
+	(typeof OAUTH2_TOKEN_ENDPOINT_AUTH_METHODS)[number];
+export function isOAuth2TokenEndpointAuthMethod(
+	v: unknown,
+): v is OAuth2TokenEndpointAuthMethod {
+	return (OAUTH2_TOKEN_ENDPOINT_AUTH_METHODS as readonly unknown[]).includes(v);
+}
+
+/** Why a set of OAuth2 grant fields violates the grant invariants. */
+export interface OAuth2GrantIssue {
+	code:
+		| "noneWithSecret"
+		| "ccRequiresSecret"
+		| "ccRejectsAuthorizeUrl"
+		| "acRequiresAuthorizeUrl";
+}
+
+/**
+ * The single statement of the OAuth2 grant-semantics invariants — shared by
+ * the guide parser (`validateOAuth2Auth`) and the synthetic-auth builder
+ * (`buildSyntheticOAuth2Auth`) so a new grant or invariant edit lands in one
+ * place. Enum membership and URL/ref shape stay caller-side (each has its
+ * own richer error style); this encodes only the cross-field grant rules.
+ * Returns the first violation (precedence: noneWithSecret, then grant rules).
+ */
+export function oauth2GrantIssue(fields: {
+	grant: OAuth2Grant;
+	hasClientSecret: boolean;
+	authorizeUrl?: string | undefined;
+	tokenEndpointAuthMethod?: OAuth2TokenEndpointAuthMethod | undefined;
+}): OAuth2GrantIssue | null {
+	const { grant, hasClientSecret, authorizeUrl, tokenEndpointAuthMethod } =
+		fields;
+	// tokenEndpointAuthMethod: none sends no client credentials (PKCE public
+	// clients) — a declared clientSecret alongside it is a contradiction.
+	if (tokenEndpointAuthMethod === "none" && hasClientSecret) {
+		return { code: "noneWithSecret" };
+	}
+	if (grant === "client_credentials") {
+		if (!hasClientSecret) return { code: "ccRequiresSecret" };
+		if (authorizeUrl !== undefined) return { code: "ccRejectsAuthorizeUrl" };
+	} else if (authorizeUrl === undefined) {
+		return { code: "acRequiresAuthorizeUrl" };
+	}
+	return null;
+}
+
+export interface OAuth2Auth {
+	kind: "oauth2";
+	grant: OAuth2Grant;
+	/** Token endpoint (POST — the only non-GET host makes, auth plumbing). */
+	tokenUrl: string;
+	/**
+	 * Client auth at the token endpoint is exactly two named scalars plus a
+	 * placement method (`tokenEndpointAuthMethod`) — never an open-ended form
+	 * map. Client authentication happens at the token endpoint; request-header
+	 * decoration is uniformly `secretRefs` (same semantics as static-key).
+	 * Store-resolved values appear ONLY as `SecretRef.secret` — a shippable
+	 * recipe bakes in no per-user credentials (each user registers their own
+	 * app → own quota, provisioned via /api secrets <domain>).
+	 */
+	clientId: SecretRef;
+	/**
+	 * Parser-required for `client_credentials`; absent for `authorization_code`
+	 * (PKCE public clients have no secret) — enforced in `validateOAuth2Auth`.
+	 */
+	clientSecret?: SecretRef;
+	/**
+	 * Request header name → ref — SAME semantics as static-key (merged
+	 * alongside the Bearer token, stripped on cross-domain redirect hops,
+	 * scrubbed from output). E.g. Twitch's `Client-Id`. Values resolve from
+	 * the secrets store — per-user, never shipped in the guide.
+	 */
+	secretRefs?: Record<string, SecretRef>;
+	/** Static scope list declared in the guide — no runtime picker. */
+	scopes?: string[];
+	/** Default bearer-header. `query` sends `?access_token=…` (RFC 6750 §2.3). */
+	paramStyle?: OAuth2ParamStyle;
+	/** How the client authenticates at the token endpoint. Default client_secret_post. */
+	tokenEndpointAuthMethod?: OAuth2TokenEndpointAuthMethod;
+	/** auth-code only (parser-enforced present iff grant === "authorization_code"). */
+	authorizeUrl?: string;
+	/** Optional revocation endpoint. */
+	revokeUrl?: string;
+}
+
+export type AuthConfig = NoneAuth | StaticKeyAuth | OAuth2Auth;
 
 // ═══════════════════════════════════════════════════════════════════
 // Pagination

@@ -19,12 +19,12 @@ An npm-workspaces monorepo containing four packages:
 
 - **`pi-lean-portal`** — Interactive web browsing (owns `/web` command). **12 tools + 1 command.**
 - **`pi-lean-search`** — SearXNG search tool (`web-search`), wired into portal's `/web` toggle. **1 tool + 1 command** (`/searxng-status`).
-- **`pi-lean-host`** — Declarative HTTP API client (`api-guide`, `api-fetch`, `api-learn`, `api-probe`, `api-scaffold`, `/api` namespace). **5 tools + 1 command.**
+- **`pi-lean-host`** — Declarative HTTP API client (`api-guide`, `api-fetch`, `api-learn`, `api-probe`, `api-scaffold`, `api-store`, `oauth-mint`, `/api` namespace). **7 tools + 1 command.**
 - **`pi-lean-dimension`** — Umbrella meta-package that bundles portal + search + host (codeless manifest).
 
 The MiniWoB++ evaluation harness was dissolved out of the workspaces and lives at `bench/miniwob/` — it is research tooling, not a pi extension.
 
-With search + host installed, the suite totals **18 tools + 3 commands** (portal 12 + search 1 + host 5). Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool + declarative HTTP API helpers (`pi-lean-host/core/resolve-op.ts` is the single shared guide-resolution → helper → transform → auth → dispatch sequence used by both `api-fetch` and `/api verify`). Portal entrypoint: `packages/pi-lean-portal/index.ts`. Host entrypoint: `packages/pi-lean-host/index.ts`. Search entrypoint: `packages/pi-lean-search/index.ts`.
+With search + host installed, the suite totals **20 tools + 3 commands** (portal 12 + search 1 + host 7). Architecture: plugin-based dispatch via `PluginRegistry` + typed `BrowserPlugin` interface + stateless `web-fetch` tool + declarative HTTP API helpers (`pi-lean-host/core/resolve-op.ts` is the single shared guide-resolution → helper → transform → auth → dispatch sequence used by both `api-fetch` and `/api verify`). Portal entrypoint: `packages/pi-lean-portal/index.ts`. Host entrypoint: `packages/pi-lean-host/index.ts`. Search entrypoint: `packages/pi-lean-search/index.ts`.
 
 ## Developer Commands
 
@@ -75,13 +75,13 @@ Portal dispatches through a `PluginRegistry` + typed `BrowserPlugin` interface; 
 
 > For the `BrowserPlugin` method list, router dispatch, the status bar `browser` slot, profile/cookie persistence, guides, key-tools table, engine parity, snapshot cache, nav-settle, bot-detection tiers, `browser-inspect` internals, the `backends/` vs `core/` boundary, and the full constraints & debt list, see [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md). The search-owned `search` status bar slot is documented in [`packages/pi-lean-search/AGENTS.md`](packages/pi-lean-search/AGENTS.md).
 
-### Registered Tools (18 total with search + host)
+### Registered Tools (20 total with search + host)
 
 **Portal (12):** web-fetch, browser-navigate, browser-snapshot, browser-click, browser-type, browser-scroll, browser-back, browser-press, browser-console, browser-inspect, web-guide, web-learn
 
 **Search (1):** web-search
 
-**Host (5):** api-guide, api-fetch, api-learn, api-probe, api-scaffold
+**Host (7):** api-guide, api-fetch, api-learn, api-probe, api-scaffold, api-store, oauth-mint
 
 ### Registered Commands
 
@@ -89,9 +89,7 @@ Portal dispatches through a `PluginRegistry` + typed `BrowserPlugin` interface; 
 
 **Search:** `/searxng-status` — test the full SearXNG search pipeline and update the status bar glyph.
 
-**Host:** `/api on|off|learn|status|helpers|secrets|verify|delete` — `/api on` (API tools enabled), `/api off` (all disabled), `/api learn` (API tools + api-learn + api-probe + api-scaffold for guide authoring), `/api status` (active guides + helpers), `/api helpers [domain]` (list/view helper source), `/api secrets [domain [name]]` (provision/list/delete per-domain secret store, names only never values), `/api verify <domain> [guide] [--force]` (run every runnable op live, stamp `verified: today` only on all-pass), `/api delete <domain> [guide]` (`rm -rf` guide dir + invalidate guide-store cache). `status`/`helpers`/`secrets`/`verify`/`delete` and bare `/api` are read-only or always-available — the focus-mode guard doesn't apply to them.
-
-Toggle state is persisted via `pi.appendEntry("web-toggle-state", ...)` per-session branch, surviving `/reload`, `/resume`, `/fork`. Three-field schema: `{browserToolsEnabled, learnToolsEnabled, defaultProfile}`.
+**Host:** `/api on|off|learn|status|helpers|secrets|verify|delete|oauth|bootstrap` — `/api on` (API tools enabled), `/api off` (all disabled), `/api learn` (API tools + api-learn + api-probe + api-scaffold + api-store + oauth-mint for guide authoring), `/api status` (active guides + helpers), `/api helpers [domain]` (list/view helper source), `/api secrets [domain [name]]` (provision/list/delete per-domain secret store, names only never values), `/api verify <domain> [guide] [--force]` (run every runnable op live, stamp `verified: today` only on all-pass), `/api delete <domain> [guide]` (`rm -rf` guide dir + invalidate guide-store cache), `/api oauth <domain> …` (init / mint / `--status` / `--refresh` / `--revoke` / `--code <code>` per token slot), `/api bootstrap oauth <domain> <spec>` (agent-driven OAuth2 bootstrap: injects a research brief via `sendUserMessage` followUp, exits; auto-enables learn — the flip is focus-guard-refused loudly when focus holds; headless-refused). `status`/`helpers`/`secrets`/`verify`/`delete`/`oauth` and bare `/api` are read-only or always-available — the focus-mode guard doesn't apply to them; `bootstrap` writes toolset state only when learn was off, so the guard is enforced inside the handler, scoped to the flip.
 
 **Defaults for new sessions** are resolved by the `pi-tool-masking` library, not portal/search/host code: `initBrowserToggle` and `initApiToggle` pass the packaged `ToolsetSpec` (with its own `defaultEnabled`) straight to `defineToolset`, and the library's restore reads the `toolsetDefaults` block from merged Pi settings (`~/.pi/agent/settings.json` + `.pi/settings.json`) before falling back to the packaged default. Keys: `toolset-state:pi-lean-dimension.web`, `toolset-state:pi-lean-dimension.web-learn`, `toolset-state:pi-lean-dimension.search` (search key only honored when `pi-lean-search` is installed), `toolset-state:pi-lean-dimension.api`, `toolset-state:pi-lean-dimension.api-learn` (host keys only honored when `pi-lean-host` is installed). Packaged defaults: web on / web-learn off, search on, api on / api-learn off. The legacy `browserToggle.defaultEnabled` key was **removed in 0.4.0** and is no longer read — the migration warning that bridged it is gone too.
 
@@ -106,8 +104,8 @@ The toggle also manages a `SIBLING_TOOL_NAMES` set populated with `"web-search"`
 - **Portal structural tests** (`pi-lean-portal`): framework internals (router dispatch, registry, config loading, snapshot cache, nav-settle, storage state, accessibility parsing, url safety, plugin contract validation, browser toggle, fetch backend, python adapter). These are mocked unit tests — no real browser or MiniWoB content required.
 - **Python bridge unit tests** (`pi-lean-portal/backends/python-base/tests/`): pure-logic pytest tests for the shared `pi_browser_bridge` library (accessibility, bot-detection, JSON-RPC transport, chromium-py/firefox-py routing, `PlaywrightBridge` stealth-quirk flags). Use fakes/mocks; the `playwright` import is lazily guarded, so they need only `pytest>=9.0` — no Playwright wheel, no browser binaries. Run via `npm run test:py-bridge`; wired into the `structural` CI job.
 - **MiniWoB behavioral tests** (`bench/miniwob/suites/`): behavioral evaluation against real browser engines (MiniWoB tasks, browser interaction pipeline verification). These require a live browser and MiniWoB++ content.
-- **Host structural tests** (`pi-lean-host/__tests__/`): guide parsing, transport, auth, resolve-op, secrets, verify-stamp, scaffold, status hint, render, host-only boundary — mocked unit tests, no live HTTP.
-- **Host recipe-validity tests** (`pi-lean-host/api-guides/<domain>/*.test.ts`): per-recipe endpoint coverage and helper transform tests co-located with their guide. Transform tests run in bare CI; live endpoint tests opt in via `HOST_INTEGRATION=1`. Excluded from the npm tarball.
+- **Host structural tests** (`pi-lean-host/__tests__/`): guide parsing, transport, auth, resolve-op, secrets, verify-stamp, scaffold, oauth-mint, bootstrap command, status hint, render, host-only boundary — mocked unit tests, no live HTTP.
+- **Host recipe-validity tests** (`pi-lean-host/api-guides/<domain>/*.test.ts`): per-recipe endpoint coverage and helper transform tests co-located with their guide. All mocked-transport (no live endpoints — the live tier lives in the caritas repo, gated by its `HOST_INTEGRATION=1`). Excluded from the npm tarball.
 - **Per-backend contract tests** (in `pi-lean-portal`): verify each backend (chromium, firefox, chromium-py, firefox-py, etc.) against the `BrowserPlugin` interface contract. Require their respective browser engine.
 
 ### Test file summary
@@ -119,8 +117,8 @@ The toggle also manages a `SIBLING_TOOL_NAMES` set populated with `"web-search"`
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 8 | varies | Per-backend (auto-skip) |
 | MiniWoB behavioral | `bench/miniwob/suites/` | 8 | 130 tasks × 4 + user-backends + smoke* | Chromium + Firefox + Python + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 29 | No |
-| Host structural | `pi-lean-host/__tests__/` | 32 | ~700 | No |
-| Host recipe-validity | `pi-lean-host/api-guides/<domain>/*.test.ts` | 6 | ~23 | No (live: `HOST_INTEGRATION=1`) |
+| Host structural | `pi-lean-host/__tests__/` | 38 | ~850 | No |
+| Host recipe-validity | `pi-lean-host/api-guides/<domain>/*.test.ts` | 8 | ~30 | No |
 
 Per-file detail for the portal-owned test lists (structural, python bridge, per-backend contract, shared test utilities) lives in [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md) ("Testing (portal detail)"). Host-owned test detail lives in [`packages/pi-lean-host/AGENTS.md`](packages/pi-lean-host/AGENTS.md). MiniWoB suite detail (preflight gate, prerequisites, env overrides, suite files, coverage ceiling) lives in [`bench/AGENTS.md`](bench/AGENTS.md).
 

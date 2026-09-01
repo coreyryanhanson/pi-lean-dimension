@@ -25,6 +25,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { restGet, paginate, HelperError } from "../core/helpers.js";
 import { parseApiGuide } from "../core/parse-api-guide.js";
+import { stripSecretQueryParams } from "../core/transport.js";
 import { writeSecret, setSecretsDir } from "../core/secrets-store.js";
 import { probe } from "../tools/api-probe.js";
 import type { ApiGuide, Operation } from "../core/api-guide-types.js";
@@ -59,8 +60,7 @@ function makeQueryGuide(apiHost: string): ApiGuide {
 		gatherAllMax: 1000,
 		auth: {
 			kind: "static-key",
-			secretQueryRefs: { apikey: "api_key" },
-			requires: ["api_key"],
+			secretQueryRefs: { apikey: { secret: "api_key" } },
 		},
 		responseShape: { format: "json", charset: "utf-8" },
 		operations: [],
@@ -125,18 +125,20 @@ body
 }
 
 describe("auth schema / parser — secretQueryRefs", () => {
-	it("secretQueryRefs with a consistent requires parses", () => {
+	it("secretQueryRefs with a nested ref parses", () => {
 		const r = parseAuthQuery(
 			`  kind: static-key
   secretQueryRefs:
-    apikey: api_key
-  requires:
-    - api_key`,
+    apikey:
+      secret: api_key`,
 		);
 		expect(r.ok).toBe(true);
 		if (r.ok) {
-			expect(r.guide.auth.secretQueryRefs).toEqual({ apikey: "api_key" });
-			expect(r.guide.auth.requires).toEqual(["api_key"]);
+			if (r.guide.auth.kind === "static-key") {
+				expect(r.guide.auth.secretQueryRefs).toEqual({
+					apikey: { secret: "api_key" },
+				});
+			}
 		}
 	});
 
@@ -144,38 +146,37 @@ describe("auth schema / parser — secretQueryRefs", () => {
 		const r = parseAuthQuery(
 			`  kind: static-key
   secretRefs:
-    x-api-key: api_key
+    x-api-key:
+      secret: api_key
   secretQueryRefs:
-    apikey: api_key
-  requires:
-    - api_key`,
+    apikey:
+      secret: api_key`,
 		);
 		expect(r.ok).toBe(true);
 	});
 
-	it("secretQueryRefs name not in requires/optional → ParseError", () => {
+	it("a query ref missing its secret name → ParseError", () => {
 		const r = parseAuthQuery(
 			`  kind: static-key
   secretQueryRefs:
-    apikey: unknownName
-  requires:
-    - api_key`,
+    apikey:
+      prefix: "x-"`,
 		);
 		expect(r.ok).toBe(false);
 		if (!r.ok) {
-			expect(r.error.field).toBe("auth.secretQueryRefs.apikey");
-			expect(r.error.fix).toBeDefined();
+			expect(r.error.field).toBe("auth.secretQueryRefs.apikey.secret");
 		}
 	});
 
-	it("secretQueryRefs with kind: none → ParseError", () => {
+	it("secretQueryRefs with kind: none → ParseError (per-variant allowlist)", () => {
 		const r = parseAuthQuery(
 			`  kind: none
   secretQueryRefs:
-    apikey: api_key`,
+    apikey:
+      secret: api_key`,
 		);
 		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.error.field).toBe("auth.secretRefs");
+		if (!r.ok) expect(r.error.field).toBe("auth.secretQueryRefs");
 	});
 
 	it("a secret param name colliding with an op's params map → ParseError", () => {
@@ -183,9 +184,8 @@ describe("auth schema / parser — secretQueryRefs", () => {
 		const r = parseAuthQuery(
 			`  kind: static-key
   secretQueryRefs:
-    apikey: api_key
-  requires:
-    - api_key`,
+    apikey:
+      secret: api_key`,
 			ops,
 		);
 		expect(r.ok).toBe(false);
@@ -200,9 +200,8 @@ describe("auth schema / parser — secretQueryRefs", () => {
 		const r = parseAuthQuery(
 			`  kind: static-key
   secretQueryRefs:
-    apikey: api_key
-  requires:
-    - api_key`,
+    apikey:
+      secret: api_key`,
 			ops,
 		);
 		expect(r.ok).toBe(true);
@@ -341,7 +340,7 @@ describe("output-channel audit — params channel / passthrough guard", () => {
 
 // ═══════════════════════════════════════════════════════════════════
 // Error-path URL redaction
-// ══════════════════���════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 
 describe("output-channel audit — error-path URL redaction", () => {
 	it("a HelperError from restGet carries the REDACTED url on err.url", async () => {
@@ -464,5 +463,31 @@ describe("api-probe store-backed auth (authoring loop)", () => {
 		);
 		expect(result.raw).not.toContain("REALKEY");
 		expect(result.note).not.toContain("REALKEY");
+	});
+});
+
+describe("cross-domain redirect hop — secret query params", () => {
+	// Mirrors the stripSecretHeaders unit in auth.test.ts (case c): the
+	// guarded-redirect loop strips secret headers on cross-domain hops;
+	// secret query params need the same treatment because a relative
+	// redirect preserves the original query string.
+	it("drops secret params, keeps agent params and path", () => {
+		const out = stripSecretQueryParams(
+			"https://evil.test/path?apikey=REALKEY&chainid=1&page=2",
+			new Set(["apikey"]),
+		);
+		expect(out).toBe("https://evil.test/path?chainid=1&page=2");
+		expect(out).not.toContain("REALKEY");
+	});
+
+	it("leaves the URL untouched when no secret params are present", () => {
+		const url = "https://q.test/path?chainid=1";
+		expect(stripSecretQueryParams(url, new Set(["apikey"]))).toBe(url);
+	});
+
+	it("returns an unparseable URL unchanged (singleGet surfaces the real error)", () => {
+		expect(stripSecretQueryParams("not a url", new Set(["apikey"]))).toBe(
+			"not a url",
+		);
 	});
 });

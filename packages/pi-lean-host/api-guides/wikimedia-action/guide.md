@@ -1,6 +1,6 @@
 ---
 kind: api
-schemaVersion: 0
+schemaVersion: 1
 organization: wikimedia.org
 description: Synthetic axis guide — tokenBag pagination + transform (paginate).
 domains:

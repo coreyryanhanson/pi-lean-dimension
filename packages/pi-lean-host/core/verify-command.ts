@@ -41,26 +41,22 @@ import {
 	invalidateCache,
 	getUserGuidesDir,
 } from "./guide-store.js";
-import {
-	formatGuideListings,
-	selectGuideByShortName,
-	shortNameErrorText,
-	stampFrontmatterField,
-	TODAY,
-} from "./parse-api-guide.js";
-import { pickGuide } from "./guide-picker.js";
+import { stampFrontmatterField, TODAY } from "./parse-api-guide.js";
+import { pickGuideForCommand } from "./guide-picker.js";
 import {
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
 	canonicalStoreDomain,
+	hasUsableTokenPath,
 } from "./auth.js";
+import { readSecret } from "./secrets-store.js";
 import { resolveOpForExecution, type ResolveOpResult } from "./resolve-op.js";
 import {
 	HelperError,
 	type RestGetResult,
 	type PaginateResult,
 } from "./helpers.js";
-import type { ApiGuide, Operation } from "./api-guide-types.js";
+import type { Operation } from "./api-guide-types.js";
 
 /** Usage + cost note, surfaced by `--help`. */
 function helpText(): string {
@@ -124,41 +120,14 @@ export async function handleVerifySubcommand(
 		return;
 	}
 
-	let selected: { guide: ApiGuide; dirName: string };
-	if (matches.length === 1) {
-		selected = matches[0]!;
-	} else if (guideSelector) {
-		const sel = selectGuideByShortName(matches, guideSelector);
-		if (!sel.ok) {
-			ctx.ui.notify(
-				shortNameErrorText(
-					sel,
-					domain,
-					guideSelector,
-					`Call /api verify ${domain} to see the menu.`,
-				),
-				"warning",
-			);
-			return;
-		}
-		selected = sel;
-	} else {
-		// N guides, no selector → interactive pick (TUI) or the menu
-		// fallback (headless/RPC/print or cancelled), nothing run yet.
-		const picked = await pickGuide(ctx, matches);
-		if (!picked) {
-			ctx.ui.notify(
-				[
-					`${matches.length} API guides for '${domain}':`,
-					formatGuideListings(matches),
-					`Call /api verify ${domain} <shortName> to pick one.`,
-				].join("\n"),
-				"info",
-			);
-			return;
-		}
-		selected = picked;
-	}
+	const selected = await pickGuideForCommand(
+		ctx,
+		domain,
+		guideSelector,
+		matches,
+		"/api verify",
+	);
+	if (!selected) return;
 
 	const { guide, dirName } = selected;
 	const storeDomain = canonicalStoreDomain(guide);
@@ -175,24 +144,56 @@ export async function handleVerifySubcommand(
 		return;
 	}
 
-	// Auth precheck (fail-fast): resolve the same secrets api-fetch does. If
-	// any `requires` secret is unprovisioned, short-circuit with ONE message —
-	// do not run N ops that all fail identically.
-	if (guide.auth.kind === "static-key") {
-		const headerRes = resolveSecretHeaders(guide.auth, storeDomain);
-		const queryRes = resolveSecretQueryParams(guide.auth, storeDomain);
-		const missingRequired = [
-			...headerRes.absentRequired,
-			...queryRes.absentRequired,
-		];
-		if (missingRequired.length > 0) {
-			ctx.ui.notify(
-				`🔑 ${guide.shortName} requires a secret not yet provisioned: ` +
-					`${missingRequired.join(", ")}.\n` +
-					`Run /api secrets ${storeDomain} to provision it, then re-run /api verify.`,
-				"warning",
-			);
-			return;
+	// Auth precheck (fail-fast): resolve the same secrets/token api-fetch does.
+	// If a required secret is unprovisioned or no OAuth2 token is mintable,
+	// short-circuit with ONE message — do not run N ops that all fail
+	// identically.
+	switch (guide.auth.kind) {
+		case "static-key": {
+			const headerRes = resolveSecretHeaders(guide.auth, storeDomain);
+			const queryRes = resolveSecretQueryParams(guide.auth, storeDomain);
+			const missingRequired = [
+				...headerRes.absentRequired,
+				...queryRes.absentRequired,
+			];
+			if (missingRequired.length > 0) {
+				ctx.ui.notify(
+					`🔑 ${guide.shortName} requires a secret not yet provisioned: ` +
+						`${missingRequired.join(", ")}.\n` +
+						`Run /api secrets ${storeDomain} to provision it, then re-run /api verify.`,
+					"warning",
+				);
+				return;
+			}
+			break;
+		}
+		case "oauth2": {
+			if (!hasUsableTokenPath(guide.auth, storeDomain)) {
+				// client_credentials reaching here ⇒ at least one credential secret
+				// is unprovisioned (hasUsableTokenPath would have returned true
+				// otherwise) — name the missing ones like the static-key arm above.
+				const missingCreds = [
+					guide.auth.clientId.secret,
+					...(guide.auth.clientSecret ? [guide.auth.clientSecret.secret] : []),
+				].filter((name) => readSecret(storeDomain, name) === null);
+				const hint =
+					guide.auth.grant === "authorization_code"
+						? `Run /api oauth ${storeDomain} to start the interactive flow`
+						: `Provision ${missingCreds.join(", ")} via /api secrets ${storeDomain}, then run /api oauth ${storeDomain}`;
+				ctx.ui.notify(
+					`🔑 ${guide.shortName} has no usable OAuth2 token for '${storeDomain}'.\n` +
+						`${hint}, then re-run /api verify.`,
+					"warning",
+				);
+				return;
+			}
+			break;
+		}
+		case "none":
+			break;
+		default: {
+			const _exhaustive: never = guide.auth;
+			throw new Error(`Unhandled auth kind: ${_exhaustive}`);
 		}
 	}
 
@@ -278,6 +279,13 @@ export async function handleVerifySubcommand(
 					// Disabled helpers are session-persistent and deterministic — the
 					// remaining fan-out runs would skip identically, so stop here.
 					break;
+				}
+				if (outcome.reason === "oauth_token_missing") {
+					// Unmintable OAuth2 token — same nudge for every op, so fail once
+					// (the auth precheck will fail-fast before the loop).
+					failed++;
+					report.push(`  ✗ ${opTag(op.name, run.tag)} — ${outcome.message}`);
+					continue;
 				}
 				// auth_required_not_provisioned — unreachable after the precheck
 				// (auth is per-guide constant); defensive.
