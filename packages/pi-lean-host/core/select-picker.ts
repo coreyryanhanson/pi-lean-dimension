@@ -154,6 +154,9 @@ export async function pickChecklist(
 				container.removeChild(list);
 				list = buildList();
 				container.addChild(list);
+				// addChild appends — keep the footer below the rebuilt list.
+				container.removeChild(footer);
+				container.addChild(footer);
 			};
 			fresh.onCancel = () => done(undefined);
 			return fresh;
@@ -161,9 +164,10 @@ export async function pickChecklist(
 
 		container.addChild(new Text(theme.fg("accent", theme.bold(title))));
 		container.addChild(list);
-		container.addChild(
-			new Text(theme.fg("dim", "↑↓ navigate • enter toggle • esc cancel all")),
+		const footer = new Text(
+			theme.fg("dim", "↑↓ navigate • enter toggle • esc cancel all"),
 		);
+		container.addChild(footer);
 		return {
 			render(width: number) {
 				return container.render(width);
