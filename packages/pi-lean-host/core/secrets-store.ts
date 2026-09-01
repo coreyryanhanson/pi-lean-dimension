@@ -17,9 +17,9 @@
 
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { assertSafeDomain } from "./path-template.js";
-import { writeJson0600 } from "./fs-0600.js";
+import { readJsonObject, writeJson0600 } from "./fs-0600.js";
 
 /** A secret store: read/write/delete one name, list domain/name indexes. */
 export interface SecretStore {
@@ -47,20 +47,10 @@ export function createFileStore(dir: string): SecretStore {
 		return join(dir, `${domain}.json`);
 	};
 
-	// Read a domain file as a flat name→value map. Missing/corrupt file → {}.
-	// Never touches the filesystem's dir structure (no mkdir).
-	const readFile = (domain: string): Record<string, string> => {
-		const p = domainPath(domain);
-		if (!existsSync(p)) return {};
-		try {
-			const parsed = JSON.parse(readFileSync(p, "utf-8"));
-			return parsed && typeof parsed === "object"
-				? (parsed as Record<string, string>)
-				: {};
-		} catch {
-			return {};
-		}
-	};
+	// Read a domain file as a flat name→value map; corrupt entries (non-string
+	// values) drop out at the `read` boundary. Never mkdirs.
+	const readFile = (domain: string): Record<string, string> =>
+		readJsonObject(domainPath(domain)) as Record<string, string>;
 
 	return {
 		read(domain, name) {

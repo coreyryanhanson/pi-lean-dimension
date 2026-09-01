@@ -2,6 +2,7 @@ import {
 	chmodSync,
 	existsSync,
 	mkdirSync,
+	readFileSync,
 	renameSync,
 	writeFileSync,
 } from "node:fs";
@@ -20,4 +21,19 @@ export function writeJson0600(p: string, data: unknown): void {
 		// best-effort; rename still proceeds
 	}
 	renameSync(tmp, p);
+}
+
+/** Read a JSON file as a string-keyed object. Missing/corrupt/non-object
+ *  (incl. array) file → {}. Read-side counterpart of writeJson0600, shared
+ *  by the secrets and OAuth token stores. */
+export function readJsonObject(p: string): Record<string, unknown> {
+	if (!existsSync(p)) return {};
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(p, "utf-8"));
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+			? (parsed as Record<string, unknown>)
+			: {};
+	} catch {
+		return {};
+	}
 }

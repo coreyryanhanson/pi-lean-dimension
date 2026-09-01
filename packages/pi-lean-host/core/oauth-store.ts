@@ -28,9 +28,9 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { assertSafeDomain } from "./path-template.js";
-import { writeJson0600 } from "./fs-0600.js";
+import { readJsonObject, writeJson0600 } from "./fs-0600.js";
 
 /** A minted token set for one (domain, grant, tokenUrl) slot. */
 export interface OAuthToken {
@@ -70,34 +70,25 @@ export interface TokenSlotInfo {
 	token: OAuthToken;
 }
 
-/** Read a slot map file. Missing/corrupt file → {}; entries failing
- *  `isEntry` are dropped. Shared by the token file and the pending-flow
- *  scratch file — same read-parse-validate loop, one implementation. */
-function readJsonMap<T>(
+/** Read a slot map file: whole-file object read + per-entry validation
+ *  (entries failing `isEntry` are dropped). Shared by the token file and
+ *  the pending-flow scratch file — one loop over readJsonObject's result. */
+function readSlotMap<T>(
 	p: string,
 	isEntry: (value: Record<string, unknown>) => boolean,
 ): Record<string, T> {
-	if (!existsSync(p)) return {};
-	try {
-		const parsed: unknown = JSON.parse(readFileSync(p, "utf-8"));
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-			return {};
+	const map: Record<string, T> = {};
+	for (const [key, value] of Object.entries(readJsonObject(p))) {
+		if (
+			value &&
+			typeof value === "object" &&
+			!Array.isArray(value) &&
+			isEntry(value as Record<string, unknown>)
+		) {
+			map[key] = value as T;
 		}
-		const map: Record<string, T> = {};
-		for (const [key, value] of Object.entries(parsed)) {
-			if (
-				value &&
-				typeof value === "object" &&
-				!Array.isArray(value) &&
-				isEntry(value)
-			) {
-				map[key] = value as T;
-			}
-		}
-		return map;
-	} catch {
-		return {};
 	}
+	return map;
 }
 
 /**
@@ -128,7 +119,7 @@ export function createTokenStore(dir: string): TokenStore {
 	// a foreign or hand-edited file — fails the check and reads as empty.
 	// Tokens are re-minted, no migration.
 	const readFileMap = (domain: string): Record<string, StampedToken> =>
-		readJsonMap(
+		readSlotMap(
 			domainPath(domain),
 			(v) =>
 				typeof v.accessToken === "string" &&
@@ -268,7 +259,7 @@ function pendingPath(domain: string): string {
 }
 
 function readPendingMap(domain: string): Record<string, PendingAuthCodeFlow> {
-	return readJsonMap(
+	return readSlotMap(
 		pendingPath(domain),
 		(v) =>
 			typeof v.verifier === "string" &&
