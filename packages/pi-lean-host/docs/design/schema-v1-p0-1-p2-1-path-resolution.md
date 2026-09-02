@@ -1,0 +1,161 @@
+# Plan — P0-1 + P2-1: Dotted JSON Keys & Numeric Cursor Coercion
+
+> Status: planned (not yet started). Seeds from
+> [`schema-v1-pre-release-backlog.md`](./schema-v1-pre-release-backlog.md)
+> items **P0-1** and **P2-1** (paired there by design: same function, same
+> test file). Scope is locked to those two items — P0-3, P0-2, and the P1/P2
+> queues are out of scope here.
+>
+> **Standing constraints (from the review brief, apply to every step):**
+> read-only forever (GET-only transport), one parser / two call sites,
+> host-only boundary, 1 local helper per domain.
+
+## Problem (one paragraph each)
+
+**P0-1 — dot-containing JSON keys.** OData v4 services (Microsoft Graph,
+SharePoint REST, Dynamics 365, SAP OData) paginate via a literal top-level
+key `@odata.nextLink` — the dot is part of the key name, not a path
+separator. `resolveJsonPath` (`core/helpers.ts`) dot-splits every path, so
+`@odata.nextLink` → `["@odata", "nextLink"]` → `undefined` →
+`advancePagination` returns null → **gatherAll silently terminates after
+page 1 reporting success**. The bracket-quote form `['@odata.nextLink']`
+degrades into the same bug (regex rewrite → dot-split). No workaround
+exists: local helpers are pre-call params-only; `transform` runs post-parse
+and never sees pagination advance. Hits `itemsPath`, `nextLinkPath`,
+`cursorPath`, `tokenPath`, `totalCountPath` alike.
+
+**P2-1 — numeric cursor coercion.** All three value branches in
+`advancePagination` require `typeof === "string"` and otherwise return
+`null` — indistinguishable from genuine exhaustion. A numeric continuation
+value (integer `next_cursor`, numeric page token, OAI-PMH's final
+`<resumptionToken/>` which parses as an attribute-only object) yields a
+**silently truncated result reported as a complete list**. `tokenBag`
+already coerces via `String(v)` — the codebase disagrees with itself.
+
+Both fix variants of the same worst-case failure mode: *silently truncated,
+reported as complete*.
+
+## Fix shape (from the backlog, unchanged)
+
+1. **P0-1 (behavior, no YAML change, no bump):** quoted bracket segments
+   become atomic keys in `resolveJsonPath` — capture `['…']` segments
+   (dots included) *before* dot-splitting. Unquoted legacy paths parse
+   identically. Unquoted `@odata.nextLink` keeps failing loudly (no silent
+   partial match).
+2. **P2-1 (behavior, no bump):** coerce numbers to strings in
+   `advancePagination` exactly like `tokenBag`; keep `""`/missing as
+   exhaustion.
+
+## Sprint 0 — Candidate research (caritas recipe selection)
+
+**Goal:** pick the real-world API that will carry the comprehensive caritas
+recipe *before* anything is built, so the axis guide (Sprint 3) can be
+modeled on it — selected cleanly and minimally — and so the fix is proven
+against a production shape, not a synthetic one.
+
+**Task:** research and enumerate candidate APIs exhibiting the target
+shape(s), then present a shortlist so the human can choose one that:
+
+- **maximizes user impact** — an API our users actually hit, with real
+  pagination volume (deep listing, not one-page curiosities);
+- **fits the brand** — consistent with the kind of read-only data sources
+  caritas already covers;
+- **exercises the shape cleanly** — ideally dotted-key pagination
+  (`@odata.nextLink` family) and/or a numeric cursor, over plain
+  unauthenticated or static-key GET (read-only);
+- **is testable live** — stable docs, no auth wall beyond the store's
+  scope, pagination observable in a handful of requests.
+
+**Candidate families to survey** (starting points, not the limit):
+
+- OData v4: Microsoft Graph, SharePoint REST, Dynamics 365, SAP OData
+  (`@odata.nextLink` / `@odata.count` — the canonical P0-1 shape).
+- Numeric-cursor APIs (the P2-1 shape) — to be identified during research;
+  note any API exhibiting *both* shapes, which would be the strongest
+  single candidate.
+
+**Deliverable:** a shortlist (2–4 candidates) with evidence links, endpoint
+shape, auth requirements, and a one-line impact/brand assessment each —
+presented for the human to pick the winner. Record the choice (and the
+runners-up) in this doc before Sprint 1 starts, so the axis guide's shape
+is pinned before code lands.
+
+## Sprint 1 — Code fix + unit tests (host)
+
+Both fixes land as **one work item** (same function territory, same test
+file), before any guide work — no recipe should be written against the
+broken behavior.
+
+1. `core/helpers.ts` — `resolveJsonPath`: atomic quoted-bracket segments.
+2. `core/helpers.ts` — `advancePagination` (and its value branches):
+   numeric → string coercion, `tokenBag`-style.
+3. Tests in `__tests__/axis-units.test.ts` (the file the backlog names):
+   - `['@odata.nextLink']` resolves (dotted key, quoted).
+   - Unquoted `@odata.nextLink` fails loudly (no silent partial match).
+   - Unquoted legacy paths parse identically (regression).
+   - Numeric cursors advance; `""`/missing still terminate.
+
+**Deliverable:** green `npx vitest run packages/pi-lean-host` with the new
+cases; no schema bump, no guide-format change.
+
+## Sprint 2 — Comprehensive caritas recipe
+
+Build the full guide for the Sprint-0-chosen API in `~/caritas`, following
+caritas's own conventions (live-verified, per-recipe `verified:` date, its
+own `HOST_INTEGRATION=1` test tier — caritas owns that machinery, not this
+repo).
+
+- Guide exercises the dotted-key / numeric-cursor shape end-to-end via the
+  Sprint-1 fix: `pagination` block using quoted-bracket paths (e.g.
+  `nextLinkPath: "['@odata.nextLink']"`), plus `totalCountPath` where the
+  candidate exposes one.
+- Live-verify the paginate loop actually walks past page 1 and terminates
+  correctly (the exact behavior that was silently broken).
+
+**Deliverable:** merged caritas guide, live-verified. This is the
+production proof the fix works against a real provider.
+
+## Sprint 3 — Synthetic axis guide (host)
+
+Add the axis candidate to the host framework fixture set, modeled minimally
+on the Sprint-2 recipe — same shape, synthetic data, mocked transport
+(always-on, no env gate), consistent with the existing axis-guide
+conventions (no `verified:` date, framework fixture not real recipe).
+
+- New guide dir under `packages/pi-lean-host/api-guides/` exercising the
+  dotted-key + numeric-cursor axes end-to-end through the
+  guide→parser→resolver→paginate path.
+- Update the `axis-coverage.test.ts` tripwire in the same commit (guide
+  count is pinned by design; the new guide adds the two axes to the kept
+  union).
+
+**Deliverable:** axis guide + tripwire update green; the axes are now
+pinned against regression the same way `resumptionToken` / `tokenBag` are.
+
+## Order & dependencies
+
+```
+Sprint 0 (research → human picks candidate)
+   └─> Sprint 1 (code fix + axis-units tests)   [host]
+         └─> Sprint 2 (caritas recipe, live)     [caritas]  — production proof
+               └─> Sprint 3 (axis guide + tripwire) [host]   — regression pin
+```
+
+Sprint 2 before Sprint 3 is deliberate: the axis fixture is derived from
+the chosen real recipe, not invented in parallel.
+
+## Out of scope (recorded, not re-litigated)
+
+- P0-3 (negative indexes / `hasMorePath`) — next work item, builds on
+  Sprint 1's `resolveJsonPath` work but is its own doc.
+- P0-2 (`secretPathRefs`) — auth surface, unrelated to this fix.
+- `stopWhen: "cursorUnchanged"` (Solr equality-with-sent) — documented
+  upgrade path only; the boolean `hasMorePath` case is P0-3 territory.
+- Schema version bump — neither fix changes the YAML schema; both are
+  behavior-level.
+
+## Decision log
+
+| Date | Decision |
+|------|----------|
+| — | Sprint 0 candidate chosen: *(pending — fill in after research)* |
