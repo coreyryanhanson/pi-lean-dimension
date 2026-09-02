@@ -27,10 +27,14 @@ and never sees pagination advance. Hits `itemsPath`, `nextLinkPath`,
 **P2-1 — numeric cursor coercion.** All three value branches in
 `advancePagination` require `typeof === "string"` and otherwise return
 `null` — indistinguishable from genuine exhaustion. A numeric continuation
-value (integer `next_cursor`, numeric page token, OAI-PMH's final
-`<resumptionToken/>` which parses as an attribute-only object) yields a
+value (integer `next_cursor`, numeric page token) yields a
 **silently truncated result reported as a complete list**. `tokenBag`
 already coerces via `String(v)` — the codebase disagrees with itself.
+(OAI-PMH's final `<resumptionToken/>` is *not* this bug: it parses as an
+attribute-only object, which coercion would mangle into
+`"[object Object]"` — it's already expressible today via
+`tokenPath: "resumptionToken.#text"`, per the backlog's P2-10
+verified-fine list. Out of scope here.)
 
 Both fix variants of the same worst-case failure mode: *silently truncated,
 reported as complete*.
@@ -43,8 +47,13 @@ reported as complete*.
    identically. Unquoted `@odata.nextLink` keeps failing loudly (no silent
    partial match).
 2. **P2-1 (behavior, no bump):** coerce numbers to strings in
-   `advancePagination` exactly like `tokenBag`; keep `""`/missing as
-   exhaustion.
+   `advancePagination` exactly like `tokenBag` — but **only** where a
+   numeric continuation is meaningful: `typeof === "number"` in the
+   `cursor` and `resumptionToken` branches. The `nextLink` branch stays
+   string-strict (a numeric "next URL" is garbage — stop, don't send a
+   bogus request), and booleans/objects do not coerce (boolean
+   continuation values are P0-3 `hasMorePath` territory). Keep `""`/
+   missing as exhaustion.
 
 ## Sprint 0 — Candidate research (caritas recipe selection)
 
@@ -87,13 +96,15 @@ file), before any guide work — no recipe should be written against the
 broken behavior.
 
 1. `core/helpers.ts` — `resolveJsonPath`: atomic quoted-bracket segments.
-2. `core/helpers.ts` — `advancePagination` (and its value branches):
-   numeric → string coercion, `tokenBag`-style.
+2. `core/helpers.ts` — `advancePagination`: numeric → string coercion
+   (`typeof === "number"` only), `tokenBag`-style, in the `cursor` and
+   `resumptionToken` branches; `nextLink` stays string-strict.
 3. Tests in `__tests__/axis-units.test.ts` (the file the backlog names):
    - `['@odata.nextLink']` resolves (dotted key, quoted).
    - Unquoted `@odata.nextLink` fails loudly (no silent partial match).
    - Unquoted legacy paths parse identically (regression).
-   - Numeric cursors advance; `""`/missing still terminate.
+   - Numeric cursors advance (cursor + resumptionToken branches); numeric
+     nextLink still terminates; `""`/missing still terminate.
 
 **Deliverable:** green `npx vitest run packages/pi-lean-host` with the new
 cases; no schema bump, no guide-format change.
