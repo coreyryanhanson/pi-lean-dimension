@@ -30,11 +30,12 @@ and never sees pagination advance. Hits `itemsPath`, `nextLinkPath`,
 value (integer `next_cursor`, numeric page token) yields a
 **silently truncated result reported as a complete list**. `tokenBag`
 already coerces via `String(v)` — the codebase disagrees with itself.
-(OAI-PMH's final `<resumptionToken/>` is *not* this bug: it parses as an
-attribute-only object, which coercion would mangle into
-`"[object Object]"` — it's already expressible today via
-`tokenPath: "resumptionToken.#text"`, per the backlog's P2-10
-verified-fine list. Out of scope here.)
+(OAI-PMH's final `<resumptionToken/>` is *not* this bug: it's already
+expressible today via `tokenPath: "resumptionToken.#text"`, per the
+backlog's P2-10 verified-fine list. A bare empty element parses as `""`
+and an attribute-only element as an object — neither is a number, so the
+planned `typeof === "number"`-only coercion leaves both terminating
+cleanly. Out of scope here.)
 
 Both fix variants of the same worst-case failure mode: *silently truncated,
 reported as complete*.
@@ -43,19 +44,25 @@ reported as complete*.
 
 1. **P0-1 (behavior, no YAML change, no bump):** quoted bracket segments
    become atomic keys in `resolveJsonPath` — capture `['…']` segments
-   (dots included) *before* dot-splitting. Unquoted legacy paths parse
-   identically. Unquoted `@odata.nextLink` keeps failing exactly as today
+   (dots included) *before* dot-splitting. Tokenize in a single pass so
+   quoted content is never exposed to the subsequent rewrites (a quoted
+   segment like `['a[3]']` must not have its `[3]` mangled by the
+   numeric-index rewrite). Unquoted legacy paths parse identically. Unquoted `@odata.nextLink` keeps failing exactly as today
    — silently (undefined → null → single page, reported complete). The
    guarantee is *no silent **wrong** match*, not loud failure; do not
    "improve" this into a warning later thinking it was already loud.
 2. **P2-1 (behavior, no bump):** coerce numbers to strings in
    `advancePagination` exactly like `tokenBag` — but **only** where a
    numeric continuation is meaningful: `typeof === "number"` in the
-   `cursor` and `resumptionToken` branches. The `nextLink` branch stays
-   string-strict (a numeric "next URL" is garbage — stop, don't send a
-   bogus request), and booleans/objects do not coerce (boolean
-   continuation values are P0-3 `hasMorePath` territory). Keep `""`/
-   missing as exhaustion.
+   `cursor` and `resumptionToken` branches. The coercion must happen
+   **before** the falsy guard (`!next || typeof next !== "string"`),
+   otherwise a numeric `0` cursor dies at `!next` and still terminates —
+   inconsistent with string `"0"`, which advances today. The `nextLink`
+   branch stays string-strict (a numeric "next URL" is garbage — stop,
+   don't send a bogus request), and booleans/objects do not coerce
+   (boolean continuation values are P0-3 `hasMorePath` territory). Keep
+   `""`/missing as exhaustion. (Constant cursors can't loop forever
+   either way — the `gatherAllMax` ceiling bounds the walk.)
 
 ## Sprint 1 — Code fix + unit tests (host)
 
@@ -79,7 +86,8 @@ broken behavior.
      the backlog names — mocked transport, inline YAML):
      - Quoted `nextLinkPath: "['@odata.nextLink']"` walks past page 1.
      - Numeric cursors advance (cursor + resumptionToken branches); numeric
-       nextLink still terminates; `""`/missing still terminate.
+       nextLink still terminates; `""`/missing still terminate; numeric `0`
+       cursor advances (coercion precedes the falsy guard).
      - `totalCountPath: "['@odata.count']"` resolving to a numeric
        `serverTotal` (OData exposes totals via the same dotted-key family).
 4. Authoring docs: document the `['…']` escape-hatch so caritas recipes
