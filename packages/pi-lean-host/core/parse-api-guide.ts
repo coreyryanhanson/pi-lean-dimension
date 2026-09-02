@@ -437,6 +437,41 @@ function validatePagination(
 			}
 			Object.assign(cfg, { [req]: v });
 		}
+		// Optional, validated-if-present (both were silently dropped before).
+		const cPsp = p["pageSizeParam"];
+		if (cPsp !== undefined) {
+			if (typeof cPsp !== "string" || cPsp === "") {
+				return fail(
+					file,
+					`${fieldPrefix}.pageSizeParam`,
+					"a string param name",
+					describeFound(cPsp),
+				);
+			}
+			cfg.pageSizeParam = cPsp;
+		}
+		const cPs = p["pageSize"];
+		if (cPs !== undefined) {
+			if (typeof cPs !== "number" || !Number.isFinite(cPs) || cPs <= 0) {
+				return fail(
+					file,
+					`${fieldPrefix}.pageSize`,
+					"a positive number",
+					describeFound(cPs),
+				);
+			}
+			cfg.pageSize = cPs;
+		}
+		// pageSize without pageSizeParam is inert (the executor seeds only
+		// when both are present) — reject rather than silently no-op.
+		if (cPs !== undefined && cPsp === undefined) {
+			return fail(
+				file,
+				`${fieldPrefix}.pageSize`,
+				"set alongside pageSizeParam (cursor: the seed only applies with both)",
+				describeFound(cPs),
+			);
+		}
 	} else if (style === "resumptionToken") {
 		for (const req of ["tokenParam", "tokenPath"] as const) {
 			const v = p[req];

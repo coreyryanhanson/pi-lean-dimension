@@ -251,6 +251,89 @@ describe("parseApiGuide — defaults-by-validator", () => {
 	});
 });
 
+// ═════════════════════════════════════════════════════════════
+// cursor pagination — pageSizeParam/pageSize (optional, validated-if-present)
+// ═════════════════════════════════════════════════════════════
+
+describe("parseApiGuide — cursor page size", () => {
+	// Minimal cursor paginate op; `pageSizeLines` swaps the page-size lines
+	// (pageSizeParam/pageSize) per test, `cursorParamPath` overrides the
+	// cursorParam value.
+	function cursorRecipe(pageSizeLines: string, cursorParam = "after"): string {
+		return `---
+domains: [example.com]
+apiHost: https://api.example.com/v1
+operations:
+  - name: listThings
+    via: paginate
+    path: /things
+    pagination:
+      style: cursor
+      cursorParam: ${cursorParam}
+      cursorPath: pagination.nextCursor
+${pageSizeLines}      itemsPath: data
+---
+Prose.
+`;
+	}
+
+	it("cursor op declaring pageSizeParam + pageSize parses with both assigned", () => {
+		const guide = expectOk(
+			cursorRecipe("      pageSizeParam: first\n      pageSize: 20\n"),
+			{
+				filename: "example.com",
+			},
+		);
+		const pag = guide.operations[0]!.pagination!;
+		expect(pag.style).toBe("cursor");
+		expect(pag.pageSizeParam).toBe("first");
+		expect(pag.pageSize).toBe(20);
+	});
+
+	it("cursor op with pageSizeParam but no pageSize parses (Twitch post-deletion shape)", () => {
+		const guide = expectOk(cursorRecipe("      pageSizeParam: first\n"), {
+			filename: "example.com",
+		});
+		const pag = guide.operations[0]!.pagination!;
+		expect(pag.pageSizeParam).toBe("first");
+		expect(pag.pageSize).toBeUndefined();
+	});
+
+	it("cursor op with neither pageSizeParam nor pageSize parses (internet-archive shape)", () => {
+		const guide = expectOk(cursorRecipe("", "cursor"), {
+			filename: "example.com",
+		});
+		const pag = guide.operations[0]!.pagination!;
+		expect(pag.pageSizeParam).toBeUndefined();
+		expect(pag.pageSize).toBeUndefined();
+	});
+
+	it("cursor op with a type-invalid pageSize now fails to parse", () => {
+		const err = expectErr(
+			cursorRecipe('      pageSizeParam: first\n      pageSize: "20"\n'),
+			{
+				filename: "example.com",
+			},
+		);
+		expect(err.field).toMatch(/pagination\.pageSize$/);
+	});
+
+	it("cursor op with pageSize but no pageSizeParam fails (inert half-pair)", () => {
+		const err = expectErr(cursorRecipe("      pageSize: 20\n"), {
+			filename: "example.com",
+		});
+		expect(err.field).toMatch(/pagination\.pageSize$/);
+		expect(err.expected).toContain("pageSizeParam");
+	});
+
+	it("cursor op with an empty-string pageSizeParam fails to parse", () => {
+		const err = expectErr(cursorRecipe('      pageSizeParam: ""\n'), {
+			filename: "example.com",
+		});
+		expect(err.field).toMatch(/pagination\.pageSizeParam$/);
+	});
+});
+
 // ═══════════════════════════════════════════════════════════════════
 // docs — optional API documentation URL
 // ═══════════════════════════════════════════════════════════════════

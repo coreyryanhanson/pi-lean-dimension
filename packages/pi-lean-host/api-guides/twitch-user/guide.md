@@ -46,7 +46,6 @@ operations:
       cursorPath: pagination.cursor
       cursorParam: after
       pageSizeParam: first
-      pageSize: 20
     params:
       user_id:
         description: User whose followed live streams to list (must match the access token's user).

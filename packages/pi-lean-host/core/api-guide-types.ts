@@ -199,9 +199,9 @@ export interface PaginationConfig {
 	itemsPath: string;
 	/** offset-limit: the row-offset param name; page: the page-number param name. */
 	pageParam?: string;
-	/** offset-limit / page: the page-size param name. */
+	/** offset-limit / page / cursor: the page-size param name (cursor: optional). */
 	pageSizeParam?: string;
-	/** offset-limit / page: requested page size. */
+	/** offset-limit / page: requested page size; cursor: optional terminal fallback — omitted if nothing resolves. */
 	pageSize?: number;
 	/**
 	 * offset-limit / page: the seed value for the page param — where this

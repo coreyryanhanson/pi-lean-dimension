@@ -342,6 +342,56 @@ Pagination fallback test guide.
 `;
 }
 
+/** Recipe for the cursor render tests — op-level cursor pagination with
+ * `pageSizeParam: first`, one op with a `pageSize` and one without (the
+ * no-`pageSize` op must not render a fabricated size bit). */
+function cursorSizeRecipe(apiHost: string): string {
+	return `---
+kind: api
+domains: [cursor-size.example]
+icon: 🎮
+shortName: CursorSize
+updated: 2026-07-17
+apiHost: ${apiHost}
+verified: 2026-07-17
+
+gatherAllMax: 500
+
+auth:
+  kind: none
+
+responseShape:
+  format: json
+  charset: utf-8
+
+operations:
+  - name: defaultSize
+    via: paginate
+    path: /items
+    accept: json
+    pagination:
+      style: cursor
+      cursorParam: after
+      cursorPath: pagination.cursor
+      itemsPath: data
+      pageSizeParam: first
+
+  - name: explicitSize
+    via: paginate
+    path: /items2
+    accept: json
+    pagination:
+      style: cursor
+      cursorParam: after
+      cursorPath: pagination.cursor
+      itemsPath: data
+      pageSizeParam: first
+      pageSize: 20
+---
+Cursor page-size render test guide.
+`;
+}
+
 /** Recipe for gatherAll robustness tests — a passthrough paginate op (so a
  * leaked `gatherAll` would be visible on the query string) and a restGet op. */
 function gatherAllRecipe(apiHost: string): string {
@@ -692,6 +742,20 @@ describe("api-guide", () => {
 		expect(text).toContain("base=1");
 		expect(text).toContain("params: q required");
 	});
+
+	it("renders cursor pageSizeParam only when a size resolves (no fabricated first)", async () => {
+		await callLearn("cursor-size.example", cursorSizeRecipe(ctx.serverUrl));
+		invalidateCache();
+		const text = contentText(await callGuide("cursor-size.example"));
+		const pagLines = text
+			.split("\n")
+			.filter((l) => l.trimStart().startsWith("pagination:"))
+			.map((l) => l.trim());
+		// defaultSize: pageSizeParam with no pageSize → omit the size bit entirely
+		expect(pagLines).toContain("pagination: cursor");
+		// explicitSize: declared pageSize renders the size bit
+		expect(pagLines).toContain("pagination: cursor first=20");
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -719,7 +783,8 @@ describe("api-learn", () => {
 			expect(text).toContain("Executor semantics");
 			expect(text).toContain("joinUrl` strips a leading `/");
 			expect(text).toContain("pagination.base` seeds the page param");
-			expect(text).toContain("page-size param is a real knob");
+			expect(text).toContain("Page-size resolution (offset-limit/page)");
+			expect(text).toContain("→ omit (server default applies)");
 			expect(text).toContain("optional: true` on a ref");
 			// Guide-prose (agent-instructions) ability is taught, not lost.
 			expect(text).toContain("Guide prose");

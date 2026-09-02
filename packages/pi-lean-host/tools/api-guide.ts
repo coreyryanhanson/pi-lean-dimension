@@ -238,8 +238,19 @@ function renderGuideDetail(
 			if (pagCfg) {
 				const bits: string[] = [pagCfg.style];
 				if (pagCfg.pageParam) bits.push(pagCfg.pageParam);
-				if (pagCfg.pageSizeParam)
-					bits.push(`${pagCfg.pageSizeParam}=${pagCfg.pageSize ?? 50}`);
+				if (pagCfg.pageSizeParam) {
+					// offset-limit/page: the executor fabricates 50 when nothing
+					// resolves (and advances row offsets by it) — rendering the
+					// fallback is honest there. Cursor's terminal fallback is
+					// omit (server default applies) — only render a size that
+					// will actually be sent.
+					const renderedSize =
+						pagCfg.style === "cursor" && pagCfg.pageSize === undefined
+							? undefined
+							: String(pagCfg.pageSize ?? 50);
+					if (renderedSize !== undefined)
+						bits.push(`${pagCfg.pageSizeParam}=${renderedSize}`);
+				}
 				if (pagCfg.base !== undefined) bits.push(`base=${pagCfg.base}`);
 				lines.push(`    pagination: ${bits.join(" ")}`);
 			}

@@ -324,7 +324,7 @@ const AUTHORING_MANUAL = [
 	"## Executor semantics",
 	"  Pagination:",
 	`    \`pagination.base\` seeds the page param for offset-limit/page styles (caller value wins, then \`base\`, then the param \`default\`); use \`base: 1\` for 1-based offset APIs`,
-	`    The page-size param is a real knob: caller value → op param \`default\` → \`pagination.pageSize\` → 50`,
+	`    Page-size resolution (offset-limit/page): caller value → op param \`default\` → \`pagination.pageSize\` → 50. Cursor: caller value → op param \`default\` → \`pagination.pageSize\` → omit (server default applies)`,
 	"",
 	"## Guide prose (agent instructions)",
 	"  After the closing `---`, optional plaintext guidance for the reading agent —",

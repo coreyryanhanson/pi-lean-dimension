@@ -371,6 +371,111 @@ operations:
 	});
 });
 
+// ── Axis C2 — cursor page-size seeding (framework fallback) ─────────
+
+// Resolution precedence (cursor): caller-supplied param → op-param
+// `default:` → `pagination.pageSize` → omit (server default applies).
+// Uses the exact post-deletion Twitch shape where noted (`pageSizeParam`
+// present, `pageSize` absent).
+describe("framework axis C2 — cursor page-size seeding", () => {
+	async function runCursor(opts: {
+		paginationExtra?: string;
+		opParams?: string;
+		callerParams?: Record<string, unknown>;
+	}) {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { parseApiGuide } = await import("../core/parse-api-guide.js");
+		const { paginate } = await import("../core/helpers.js");
+
+		const fixture = loadFixture("datagov-cursor-page1.json");
+		vi.mocked(fetchUrl).mockResolvedValue({
+			status: fixture.status,
+			headers: {},
+			body: fixture.body,
+			cached: false,
+		});
+
+		const parsed = parseApiGuide(`---
+kind: api
+domains: [twitch.example]
+apiHost: https://api.example
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: followedStreams
+    via: paginate
+    path: /helix/streams/followed
+    pagination:
+      style: cursor
+      itemsPath: results
+      cursorParam: after
+      cursorPath: after
+${opts.paginationExtra ?? ""}${opts.opParams ?? ""}---
+`);
+		if (!parsed.ok)
+			throw new Error(`guide failed to parse: ${parsed.error.field}`);
+		const guide = parsed.guide;
+		const op = guide.operations[0]!;
+		return paginate(guide.apiHost, op, opts.callerParams ?? {}, guide);
+	}
+
+	it("caller-supplied size lands on the page URL (wins over pagCfg.pageSize)", async () => {
+		const result = await runCursor({
+			paginationExtra: "      pageSizeParam: first\n      pageSize: 20\n",
+			opParams:
+				"    params:\n      first:\n        description: Max items per page\n",
+			callerParams: { first: 50 },
+		});
+		expect(result.urls[0]).toContain("first=50");
+		expect(result.params["first"]).toBe("50");
+	});
+
+	it("op-param default lands when the caller omits the size (pinned pre-existing behavior)", async () => {
+		const result = await runCursor({
+			paginationExtra: "      pageSizeParam: first\n      pageSize: 20\n",
+			opParams: "    params:\n      first:\n        default: 100\n",
+		});
+		expect(result.urls[0]).toContain("first=100");
+		expect(result.params["first"]).toBe("100");
+	});
+
+	it("pagCfg.pageSize seeds when caller + op default are absent", async () => {
+		const result = await runCursor({
+			paginationExtra: "      pageSizeParam: first\n      pageSize: 20\n",
+		});
+		expect(result.urls[0]).toContain("first=20");
+	});
+
+	it("seeded value appears in result.params (honesty claim)", async () => {
+		const result = await runCursor({
+			paginationExtra: "      pageSizeParam: first\n      pageSize: 20\n",
+		});
+		expect(result.params["first"]).toBe("20");
+	});
+
+	it("caller-supplied value dropped by the closed contract still suppresses seeding", async () => {
+		// `first` is NOT declared in op params → dropped from effectiveParams;
+		// the raw-params check still sees it, so no seed overrides it.
+		const result = await runCursor({
+			paginationExtra: "      pageSizeParam: first\n      pageSize: 20\n",
+			callerParams: { first: 50 },
+		});
+		expect(result.urls[0]).not.toContain("first=20");
+		expect(result.urls[0]).not.toContain("first=50");
+		expect(result.params["first"]).toBeUndefined();
+	});
+
+	it("nothing seeds when all three are absent (Twitch post-deletion shape)", async () => {
+		const result = await runCursor({
+			paginationExtra: "      pageSizeParam: first\n",
+		});
+		expect(result.urls[0]).not.toContain("first=");
+		expect(result.params["first"]).toBeUndefined();
+	});
+});
+
 // ── Axis D — ETag / conditional-GET (restGet) ───────────────────────
 
 describe("framework axis D — ETag header on restGet", () => {

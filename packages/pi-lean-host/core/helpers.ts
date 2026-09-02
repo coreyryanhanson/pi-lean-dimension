@@ -710,6 +710,20 @@ export async function paginate(
 		effectivePageSize =
 			rawSize === undefined ? (pagCfg.pageSize ?? 50) : Number(rawSize);
 		if (isNaN(effectivePageSize)) effectivePageSize = 50;
+	} else if (style === "cursor") {
+		// Terminal fallback for cursor is OMIT (server default applies) — no
+		// fabricated 50 like offset-limit (which needs a real number to advance
+		// row offsets; cursor's position comes from the response cursor). Seed
+		// effectiveParams (not pageParams — rebuilt per iteration) so
+		// result.params stays honest about what was sent.
+		if (
+			pagCfg.pageSizeParam !== undefined &&
+			pagCfg.pageSize !== undefined &&
+			params[pagCfg.pageSizeParam] === undefined &&
+			effectiveParams[pagCfg.pageSizeParam] === undefined
+		) {
+			effectiveParams[pagCfg.pageSizeParam] = String(pagCfg.pageSize);
+		}
 	}
 	// Secret query params injected below the agent map on every page's fetch URL.
 	const secretParams = opts?.secretQueryParams ?? {};
@@ -724,7 +738,7 @@ export async function paginate(
 		}
 
 		if (style === "offset-limit" || style === "page") {
-			pageParams[pagCfg.pageParam!] = String(page ?? 0);
+			pageParams[pagCfg.pageParam!] = String(page);
 			// effectivePageSize is always resolved (a number) in this branch.
 			if (pagCfg.pageSizeParam) {
 				pageParams[pagCfg.pageSizeParam] = String(effectivePageSize);

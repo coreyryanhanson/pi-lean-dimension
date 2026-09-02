@@ -154,7 +154,7 @@ patterns the recipe library (caritas) pressure-tested:
 | `offset-limit` | absolute offset + page size | `pageParam`, `pageSizeParam`, `pageSize`, `base`, `itemsPath` |
 | `page` | 1-based page number + page size | same fields as `offset-limit` (semantic difference only) |
 | `nextLink` | follows a URL from the response body | `nextLinkPath`, `itemsPath` — the **only** SSRF-guarded path (see the README's [Security & Scope](../README.md#security--scope)) |
-| `cursor` | echoes an opaque cursor query param | `cursorParam`, `cursorPath`, `itemsPath` |
+| `cursor` | echoes an opaque cursor query param | `cursorParam`, `cursorPath`, `itemsPath`, plus optional `pageSizeParam`/`pageSize` — page size resolves caller value → op param `default` → `pageSize` → **omitted** (server default applies, unlike offset-limit's 50 fallback) |
 | `resumptionToken` | OAI-PMH opaque single-token cursor | `tokenParam`, `tokenPath`, `itemsPath` |
 | `tokenBag` | Wikimedia-style multi-key continuation dict | `continuationParams[]`, `itemsPath` |
 
