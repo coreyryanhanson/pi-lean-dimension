@@ -123,22 +123,30 @@ broken behavior.
 **Deliverable:** green `npx vitest run packages/pi-lean-host` with the new
 cases; no schema bump, no guide-format change.
 
-## Sprint 2 — Comprehensive caritas recipe
+## Sprint 2 — Comprehensive caritas recipes
 
-Build the full guide for the Sprint-0-chosen API in `~/caritas`, following
-caritas's own conventions (live-verified, per-recipe `verified:` date, its
-own `HOST_INTEGRATION=1` test tier — caritas owns that machinery, not this
-repo).
+Two guides, not one — multiple recipes of different shapes reinforce that
+the generalization works rather than fitting one provider:
 
-- Guide exercises the dotted-key / numeric-cursor shape end-to-end via the
-  Sprint-1 fix: `pagination` block using quoted-bracket paths (e.g.
-  `nextLinkPath: "['@odata.nextLink']"`), plus `totalCountPath` where the
-  candidate exposes one.
-- Live-verify the paginate loop actually walks past page 1 and terminates
-  correctly (the exact behavior that was silently broken).
+1. **FROST-Server (OGC SensorThings API)** — the Sprint-0 winner. Guide
+   exercises the dotted-key / numeric-count shape end-to-end via the
+   Sprint-1 fix: `pagination` block using quoted-bracket paths (e.g.
+   `nextLinkPath: "['@iot.nextLink']"`), plus
+   `totalCountPath: "['@iot.count']"`. Live-verify the paginate loop
+   actually walks past page 1 and terminates correctly (the exact behavior
+   that was silently broken).
+2. **OpenFoodFacts Search API v2** — the second recipe, shape B only
+   (numeric `page` echoed in the body, fed back as `?page=N`; AGPL-3.0,
+   community-run non-profit, no auth). Proves the numeric-cursor coercion
+   fix against a second, structurally different provider.
 
-**Deliverable:** merged caritas guide, live-verified. This is the
-production proof the fix works against a real provider.
+**Deliverable:** merged caritas guides, live-verified. This is the
+production proof the fix works against real providers.
+
+(MediaWiki Action API was considered as a third candidate but is already
+covered by caritas's existing `wikimedia-action` guide —
+`tokenBag` `continue.rccontinue` + offset-limit `sroffset` — and would be
+duplicate coverage.)
 
 ## Sprint 3 — Synthetic axis guide (host)
 
@@ -190,4 +198,16 @@ the chosen real recipe, not invented in parallel.
 
 | Date | Decision |
 |------|----------|
-| — | Sprint 0 candidate chosen: *(pending — fill in after research)* |
+| — | Sprint 0 candidate chosen: **FROST-Server (OGC SensorThings API)** (see decision note below) |
+
+Decision note: FROST-Server was chosen for exhibiting both shapes in one
+recipe (`@iot.nextLink` dotted key + numeric `@iot.count`), LGPL-3.0
+Fraunhofer research-institute OSS, live-verified against the public
+no-auth instance (`airquality-frost.k8s.ilt-dmz.iosb.fraunhofer.de/v1.1`)
+in 2 GETs. Runners-up: **OpenFoodFacts Search API v2** (shape B — promoted
+to a second Sprint-2 recipe, see above) and the odata.org TripPin reference
+services (shape A, community-run but Microsoft-heritage sample stack).
+Microsoft Graph / SAP ranked last per the open-source weighting; fixing
+against FROST yields Graph compatibility for free since the shape is
+spec-identical. MediaWiki Action API dropped — already covered by
+caritas's `wikimedia-action` guide.
