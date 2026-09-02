@@ -57,40 +57,6 @@ reported as complete*.
    continuation values are P0-3 `hasMorePath` territory). Keep `""`/
    missing as exhaustion.
 
-## Sprint 0 — Candidate research (caritas recipe selection)
-
-**Goal:** pick the real-world API that will carry the comprehensive caritas
-recipe *before* anything is built, so the axis guide (Sprint 3) can be
-modeled on it — selected cleanly and minimally — and so the fix is proven
-against a production shape, not a synthetic one.
-
-**Task:** research and enumerate candidate APIs exhibiting the target
-shape(s), then present a shortlist so the human can choose one that:
-
-- **maximizes user impact** — an API our users actually hit, with real
-  pagination volume (deep listing, not one-page curiosities);
-- **fits the brand** — consistent with the kind of read-only data sources
-  caritas already covers;
-- **exercises the shape cleanly** — ideally dotted-key pagination
-  (`@odata.nextLink` family) and/or a numeric cursor, over plain
-  unauthenticated or static-key GET (read-only);
-- **is testable live** — stable docs, no auth wall beyond the store's
-  scope, pagination observable in a handful of requests.
-
-**Candidate families to survey** (starting points, not the limit):
-
-- OData v4: Microsoft Graph, SharePoint REST, Dynamics 365, SAP OData
-  (`@odata.nextLink` / `@odata.count` — the canonical P0-1 shape).
-- Numeric-cursor APIs (the P2-1 shape) — to be identified during research;
-  note any API exhibiting *both* shapes, which would be the strongest
-  single candidate.
-
-**Deliverable:** a shortlist (2–4 candidates) with evidence links, endpoint
-shape, auth requirements, and a one-line impact/brand assessment each —
-presented for the human to pick the winner. Record the choice (and the
-runners-up) in this doc before Sprint 1 starts, so the axis guide's shape
-is pinned before code lands.
-
 ## Sprint 1 — Code fix + unit tests (host)
 
 Both fixes land as **one work item** (same function territory, same test
@@ -128,7 +94,7 @@ cases; no schema bump, no guide-format change.
 Two guides, not one — multiple recipes of different shapes reinforce that
 the generalization works rather than fitting one provider:
 
-1. **FROST-Server (OGC SensorThings API)** — the Sprint-0 winner. Guide
+1. **FROST-Server (OGC SensorThings API)** — the chosen primary candidate. Guide
    exercises the dotted-key / numeric-count shape end-to-end via the
    Sprint-1 fix: `pagination` block using quoted-bracket paths (e.g.
    `nextLinkPath: "['@iot.nextLink']"`), plus
@@ -168,10 +134,9 @@ pinned against regression the same way `resumptionToken` / `tokenBag` are.
 ## Order & dependencies
 
 ```
-Sprint 0 (research → human picks candidate)
-   └─> Sprint 1 (code fix + axis-units tests)   [host]
-         └─> Sprint 2 (caritas recipe, live)     [caritas]  — production proof
-               └─> Sprint 3 (axis guide + tripwire) [host]   — regression pin
+Sprint 1 (code fix + axis-units tests)   [host]
+   └─> Sprint 2 (caritas recipes, live)    [caritas]  — production proof
+         └─> Sprint 3 (axis guide + tripwire) [host]   — regression pin
 ```
 
 Sprint 2 before Sprint 3 is deliberate: the axis fixture is derived from
@@ -198,9 +163,10 @@ the chosen real recipe, not invented in parallel.
 
 | Date | Decision |
 |------|----------|
-| — | Sprint 0 candidate chosen: **FROST-Server (OGC SensorThings API)** (see decision note below) |
+| — | Sprint 0 (candidate research) completed and removed from this doc; choice recorded in the decision note below |
 
-Decision note: FROST-Server was chosen for exhibiting both shapes in one
+Decision note (Sprint 0 outcome, kept for provenance): FROST-Server was
+chosen for exhibiting both shapes in one
 recipe (`@iot.nextLink` dotted key + numeric `@iot.count`), LGPL-3.0
 Fraunhofer research-institute OSS, live-verified against the public
 no-auth instance (`airquality-frost.k8s.ilt-dmz.iosb.fraunhofer.de/v1.1`)
