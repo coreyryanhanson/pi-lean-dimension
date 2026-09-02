@@ -50,8 +50,13 @@ reported as complete*.
    quoted content is never exposed to the subsequent rewrites (a quoted
    segment like `['a[3]']` must not have its `[3]` mangled by the
    numeric-index rewrite). A `(.*?)`-style tokenizer cannot match `]` or a
-   quote character *inside* a quoted segment (`['a]b']` is unresolvable) —
-   document this as a path-syntax limit rather than handling it in code. Unquoted legacy paths parse identically. Unquoted `@odata.nextLink` keeps failing exactly as today
+   quote character *inside* a quoted segment — document this as a
+   path-syntax limit rather than handling it in code. Note the `['a]b']`
+   case is a behavior *change*, not an impossible path: the current regex
+   accidentally resolves it today (content `a]b` matches, yielding
+   `obj["a]b"]`), and it becomes a miss under the fix — acceptable for a
+   pathological key, but the authoring docs must say "accidentally resolves
+   today, no longer under the atomic tokenizer" rather than "cannot match". Unquoted legacy paths parse identically. Unquoted `@odata.nextLink` keeps failing exactly as today
    — silently (undefined → null → single page, reported complete). The
    guarantee is *no silent **wrong** match*, not loud failure; do not
    "improve" this into a warning later thinking it was already loud.
@@ -121,9 +126,11 @@ broken behavior.
 4. Authoring docs: document the `['…']` / `["…"]` escape-hatch so caritas recipes
    are written correctly the first time (backlog P0-1's own fix line —
    one paragraph where path syntax is documented). Include the two syntax
-   limits from the review: quoted segments may not contain `]` or quote
-   characters, and unquoted dot-keys keep failing silently (miss ≠ wrong
-   match). Also note the numeric-`0` caveat from P2-1: an API that uses
+   limits from the review in one paragraph: quoted segments may not contain
+   `]` **or quote characters** (either ends the `(.*?)` capture), and
+   unquoted dot-keys keep failing silently (miss ≠ wrong match). State the
+   `['a]b']` case accurately: it accidentally resolves today via the legacy
+   regex and becomes a miss under the atomic tokenizer. Also note the numeric-`0` caveat from P2-1: an API that uses
    `0` as an *end marker* (legacy Twitter-style `next_cursor: 0`) now
    walks to the `gatherAllMax` ceiling and surfaces the
    `⚠ Ceiling reached` warning for a *complete* list — recipes against
@@ -209,7 +216,8 @@ the chosen real recipe, not invented in parallel.
 |------|----------|
 | — | Sprint 0 (candidate research) completed and removed from this doc; choice recorded in the decision note below |
 | — | Plan review folded in: preserve `["…"]` double-quote parity in the tokenizer; coerce before each branch's type/falsy check (resumptionToken has no `!next` guard — don't invent one); quote-strip the `tokenBag` param derivation in Sprint 1 over parse-time rejection; add double-quoted + constant-numeric-cursor-`gatherAllMax` tests |
-| — | Post-review findings folded in (review verdict: sound-with-issues, merge OK): (1) tokenBag quote-strip runs unconditionally, before the `key.includes(".")` gate — quoted non-dotted keys like `['next']` would otherwise wire a junk param post-P0-1; (2) authoring docs record the numeric-`0`-end-marker caveat (legacy Twitter `next_cursor: 0` walks to the `gatherAllMax` ceiling with a false-alarm ⚠ on a complete list); (3) authoring docs record the tokenizer limit — quoted segments cannot contain `]` or quotes (`['a]b']` unresolvable) |
+| — | Post-review findings folded in (review verdict: sound-with-issues, merge OK): (1) tokenBag quote-strip runs unconditionally, before the `key.includes(".")` gate — quoted non-dotted keys like `['next']` would otherwise wire a junk param post-P0-1; (2) authoring docs record the numeric-`0`-end-marker caveat (legacy Twitter `next_cursor: 0` walks to the `gatherAllMax` ceiling with a false-alarm ⚠ on a complete list); (3) authoring docs record the tokenizer limit — quoted segments cannot contain `]` or quotes |
+| — | Second review pass (verdict: sound, no blockers) folded in as two nitpicks: (1) the `['a]b']` tokenizer limit is a behavior *change*, not an impossible path — it accidentally resolves today via the legacy regex and becomes a miss under the fix; authoring docs must state it that way; (2) the tokenizer limits paragraph names both constraints — quoted segments may not contain `]` **or quote characters** (either ends the `(.*?)` capture) — and the `['a]b']` case is stated accurately there |
 
 Decision note (Sprint 0 outcome, kept for provenance): FROST-Server was
 chosen for exhibiting both shapes in one
