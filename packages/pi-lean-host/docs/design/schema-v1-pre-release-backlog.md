@@ -38,38 +38,7 @@
 
 # P0 — Act before release
 
-## P0-1. Pagination blocks silently ignore unknown keys (parse-integrity)
-
-**Classification: the review's one confirmed BREAKING-RISK.**
-
-- **Pattern/trigger:** any authoring session. A guide writing `itemPath:`
-  instead of `itemsPath:`, or `cursorPath:` on a `nextLink` op, parses OK and
-  **silently single-pages at runtime**.
-- **Gap:** `validatePagination()` (parse-api-guide.ts) reads known keys and
-  constructs the config without comparing `Object.keys(p)` against a per-style
-  allowlist. Auth already got this treatment (`AUTH_ALLOWLISTS` rejects
-  unknown keys per kind); pagination did not.
-- **Why breaking:** adding the allowlist later is a parse-behavior tightening —
-  any guide carrying a stray key (the removed pre-release
-  `completeListSizePath` is exactly this drift class, documented in the type
-  file itself) goes parse-OK → malformed, which per the bump rule ("changing a
-  parse-enforced constraint's meaning") forces a schemaVersion bump.
-- **Fix (~20 lines):** mirror `AUTH_ALLOWLISTS` with per-style key sets:
-  - `offset-limit` / `page`: style, itemsPath, pageParam, pageSizeParam,
-    pageSize, base
-  - `nextLink`: + nextLinkPath
-  - `cursor`: + cursorParam, cursorPath
-  - `resumptionToken`: + tokenParam, tokenPath
-  - `tokenBag`: + continuationParams
-  - all styles: + totalCountPath (style-agnostic)
-  Reject unknown keys with a ParseError, like auth does. Reuse the existing
-  pattern — no new mechanism.
-- **API examples:** N/A (schema-integrity finding); the trigger class is any
-  typo'd guide.
-- **Tests:** malformed-guide test per style (unknown key rejected, known keys
-  still parse); existing axis guides keep parsing.
-
-## P0-2. Dot-containing JSON keys break every path field (Microsoft Graph/OData v4 inexpressible)
+## P0-1. Dot-containing JSON keys break every path field (Microsoft Graph/OData v4 inexpressible)
 
 - **Pattern:** OData v4 (Microsoft Graph, SharePoint REST, Dynamics 365, SAP
   OData) paginate via a literal top-level key `@odata.nextLink` and expose
@@ -95,7 +64,7 @@
 - **Grouping note:** land with P2-1 (numeric cursor coercion) — same function,
   same test file.
 
-## P0-3. `secretPathRefs` — token-in-path APIs leak secrets today
+## P0-2. `secretPathRefs` — token-in-path APIs leak secrets today
 
 - **Pattern:** Telegram Bot API keys *every* method through the URL path:
   `https://api.telegram.org/bot<token>/getUpdates` — read-only GETs included.
@@ -123,7 +92,7 @@
 - **Tests:** parse collision guard; executor fills from store; URL redaction;
   secret scrub on error bodies.
 
-## P0-4. Stripe-style exhaustion — negative-index cursors + `hasMorePath`
+## P0-3. Stripe-style exhaustion — negative-index cursors + `hasMorePath`
 
 **Conclusion from the review: fix now (capability gap + silent-failure footgun),
 even though strictly additive-later.** Stripe has a canonical spec, a testable
@@ -348,7 +317,7 @@ the trigger instead of re-litigated:
 - **Fix:** coerce numbers to strings like `tokenBag`; keep `""`/missing as
   exhaustion. Behavior, not schema — no bump. One `axis-units` test asserting
   numeric cursors advance.
-- **Pair with P0-2** (same function, same test file).
+- **Pair with P0-1** (same function, same test file).
 
 ## P2-2. Multi-value query params (`listStyle`) + array-value footgun
 
@@ -547,7 +516,7 @@ Each P0/P1/P2 item above is written to be self-seeding for a downstream doc:
 it carries the pattern, gap, fix shape, tests, and API evidence needed to
 elaborate it (with full caritas recipes and per-doc sprints) without
 re-reading the lane reports. Items that must land together are paired inline
-(P0-2 + P2-1 share a function and test file; P2-2's array-semantics decision
+(P0-1 + P2-1 share a function and test file; P2-2's array-semantics decision
 spans two items; P2-8's conclusion feeds P1-1's seam). The verified-fine list
 (P2-10) and out-of-bounds drops belong in the authoring-reference doc, not a
 fix doc.
