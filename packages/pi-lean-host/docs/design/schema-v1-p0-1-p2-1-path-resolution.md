@@ -89,8 +89,10 @@ broken behavior.
    **unconditionally** — before any dot check — because the existing
    derivation only strips when `key.includes(".")`, and a quoted
    non-dotted key like `['next']` would then produce the junk wire param
-   `['next']` (post-P0-1 that key resolves; pre-fix it merely missed and
-   was skipped). Stripping keeps quoted bag keys doing the sane thing
+   `['next']` (post-P0-1 that key resolves; note it already resolves
+   today — the regex rewrite turns it into `.next` — and the derivation
+   at :983 already produces the junk wire param `['next']` pre-fix, so
+   the strip corrects an existing wart as well as a post-fix one). Stripping keeps quoted bag keys doing the sane thing
    without full quoted-key bag support.
    Alternative considered: rejecting `['` in `continuationParams` at
    parse time — rejected as a new parse error for something the strip
