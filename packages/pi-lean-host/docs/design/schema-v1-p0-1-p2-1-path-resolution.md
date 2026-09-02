@@ -44,8 +44,10 @@ reported as complete*.
 1. **P0-1 (behavior, no YAML change, no bump):** quoted bracket segments
    become atomic keys in `resolveJsonPath` — capture `['…']` segments
    (dots included) *before* dot-splitting. Unquoted legacy paths parse
-   identically. Unquoted `@odata.nextLink` keeps failing loudly (no silent
-   partial match).
+   identically. Unquoted `@odata.nextLink` keeps failing exactly as today
+   — silently (undefined → null → single page, reported complete). The
+   guarantee is *no silent **wrong** match*, not loud failure; do not
+   "improve" this into a warning later thinking it was already loud.
 2. **P2-1 (behavior, no bump):** coerce numbers to strings in
    `advancePagination` exactly like `tokenBag` — but **only** where a
    numeric continuation is meaningful: `typeof === "number"` in the
@@ -99,12 +101,24 @@ broken behavior.
 2. `core/helpers.ts` — `advancePagination`: numeric → string coercion
    (`typeof === "number"` only), `tokenBag`-style, in the `cursor` and
    `resumptionToken` branches; `nextLink` stays string-strict.
-3. Tests in `__tests__/axis-units.test.ts` (the file the backlog names):
-   - `['@odata.nextLink']` resolves (dotted key, quoted).
-   - Unquoted `@odata.nextLink` fails loudly (no silent partial match).
-   - Unquoted legacy paths parse identically (regression).
-   - Numeric cursors advance (cursor + resumptionToken branches); numeric
-     nextLink still terminates; `""`/missing still terminate.
+3. Tests, split by subject:
+   - **Resolver unit cases** in the existing `describe("resolveJsonPath")`
+     block in `__tests__/helpers.test.ts` (alongside their siblings — pure
+     path resolution, no paginate machinery):
+     - `['@odata.nextLink']` resolves (dotted key, quoted).
+     - Unquoted `@odata.nextLink` misses (no silent *wrong* match).
+     - Unquoted legacy paths parse identically (regression).
+     - Mixed bracket index + quoted segment: `data[0]['key.name']`.
+   - **Paginate-level cases** in `__tests__/axis-units.test.ts` (the file
+     the backlog names — mocked transport, inline YAML):
+     - Quoted `nextLinkPath: "['@odata.nextLink']"` walks past page 1.
+     - Numeric cursors advance (cursor + resumptionToken branches); numeric
+       nextLink still terminates; `""`/missing still terminate.
+     - `totalCountPath: "['@odata.count']"` resolving to a numeric
+       `serverTotal` (OData exposes totals via the same dotted-key family).
+4. Authoring docs: document the `['…']` escape-hatch so caritas recipes
+   are written correctly the first time (backlog P0-1's own fix line —
+   one paragraph where path syntax is documented).
 
 **Deliverable:** green `npx vitest run packages/pi-lean-host` with the new
 cases; no schema bump, no guide-format change.
@@ -164,6 +178,13 @@ the chosen real recipe, not invented in parallel.
   upgrade path only; the boolean `hasMorePath` case is P0-3 territory.
 - Schema version bump — neither fix changes the YAML schema; both are
   behavior-level.
+- Quoted dotted keys in `tokenBag` `continuationParams` — unsupported in
+  v1; keys stay dot-unquoted (the last dotted segment is the wire param
+  name, e.g. `"continue.rccontinue"` → `rccontinue`). No known API ships a
+  dot-containing key inside a continuation bag; if research turns one up,
+  the fix (quote-stripping or whole-key-as-param) is additive. A wrong
+  derived name fails loudly (bogus request), not silently, so this can wait
+  for a real candidate.
 
 ## Decision log
 
