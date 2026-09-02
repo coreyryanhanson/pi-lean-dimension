@@ -191,6 +191,14 @@
   learn about page crashes the same way they learn about auto-dismissed
   dialogs.
 
+- **`pi-tool-masking` bumped to `^1.3.0`** — spawned `pi` children no
+  longer enforce `toolsetDefaults` pins, including the
+  `toolset-state:pi-lean-dimension.*` toggle keys, since a spawner that
+  explicitly configures a child's tools shouldn't be overridden by global
+  settings pins. Set `"piToolMasking": { "childPolicy": "settings" }` to
+  restore enforcement in children (see the pi-tool-masking 1.3.0
+  changelog for full semantics).
+
 ### Fixed
 
 - **Reserved-char pre-scan is now block-scalar aware** — `parse-api-guide`'s

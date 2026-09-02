@@ -408,6 +408,8 @@ the toolset's packaged default:
 ```
 
 - Keys are the toolsets' `persistKey` values.
+- Pins do not apply in spawned subagent children (see pi-tool-masking
+  1.3.0's `piToolMasking.childPolicy` for the opt-out).
 - Omit a key to use the packaged default (`api` defaults `true`; `api-learn`
   defaults `false`).
 - The `api-learn` toolset `requires` `api`, so enabling learn cascades api on;

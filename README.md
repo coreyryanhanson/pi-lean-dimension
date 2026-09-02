@@ -48,7 +48,9 @@ sessions, add a `toolsetDefaults` block to your Pi settings
 `toolsetDefaults` is read by the [`pi-tool-masking`](https://github.com/coreyryanhanson/pi-tool-masking/) library on restore, before
 the toolset's packaged default. Omit a key to use the packaged default; the
 `search` keys only apply when `pi-lean-search` is installed, and the `api` /
-`api-learn` keys only apply when `pi-lean-host` is installed.
+`api-learn` keys only apply when `pi-lean-host` is installed. Pins do not
+apply in spawned subagent children (see pi-tool-masking 1.3.0's
+`piToolMasking.childPolicy` for the opt-out).
 
 > The legacy `browserToggle.defaultEnabled` key is **removed in 0.4.0** and
 > no longer read. If you pinned it, move the value into the matching
