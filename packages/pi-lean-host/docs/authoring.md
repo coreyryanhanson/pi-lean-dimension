@@ -163,6 +163,12 @@ reported total, surfaced as `serverTotal` in the `paginate` result and as
 `server total: N` / `remaining: …` in the `api-fetch` footer. Omit it when
 the API exposes no total.
 
+Pagination blocks are **key-allowlisted per style**: only the keys listed
+for the style above (plus `totalCountPath`) are accepted. An unknown key —
+e.g. a `itemPath` typo or a `cursorPath` on a `nextLink` op — is a parse
+error naming the offender and the style's valid keys, never a silent
+single-page at runtime.
+
 `pagination` and `responseShape` are top-level defaults; an individual
 operation overrides them with its own block.
 

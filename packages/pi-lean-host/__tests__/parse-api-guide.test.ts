@@ -25,12 +25,14 @@ import {
 	loadApiGuidesFromDir,
 	formatApiGuideCatalog,
 	stampFrontmatterField,
+	PAGINATION_ALLOWLISTS,
 } from "../core/parse-api-guide.js";
 import { slug } from "../core/path-template.js";
 import {
 	GATHER_ALL_MAX_FALLBACK,
 	type ApiGuide,
 	type ParseError,
+	type PaginationStyle,
 } from "../core/api-guide-types.js";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1604,6 +1606,174 @@ body
 			file: "/tmp/guides/broken.md",
 		});
 		expect(err.file).toBe("/tmp/guides/broken.md");
+	});
+});
+
+// ═════════════════════════════════════════════════════════════════
+// pagination key allowlist — unknown keys fail at parse, not silently
+// ═════════════════════════════════════════════════════════════════
+
+describe("parseApiGuide — pagination key allowlist", () => {
+	// The expected key set per style: exactly what validatePagination() reads.
+	// One table shared by three checks — the tripwire asserts PAGINATION_ALLOWLISTS
+	// equals it (drift in either direction fails), and the round-trip grounds it
+	// in parser behavior (an allowlisted key the parser never reads would fail
+	// here instead of silently no-oping).
+	const EXPECTED_KEYS: Record<PaginationStyle, readonly string[]> = {
+		"offset-limit": [
+			"style",
+			"itemsPath",
+			"pageParam",
+			"pageSizeParam",
+			"pageSize",
+			"base",
+			"totalCountPath",
+		],
+		page: [
+			"style",
+			"itemsPath",
+			"pageParam",
+			"pageSizeParam",
+			"pageSize",
+			"base",
+			"totalCountPath",
+		],
+		nextLink: ["style", "itemsPath", "nextLinkPath", "totalCountPath"],
+		cursor: [
+			"style",
+			"itemsPath",
+			"cursorParam",
+			"cursorPath",
+			"pageSizeParam",
+			"pageSize",
+			"totalCountPath",
+		],
+		resumptionToken: [
+			"style",
+			"itemsPath",
+			"tokenParam",
+			"tokenPath",
+			"totalCountPath",
+		],
+		tokenBag: ["style", "itemsPath", "continuationParams", "totalCountPath"],
+	};
+	const STYLES = Object.keys(EXPECTED_KEYS) as PaginationStyle[];
+
+	// Sample YAML value + parsed expectation per non-style allowlisted key.
+	const KEY_VALUES: Record<string, { yaml: string; parsed: unknown }> = {
+		itemsPath: { yaml: "data", parsed: "data" },
+		pageParam: { yaml: "offset", parsed: "offset" },
+		pageSizeParam: { yaml: "limit", parsed: "limit" },
+		pageSize: { yaml: "25", parsed: 25 },
+		base: { yaml: "1", parsed: 1 },
+		nextLinkPath: { yaml: "links.next", parsed: "links.next" },
+		cursorParam: { yaml: "cursor", parsed: "cursor" },
+		cursorPath: { yaml: "meta.next", parsed: "meta.next" },
+		tokenParam: { yaml: "resumptionToken", parsed: "resumptionToken" },
+		tokenPath: {
+			yaml: "ListRecords.resumptionToken",
+			parsed: "ListRecords.resumptionToken",
+		},
+		continuationParams: { yaml: "[a, b]", parsed: ["a", "b"] },
+		totalCountPath: { yaml: "total", parsed: "total" },
+	};
+
+	function paginationYaml(style: PaginationStyle, indent: string): string {
+		return EXPECTED_KEYS[style]
+			.map((k) =>
+				k === "style"
+					? `${indent}style: ${style}`
+					: `${indent}${k}: ${KEY_VALUES[k]!.yaml}`,
+			)
+			.join("\n");
+	}
+
+	function guideWithPagination(paginationBlock: string): string {
+		return `---
+domains: [example.com]
+apiHost: https://api.example.com
+${paginationBlock}
+operations:
+  - name: list
+    via: paginate
+    path: /things
+---
+body
+`;
+	}
+
+	// Tripwire (both directions): the allowlist must EQUAL the keys the parser
+	// reads. The reverse direction is load-bearing — an allowlisted key the
+	// parser never assigns re-creates the silent-drop bug this allowlist kills.
+	it("allowlists exactly match the keys validatePagination() reads, per style", () => {
+		for (const style of STYLES) {
+			expect([...PAGINATION_ALLOWLISTS[style]].sort(), style).toEqual(
+				[...EXPECTED_KEYS[style]].sort(),
+			);
+		}
+	});
+
+	// Round-trip: a guide carrying every expected key for a style parses and
+	// preserves every key on the resulting PaginationConfig. Also proves
+	// totalCountPath is accepted on every style (it is in every config here).
+	it("round-trip: every allowlisted key parses and is preserved", () => {
+		for (const style of STYLES) {
+			const guide = expectOk(
+				guideWithPagination(`pagination:\n${paginationYaml(style, "  ")}`),
+			);
+			const expected: Record<string, unknown> = {};
+			for (const k of EXPECTED_KEYS[style]) {
+				expected[k] = k === "style" ? style : KEY_VALUES[k]!.parsed;
+			}
+			expect(guide.pagination, style).toEqual(expected);
+		}
+	});
+
+	it("rejects one wrong-style key per style, listing the style's valid keys", () => {
+		// Each stray is a real key from a DIFFERENT style — the cross-style
+		// confusion the allowlist exists to catch.
+		const stray: Record<PaginationStyle, string> = {
+			"offset-limit": "nextLinkPath",
+			page: "nextLinkPath",
+			nextLink: "cursorPath",
+			cursor: "nextLinkPath",
+			resumptionToken: "continuationParams",
+			tokenBag: "tokenParam",
+		};
+		for (const style of STYLES) {
+			const err = expectErr(
+				guideWithPagination(
+					`pagination:\n${paginationYaml(style, "  ")}\n  ${stray[style]}: stray`,
+				),
+			);
+			expect(err.field, style).toBe(`pagination.${stray[style]}`);
+			expect(err.expected, style).toContain(
+				`a known pagination key for style: ${style}`,
+			);
+			for (const k of EXPECTED_KEYS[style]) {
+				expect(err.expected, style).toContain(k);
+			}
+		}
+	});
+
+	it("realistic trigger: itemsPath misspelled as itemPath → error names itemPath and lists valid fields", () => {
+		const err = expectErr(
+			guideWithPagination(
+				`pagination:\n  style: offset-limit\n  itemPath: data\n  pageParam: page\n  pageSizeParam: limit`,
+			),
+		);
+		expect(err.field).toBe("pagination.itemPath");
+		expect(err.expected).toContain("itemsPath");
+	});
+
+	it("multiple unknown keys are listed together in one error", () => {
+		const err = expectErr(
+			guideWithPagination(
+				`pagination:\n  style: offset-limit\n  itemPath: data\n  bogusOne: 1\n  pageParam: page\n  pageSizeParam: limit`,
+			),
+		);
+		expect(err.field).toBe("pagination.itemPath");
+		expect(err.found).toBe("unknown key(s): itemPath, bogusOne");
 	});
 });
 

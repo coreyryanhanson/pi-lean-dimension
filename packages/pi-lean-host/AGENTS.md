@@ -168,6 +168,14 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   re-attempted on `session_start` in case host loads before portal.
 - **One parser, two call sites**: `parseApiGuide()` validates before write
   (`api-learn`) and before use (loader). Don't add a second parser.
+- **Pagination key allowlists**: `PAGINATION_ALLOWLISTS`
+  (`core/parse-api-guide.ts`, per-style `ReadonlySet`, mirrors
+  `AUTH_ALLOWLISTS`) — `validatePagination()` rejects unknown pagination
+  keys (typo → `ParseError` naming the key + the style's valid keys)
+  instead of silently single-paging at runtime. A tripwire test asserts the
+  allowlist **equals** the keys the parser actually reads (both
+  directions); any future pagination field must be added to its style's
+  allowlist in the same commit.
 - **No mutations v1**: `via` accepts only `restGet` and `paginate`.
 - **Two distinct transform mechanisms** — do not conflate:
   - **Built-in post-response transform** (gated): an op declares `transform: true`

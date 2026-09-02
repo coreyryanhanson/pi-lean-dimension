@@ -131,6 +131,61 @@ const AUTH_ALLOWLISTS: Record<AuthKind, ReadonlySet<string>> = {
 	]),
 };
 
+// Per-style pagination field allowlists — same pattern as AUTH_ALLOWLISTS:
+// each style rejects keys not legal for it, so a typo (`itemPath:`) or a
+// wrong-style key (`cursorPath:` on a nextLink block) fails at parse instead
+// of silently single-paging at runtime.
+// Post-landing note: any schema change touching pagination fields updates
+// these allowlists in the same commit — every future optional pagination
+// field must be added to its style's set here (the allowlist↔parser tripwire
+// in __tests__/parse-api-guide.test.ts enforces the parser side mechanically).
+export const PAGINATION_ALLOWLISTS: Record<
+	PaginationStyle,
+	ReadonlySet<string>
+> = {
+	"offset-limit": new Set([
+		"style",
+		"itemsPath",
+		"pageParam",
+		"pageSizeParam",
+		"pageSize",
+		"base",
+		"totalCountPath",
+	]),
+	page: new Set([
+		"style",
+		"itemsPath",
+		"pageParam",
+		"pageSizeParam",
+		"pageSize",
+		"base",
+		"totalCountPath",
+	]),
+	nextLink: new Set(["style", "itemsPath", "nextLinkPath", "totalCountPath"]),
+	cursor: new Set([
+		"style",
+		"itemsPath",
+		"cursorParam",
+		"cursorPath",
+		"pageSizeParam",
+		"pageSize",
+		"totalCountPath",
+	]),
+	resumptionToken: new Set([
+		"style",
+		"itemsPath",
+		"tokenParam",
+		"tokenPath",
+		"totalCountPath",
+	]),
+	tokenBag: new Set([
+		"style",
+		"itemsPath",
+		"continuationParams",
+		"totalCountPath",
+	]),
+};
+
 // ═══════════════════════════════════════════════════════════════════
 // Error helper
 // ═══════════════════════════════════════════════════════════════════
@@ -362,6 +417,21 @@ function validatePagination(
 		);
 	}
 	const style = styleRaw as PaginationStyle;
+
+	// Per-style allowlist — reject keys not legal for this style (a typo like
+	// `itemPath:` or a `cursorPath:` on a nextLink block fails here instead of
+	// silently single-paging at runtime). Format mirrors AUTH_ALLOWLISTS.
+	const allowlist = PAGINATION_ALLOWLISTS[style];
+	const unknownKeys = Object.keys(p).filter((k) => !allowlist.has(k));
+	if (unknownKeys.length > 0) {
+		const first = unknownKeys[0]!; // guarded by the length check above
+		return fail(
+			file,
+			`${fieldPrefix}.${first}`,
+			`a known pagination key for style: ${style} (${[...allowlist].join(", ")})`,
+			`unknown key(s): ${unknownKeys.join(", ")}`,
+		);
+	}
 
 	const itemsPath = p["itemsPath"];
 	if (typeof itemsPath !== "string" || itemsPath === "") {

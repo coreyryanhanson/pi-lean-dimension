@@ -43,7 +43,10 @@
   `charset` fallback (header charset always wins). Six pagination styles
   cover the recipe-library axes: `offset-limit`, `page`, `nextLink`,
   `cursor`, `resumptionToken`, `tokenBag`, with optional
-  `totalCountPath` for a server-reported total. `gatherAll` paginates
+  `totalCountPath` for a server-reported total. Pagination blocks are
+  key-allowlisted per style — an unknown key (e.g. a `itemPath` typo) is a
+  parse error naming the offender and the style's valid keys, never a
+  silent single-page at runtime. `gatherAll` paginates
   to exhaustion under a per-guide / per-op `gatherAllMax` ceiling
   (default `1000`). Op-level `requiresAnyOf` declares an at-least-one-of
   param group (single group per op, v1). `schemaVersion` frontmatter
