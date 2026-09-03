@@ -10,8 +10,8 @@
  * axis set keeps host green by construction).
  *
  * It encodes the axis-set audit matrix:
- *  - the kept set has exactly the finalized 11 synthetic guides;
- *  - the union covers all thirteen guide-driven axes;
+ *  - the kept set has exactly the finalized 13 synthetic guides;
+ *  - the union covers all fifteen guide-driven axes;
  *  - all six pagination styles are present (offset-limit, page, nextLink,
  *    cursor, resumptionToken, tokenBag);
  *  - all three realized auth kinds appear (none, static-key, oauth2).
@@ -49,6 +49,8 @@ const AXIS_DIRS = [
 	"twitch-user",
 	"frost-sensorthings",
 	"wikidata-search",
+	"inaturalist",
+	"stripe",
 ];
 
 const GUIDES: Record<string, ApiGuide> =
@@ -70,7 +72,7 @@ describe("axis-coverage — kept synthetic axis set", () => {
 	it(`is exactly the finalized ${AXIS_DIRS.length} guides (no drift from the audit)`, () => {
 		const found = Object.keys(GUIDES).sort();
 		expect(found).toEqual([...AXIS_DIRS].sort());
-		expect(found.length).toBe(11);
+		expect(found.length).toBe(13);
 	});
 
 	it("loads with no malformed guides", () => {
@@ -200,6 +202,23 @@ describe("axis-coverage — every guide-driven axis is covered by ≥1 guide", (
 			),
 		).toBe(true);
 	});
+
+	it("derived-id negative-index cursor (a cursorPath into items[-1], cursor style)", () => {
+		expect(
+			paginateOps.some(
+				(o) =>
+					o.pagination?.style === "cursor" &&
+					o.pagination.cursorPath?.includes("[-1]") === true,
+			),
+		).toBe(true);
+	});
+
+	it("boolean hasMorePath (a hasMorePath done-flag on a paginate op)", () => {
+		expect(
+			paginateOps.some((o) => o.pagination?.hasMorePath !== undefined) ||
+				Object.values(GUIDES).some((g) => g.pagination?.hasMorePath !== undefined),
+		).toBe(true);
+	});
 });
 
 // Per-guide spot checks — each single-coverage axis maps 1:1 to a guide
@@ -268,6 +287,22 @@ describe("axis-coverage — single-coverage guide ownership", () => {
 		expect(op?.pagination?.style).toBe("cursor");
 		expect(op?.pagination?.cursorParam).toBe("continue");
 		expect(op?.pagination?.cursorPath).toBe("search-continue");
+	});
+
+	it("derived-id negative-index cursor is owned by inaturalist's listObservations op", () => {
+		const op = opOf(GUIDES["inaturalist"]).find(
+			(o) => o.name === "listObservations",
+		);
+		expect(op?.pagination?.style).toBe("cursor");
+		expect(op?.pagination?.cursorParam).toBe("id_above");
+		expect(op?.pagination?.cursorPath).toBe("results[-1].id");
+	});
+
+	it("boolean hasMorePath is owned by stripe's guide-level has_more block", () => {
+		const g = GUIDES["stripe"];
+		expect(g?.pagination?.style).toBe("cursor");
+		expect(g?.pagination?.cursorPath).toBe("data[-1].id");
+		expect(g?.pagination?.hasMorePath).toBe("has_more");
 	});
 
 	it("oauth2-client-credentials is owned by twitch", () => {

@@ -417,12 +417,13 @@ tarball (repo-only); the tests read them from disk.
 The membership is set by the axis-set audit (its matrix is encoded in
 `__tests__/axis-coverage.test.ts`). That test is the regression tripwire
 that pins the set: the kept union must cover every axis and the guide count
-must match (11 guides, auth kinds `none` + `static-key` + `oauth2`).
+must match (13 guides, auth kinds `none` + `static-key` + `oauth2`).
 Co-located mocked-transport tests live only for
 axes **not** consolidated into `__tests__/axis-units.test.ts` (local-helper,
 transform, static-key-auth, multi-recipe-domains, resumptionToken, tokenBag,
 oauth2, dotted-key [`frost-sensorthings`], numeric-cursor
-[`wikidata-search`]). The `oauth2` axis is carried by the sibling pair `twitch`
+[`wikidata-search`], derived-id negative-index cursor [`inaturalist`],
+boolean hasMorePath [`stripe`]). The `oauth2` axis is carried by the sibling pair `twitch`
 (client_credentials — auto-mint, Bearer + `Client-Id` `secretRefs` merge,
 no-refresh re-mint) + `twitch-user` (authorization_code — fail-closed
 `oauth_token_missing`, multi-grant slot coexistence) on the shared
