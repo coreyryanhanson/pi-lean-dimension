@@ -332,7 +332,8 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `?error=` surfacing), `mintAuthCodeToken` orchestration, the
   `http://127.0.0.1/callback` redirect convention (RFC 8252 §7.3) —
   host-only, no portal import, no listener, no inbound network surface),
-  `transport.ts` (shared fetch pipeline: UA, charset, 429-retry, ETag cache —
+  `transport.ts` (shared fetch pipeline: UA, charset, gzip/deflate
+  response decompression, 429-retry, ETag cache —
   the sanctioned way to reach even WAF'd hosts), `path-template.ts`,
   `ssrf-guard.ts`, `status-hint.ts` (shared 403 classifier — `serverMessage`
   extracts the server's reason, `isPlanGated` flags plan/subscription
@@ -377,13 +378,15 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   (query-param-secret injection, output-channel redaction, api-probe inline
   auth / probe inline-auth `domain` override), `portal-projection`, `render-result`,
   `response-spill`, `host-only-boundary`, `axis-units` (nextLink/XML/cursor/
-  ETag via mocked transport; fixtures in `__tests__/fixtures/axis/`),
+  ETag/quoted-bracket-dotted-key/negative-index/numeric-coercion via mocked
+  transport; fixtures in `__tests__/fixtures/axis/`),
   `axis-coverage` (regression tripwire: the synthetic axis-guide set's union
   covers every guide-driven axis — removing an axis guide or dropping an
   axis-exercising op fails it), `schema-version` (metadata-only guard on
   `schemaVersion` frontmatter), `transform-{restget,paginate,render}`,
-  `transport` (A3 Retry-After HTTP-date / exponential-backoff parsing — no
-  recipe can reliably force a 429, so the unit test is the proof),
+  `transport` (A3 Retry-After HTTP-date / exponential-backoff parsing +
+  gzip/deflate response decompression — no recipe can reliably force a
+  429, so the unit test is the proof),
   `api-probe`, `verify-command` (mocked-transport: strict threshold, auth
   precheck, param precheck, `verify.json`, helper-disabled skip),
   `status-hint` (shared 403 classifier: server-message extraction +
@@ -414,11 +417,12 @@ tarball (repo-only); the tests read them from disk.
 The membership is set by the axis-set audit (its matrix is encoded in
 `__tests__/axis-coverage.test.ts`). That test is the regression tripwire
 that pins the set: the kept union must cover every axis and the guide count
-must match (9 guides, auth kinds `none` + `static-key` + `oauth2`).
+must match (11 guides, auth kinds `none` + `static-key` + `oauth2`).
 Co-located mocked-transport tests live only for
 axes **not** consolidated into `__tests__/axis-units.test.ts` (local-helper,
 transform, static-key-auth, multi-recipe-domains, resumptionToken, tokenBag,
-oauth2). The `oauth2` axis is carried by the sibling pair `twitch`
+oauth2, dotted-key [`frost-sensorthings`], numeric-cursor
+[`wikidata-search`]). The `oauth2` axis is carried by the sibling pair `twitch`
 (client_credentials — auto-mint, Bearer + `Client-Id` `secretRefs` merge,
 no-refresh re-mint) + `twitch-user` (authorization_code — fail-closed
 `oauth_token_missing`, multi-grant slot coexistence) on the shared
