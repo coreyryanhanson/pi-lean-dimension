@@ -378,8 +378,8 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   (query-param-secret injection, output-channel redaction, api-probe inline
   auth / probe inline-auth `domain` override), `portal-projection`, `render-result`,
   `response-spill`, `host-only-boundary`, `axis-units` (nextLink/XML/cursor/
-  ETag/quoted-bracket-dotted-key/negative-index/numeric-coercion via mocked
-  transport; fixtures in `__tests__/fixtures/axis/`),
+  ETag/quoted-bracket-dotted-key/negative-index/numeric-coercion/hasMorePath
+  via mocked transport; fixtures in `__tests__/fixtures/axis/`),
   `axis-coverage` (regression tripwire: the synthetic axis-guide set's union
   covers every guide-driven axis — removing an axis guide or dropping an
   axis-exercising op fails it), `schema-version` (metadata-only guard on
