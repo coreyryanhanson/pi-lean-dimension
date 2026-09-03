@@ -150,7 +150,21 @@ recipe) and `stripe` (boolean exhaustion + the full target recipe).
    path** (path resolves to `undefined` on every page) → walk continues per
    old semantics, never truncates after page 1; ceiling and `hasMorePath:`
    false on the same page → `ceilingHit: true` wins; the full
-   Stripe target recipe walks and terminates on `has_more: false`.
+   Stripe target recipe walks and terminates on `has_more: false`; explicit
+   JSON `null` at the path → stops (truthiness, same class as `false`);
+   **empty-final-page ordering** — `hasMorePath` present and the final page
+   has an empty `itemsPath` array → the pre-existing empty-page break wins
+   (the check never runs on a page with no items); still a clean stop;
+   **XML pin** — one mocked-transport `format: xml` case where
+   `<has_more>false</has_more>` resolves to real boolean `false` and stops,
+   pinning the repo's fast-xml-parser config so a silent lib upgrade that
+   changes tag-text-to-boolean conversion fails here, not in production.
+- `__tests__/parse-api-guide.test.ts` — the allowlist↔parser tripwire is a
+  **hardcoded `EXPECTED_KEYS` table** asserted for equality against
+  `PAGINATION_ALLOWLISTS` in both directions (plus a per-style round-trip
+  fixture), so adding `hasMorePath` to the six allowlists without updating
+  this table fails the tripwire immediately. Update the table + fixture in
+  the same commit — this file is load-bearing for Sprint 1, not optional.
   - `docs/authoring.md` — `hasMorePath` section mirroring the `totalCountPath`
    prose: the Stripe shape, the always-present-cursor (Solr) family it
    rescues from the ceiling false-alarm, the explicit statement that
@@ -158,7 +172,10 @@ recipe) and `stripe` (boolean exhaustion + the full target recipe).
    documented upgrade path. Include: the boolean/numeric-flag contract
    (string `"false"` advances — don't author against string-flag APIs),
    `undefined`/missing path → unchanged semantics (a miss never stops the
-   walk), only meaningful on `gatherAll` walks (single-page ops break
+   walk), explicit `null` at the path → stops (same class as `false`),
+   the check is only consulted on pages that produced items (an empty final
+   page exits via the empty-page rule before the flag is read), only
+   meaningful on `gatherAll` walks (single-page ops break
    regardless — don't expect it to gate a single read), and the XML note
    (lowercase `<has_more>false</has_more>` parses to real boolean `false`).
 
