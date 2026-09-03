@@ -173,7 +173,10 @@ single-page at runtime.
 
 Path fields (`itemsPath`, `nextLinkPath`, `cursorPath`, `tokenPath`,
 `totalCountPath`) are dot-delimited: `data.items`, `resultados[0].campo`, and
-numeric indexes (`items[2].id`). When the API's
+numeric indexes (`items[2].id`). Negative indexes address from the end —
+`results[-1].id` is the last item's `id` (the derived-id cursor pattern); an
+out-of-bounds negative is a clean miss (pagination terminates) and `[-0]` is
+malformed. When the API's
 key itself contains a dot — OData's `@odata.nextLink` / `@iot.nextLink` /
 `@odata.count` family is the common case — the dot is part of the key name,
 not a separator. Address it with a quoted bracket segment, which is treated

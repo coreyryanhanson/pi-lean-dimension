@@ -994,4 +994,74 @@ operations:
 		expect(result.urls[1]).toContain("next=tok");
 		expect(result.urls[1]).not.toContain("%5B");
 	});
+
+	// Always-on pinning for the derived-id numeric-cursor pagination axis:
+	// the cursor is the last item's id fed back as a query param (the
+	// iNaturalist pattern) — exercises itemsPath + `results[-1].id` + numeric
+	// coercion through the guide → parser → resolver → paginate path, no
+	// network. The synthetic axis guide + axis-coverage tripwire update that
+	// would normally pin this axis was deferred to the later negative-index /
+	// boolean-cursor work item; this test is the mandatory interim proof. Do
+	// not remove until that guide lands and covers the axis in the tripwire.
+	it("derived-id cursor (results[-1].id) walks, coerces, and terminates", async () => {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { paginate } = await import("../core/helpers.js");
+
+		const body = (ids: number[]) =>
+			JSON.stringify({ results: ids.map((id) => ({ id })), total_results: 4 });
+		vi
+			.mocked(fetchUrl)
+			.mockResolvedValueOnce({
+				status: 200,
+				headers: {},
+				body: body([1, 2]),
+				cached: false,
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				headers: {},
+				body: body([3, 4]),
+				cached: false,
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				headers: {},
+				// Empty final page: results[-1] is a clean miss → terminates.
+				body: JSON.stringify({ results: [], total_results: 4 }),
+				cached: false,
+			});
+
+		const { guide, op } = await parseGuide(`---
+kind: api
+domains: [api.test]
+apiHost: https://api.test
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: listObservations
+    via: paginate
+    path: /observations
+    pagination:
+      style: cursor
+      itemsPath: results
+      cursorParam: id_above
+      cursorPath: "results[-1].id"
+      totalCountPath: total_results
+---
+`);
+		const result = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+			skipSsrfGuard: true,
+		});
+
+		expect(result.pages).toBe(3);
+		expect(result.items).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]);
+		expect(result.serverTotal).toBe(4);
+		// Page-2 echo: the cursor is page 1's LAST id, coerced to the wire param.
+		expect(result.urls[1]).toContain("id_above=2");
+		expect(result.urls[2]).toContain("id_above=4");
+	});
 });

@@ -571,6 +571,40 @@ describe("resolveJsonPath", () => {
 		// a quoted segment cannot match at all → malformed → miss.
 		expect(resolveJsonPath(obj, "['a[3]']")).toBeUndefined();
 	});
+
+	it("resolves a negative index from the end (derived-id cursor)", () => {
+		const obj = { results: [{ id: 1 }, { id: 2 }, { id: 3 }] };
+		expect(resolveJsonPath(obj, "results[-1].id")).toBe(3);
+		expect(resolveJsonPath(obj, "results[-3].id")).toBe(1);
+	});
+
+	it("misses a negative index on an empty array (clean miss, not wrong)", () => {
+		const obj = { results: [] };
+		expect(resolveJsonPath(obj, "results[-1].id")).toBeUndefined();
+	});
+
+	it("misses an out-of-bounds negative index (clean miss, not wrong)", () => {
+		const obj = { results: [{ id: 1 }, { id: 2 }] };
+		expect(resolveJsonPath(obj, "results[-5].id")).toBeUndefined();
+	});
+
+	it("treats [-0] as malformed (would silently match element 0)", () => {
+		const obj = { results: [{ id: 1 }, { id: 2 }] };
+		expect(resolveJsonPath(obj, "results[-0].id")).toBeUndefined();
+		expect(resolveJsonPath(obj, "results[-00].id")).toBeUndefined();
+	});
+
+	it("treats a bare [-] or [-x] as malformed", () => {
+		const obj = { results: [{ id: 1 }] };
+		expect(resolveJsonPath(obj, "results[-].id")).toBeUndefined();
+		expect(resolveJsonPath(obj, "results[-x].id")).toBeUndefined();
+	});
+
+	it("composes [-1] with quoted-bracket and numeric-index siblings", () => {
+		const obj = { pages: [{ items: [{ id: 1 }, { "key.name": "v" }] }] };
+		expect(resolveJsonPath(obj, "pages[0].items[-1]['key.name']")).toBe("v");
+		expect(resolveJsonPath(obj, "pages[0].items[-2].id")).toBe(1);
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════

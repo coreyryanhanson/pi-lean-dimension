@@ -254,8 +254,8 @@ export function normalizeDateParam(
  * regex; a miss is the acceptable outcome for a pathological key).
  *
  * Returns null for a malformed path (unterminated bracket, non-numeric
- * unquoted bracket) — the caller resolves that to `undefined`, never a
- * silent wrong match.
+ * unquoted bracket, `[-0]`) — the caller resolves that to `undefined`, never
+ * a silent wrong match.
  */
 function tokenizeJsonPath(path: string): string[] | null {
 	const s = path.replace(/^\$\.?/, "");
@@ -289,14 +289,23 @@ function tokenizeJsonPath(path: string): string[] | null {
 				parts.push(content);
 				i += 2;
 			} else {
-				// Unquoted bracket: numeric index only (`[3]`).
+				// Unquoted bracket: numeric index, optionally negative (`[3]`, `[-1]`).
+				let neg = false;
+				if (s[i] === "-") {
+					neg = true;
+					i++;
+				}
 				let digits = "";
 				while (i < s.length && s[i]! >= "0" && s[i]! <= "9") {
 					digits += s[i];
 					i++;
 				}
 				if (digits.length === 0 || s[i] !== "]") return null;
-				parts.push(digits);
+				// Reject `[-0]`/`[-00]`: parseInt yields -0 and `-0 < 0` is false in
+				// JS, so the resolver's negative guard would never fire and `[-0]`
+				// would silently match element 0.
+				if (neg && /^0+$/.test(digits)) return null;
+				parts.push((neg ? "-" : "") + digits);
 				i++;
 			}
 		} else {
@@ -310,7 +319,8 @@ function tokenizeJsonPath(path: string): string[] | null {
 
 /**
  * Resolve a simple dot-delimited JSON path against an object.
- * Supports `data.items`, `resultados[0].campo`, `$.items` prefix, and
+ * Supports `data.items`, `resultados[0].campo`, negative array indexes
+ * addressing from the end (`results[-1].id`), `$.items` prefix, and
  * quoted-bracket atomic keys for dot-containing names (`['@odata.nextLink']`).
  *
  * Returns `unknown` by design — the value at an arbitrary JSON path has no
@@ -328,7 +338,10 @@ export function resolveJsonPath(obj: unknown, path: string): unknown {
 		if (Array.isArray(current)) {
 			const idx = parseInt(part, 10);
 			if (isNaN(idx)) return undefined;
-			current = current[idx];
+			// Negative index addresses from the end; out of bounds → miss.
+			const j = idx < 0 ? idx + current.length : idx;
+			if (j < 0 || j >= current.length) return undefined;
+			current = current[j];
 		} else {
 			current = (current as Record<string, unknown>)[part];
 		}
