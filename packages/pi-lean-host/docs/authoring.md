@@ -111,7 +111,7 @@ and copy a domain folder that matches your target.
 | `pagination.style` | guide / op | required when `via: paginate` | `offset-limit` \| `nextLink` \| `cursor` \| `page` \| `resumptionToken` \| `tokenBag` |
 | `pagination.itemsPath` | guide / op | — | JSON path to the items array in the body |
 | `pagination.totalCountPath` | guide / op | — | optional, any style → server-reported total surfaced as `serverTotal` / `server total: N` |
-| `pagination.hasMorePath` | guide / op | — | optional, any style → JSON path to a boolean/numeric done-flag (Stripe's `has_more`); a resolved-falsy value stops a `gatherAll` walk cleanly (see [Has-more exhaustion](#has-more-exhaustion-hasmorepath)) |
+| `pagination.hasMorePath` | guide / op | — | optional, any style → JSON path to a boolean/numeric done-flag; a resolved-falsy value stops a `gatherAll` walk cleanly (see [Has-more exhaustion](#has-more-exhaustion-hasmorepath)) |
 | `responseShape.format` | guide / op | `json` | `json` \| `xml` \| `text` → drives `parseResponse` (`text` is raw passthrough) |
 | `responseShape.charset` | guide / op | `utf-8` | `utf-8` or any IANA charset name (e.g. `iso-8859-1`); used as a fallback when the response's Content-Type header omits a charset — an explicit header charset wins |
 | `operations[].name` | op | — | the `operation` arg `api-fetch` takes |

@@ -967,7 +967,7 @@ export async function paginate(
 			break;
 		}
 
-		// hasMorePath done-flag (style-agnostic, e.g. Stripe's `has_more`).
+		// hasMorePath done-flag (style-agnostic).
 		// Sits after the ceiling checks so ceilingHit still wins when both fire
 		// on the same page. The undefined carve-out is fail-open: a missing or
 		// typo'd path never stops the walk (pre-existing exhaustion semantics

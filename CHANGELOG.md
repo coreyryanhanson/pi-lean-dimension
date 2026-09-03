@@ -44,7 +44,7 @@
   cover the recipe-library axes: `offset-limit`, `page`, `nextLink`,
   `cursor`, `resumptionToken`, `tokenBag`, with optional
   `totalCountPath` for a server-reported total and optional
-  `hasMorePath` for a boolean done-flag (Stripe's `has_more` — a
+  `hasMorePath` for a boolean done-flag (a
   resolved-falsy value stops a `gatherAll` walk cleanly; absent/typo'd
   path never stops, string `"false"` advances by design). Path expressions
   resolve dot-containing keys via quoted bracket segments
