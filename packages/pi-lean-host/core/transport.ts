@@ -13,6 +13,7 @@
  */
 
 import { request, Agent, interceptors, type Dispatcher } from "undici";
+import { gunzipSync, inflateRawSync, inflateSync } from "node:zlib";
 import { ssrfGuard } from "./ssrf-guard.js";
 
 // ponytail: module-level composed agents; closed only on process exit.
@@ -210,6 +211,37 @@ async function collectBody(
 		chunks.push(Buffer.from(chunk));
 	}
 	return Buffer.concat(chunks);
+}
+
+/**
+ * Content-Encoding decompression — some servers (Open Food Facts' mod_deflate,
+ * various OData stacks) gzip JSON responses even when the client does not
+ * advertise `Accept-Encoding: gzip`. undici's raw `request()` does NOT
+ * auto-decompress (unlike fetch()), so without this the raw gzip bytes reach
+ * JSON.parse and the op fails with a confusing "Invalid JSON response".
+ * Handled here — the single choke point every fetch (restGet, paginate,
+ * nextLink hops, /api verify) flows through — not per call site.
+ * ponytail: gzip + deflate only; br and multi-layer encodings pass through
+ * untouched — add when a real guide needs them.
+ */
+function decompressBody(buf: Buffer, encoding: string | undefined): Buffer {
+	const enc = encoding?.toLowerCase().trim();
+	if (!enc) return buf;
+	try {
+		if (enc === "gzip" || enc === "x-gzip") return gunzipSync(buf);
+		// "deflate" is ambiguous on the wire (zlib-wrapped vs raw) — try both.
+		if (enc === "deflate") {
+			try {
+				return inflateSync(buf);
+			} catch {
+				return inflateRawSync(buf);
+			}
+		}
+	} catch {
+		// Un-decodable body (e.g. server lied about the encoding) — return the
+		// raw bytes so the caller surfaces the parse error it would have anyway.
+	}
+	return buf;
 }
 
 function decodeBuffer(buf: Buffer, charset: string): string {
@@ -547,7 +579,10 @@ export async function fetchUrl(
 			const contentType = respHeaders["content-type"] ?? "";
 			const charsetMatch = contentType.match(/charset\s*=\s*([^\s;]+)/i);
 			const charset = charsetMatch?.[1] ?? opts?.fallbackCharset ?? "utf-8";
-			const body = decodeBuffer(rawBody, charset);
+			const body = decodeBuffer(
+				decompressBody(rawBody, respHeaders["content-encoding"]),
+				charset,
+			);
 
 			if (status >= 200 && status < 300 && !hasAuth) {
 				const maxAge = parseMaxAge(respHeaders) ?? DEFAULT_TTL_MS;

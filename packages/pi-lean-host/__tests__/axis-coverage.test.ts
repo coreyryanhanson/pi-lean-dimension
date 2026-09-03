@@ -10,8 +10,8 @@
  * axis set keeps host green by construction).
  *
  * It encodes the axis-set audit matrix:
- *  - the kept set has exactly the finalized 9 synthetic guides;
- *  - the union covers all ten guide-driven axes;
+ *  - the kept set has exactly the finalized 11 synthetic guides;
+ *  - the union covers all thirteen guide-driven axes;
  *  - all six pagination styles are present (offset-limit, page, nextLink,
  *    cursor, resumptionToken, tokenBag);
  *  - all three realized auth kinds appear (none, static-key, oauth2).
@@ -47,6 +47,8 @@ const AXIS_DIRS = [
 	"wikimedia-action",
 	"twitch",
 	"twitch-user",
+	"frost-sensorthings",
+	"wikidata-search",
 ];
 
 const GUIDES: Record<string, ApiGuide> =
@@ -68,7 +70,7 @@ describe("axis-coverage — kept synthetic axis set", () => {
 	it(`is exactly the finalized ${AXIS_DIRS.length} guides (no drift from the audit)`, () => {
 		const found = Object.keys(GUIDES).sort();
 		expect(found).toEqual([...AXIS_DIRS].sort());
-		expect(found.length).toBe(9);
+		expect(found.length).toBe(11);
 	});
 
 	it("loads with no malformed guides", () => {
@@ -179,6 +181,25 @@ describe("axis-coverage — every guide-driven axis is covered by ≥1 guide", (
 	it("requires-any-of (an at-least-one-of group on an op)", () => {
 		expect(allOps.some((o) => (o.requiresAnyOf?.length ?? 0) > 0)).toBe(true);
 	});
+
+	it("dotted-key (a quoted-bracket nextLinkPath targeting a literal dot key)", () => {
+		const quotedDot = (
+			p: { style?: string; nextLinkPath?: string } | undefined,
+		) => p?.style === "nextLink" && p.nextLinkPath?.includes("['@iot.") === true;
+		expect(
+			paginateOps.some((o) => quotedDot(o.pagination)) ||
+				Object.values(GUIDES).some((g) => quotedDot(g.pagination)),
+		).toBe(true);
+	});
+
+	it("numeric-cursor (a dedicated-field numeric cursorPath, cursor style)", () => {
+		expect(
+			paginateOps.some(
+				(o) =>
+					o.pagination?.style === "cursor" && o.pagination.cursorParam !== undefined,
+			),
+		).toBe(true);
+	});
 });
 
 // Per-guide spot checks — each single-coverage axis maps 1:1 to a guide
@@ -231,6 +252,22 @@ describe("axis-coverage — single-coverage guide ownership", () => {
 		for (const g of domains) {
 			expect(g.domains?.includes("archive.org")).toBe(true);
 		}
+	});
+
+	it("dotted-key is owned by frost-sensorthings's guide-level quoted-bracket pagination", () => {
+		const g = GUIDES["frost-sensorthings"];
+		expect(g?.pagination?.style).toBe("nextLink");
+		expect(g?.pagination?.nextLinkPath).toBe("['@iot.nextLink']");
+		expect(g?.pagination?.totalCountPath).toBe("['@iot.count']");
+	});
+
+	it("numeric-cursor is owned by wikidata-search's search-continue cursor op", () => {
+		const op = opOf(GUIDES["wikidata-search"]).find(
+			(o) => o.name === "searchEntities",
+		);
+		expect(op?.pagination?.style).toBe("cursor");
+		expect(op?.pagination?.cursorParam).toBe("continue");
+		expect(op?.pagination?.cursorPath).toBe("search-continue");
 	});
 
 	it("oauth2-client-credentials is owned by twitch", () => {

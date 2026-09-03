@@ -17,7 +17,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { waitForRetry, redactSecretParams } from "../core/transport.js";
+import {
+	waitForRetry,
+	redactSecretParams,
+	fetchUrl,
+} from "../core/transport.js";
+import { createServer, type Server } from "node:http";
+import { deflateSync, gzipSync } from "node:zlib";
 
 const BACKOFF = (attempt: number) => Math.min(1000 * 2 ** attempt, 30_000);
 
@@ -76,5 +82,69 @@ describe("redactSecretParams (transport output-channel audit)", () => {
 	it("returns the URL unchanged for an unparseable URL", () => {
 		const url = "not-a-url {{{";
 		expect(redactSecretParams(url, new Set(["apikey"]))).toBe(url);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Content-Encoding decompression (gzip-happy servers)
+// ═══════════════════════════════════════════════════════════════
+
+// Open Food Facts' mod_deflate gzips JSON even when the client does not
+// advertise `Accept-Encoding: gzip`; undici's raw request() does not
+// auto-decompress. The transport must honor Content-Encoding or the raw
+// gzip bytes reach JSON.parse. The decode path is one line inside fetchUrl,
+// so the proof needs a real socket — a tiny in-process server stands in.
+
+function listenAsync(server: Server): Promise<number> {
+	return new Promise((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			const addr = server.address();
+			if (addr && typeof addr === "object") resolve(addr.port);
+			else reject(new Error("no port"));
+		});
+	});
+}
+
+describe("fetchUrl content-encoding handling", () => {
+	it("transparently decompresses a gzip body", async () => {
+		const payload = JSON.stringify({ value: [1, 2, 3] });
+		const server = createServer((_req, res) => {
+			res.writeHead(200, {
+				"content-type": "application/json",
+				"content-encoding": "gzip",
+			});
+			res.end(gzipSync(Buffer.from(payload)));
+		});
+		const port = await listenAsync(server);
+		try {
+			const result = await fetchUrl(`http://127.0.0.1:${port}/gz`, {
+				fresh: true,
+			});
+			expect(result.status).toBe(200);
+			expect(JSON.parse(result.body)).toEqual({ value: [1, 2, 3] });
+		} finally {
+			server.close();
+		}
+	});
+
+	it("transparently decompresses a zlib-wrapped deflate body", async () => {
+		const payload = JSON.stringify({ ok: true });
+		const server = createServer((_req, res) => {
+			res.writeHead(200, {
+				"content-type": "application/json",
+				"content-encoding": "deflate",
+			});
+			res.end(deflateSync(Buffer.from(payload)));
+		});
+		const port = await listenAsync(server);
+		try {
+			const result = await fetchUrl(`http://127.0.0.1:${port}/def`, {
+				fresh: true,
+			});
+			expect(JSON.parse(result.body)).toEqual({ ok: true });
+		} finally {
+			server.close();
+		}
 	});
 });
