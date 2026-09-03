@@ -3,14 +3,16 @@
 > Status: **not started.** Seeds from
 > [`schema-v1-pre-release-backlog.md`](./schema-v1-pre-release-backlog.md)
 > item **P0-3** — specifically the **remaining half**. The negative-index
-> (`[-N]`) lexer slice already shipped as "P0-3a" inside
-> [`schema-v1-p0-1-p2-1-path-resolution.md`](./schema-v1-p0-1-p2-1-path-resolution.md)
-> Sprint 1; what is left is (1) the `hasMorePath` stop-condition field and
-> (2) the deferred synthetic axis work — the inaturalist derived-id axis
-> guide that the path-resolution plan doc explicitly skipped ("folded into
-> P0-3's own axis guide + tripwire"), plus a stripe fixture for the new
-> boolean-exhaustion axis. Scope locked to those two pieces; P0-2 and the
-> P1/P2 queues are out of scope.
+> (`[-N]`) lexer slice has a tentative working implementation (P0-3a),
+> brought in as a necessity for the inaturalist POC: it lives in
+> `core/helpers.ts` (`tokenizeJsonPath` + `resolveJsonPath`), pinned by
+> `helpers.test.ts` / `axis-units.test.ts`, with its path-syntax semantics
+> documented in `docs/authoring.md`. What is left is (1) the `hasMorePath`
+> stop-condition field and (2) the deferred synthetic axis work — the
+> inaturalist derived-id axis guide that the prior path-resolution work
+> explicitly skipped ("folded into P0-3's own axis guide + tripwire"), plus
+> a stripe fixture for the new boolean-exhaustion axis. Scope locked to
+> those two pieces; P0-2 and the P1/P2 queues are out of scope.
 >
 > **Standing constraints (unchanged):** read-only forever (GET-only
 > transport), one parser / two call sites, host-only boundary, 1 local
@@ -27,10 +29,10 @@ field is absent, empty, or unresolvable" — there is no stop-condition field.
 An always-present repeating cursor (or one derived from the last item)
 refetches pages until the `gatherAllMax` ceiling, surfacing a false-alarm ⚠
 on a complete list; the Solr `cursorMark` variant never even has an absent
-state. The `[-N]` half already shipped, so `cursorPath: "data[-1].id"`
-resolves — but with no `hasMorePath`, a Stripe walk terminates only via
-Stripe's own `data: []` past-the-end behavior (one wasted request) or the
-ceiling.
+state. The `[-N]` half is implemented (tentatively, on this branch), so
+`cursorPath: "data[-1].id"` resolves — but with no `hasMorePath`, a Stripe
+walk terminates only via Stripe's own `data: []` past-the-end behavior (one
+wasted request) or the ceiling.
 
 The second problem is regression coverage debt: the derived-id numeric-cursor
 axis (iNat-shaped, `results[-1].id`) is currently pinned **only** by an
@@ -63,8 +65,8 @@ fixture landed; that is Sprint 3 of this plan.
      field *is* the P0-3 territory that decision deferred to). `false`,
      `0`, and `""` all stop; `true` advances.
    - **No schema bump** — additive optional field, non-event per the bump
-     rule. Target recipe (the backlog's, verbatim — exercises both shipped
-     and new halves in one op):
+     rule. Target recipe (the backlog's, verbatim — exercises both the
+     existing and new halves in one op):
 
      ```yaml
      pagination:
@@ -77,8 +79,9 @@ fixture landed; that is Sprint 3 of this plan.
 
 2. **Axis test debt + the derived-id axis guide** — see Sprint 3 below
    (which is fed by the Sprint-2 live recipe). The `[-N]` lexer semantics
-   themselves need no further code work: shipped and pinned in Sprint 1 of
-   the path-resolution plan.
+   themselves need no further code work for this plan: implemented and
+   pinned (unit tests + `docs/authoring.md`), though still open to
+   reshaping if cleaner code/schema shapes emerge while P0-3 is in flight.
 
 ## Axis-model question: can iNaturalist carry the whole P0-3 axis weight?
 
@@ -87,8 +90,9 @@ fixture landed; that is Sprint 3 of this plan.
 `hasMorePath` on an iNat-shaped fixture would mean inventing an `has_more`
 field iNaturalist does not send — an ungrounded fiction, exactly what the
 synthetic-axis convention exists to prevent. The two P0-3 axes live on
-different providers in the real world, which is the same reason the previous
-Sprint 3 ended up with two guides (`frost-sensorthings` + `wikidata-search`).
+different providers in the real world, which is the same reason the prior
+path-resolution work's Sprint 3 ended up with two guides
+(`frost-sensorthings` + `wikidata-search`).
 
 The model for the `hasMorePath` half is **Stripe itself**: it is the
 spec-canonical shape the whole backlog item is named after, and one Stripe
@@ -126,11 +130,11 @@ recipe) and `stripe` (boolean exhaustion + the full target recipe).
 CHANGELOG folds `hasMorePath` into the existing "Recipe schema and fixed
 executor" pagination sentence (unreleased — replacement over addition).
 
-## Sprint 2 — Live proof (caritas) — recipe before fixture, per precedent
+## Sprint 2 — Live proof (caritas)
 
-**Stripe, authenticated.** Same ordering rationale as the path-resolution
-plan ("the axis fixture is derived from the chosen real recipe, not
-invented in parallel"): live-verify the recipe first, then derive the
+**Stripe, authenticated.** Recipe before fixture, per the established
+convention: the axis fixture is derived from the chosen real recipe, not
+invented in parallel. Live-verify the recipe first, then derive the
 synthetic fixture from what the server actually does — not from docs.
 Stripe's pagination (`has_more` + `starting_after` = last item's id) is
 *literally* the P0-3 target recipe, so one caritas guide exercises the
@@ -194,9 +198,9 @@ the original skip decision warned against.
 
 **Deliverable:** green host suite; the derived-id and boolean-exhaustion
 axes are pinned in the tripwire the same way `resumptionToken` / `tokenBag`
-are. The obligation recorded in the path-resolution plan ("when P0-3 lands,
-its axis guide must include the derived-id axis in the kept union") is
-discharged; that plan doc can then be deleted.
+are. The obligation inherited from the prior path-resolution work ("when
+P0-3 lands, its axis guide must include the derived-id axis in the kept
+union") is discharged.
 
 ## Order & dependencies
 
@@ -208,9 +212,10 @@ Sprint 1 (hasMorePath code + unit tests)   [host]
 
 Sprint 1 first — the Stripe recipe can't parse before the allowlist lands.
 Sprint 2 (recipe) before Sprint 3 (fixtures) is deliberate, per the
-path-resolution plan: the axis fixture is derived from the chosen real
-recipe, not invented in parallel — recipe-first grounds the fixture in
-observed server behavior and avoids churn when docs and reality diverge.
+established recipe-before-fixture convention: the axis fixture is derived
+from the chosen real recipe, not invented in parallel — recipe-first
+grounds the fixture in observed server behavior and avoids churn when
+docs and reality diverge.
 The inaturalist fixture is already grounded in its live-verified caritas
 recipe, so only the stripe fixture gains from the ordering, but the
 tripwire pins both in one commit anyway.
@@ -220,7 +225,7 @@ tripwire pins both in one commit anyway.
 - `stopWhen: "cursorUnchanged"` (Solr equality-with-sent) — documented
   upgrade path only; `hasMorePath` covers the common boolean-flag case.
 - P0-2 (`secretPathRefs`) — auth surface, unrelated.
-- Any negative-index semantics beyond the shipped `[-N]` slice.
+- Any negative-index semantics beyond the `[-N]` slice.
 - Schema version bump — additive optional field; non-event per the bump
   rule.
 
@@ -230,4 +235,4 @@ tripwire pins both in one commit anyway.
 |------|----------|
 | — | Axis-model question resolved up front: iNaturalist cannot carry the boolean-exhaustion axis (no boolean flag in its real payloads — pinning `hasMorePath` on it would be ungrounded); Stripe is the model for that half, per the backlog's own target recipe. Two-fixture split mirrors the frost/wikidata precedent (axes live on different providers in the real world). Stripe fixture ships `auth.kind: none` (auth axes already carried by github/twitch fixtures; grounding, not realism, is the fixture's job). |
 | — | Sprint 3 upgraded from optional/research-gated to a committed Stripe recipe: the no-auth boolean-exhaustion search was the only reason it was optional, but caritas recipes are routinely authenticated (github is static-key), and Stripe's `has_more` + `starting_after` pagination is exactly the P0-3 target recipe — the live proof of both new halves in one guide. Read-only enforced by Stripe restricted-key scopes server-side; scope discipline: common list endpoints only, not the long tail. |
-| — | Sprint order corrected to recipe-before-fixture (plan review): the initial draft put the synthetic fixtures before the live Stripe recipe, breaking the path-resolution plan's deliberate "fixture derived from the chosen real recipe, not invented in parallel" ordering. Recipe-first grounds the stripe fixture in observed exhaustion facts (filtered-query `has_more` behavior, empty-page shape) with zero churn; the inat fixture is already recipe-grounded, and the tripwire pins both in one commit regardless. Only hard ordering: Sprint 1 before the recipe (parser allowlist). |
+| — | Sprint order corrected to recipe-before-fixture (plan review): the initial draft put the synthetic fixtures before the live Stripe recipe, breaking the established "fixture derived from the chosen real recipe, not invented in parallel" ordering. Recipe-first grounds the stripe fixture in observed exhaustion facts (filtered-query `has_more` behavior, empty-page shape) with zero churn; the inat fixture is already recipe-grounded, and the tripwire pins both in one commit regardless. Only hard ordering: Sprint 1 before the recipe (parser allowlist). |
