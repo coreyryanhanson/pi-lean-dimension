@@ -53,7 +53,10 @@ fixture landed; that is Sprint 3 of this plan.
    - Parser: added to **all six** style sets in `PAGINATION_ALLOWLISTS`
      (the allowlist↔parser tripwire in `parse-api-guide.test.ts` enforces
      this mechanically — allowlist and validation land in the same commit),
-     validated as a non-empty string exactly like `totalCountPath`.
+     validated as a non-empty string exactly like `totalCountPath`, with the
+     parsed-field assignment itself (the round-trip fixture reads what
+     `validatePagination` assigns — a validated-but-dropped field fails the
+     fixture).
    - Executor: in the `paginate` loop, after a page's items are collected
      and **before** `advancePagination` — resolve `hasMorePath` against the
      page body; resolved-and-falsy → stop (clean stop, not a ceiling hit);
@@ -138,8 +141,10 @@ recipe) and `stripe` (boolean exhaustion + the full target recipe).
 - `core/api-guide-types.ts` — optional `hasMorePath?: string` on the
   pagination block.
 - `core/parse-api-guide.ts` — add to all six `PAGINATION_ALLOWLISTS` sets +
-  validate like `totalCountPath`; the allowlist↔parser tripwire stays green
-  in the same commit.
+  validate like `totalCountPath`, including the parsed-field assignment
+  itself (the round-trip fixture reads what `validatePagination` assigns —
+  a validated-but-dropped field fails the fixture); the allowlist↔parser
+  tripwire stays green in the same commit.
 - `core/helpers.ts` — the page-level stop check in the `paginate` loop
   (after the ceiling checks, before `advancePagination`; semantics per
   Fix shape 1 — `ceilingHit: true` wins when both fire on the same page).
@@ -163,21 +168,33 @@ recipe) and `stripe` (boolean exhaustion + the full target recipe).
   **hardcoded `EXPECTED_KEYS` table** asserted for equality against
   `PAGINATION_ALLOWLISTS` in both directions (plus a per-style round-trip
   fixture), so adding `hasMorePath` to the six allowlists without updating
-  this table fails the tripwire immediately. Update the table + fixture in
-  the same commit — this file is load-bearing for Sprint 1, not optional.
+  this table fails the tripwire immediately. Update the table **plus its
+  `KEY_VALUES` entry** (the round-trip YAML is built from
+  `KEY_VALUES[k].yaml` — a table row without one crashes the fixture on the
+  non-null assert) in the same commit — this file is load-bearing for
+  Sprint 1, not optional.
   - `docs/authoring.md` — `hasMorePath` section mirroring the `totalCountPath`
-   prose: the Stripe shape, the always-present-cursor (Solr) family it
-   rescues from the ceiling false-alarm, the explicit statement that
-   equality-with-sent (`stopWhen`) is *not* expressible and stays a
-   documented upgrade path. Include: the boolean/numeric-flag contract
-   (string `"false"` advances — don't author against string-flag APIs),
-   `undefined`/missing path → unchanged semantics (a miss never stops the
-   walk), explicit `null` at the path → stops (same class as `false`),
-   the check is only consulted on pages that produced items (an empty final
-   page exits via the empty-page rule before the flag is read), only
-   meaningful on `gatherAll` walks (single-page ops break
-   regardless — don't expect it to gate a single read), and the XML note
-   (lowercase `<has_more>false</has_more>` parses to real boolean `false`).
+  prose: the Stripe shape, the always-present-cursor + boolean done-flag
+  family it rescues from the ceiling false-alarm (Solr `cursorMark` proper
+  sends no boolean flag — its exhaustion is `numFound` vs. docs-fetched and
+  is the `stopWhen` upgrade path, not this field; don't author Solr-shaped
+  guides against `hasMorePath`), the explicit statement that
+  equality-with-sent (`stopWhen`) is *not* expressible and stays a
+  documented upgrade path. Include: the boolean/numeric-flag contract
+  (string `"false"` advances — don't author against string-flag APIs),
+  `undefined`/missing path → unchanged semantics (a miss never stops the
+  walk), explicit `null` at the path → stops (same class as `false`),
+  the check is only consulted on pages that produced items (an empty final
+  page exits via the empty-page rule before the flag is read), only
+  meaningful on `gatherAll` walks (single-page ops break
+  regardless — don't expect it to gate a single read), a final page that
+  exactly fills the ceiling still reports `ceilingHit: true` even with the
+  done-flag false (pre-existing ceiling semantics, unchanged by this
+  field), the offset/page-style strengthening (those styles have no
+  cursor-based exhaustion at all, so `hasMorePath` is the *only* clean
+  stop condition for a gatherAll walk over an offset API that exposes a
+  done-flag), and the XML note
+  (lowercase `<has_more>false</has_more>` parses to real boolean `false`).
 
 **Deliverable:** green `npx vitest run packages/pi-lean-host`; no bump;
 CHANGELOG folds `hasMorePath` into the existing "Recipe schema and fixed
