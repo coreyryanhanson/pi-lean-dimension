@@ -10,7 +10,7 @@
  * stripped leaner.
  */
 
-import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import {
 	mkdtempSync,
 	mkdirSync,
@@ -33,6 +33,13 @@ vi.mock("../../core/transport.js", async () => ({
 import { paginate } from "../../core/helpers.js";
 import { loadApiGuidesFromDir } from "../../core/parse-api-guide.js";
 import { setUserGuidesDir, invalidateCache } from "../../core/guide-store.js";
+import { fetchUrl } from "../../core/transport.js";
+
+// Drain any under-consumed Once-queue so a leaky test can't shift its
+// leftover pages into the next test (mockReset also clears calls).
+beforeEach(() => {
+	vi.mocked(fetchUrl).mockReset();
+});
 
 // Real payloads (search=love, limit=3), field-stripped: id/label/
 // description/match. Page 2 echoes the numeric search-continue from page 1.

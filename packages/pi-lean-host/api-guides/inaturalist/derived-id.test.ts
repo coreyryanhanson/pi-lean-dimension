@@ -11,7 +11,7 @@
  * stripped leaner.
  */
 
-import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import {
 	mkdtempSync,
 	mkdirSync,
@@ -31,9 +31,16 @@ vi.mock("../../core/transport.js", async () => ({
 	fetchUrl: vi.fn(),
 }));
 
+import { fetchUrl } from "../../core/transport.js";
 import { paginate } from "../../core/helpers.js";
 import { loadApiGuidesFromDir } from "../../core/parse-api-guide.js";
 import { setUserGuidesDir, invalidateCache } from "../../core/guide-store.js";
+
+// Drain any under-consumed Once-queue so a leaky test can't shift its
+// leftover pages into the next test (mockReset also clears calls).
+beforeEach(() => {
+	vi.mocked(fetchUrl).mockReset();
+});
 
 // Real payloads (taxon_name=Danaus plexippus, per_page=2), field-stripped:
 // id/taxon.name/user.login. Page 2 echoes page 1's LAST id as id_above
@@ -107,7 +114,6 @@ describe("inaturalist derived-id negative-index cursor (mocked transport)", () =
 	it("walks pages by echoing results[-1].id as id_above, never overlaps, and terminates on the empty final page", async () => {
 		const { fetchUrl } = await import("../../core/transport.js");
 		const mock = vi.mocked(fetchUrl);
-		mock.mockClear();
 		mock
 			.mockResolvedValueOnce({
 				status: 200,

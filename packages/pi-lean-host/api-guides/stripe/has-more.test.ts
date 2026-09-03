@@ -10,7 +10,7 @@
  * leaner.
  */
 
-import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import {
 	mkdtempSync,
 	mkdirSync,
@@ -30,9 +30,16 @@ vi.mock("../../core/transport.js", async () => ({
 	fetchUrl: vi.fn(),
 }));
 
+import { fetchUrl } from "../../core/transport.js";
 import { paginate } from "../../core/helpers.js";
 import { loadApiGuidesFromDir } from "../../core/parse-api-guide.js";
 import { setUserGuidesDir, invalidateCache } from "../../core/guide-store.js";
+
+// Drain any under-consumed Once-queue so a leaky test can't shift its
+// leftover pages into the next test (mockReset also clears calls).
+beforeEach(() => {
+	vi.mocked(fetchUrl).mockReset();
+});
 
 // Real payloads (GET /v1/charges, limit=2), field-stripped:
 // id/object/amount/currency. Stripe's list envelope is uniform.
@@ -87,7 +94,6 @@ describe("stripe boolean hasMorePath exhaustion (mocked transport)", () => {
 	it("has_more: true advances; has_more: false stops cleanly and the past-the-end empty page is never fetched", async () => {
 		const { fetchUrl } = await import("../../core/transport.js");
 		const mock = vi.mocked(fetchUrl);
-		mock.mockClear();
 		mock
 			.mockResolvedValueOnce({
 				status: 200,
@@ -136,7 +142,6 @@ describe("stripe boolean hasMorePath exhaustion (mocked transport)", () => {
 	it("absent has_more falls back to unchanged semantics (empty-data stop)", async () => {
 		const { fetchUrl } = await import("../../core/transport.js");
 		const mock = vi.mocked(fetchUrl);
-		mock.mockClear();
 		mock
 			.mockResolvedValueOnce({
 				status: 200,

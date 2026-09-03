@@ -19,8 +19,9 @@
  * static-key-auth, tokenBag).
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
+import { fetchUrl } from "../core/transport.js";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,6 +33,12 @@ vi.mock("../core/transport.js", async () => ({
 	)),
 	fetchUrl: vi.fn(),
 }));
+
+// Drain any under-consumed Once-queue so a leaky test can't shift its
+// leftover pages into the next test (mockReset also clears calls).
+beforeEach(() => {
+	vi.mocked(fetchUrl).mockReset();
+});
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_DIR = join(__dirname, "fixtures", "axis");
