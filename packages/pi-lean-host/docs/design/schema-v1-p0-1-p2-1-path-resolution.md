@@ -1,6 +1,10 @@
 # Plan — P0-1 + P2-1: Dotted JSON Keys & Numeric Cursor Coercion
 
-> Status: planned (not yet started). Seeds from
+> Status: **Sprint 1 shipped** (atomic quoted-bracket tokenizer + numeric-cursor
+> coercion live in `core/helpers.ts`, pinned by `helpers.test.ts` /
+> `axis-units.test.ts`). Sprint 2 (caritas recipes) and Sprint 3 (axis guide)
+> are pending.
+> Seeds from
 > [`schema-v1-pre-release-backlog.md`](./schema-v1-pre-release-backlog.md)
 > items **P0-1** and **P2-1** (paired there by design: same function, same
 > test file). Scope is locked to those two items — P0-3, P0-2, and the P1/P2
