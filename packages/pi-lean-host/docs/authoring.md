@@ -197,6 +197,18 @@ paths coerce numeric values to strings, so an API that uses `0` as an
 complete list — against such APIs, don't use `cursorPath` for the
 end-marker field, or treat the ceiling signal as normal completion.
 
+One declaration rule for sorted keyset walks (the derived-id family): a
+walk that feeds an item field back as a cursor is only stable if every page
+sorts identically on that field — and the executor serializes **only the
+params declared on the op**. An undeclared sort param is silently dropped
+and the API's own default sort applies, which turns the walk into a moving
+newest-items feed that re-reads rows (valid-shaped, wrong-meaning — page 1
+looks fine under any sort, so only a page-2+ non-overlap check catches it).
+Declare the sort params on the op with their stable-walk defaults — e.g.
+an `id`-keyed walk on an API whose sort params are named `order_by`/`order`
+and whose default order is newest-first would declare both with defaults
+`id` and `asc`.
+
 `pagination` and `responseShape` are top-level defaults; an individual
 operation overrides them with its own block.
 
