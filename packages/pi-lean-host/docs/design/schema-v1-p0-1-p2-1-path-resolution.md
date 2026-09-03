@@ -1,6 +1,6 @@
 # Plan — P0-1 + P2-1: Dotted JSON Keys, Numeric Cursor Coercion & `[-N]` Negative Indexes
 
-> Status: **Sprint 1 + 1b shipped** (atomic quoted-bracket tokenizer, numeric-cursor
+> Status: **Sprint 1 shipped** (atomic quoted-bracket tokenizer, numeric-cursor
 > coercion, and the `[-N]` negative-index lexer slice live in `core/helpers.ts`,
 > pinned by `helpers.test.ts` / `axis-units.test.ts`). Sprint 2 is in progress:
 > minimal one-op guides for FROST-Server, OpenFoodFacts, and iNaturalist are
@@ -135,83 +135,41 @@ reported as complete*.
    walk self-terminates correctly on the partial page. Additive lexer
    acceptance — nothing that parsed before changes (no schema bump).
 
-## Sprint 1 — Code fix + unit tests (host)
+## Sprint 1 — Code fix + unit tests (host) — SHIPPED
 
-All three fixes land as **one work item** (same function territory, same
-test file), before any guide work — no recipe should be written against the
-broken behavior.
+All three fixes landed as **one work item** (same function territory, same
+test file), before any guide work — the details of each fix (and the
+invariants they enforce) are recorded in the **Fix shape** section above;
+what follows is the shipped record only.
 
-1. `core/helpers.ts` — `resolveJsonPath`: atomic quoted-bracket segments.
-2. `core/helpers.ts` — `advancePagination`: numeric → string coercion
-   (`typeof === "number"` only), `tokenBag`-style, in the `cursor` and
-   `resumptionToken` branches; `nextLink` stays string-strict. Same
-   commit, one line: quote-strip the `tokenBag` param-name derivation
-   (`key.split(".").pop()` at `core/helpers.ts:983`). After the P0-1 fix a
-   quoted `continuationParams` key like `['continue.rccontinue']`
-   resolves (today it misses → skipped); without stripping, the derived
-   wire param is the junk `rccontinue']`. The strip must run
-   **unconditionally** — before any dot check — because the existing
-   derivation only strips when `key.includes(".")`, and a quoted
-   non-dotted key like `['next']` would then produce the junk wire param
-   `['next']` (post-P0-1 that key resolves; note it already resolves
-   today — the regex rewrite turns it into `.next` — and the derivation
-   at :983 already produces the junk wire param `['next']` pre-fix, so
-   the strip corrects an existing wart as well as a post-fix one). Stripping keeps quoted bag keys doing the sane thing
-   without full quoted-key bag support.
-   Alternative considered: rejecting `['` in `continuationParams` at
-   parse time — rejected as a new parse error for something the strip
-   handles correctly in one line.
-3. `core/helpers.ts` — `tokenizeJsonPath`: the `[-N]` lexer slice (see fix
-   shape item 3).
-4. Tests, split by subject:
-   - **Resolver unit cases** in the existing `describe("resolveJsonPath")`
-     block in `__tests__/helpers.test.ts` (alongside their siblings — pure
-     path resolution, no paginate machinery):
-     - `['@odata.nextLink']` resolves (dotted key, quoted).
-     - Unquoted `@odata.nextLink` misses (no silent *wrong* match).
-     - Unquoted legacy paths parse identically (regression).
-     - Double-quoted segment resolves: `["@odata.nextLink"]` (quote-style
-       parity — the legacy regex accepted both).
-     - Mixed bracket index + quoted segment: `data[0]['key.name']`.
-     - `items[-1]` resolves the last element; `[-1]` on an empty array
-       misses; out-of-bounds negative misses; `[-0]` is malformed;
-       `[-1].id` composes with quoted-bracket and numeric-index siblings.
-   - **Paginate-level cases** in `__tests__/axis-units.test.ts` (the file
-     the backlog names — mocked transport, inline YAML):
-     - Quoted `nextLinkPath: "['@odata.nextLink']"` walks past page 1.
-     - Numeric cursors advance (cursor + resumptionToken branches); numeric
-       nextLink still terminates; `""`/missing still terminate; numeric `0`
-       cursor advances (coercion precedes each branch's type/falsy check).
-     - A *constant* numeric cursor terminates via the `gatherAllMax`
-       ceiling (`ceilingHit`) — the safety net the coercion leans on;
-       one assertion, cheap.
-     - `totalCountPath: "['@odata.count']"` resolving to a numeric
-       `serverTotal` (OData exposes totals via the same dotted-key family).
-     - A cursor-style op with `cursorPath: "results[-1].id"`,
-       `cursorParam: id_above`, numeric ids in the body walks past page 1,
-       coerces the number to the wire param, and terminates on the empty
-       page (iNat-shaped inline YAML). **This test is the always-on
-       pinning that Sprint 3b would have provided** — see the skip
-       decision under Sprint 3.
-5. Authoring docs: document the `['…']` / `["…"]` escape-hatch so caritas recipes
-   are written correctly the first time (backlog P0-1's own fix line —
-   one paragraph where path syntax is documented). Include the two syntax
-   limits from the review in one paragraph: quoted segments may not contain
-   `]` **or quote characters** (either ends the `(.*?)` capture), and
-   unquoted dot-keys keep failing silently (miss ≠ wrong match). State the
-   `['a]b']` case accurately: it accidentally resolves today via the legacy
-   regex and becomes a miss under the atomic tokenizer. Add one sentence on
-   negative indexes: they address from the end (`results[-1].id` = last
-   item's `id`), out-of-bounds is a clean miss (pagination terminates),
-   `[-0]` is malformed. Also note the numeric-`0` caveat from P2-1: an API that uses
-   `0` as an *end marker* (legacy Twitter-style `next_cursor: 0`) now
-   walks to the `gatherAllMax` ceiling and surfaces the
-   `⚠ Ceiling reached` warning for a *complete* list — recipes against
-   such APIs should not use `cursorPath` for the end-marker field, or
-   should treat the ceiling signal as normal completion.
+- `core/helpers.ts` — atomic quoted-bracket segments in `resolveJsonPath`
+  (fix shape 1), numeric → string coercion in the `cursor` and
+  `resumptionToken` branches of `advancePagination` with `nextLink`
+  string-strict (fix shape 2), and the unconditional quote-strip of the
+  `tokenBag` param-name derivation (quoted bag keys like
+  `['continue.rccontinue']` wire the clean param `rccontinue` instead of
+  junk; parse-time rejection of `['` was rejected as a new parse error for
+  something the strip handles in one line).
+- `core/helpers.ts` — the `[-N]` lexer slice in `tokenizeJsonPath` (fix
+  shape 3).
+- Tests: resolver cases in `__tests__/helpers.test.ts`
+  (`describe("resolveJsonPath")`), paginate-level cases in
+  `__tests__/axis-units.test.ts` (mocked transport, inline YAML) —
+  including the iNat-shaped `cursorPath: "results[-1].id"` cursor walk,
+  which is the always-on pinning that the skipped derived-id axis guide
+  would have provided (see the skip decision under Sprint 3).
+- Authoring docs (`docs/authoring.md`): the `['…']` / `["…"]`
+  escape-hatch and its two limits (quoted segments may not contain `]` or
+  quote characters; unquoted dot-keys fail silently — miss ≠ wrong match;
+  `['a]b']` accidentally resolved pre-fix and is a miss now), negative
+  indexes (`results[-1].id`, out-of-bounds = clean miss, `[-0]` malformed),
+  the numeric-`0` end-marker caveat (legacy Twitter-style `next_cursor: 0`
+  walks to the `gatherAllMax` ceiling with a false-alarm ⚠ on a complete
+  list), and the sorted-keyset sort-declaration rule (added at Sprint-2
+  live verification).
 
-**Deliverable:** green `npx vitest run packages/pi-lean-host` with the new
-cases; no schema bump, no guide-format change.
+**Deliverable (met):** green `npx vitest run packages/pi-lean-host` with
+the new cases; no schema bump, no guide-format change.
 
 ## Sprint 2 — Comprehensive caritas recipes
 
@@ -260,7 +218,7 @@ under `HOST_INTEGRATION=1`, pacing per community etiquette).
 **Deliverable:** merged caritas guides, live-verified. This is the
 production proof the fix works against real providers.
 
-(MediaWiki Action API was considered as a third candidate but is already
+(MediaWiki Action API was considered as an additional candidate but is already
 covered by caritas's existing `wikimedia-action` guide —
 `tokenBag` `continue.rccontinue` + offset-limit `sroffset` — and would be
 duplicate coverage.)
