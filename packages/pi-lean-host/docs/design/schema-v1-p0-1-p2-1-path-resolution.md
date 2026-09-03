@@ -2,12 +2,14 @@
 
 > Status: **Sprint 1 shipped** (atomic quoted-bracket tokenizer, numeric-cursor
 > coercion, and the `[-N]` negative-index lexer slice live in `core/helpers.ts`,
-> pinned by `helpers.test.ts` / `axis-units.test.ts`). Sprint 2 is in progress:
-> minimal one-op guides for FROST-Server, OpenFoodFacts, and iNaturalist are
-> live-verified on caritas; the full guides are pending. Sprint 3 (synthetic
-> axis guide for the Sprint-1 axes) is pending; the iNaturalist synthetic axis
-> guide is **skipped by design** (folded into P0-3's own axis guide + tripwire).
-> Seeds from
+> pinned by `helpers.test.ts` / `axis-units.test.ts`). **Sprint 2 shipped**: full
+> guides for FROST-Server (42 ops), OpenFoodFacts (9 ops), and iNaturalist
+> (37 ops) are live-verified on caritas. **Sprint 3 shipped**: the Sprint-1 axes
+> are pinned by two new synthetic axis guides (`frost-sensorthings` — dotted-key
+> nextLink; `wikidata-search` — dedicated-field numeric cursor), with real (field-stripped)
+> payloads, co-located mocked-transport tests, and the `axis-coverage` tripwire
+> updated to 11 guides + 13 axes. The iNaturalist synthetic axis guide is
+> **skipped by design** (folded into P0-3's own axis guide + tripwire). Seeds from
 > [`schema-v1-pre-release-backlog.md`](./schema-v1-pre-release-backlog.md)
 > items **P0-1**, **P2-1**, and **P0-3** (negative-index half only — the
 > boolean/`hasMorePath` half stays with the full P0-3 work item and is out of
@@ -223,36 +225,56 @@ covered by caritas's existing `wikimedia-action` guide —
 `tokenBag` `continue.rccontinue` + offset-limit `sroffset` — and would be
 duplicate coverage.)
 
-## Sprint 3 — Synthetic axis guide (host)
+## Sprint 3 — Synthetic axis guides (host) — SHIPPED
 
-Add the axis candidate to the host framework fixture set, modeled minimally
-on the Sprint-2 recipe — same shape, synthetic data, mocked transport
-(always-on, no env gate), consistent with the existing axis-guide
-conventions (no `verified:` date, framework fixture not real recipe).
+Two axis guides, not one — the dotted-key and numeric-cursor axes live on
+**different providers** in the real world, and the fixture set is modeled
+on real sites (real captured payloads, stripped leaner; no synthetic data),
+consistent with the existing axis-guide conventions (no `verified:` date,
+no live-endpoint claim, mocked transport always-on):
 
-- New guide dir under `packages/pi-lean-host/api-guides/` exercising the
-  dotted-key + numeric-cursor axes end-to-end through the
-  guide→parser→resolver→paginate path.
-- Update the `axis-coverage.test.ts` tripwire in the same commit (guide
-  count is pinned by design; the new guide adds the two axes to the kept
-  union).
+- **`frost-sensorthings/`** — the dotted-key axis, modeled on the caritas
+  FROST recipe: guide-level `nextLink` pagination with
+  `nextLinkPath: "['@iot.nextLink']"` + `totalCountPath: "['@iot.count']"`,
+  one `listThings` op (`passthrough: true`). Real EEA air-quality payloads
+  (Things 1–4), stripped to identity/name/properties/navigation-link.
+  Co-located `dotted-key.test.ts`: two-page walk + serverTotal + no-nextLink
+  termination.
+- **`wikidata-search/`** — the dedicated-field numeric-cursor axis, chosen
+  by a three-lane research round (see the decision log): op-level `cursor`
+  pagination with `cursorParam: continue` / `cursorPath: search-continue`
+  — a top-level JSON integer that is **absent** on the terminal page (and
+  on zero-hit searches). Real Wikidata `wbsearchentities` payloads (CC0;
+  search=love, limit=3), stripped. Co-located `numeric-cursor.test.ts`:
+  two-page walk (3 → 6 → absent) proving the numeric cursor coerces onto
+  the wire and the absent field terminates. Grounded in the caritas
+  `wikidata` recipe's `searchEntities` op — same domain, path, and params,
+  with only the pagination treatment changed (`offset-limit` → `cursor`);
+  the wire behavior is identical, only the client strategy differs.
+  (Runners-up, all live-probed: YGOPRODeck
+  `meta.next_page_offset` — nested under `meta`, arithmetic, community-DB
+  optics; Zenn `next_page` — unofficial API, global feed 404s on deep
+  pages, clean `null` only on filtered listings; Semantic Scholar `next` —
+  spec-verified but 429-flaky from shared-pool IPs, matching the plan's
+  existing note.)
+- The `axis-coverage.test.ts` tripwire updated in the same commit: 11
+  guides, 13 axes, per-guide ownership spot-checks for both new axes.
 - **iNaturalist synthetic axis guide: SKIPPED (folded into P0-3).** P0-3
   proper (booleans/`hasMorePath` + any remaining negative semantics) lands
   soon and without an intervening version release; it will add its own axis
   guide + tripwire update covering the full P0-3 surface in one commit.
-  Writing the tripwire twice — once for the `[-1]` slice, again for P0-3 —
-  is duplicate work against an unpinned interim state. The interim gap
-  (nothing always-on proves the guide-driven derived-id cursor shape) is
-  closed by the Sprint 1 axis-units paginate-level mocked test, which
-  exercises itemsPath + `results[-1].id` + numeric coercion through the
-  guide→parser→resolver→paginate path without a browser or network.
-  **This skip is only safe with that test in place** — it is not optional.
-  When P0-3 lands, its axis guide must include the derived-id
+  The interim gap (nothing always-on proves the guide-driven derived-id
+  cursor shape) is closed by the Sprint 1 axis-units paginate-level mocked
+  test, which exercises itemsPath + `results[-1].id` + numeric coercion
+  through the guide→parser→resolver→paginate path without a browser or
+  network. **This skip is only safe with that test in place** — it is not
+  optional. When P0-3 lands, its axis guide must include the derived-id
   numeric-cursor axis (iNat-shaped fixture) in the kept union.
 
-**Deliverable:** axis guide + tripwire update green; the Sprint-1 axes are
-now pinned against regression the same way `resumptionToken` / `tokenBag`
-are. The derived-id axis is deliberately deferred to P0-3's deliverables.
+**Deliverable (met):** axis guides + tripwire update green (921/921 host
+suite); the Sprint-1 axes are now pinned against regression the same way
+`resumptionToken` / `tokenBag` are. The derived-id axis is deliberately
+deferred to P0-3's deliverables.
 
 ## Order & dependencies
 
@@ -314,6 +336,8 @@ silent-page-1-stop bug into the library.
 | — | Sprint 1b (second research round, ~65 APIs live-probed across mainstream/scholarly-gov/long-tail lanes plus an exact-shape sweep) completed: dedicated-field numeric cursors are all keyed/blocked in the live no-auth world; derived-id is the dominant live shape. iNaturalist chosen over Coinbase/OpenDota/ListenBrainz on end-marker cleanliness (empty `results`, not a `0` sentinel), zero auth, `total_results` as a free `totalCountPath`, and optics; Weasyl (exact-shape fit) rejected on community optics; Semantic Scholar demoted to optional future recipe (key delay + unauth 429 flake). `helper.ts` bridging rejected (pre-call contract cannot see responses — verified against `core/helpers.ts`); static-index workaround rejected (silently truncates on short-but-nonempty pages — reintroduces the failure class under fix). Negative indexes scoped to the `[-N]` array slice only; `hasMorePath`/booleans stay with P0-3 proper. `[-0]` malformed; out-of-bounds negative = miss, never wrong. Sprint 3's derived-id axis guide skipped by design (folded into P0-3's deliverables); Sprint 1's axis-units mocked test (iNat shape, inline YAML) is the mandatory interim pinning that makes the skip safe. |
 | — | Sprint 2 live verification (2026-09-03) corrected two research-lane findings before the iNat recipe shipped: (1) **`order: desc` + `id_above` double-counts** — "id above the cursor" is the newest-rows region, which is where page 1 lives; the stable `results[-1].id` walk needs **`order_by: id` + `order: asc` + `id_above`** (declared op defaults, so they serialize on every page — undeclared sort params are silently dropped by the executor and the walk degenerates into a moving newest-items feed); (2) the sparse-fieldset params (`fields`, `only_id`) are **not honored** on `/v1/observations` (live-probed, full payloads regardless) — the payload-weight mitigation is page size only, so the recipe pins `pageSize: 30`. The sort-declaration rule was added to `docs/authoring.md` as a general rule for sorted keyset walks, and the `api-learn` placeholder skeleton gained a commented hint for authoring agents. |
 | — | Sprint 2b doc (`schema-v1-p0-3a-neg-index-p2-1-derived-cursor.md`) folded into this doc: P0-3a's lexer slice ships as part of Sprint 1, the iNaturalist recipe joins Sprint 2 as recipe 3, and the derived-id synthetic axis guide stays skipped (P0-3 owns it). Standalone doc removed. |
+| — | Sprint 3 landed as **two** guides, not one: the dotted-key and numeric-cursor axes live on different providers, and the fixture set is modeled on real sites (real captured payloads, stripped leaner — no synthetic data). FROST carries the dotted-key axis (guide-level `['@iot.nextLink']` / `['@iot.count']`); Wikidata carries the dedicated-field numeric-cursor axis (see the next entry). The `[-1]`/derived-id shape stays deferred to P0-3 (no overlap written now). An earlier one-guide draft dir (`odata-dotted-key`) was removed before it ever parsed. |
+| — | Sprint 3's numeric-cursor carrier was chosen by a three-lane research round (mainstream / scholarly-gov / long-tail, ~20 APIs live-probed, all lanes requiring live probe evidence: page-1 shape, page-2 echo, non-overlap, end marker). The dedicated-field numeric shape is genuinely rare no-auth — every survivor is an arithmetic offset (stable-offset walk, not keyset): Wikidata top-level `search-continue` (absent-field end marker, CC0, official docs — chosen), YGOPRODeck `meta.next_page_offset` (nested, runner-up), Zenn `next_page` (unofficial API, global feed deep-page 404s), Terraform Registry `meta.next_offset` (hybrid URL-next, broken end marker — never emits a terminal signal), Semantic Scholar `next` (clean spec but 429-flaky unauth tier, matching the plan's earlier finding). Kraken OHLC `last`/`since` noted as a time-series continuation near-miss, not list pagination. |
 
 Decision note (Sprint 0 outcome, kept for provenance): FROST-Server was
 chosen for exhibiting both shapes in one
