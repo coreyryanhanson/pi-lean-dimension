@@ -60,10 +60,36 @@ fixture landed; that is Sprint 3 of this plan.
      unresolvable/absent → current semantics completely unchanged
      (empty-page / absent-cursor stop rules apply as today). The check runs
      even when the style's own cursor still resolves — that is the entire
-     point (Solr-family always-present fields).
-   - **No coercion.** Booleans do not coerce (the Sprint-1 decision — this
-     field *is* the P0-3 territory that decision deferred to). `false`,
-     `0`, and `""` all stop; `true` advances.
+     point (Solr-family always-present fields). The check sits **after** the
+     ceiling checks, so `ceilingHit: true` still wins when both fire on the
+     same page (the run genuinely was cut short).
+   - **Stop predicate: plain truthiness, with a `undefined` carve-out.** The
+     check is `const v = resolveJsonPath(data, pagCfg.hasMorePath); if (v !==
+     undefined && !v) break;` — a *resolved* falsy value stops; `undefined`
+     (field absent, or the path typo'd/missed) never stops. Order matters:
+     the `undefined` check must precede the truthiness check or a typo'd
+     `hasMorePath` silently truncates the walk after page 1 under plain
+     falsiness. Truthiness means `false`, `0`, and `""` all stop; `true`, `1`,
+     and non-empty strings advance.
+   - **No string coercion — the string `"false"` advances, by design.** This
+     field is the P0-3 territory the Sprint-1 boolean decision deferred to;
+     its resolution: plain truthiness (above), not a coercion layer. The
+     string `"false"` is truthy in JS and therefore advances — `hasMorePath`
+     is a boolean/numeric-flag contract, documented in authoring.md. We do
+     *not* map `"false"`/`"False"`/`"0"` → stop: each mapping is a guess
+     about unseen servers, misfires on APIs legitimately using `"0"` as a
+     truthy value, and contradicts the cursor precedent (`advancePagination`
+     deliberately doesn't coerce booleans; numeric-0 is coerced there
+     because it's a legitimate cursor value, while a numeric `0` flag
+     legitimately means stop — the asymmetry is intended). The asymmetric
+     corner: an API serving the flag as a non-lowercase string
+     (`<has_more>False</has_more>` XML, or JSON `"has_more": "false"`) walks
+     to the ceiling with the ⚠ false-alarm — bounded annoyance, not data
+     loss; if a real provider shows up, widening the predicate is a
+     one-line additive change. (`format: xml` guides are mostly covered:
+     the repo's `XMLParser` config converts lowercase `<has_more>false</has_more>`
+     to real boolean `false` — verified against fast-xml-parser; only
+     capitalized variants stay strings.)
    - **No schema bump** — additive optional field, non-event per the bump
      rule. Target recipe (the backlog's, verbatim — exercises both the
      existing and new halves in one op):
@@ -115,16 +141,26 @@ recipe) and `stripe` (boolean exhaustion + the full target recipe).
   validate like `totalCountPath`; the allowlist↔parser tripwire stays green
   in the same commit.
 - `core/helpers.ts` — the page-level stop check in the `paginate` loop
-  (before `advancePagination`; semantics per Fix shape 1).
-- Tests: `__tests__/axis-units.test.ts` — `hasMorePath: false` stops;
-  `hasMorePath: true` advances; absent → semantics unchanged (existing tests
-  already pin this, they must stay green); falsy-string/`0` stop; the full
-  Stripe target recipe walks and terminates on `has_more: false`.
-- `docs/authoring.md` — `hasMorePath` section mirroring the `totalCountPath`
-  prose: the Stripe shape, the always-present-cursor (Solr) family it
-  rescues from the ceiling false-alarm, the explicit statement that
-  equality-with-sent (`stopWhen`) is *not* expressible and stays a
-  documented upgrade path.
+  (after the ceiling checks, before `advancePagination`; semantics per
+  Fix shape 1 — `ceilingHit: true` wins when both fire on the same page).
+  - Tests: `__tests__/axis-units.test.ts` — `hasMorePath: false` stops;
+   `hasMorePath: true` advances; absent → semantics unchanged (existing tests
+   already pin this, they must stay green); `0` and `""` stop; string
+   `"false"` advances (truthiness contract pinned); **declared-but-missing
+   path** (path resolves to `undefined` on every page) → walk continues per
+   old semantics, never truncates after page 1; ceiling and `hasMorePath:`
+   false on the same page → `ceilingHit: true` wins; the full
+   Stripe target recipe walks and terminates on `has_more: false`.
+  - `docs/authoring.md` — `hasMorePath` section mirroring the `totalCountPath`
+   prose: the Stripe shape, the always-present-cursor (Solr) family it
+   rescues from the ceiling false-alarm, the explicit statement that
+   equality-with-sent (`stopWhen`) is *not* expressible and stays a
+   documented upgrade path. Include: the boolean/numeric-flag contract
+   (string `"false"` advances — don't author against string-flag APIs),
+   `undefined`/missing path → unchanged semantics (a miss never stops the
+   walk), only meaningful on `gatherAll` walks (single-page ops break
+   regardless — don't expect it to gate a single read), and the XML note
+   (lowercase `<has_more>false</has_more>` parses to real boolean `false`).
 
 **Deliverable:** green `npx vitest run packages/pi-lean-host`; no bump;
 CHANGELOG folds `hasMorePath` into the existing "Recipe schema and fixed
@@ -188,6 +224,12 @@ goes 11 → 13; the axes 13 → 15 (add **derived-id negative-index cursor**
 and **boolean hasMorePath** to the kept union); pagination-style and
 auth-kind invariants re-asserted.
 
+**Doc-count sync (same commit):** update this package's `AGENTS.md` —
+the hardcoded guide count ("11 guides at time of writing — 13 after
+P0-3 Sprint 3") becomes "13 guides", and the co-located-axes list gains
+the two new entries. Plan-review finding: the plan's file list originally
+omitted AGENTS.md, leaving the count to drift.
+
 **Placeholder removal (same commit):** delete the inline derived-id
 placeholder block from `__tests__/axis-units.test.ts`. Its pinning duty
 transfers to `api-guides/inaturalist/derived-id.test.ts`, which exercises a
@@ -233,6 +275,7 @@ tripwire pins both in one commit anyway.
 
 | Date | Decision |
 |------|----------|
+| — | Stop predicate pinned to plain truthiness with an `undefined` carve-out (`v !== undefined && !v` stops; `undefined` never stops): resolved-and-falsy `false`/`0`/`""` stop, `true`/`1`/non-empty strings advance, and the string `"false"` advances by design — no coercion layer (would be guesses about unseen servers, misfire on `"0"`-as-truthy APIs, and contradict the cursor precedent; the plan-review finding also caught that the draft's "No coercion ... `0` and `""` stop" was self-contradictory — truthiness *is* coercion, so the predicate is named for what it is). `undefined`-before-truthiness also discharges the P2 declared-but-missing-path finding: a typo'd `hasMorePath` continues per old semantics instead of silently truncating after page 1. XML verified: the repo's fast-xml-parser config converts lowercase `<has_more>false</has_more>` to real boolean `false`; only capitalized variants stay strings. |
 | — | Axis-model question resolved up front: iNaturalist cannot carry the boolean-exhaustion axis (no boolean flag in its real payloads — pinning `hasMorePath` on it would be ungrounded); Stripe is the model for that half, per the backlog's own target recipe. Two-fixture split mirrors the frost/wikidata precedent (axes live on different providers in the real world). Stripe fixture ships `auth.kind: none` (auth axes already carried by github/twitch fixtures; grounding, not realism, is the fixture's job). |
 | — | Sprint 3 upgraded from optional/research-gated to a committed Stripe recipe: the no-auth boolean-exhaustion search was the only reason it was optional, but caritas recipes are routinely authenticated (github is static-key), and Stripe's `has_more` + `starting_after` pagination is exactly the P0-3 target recipe — the live proof of both new halves in one guide. Read-only enforced by Stripe restricted-key scopes server-side; scope discipline: common list endpoints only, not the long tail. |
 | — | Sprint order corrected to recipe-before-fixture (plan review): the initial draft put the synthetic fixtures before the live Stripe recipe, breaking the established "fixture derived from the chosen real recipe, not invented in parallel" ordering. Recipe-first grounds the stripe fixture in observed exhaustion facts (filtered-query `has_more` behavior, empty-page shape) with zero churn; the inat fixture is already recipe-grounded, and the tripwire pins both in one commit regardless. Only hard ordering: Sprint 1 before the recipe (parser allowlist). |
