@@ -47,7 +47,7 @@ Axis-guide fixture for the **numeric-cursor** axis, grounded in the caritas
 prev + pageSize, body field unread); this fixture formulates the same
 endpoint as `cursor`, reading the server-supplied top-level numeric field
 `search-continue` and echoing it back as `continue` — exercising the
-Sprint-1 numeric-coercion code path (JSON-integer continuation field →
+numeric-coercion code path (JSON-integer continuation field →
 string wire param). The field is **absent** on the terminal page (and on
 zero-hit searches), which stops the walk cleanly. Also carries
 `exec-paginate` (cursor style) and `transport`.

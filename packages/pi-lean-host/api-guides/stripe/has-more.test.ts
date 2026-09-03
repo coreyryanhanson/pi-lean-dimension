@@ -118,7 +118,8 @@ describe("stripe boolean hasMorePath exhaustion (mocked transport)", () => {
 
 		const { guide } = await setupRecipe();
 		const op = guide.operations.find((o) => o.name === "listCharges")!;
-		// The plan's target recipe, verbatim — at guide level (Stripe's list
+		// Stripe's list recipe, verbatim from the live-verified caritas guide —
+		// at guide level (Stripe's list
 		// envelope is uniform, so ops carry no pagination of their own;
 		// paginate falls back to guide.pagination).
 		expect(op.pagination).toBeUndefined();

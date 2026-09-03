@@ -1039,8 +1039,9 @@ describe("framework axis H — hasMorePath boolean exhaustion", () => {
 		}
 	}
 
-	// The plan's target recipe, verbatim — exercises the derived-id cursor
-	// (data[-1].id) and the new hasMorePath stop in one walk.
+	// Stripe's list recipe, verbatim from the live-verified caritas guide —
+	// exercises the derived-id cursor (data[-1].id) and the hasMorePath stop
+	// in one walk.
 	const STRIPE_GUIDE = `---
 kind: api
 domains: [api.test]

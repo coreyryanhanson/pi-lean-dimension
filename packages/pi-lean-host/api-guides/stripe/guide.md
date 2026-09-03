@@ -43,9 +43,9 @@ Axis-guide fixture for the **boolean hasMorePath** axis: Stripe list
 endpoints return `{ object: "list", data: [...], has_more: bool }` with
 **no cursor field anywhere in the envelope** — the documented manual loop
 is "if `has_more` is true, take the last object's id and pass it as
-`starting_after`". One op exercises both P0-3 halves at once (the plan's
-target recipe, verbatim from the live-verified caritas recipe's guide-level
-pagination block): `cursorPath: "data[-1].id"` derives the cursor,
+`starting_after`". One op exercises both halves of the exhaustion pattern
+in one walk (the list recipe, verbatim from the live-verified caritas
+recipe's guide-level pagination block): `cursorPath: "data[-1].id"` derives the cursor,
 `hasMorePath: has_more` is the stop-condition field — resolved-falsy stops
 cleanly (no wasted past-the-end request, no ceiling ⚠), while absent-never-
 stops keeps the pre-exhaustion semantics as the fallback. Also carries
