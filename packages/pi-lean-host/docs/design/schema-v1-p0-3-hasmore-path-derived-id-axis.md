@@ -89,10 +89,16 @@ fixture landed; that is Sprint 3 of this plan.
      (`<has_more>False</has_more>` XML, or JSON `"has_more": "false"`) walks
      to the ceiling with the ⚠ false-alarm — bounded annoyance, not data
      loss; if a real provider shows up, widening the predicate is a
-     one-line additive change. (`format: xml` guides are mostly covered:
-     the repo's `XMLParser` config converts lowercase `<has_more>false</has_more>`
-     to real boolean `false` — verified against fast-xml-parser; only
-     capitalized variants stay strings.)
+     one-line additive change. Same bounded-annoyance class: an API that
+     **omits the flag on the final page** instead of sending `false`
+     resolves to `undefined` under the carve-out and walks to the ceiling —
+     don't author against one without testing it. (`format: xml` guides are
+     *expected* to be mostly covered: the repo's `XMLParser` config is
+     believed to convert lowercase `<has_more>false</has_more>` to real
+     boolean `false`, but this is not verified from this checkout —
+     Sprint 1's XML pin test is the proof; if the lib doesn't convert,
+     the test forces the decision. Only capitalized variants stay
+     strings either way.)
    - **No schema bump** — additive optional field, non-event per the bump
      rule. Target recipe (the backlog's, verbatim — exercises both the
      existing and new halves in one op):
@@ -163,7 +169,9 @@ recipe) and `stripe` (boolean exhaustion + the full target recipe).
    **XML pin** — one mocked-transport `format: xml` case where
    `<has_more>false</has_more>` resolves to real boolean `false` and stops,
    pinning the repo's fast-xml-parser config so a silent lib upgrade that
-   changes tag-text-to-boolean conversion fails here, not in production.
+   changes tag-text-to-boolean conversion fails here, not in production
+   (this test is also the verification for the "XML converts booleans"
+   claim above — it was not verifiable from this checkout beforehand).
 - `__tests__/parse-api-guide.test.ts` — the allowlist↔parser tripwire is a
   **hardcoded `EXPECTED_KEYS` table** asserted for equality against
   `PAGINATION_ALLOWLISTS` in both directions (plus a per-style round-trip
@@ -175,8 +183,13 @@ recipe) and `stripe` (boolean exhaustion + the full target recipe).
   Sprint 1, not optional.
   - `docs/authoring.md` — **four touchpoints, all in the same commit** (not
   just a new section): (1) the pagination field table (~line 113) gains a
-  `hasMorePath` row; (2) the per-style key lists (~lines 146–159) gain it
-  in all six styles; (3) the allowlist sentence (~line 167) reading "plus
+  `hasMorePath` row; (2) the per-style "Key fields" table (~lines
+  140–146) — note it does **not** list `totalCountPath` per style today
+  (that field is covered by the style-agnostic sentences at ~149–151 and
+  the allowlist sentence at ~167), so the matching edit is to extend those
+  same style-agnostic sentences to read "`totalCountPath` and
+  `hasMorePath`" — do not invent per-style table rows the doc never had;
+  (3) the allowlist sentence (~line 167) reading "plus
   `totalCountPath`" becomes "plus `totalCountPath` and `hasMorePath`"; (4)
   the path-syntax field list (~line 174) adds it alongside
   `cursorPath`/`totalCountPath`. Plus the `hasMorePath` section mirroring
@@ -266,10 +279,13 @@ and **boolean hasMorePath** to the kept union); pagination-style and
 auth-kind invariants re-asserted.
 
 **Doc-count sync (same commit):** update this package's `AGENTS.md` —
-the hardcoded guide count ("11 guides at time of writing — 13 after
-P0-3 Sprint 3") becomes "13 guides", and the co-located-axes list gains
-the two new entries. Plan-review finding: the plan's file list originally
-omitted AGENTS.md, leaving the count to drift.
+the hardcoded guide count in the api-guides section (the real string at
+`AGENTS.md` ~line 420 is `(11 guides, auth kinds \`none\` + \`static-key\`
+- \`oauth2\`)` — an earlier draft of this plan quoted a string that doesn't
+exist) becomes `13 guides`; the auth-kinds parenthetical is unchanged.
+Also update the co-located-axes list with the two new entries.
+Plan-review finding: the plan's file list originally omitted AGENTS.md,
+leaving the count to drift.
 
 **Placeholder removal (same commit):** delete the inline derived-id
 placeholder block from `__tests__/axis-units.test.ts`. Its pinning duty
@@ -316,7 +332,7 @@ tripwire pins both in one commit anyway.
 
 | Date | Decision |
 |------|----------|
-| — | Stop predicate pinned to plain truthiness with an `undefined` carve-out (`v !== undefined && !v` stops; `undefined` never stops): resolved-and-falsy `false`/`0`/`""` stop, `true`/`1`/non-empty strings advance, and the string `"false"` advances by design — no coercion layer (would be guesses about unseen servers, misfire on `"0"`-as-truthy APIs, and contradict the cursor precedent; the plan-review finding also caught that the draft's "No coercion ... `0` and `""` stop" was self-contradictory — truthiness *is* coercion, so the predicate is named for what it is). `undefined`-before-truthiness also discharges the P2 declared-but-missing-path finding: a typo'd `hasMorePath` continues per old semantics instead of silently truncating after page 1. XML verified: the repo's fast-xml-parser config converts lowercase `<has_more>false</has_more>` to real boolean `false`; only capitalized variants stay strings. |
+| — | Stop predicate pinned to plain truthiness with an `undefined` carve-out (`v !== undefined && !v` stops; `undefined` never stops): resolved-and-falsy `false`/`0`/`""` stop, `true`/`1`/non-empty strings advance, and the string `"false"` advances by design — no coercion layer (would be guesses about unseen servers, misfire on `"0"`-as-truthy APIs, and contradict the cursor precedent; the plan-review finding also caught that the draft's "No coercion ... `0` and `""` stop" was self-contradictory — truthiness *is* coercion, so the predicate is named for what it is). `undefined`-before-truthiness also discharges the P2 declared-but-missing-path finding: a typo'd `hasMorePath` continues per old semantics instead of silently truncating after page 1 — the carve-out is deliberately fail-open toward bounded annoyance (ceiling ⚠), never toward silent truncation; it also covers an API that omits the flag on the final page (documented in the authoring.md touchpoints). XML: the repo's fast-xml-parser config is *believed* to convert lowercase `<has_more>false</has_more>` to real boolean `false` (not verifiable from this checkout) — Sprint 1's XML pin test is the verification; only capitalized variants stay strings either way. Plan review (code-verified): insertion point, ceiling/empty-page/`!gatherAll` ordering, tripwire mechanics, and axis/guide counts all confirmed against `helpers.ts:955–971`, `parse-api-guide.test.ts`, and `axis-coverage.test.ts`. |
 | — | Axis-model question resolved up front: iNaturalist cannot carry the boolean-exhaustion axis (no boolean flag in its real payloads — pinning `hasMorePath` on it would be ungrounded); Stripe is the model for that half, per the backlog's own target recipe. Two-fixture split mirrors the frost/wikidata precedent (axes live on different providers in the real world). Stripe fixture ships `auth.kind: none` (auth axes already carried by github/twitch fixtures; grounding, not realism, is the fixture's job). |
 | — | Sprint 3 upgraded from optional/research-gated to a committed Stripe recipe: the no-auth boolean-exhaustion search was the only reason it was optional, but caritas recipes are routinely authenticated (github is static-key), and Stripe's `has_more` + `starting_after` pagination is exactly the P0-3 target recipe — the live proof of both new halves in one guide. Read-only enforced by Stripe restricted-key scopes server-side; scope discipline: common list endpoints only, not the long tail. |
 | — | Sprint order corrected to recipe-before-fixture (plan review): the initial draft put the synthetic fixtures before the live Stripe recipe, breaking the established "fixture derived from the chosen real recipe, not invented in parallel" ordering. Recipe-first grounds the stripe fixture in observed exhaustion facts (filtered-query `has_more` behavior, empty-page shape) with zero churn; the inat fixture is already recipe-grounded, and the tripwire pins both in one commit regardless. Only hard ordering: Sprint 1 before the recipe (parser allowlist). |
