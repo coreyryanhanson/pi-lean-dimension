@@ -238,20 +238,88 @@ export function normalizeDateParam(
 }
 
 /**
+ * Tokenize a JSON path into key/index segments in a single pass.
+ *
+ * - Dot segments split on `.` as before (unquoted legacy paths parse
+ *   identically to the old regex-rewrite tokenizer).
+ * - Numeric brackets `[3]` become index segments.
+ * - Quoted brackets `['@odata.nextLink']` / `["@odata.nextLink"]` become
+ *   ATOMIC key segments — the dot inside is part of the key name, not a
+ *   separator. The old rewrite turned the quoted segment into `.nextLink`
+ *   and silently missed the literal key.
+ *
+ * Syntax limits (documented, not handled): a quoted segment's content may
+ * not contain `]` or a quote character — either ends the capture. So
+ * `['a]b']` does NOT resolve (it accidentally resolved under the legacy
+ * regex; a miss is the acceptable outcome for a pathological key).
+ *
+ * Returns null for a malformed path (unterminated bracket, non-numeric
+ * unquoted bracket) — the caller resolves that to `undefined`, never a
+ * silent wrong match.
+ */
+function tokenizeJsonPath(path: string): string[] | null {
+	const s = path.replace(/^\$\.?/, "");
+	const parts: string[] = [];
+	let buf = "";
+	let i = 0;
+	const flush = () => {
+		if (buf.length > 0) parts.push(buf);
+		buf = "";
+	};
+	while (i < s.length) {
+		const ch = s[i]!;
+		if (ch === ".") {
+			flush();
+			i++;
+		} else if (ch === "[") {
+			flush();
+			i++;
+			const q = s[i];
+			if (q === "'" || q === '"') {
+				// Quoted segment: atomic key, dots included. Content ends at the
+				// closing quote (which must be followed by `]`); `]` or a quote
+				// inside the content is a syntax limit → malformed.
+				i++;
+				let content = "";
+				while (i < s.length && s[i] !== q && s[i] !== "]") {
+					content += s[i];
+					i++;
+				}
+				if (i >= s.length || s[i] !== q || s[i + 1] !== "]") return null;
+				parts.push(content);
+				i += 2;
+			} else {
+				// Unquoted bracket: numeric index only (`[3]`).
+				let digits = "";
+				while (i < s.length && s[i]! >= "0" && s[i]! <= "9") {
+					digits += s[i];
+					i++;
+				}
+				if (digits.length === 0 || s[i] !== "]") return null;
+				parts.push(digits);
+				i++;
+			}
+		} else {
+			buf += ch;
+			i++;
+		}
+	}
+	flush();
+	return parts;
+}
+
+/**
  * Resolve a simple dot-delimited JSON path against an object.
- * Supports `data.items`, `resultados[0].campo`, `$.items` prefix.
+ * Supports `data.items`, `resultados[0].campo`, `$.items` prefix, and
+ * quoted-bracket atomic keys for dot-containing names (`['@odata.nextLink']`).
  *
  * Returns `unknown` by design — the value at an arbitrary JSON path has no
  * named domain type until the caller knows the path they asked for.
  */
 // pi-lens-ignore: ast-grep:no-unknown-returns
 export function resolveJsonPath(obj: unknown, path: string): unknown {
-	// Normalise: strip leading $ or $., convert bracket notation.
-	const normalised = path
-		.replace(/^\$\.?/, "")
-		.replace(/\[['"](.*?)['"]\]/g, ".$1")
-		.replace(/\[(\d+)\]/g, ".$1");
-	const parts = normalised.split(".").filter((p) => p.length > 0);
+	const parts = tokenizeJsonPath(path);
+	if (parts === null) return undefined; // malformed path → miss, never a wrong match
 	if (parts.length === 0) return obj;
 
 	let current: unknown = obj;
@@ -959,13 +1027,20 @@ function advancePagination(
 	}
 
 	if (style === "cursor") {
-		const next = resolveJsonPath(data, cfg.cursorPath!);
+		// Numeric cursors coerce to strings (tokenBag-style) BEFORE the
+		// type/falsy check — a numeric 0 must advance like string "0", not die
+		// at !next. nextLink stays string-strict (a numeric "next URL" is
+		// garbage); booleans/objects don't coerce.
+		const raw = resolveJsonPath(data, cfg.cursorPath!);
+		const next = typeof raw === "number" ? String(raw) : raw;
 		if (!next || typeof next !== "string") return null;
 		return { cursor: next };
 	}
 
 	if (style === "resumptionToken") {
-		const t = resolveJsonPath(data, cfg.tokenPath!);
+		// No !next guard here by design — "" and missing are exhaustion.
+		const raw = resolveJsonPath(data, cfg.tokenPath!);
+		const t = typeof raw === "number" ? String(raw) : raw; // coercion, before the check
 		if (typeof t !== "string" || t === "") return null;
 		return { token: t };
 	}
@@ -980,7 +1055,15 @@ function advancePagination(
 		for (const key of cfg.continuationParams ?? []) {
 			const v = resolveJsonPath(data, key);
 			if (v === undefined || v === null) continue;
-			const param = key.includes(".") ? key.split(".").pop()! : key;
+			// Wire param = last dot segment, with any quoted-bracket dress
+			// stripped UNCONDITIONALLY (before the dot check): a quoted
+			// non-dotted key like "['next']" (no dot → pop is a no-op) would
+			// otherwise wire the bracketed junk as the param name.
+			const param = key
+				.split(".")
+				.pop()!
+				.replace(/^\[['"]?/, "")
+				.replace(/['"]?\]$/, "");
 			collected[param] = String(v);
 		}
 		return Object.keys(collected).length > 0 ? { tokenBag: collected } : null;

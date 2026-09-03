@@ -169,6 +169,31 @@ e.g. a `itemPath` typo or a `cursorPath` on a `nextLink` op — is a parse
 error naming the offender and the style's valid keys, never a silent
 single-page at runtime.
 
+#### Path syntax (dot-splitting and the quoted-bracket escape hatch)
+
+Path fields (`itemsPath`, `nextLinkPath`, `cursorPath`, `tokenPath`,
+`totalCountPath`) are dot-delimited: `data.items`, `resultados[0].campo`, and
+numeric indexes (`items[2].id`). When the API's
+key itself contains a dot — OData's `@odata.nextLink` / `@iot.nextLink` /
+`@odata.count` family is the common case — the dot is part of the key name,
+not a separator. Address it with a quoted bracket segment, which is treated
+as one atomic key: `nextLinkPath: "['@odata.nextLink']"` (single or double
+quotes both work). The unquoted form `@odata.nextLink` splits at the dot and
+silently misses — a miss resolves to nothing and pagination terminates after
+page 1, so always quote these keys.
+
+Two syntax limits, by design: a quoted segment's content may not contain
+`]` or a quote character — either ends the segment, so `['a]b']` and
+`['a'b']` are malformed (a key containing `]` or a quote cannot be
+addressed; note the pre-atomic-tokenizer resolver accidentally resolved
+`['a]b']` as key `a]b` — that is no longer the case, it is a clean miss
+now). And the numeric-continuation caveat: `cursor` and `resumptionToken`
+paths coerce numeric values to strings, so an API that uses `0` as an
+**end marker** (legacy Twitter-style `next_cursor: 0`) walks to the
+`gatherAllMax` ceiling and surfaces the `⚠ Ceiling reached` warning for a
+complete list — against such APIs, don't use `cursorPath` for the
+end-marker field, or treat the ceiling signal as normal completion.
+
 `pagination` and `responseShape` are top-level defaults; an individual
 operation overrides them with its own block.
 

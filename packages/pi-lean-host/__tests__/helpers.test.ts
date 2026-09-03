@@ -528,6 +528,49 @@ describe("resolveJsonPath", () => {
 		const obj = { data: {} };
 		expect(resolveJsonPath(obj, "data.missing")).toBeUndefined();
 	});
+
+	it("resolves a quoted dot-containing key as atomic (OData nextLink)", () => {
+		const obj = { "@odata.nextLink": "https://api.test/page2" };
+		expect(resolveJsonPath(obj, "['@odata.nextLink']")).toBe(
+			"https://api.test/page2",
+		);
+	});
+
+	it("misses on the unquoted dot-containing key (no silent wrong match)", () => {
+		const obj = { "@odata.nextLink": "https://api.test/page2" };
+		// Unquoted dot-split looks for data at @odata.nextLink — undefined,
+		// never a wrong match against the literal key.
+		expect(resolveJsonPath(obj, "@odata.nextLink")).toBeUndefined();
+	});
+
+	it("parses unquoted legacy paths identically (regression)", () => {
+		const obj = {
+			data: { items: [{ id: 1 }, { id: 2 }] },
+			meta: { "key.with.dots": "found" },
+		};
+		expect(resolveJsonPath(obj, "data.items[0].id")).toBe(1);
+		expect(resolveJsonPath(obj, "$.data.items[1].id")).toBe(2);
+		expect(resolveJsonPath(obj, "data")).toEqual(obj.data);
+	});
+
+	it("resolves a double-quoted segment (quote-style parity)", () => {
+		const obj = { "@odata.nextLink": "https://api.test/page2" };
+		expect(resolveJsonPath(obj, '["@odata.nextLink"]')).toBe(
+			"https://api.test/page2",
+		);
+	});
+
+	it("mixes bracket index + quoted segment", () => {
+		const obj = { data: [{ "key.name": "value" }] };
+		expect(resolveJsonPath(obj, "data[0]['key.name']")).toBe("value");
+	});
+
+	it("treats a quoted segment containing a bracket as a miss (syntax limit)", () => {
+		const obj = { "a[3]": "literal" };
+		// Content is shielded from the numeric-index rewrite, but a `]` inside
+		// a quoted segment cannot match at all → malformed → miss.
+		expect(resolveJsonPath(obj, "['a[3]']")).toBeUndefined();
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════

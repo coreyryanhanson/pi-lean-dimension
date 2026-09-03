@@ -659,3 +659,339 @@ operations:
 		expect(obsValue!["@_value"]).toBe(0.9);
 	});
 });
+
+// ── Axis G — quoted dotted keys + numeric cursors ─────────────
+
+// Dot-containing JSON keys (`@odata.nextLink`, `@iot.nextLink`,
+// `@odata.count`) are literal key names, not path separators — they resolve
+// only via the quoted-bracket form `['…']` / `["…"]`. Numeric
+// continuation values coerce to strings in the cursor and resumptionToken
+// branches (nextLink stays string-strict). Both fix silent-truncation bugs
+// that reported an incomplete gather as complete.
+
+describe("framework axis G — quoted dotted keys + numeric cursors", () => {
+	async function parseGuide(yaml: string) {
+		const { parseApiGuide } = await import("../core/parse-api-guide.js");
+		const parsed = parseApiGuide(yaml);
+		if (!parsed.ok) throw new Error("guide failed to parse");
+		const guide = parsed.guide;
+		return { guide, op: guide.operations[0]! };
+	}
+
+	async function mockBody(body: string) {
+		const { fetchUrl } = await import("../core/transport.js");
+		vi.mocked(fetchUrl).mockResolvedValue({
+			status: 200,
+			headers: {},
+			body,
+			cached: false,
+		});
+	}
+
+	it("quoted nextLinkPath ['@odata.nextLink'] walks past page 1", async () => {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { paginate } = await import("../core/helpers.js");
+
+		const page1 = JSON.stringify({
+			value: [{ id: 1 }, { id: 2 }],
+			"@odata.count": 42,
+			"@odata.nextLink": "https://api.test/page2",
+		});
+		const page2 = JSON.stringify({ value: [{ id: 3 }] });
+		vi
+			.mocked(fetchUrl)
+			.mockResolvedValueOnce({
+				status: 200,
+				headers: {},
+				body: page1,
+				cached: false,
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				headers: {},
+				body: page2,
+				cached: false,
+			});
+
+		const { guide, op } = await parseGuide(`---
+kind: api
+domains: [api.test]
+apiHost: https://api.test
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: odataList
+    via: paginate
+    path: /things
+    pagination:
+      style: nextLink
+      itemsPath: value
+      nextLinkPath: "['@odata.nextLink']"
+      totalCountPath: "['@odata.count']"
+---
+`);
+		const result = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+			skipSsrfGuard: true,
+		});
+
+		expect(result.pages).toBe(2);
+		expect(result.items).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+		// OData exposes totals via the same dotted-key family.
+		expect(result.serverTotal).toBe(42);
+	});
+
+	it("numeric cursors advance, including numeric 0", async () => {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { paginate } = await import("../core/helpers.js");
+
+		const body = (cursor: number | null) =>
+			JSON.stringify({ items: [{ id: cursor }], next_cursor: cursor });
+		vi
+			.mocked(fetchUrl)
+			.mockResolvedValueOnce({
+				status: 200,
+				headers: {},
+				body: body(5),
+				cached: false,
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				headers: {},
+				body: body(0),
+				cached: false,
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				headers: {},
+				body: JSON.stringify({ items: [{ id: -1 }], next_cursor: null }),
+				cached: false,
+			});
+
+		const { guide, op } = await parseGuide(`---
+kind: api
+domains: [api.test]
+apiHost: https://api.test
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: cursorList
+    via: paginate
+    path: /things
+    pagination:
+      style: cursor
+      itemsPath: items
+      cursorParam: cursor
+      cursorPath: next_cursor
+---
+`);
+		const result = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+			skipSsrfGuard: true,
+		});
+
+		expect(result.pages).toBe(3);
+		// Numeric 5 and numeric 0 both landed on the wire as the next cursor.
+		expect(result.urls[1]).toContain("cursor=5");
+		expect(result.urls[2]).toContain("cursor=0");
+	});
+
+	it("empty-string and missing cursors still terminate", async () => {
+		const { paginate } = await import("../core/helpers.js");
+
+		const { guide, op } = await parseGuide(`---
+kind: api
+domains: [api.test]
+apiHost: https://api.test
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: cursorList
+    via: paginate
+    path: /things
+    pagination:
+      style: cursor
+      itemsPath: items
+      cursorParam: cursor
+      cursorPath: next_cursor
+---
+`);
+
+		await mockBody(JSON.stringify({ items: [{ id: 1 }], next_cursor: "" }));
+		const empty = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+		});
+		expect(empty.pages).toBe(1);
+
+		await mockBody(JSON.stringify({ items: [{ id: 1 }] }));
+		const missing = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+		});
+		expect(missing.pages).toBe(1);
+	});
+
+	it("numeric nextLink terminates (nextLink stays string-strict)", async () => {
+		const { paginate } = await import("../core/helpers.js");
+
+		await mockBody(JSON.stringify({ value: [{ id: 1 }], "@odata.nextLink": 42 }));
+		const { guide, op } = await parseGuide(`---
+kind: api
+domains: [api.test]
+apiHost: https://api.test
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: odataList
+    via: paginate
+    path: /things
+    pagination:
+      style: nextLink
+      itemsPath: value
+      nextLinkPath: "['@odata.nextLink']"
+---
+`);
+		const result = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+		});
+		// A numeric "next URL" is garbage — stop, don't send a bogus request.
+		expect(result.pages).toBe(1);
+	});
+
+	it("constant numeric cursor terminates via the gatherAllMax ceiling", async () => {
+		const { paginate } = await import("../core/helpers.js");
+
+		// Every page returns the same numeric cursor — the coercion leans on
+		// the ceiling as its safety net against an endless walk.
+		await mockBody(
+			JSON.stringify({
+				items: [{ id: 1 }, { id: 2 }, { id: 3 }],
+				next_cursor: 7,
+			}),
+		);
+		const { guide, op } = await parseGuide(`---
+kind: api
+domains: [api.test]
+apiHost: https://api.test
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: cursorList
+    via: paginate
+    path: /things
+    pagination:
+      style: cursor
+      itemsPath: items
+      cursorParam: cursor
+      cursorPath: next_cursor
+---
+`);
+		const result = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 6,
+		});
+		expect(result.ceilingHit).toBe(true);
+	});
+
+	it("numeric resumptionToken advances (resumptionToken branch)", async () => {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { paginate } = await import("../core/helpers.js");
+
+		vi
+			.mocked(fetchUrl)
+			.mockResolvedValueOnce({
+				status: 200,
+				headers: {},
+				body: JSON.stringify({ items: [{ id: 1 }], resumptionToken: 42 }),
+				cached: false,
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				headers: {},
+				body: JSON.stringify({ items: [{ id: 2 }], resumptionToken: null }),
+				cached: false,
+			});
+
+		const { guide, op } = await parseGuide(`---
+kind: api
+domains: [api.test]
+apiHost: https://api.test
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: tokenList
+    via: paginate
+    path: /things
+    pagination:
+      style: resumptionToken
+      itemsPath: items
+      tokenParam: resumptionToken
+      tokenPath: resumptionToken
+---
+`);
+		const result = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+		});
+		expect(result.pages).toBe(2);
+		expect(result.urls[1]).toContain("resumptionToken=42");
+	});
+
+	it("tokenBag strips quoted-bracket dress from the wire param name", async () => {
+		const { paginate } = await import("../core/helpers.js");
+
+		await mockBody(
+			JSON.stringify({
+				items: [{ id: 1 }],
+				// The quoted-bracket form targets a literal dot-containing KEY.
+				"continue.rccontinue": "abc",
+				next: "tok",
+			}),
+		);
+		const { guide, op } = await parseGuide(`---
+kind: api
+domains: [api.test]
+apiHost: https://api.test
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: bagList
+    via: paginate
+    path: /things
+    pagination:
+      style: tokenBag
+      itemsPath: items
+      continuationParams:
+        - "['continue.rccontinue']"
+        - "['next']"
+---
+`);
+		const result = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+		});
+		// Both quoted keys resolve; the wire params are the bare
+		// names, not the bracketed junk.
+		expect(result.urls[1]).toContain("rccontinue=abc");
+		expect(result.urls[1]).toContain("next=tok");
+		expect(result.urls[1]).not.toContain("%5B");
+	});
+});

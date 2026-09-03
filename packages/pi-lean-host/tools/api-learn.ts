@@ -162,6 +162,10 @@ pagination:
   pageSizeParam: limit
   pageSize: 50
   itemsPath: results
+  # Path fields are dot-delimited. If the API's key itself contains a dot
+  # (OData's '@odata.nextLink' / '@iot.count' family), quote it as an atomic
+  # key or the dot splits the path and pagination silently misses:
+  #   nextLinkPath: "['@odata.nextLink']"   # single or double quotes
 
 responseShape:
   format: json
