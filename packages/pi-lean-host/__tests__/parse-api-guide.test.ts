@@ -1628,6 +1628,7 @@ describe("parseApiGuide — pagination key allowlist", () => {
 			"pageSize",
 			"base",
 			"totalCountPath",
+			"hasMorePath",
 		],
 		page: [
 			"style",
@@ -1637,8 +1638,15 @@ describe("parseApiGuide — pagination key allowlist", () => {
 			"pageSize",
 			"base",
 			"totalCountPath",
+			"hasMorePath",
 		],
-		nextLink: ["style", "itemsPath", "nextLinkPath", "totalCountPath"],
+		nextLink: [
+			"style",
+			"itemsPath",
+			"nextLinkPath",
+			"totalCountPath",
+			"hasMorePath",
+		],
 		cursor: [
 			"style",
 			"itemsPath",
@@ -1647,6 +1655,7 @@ describe("parseApiGuide — pagination key allowlist", () => {
 			"pageSizeParam",
 			"pageSize",
 			"totalCountPath",
+			"hasMorePath",
 		],
 		resumptionToken: [
 			"style",
@@ -1654,8 +1663,15 @@ describe("parseApiGuide — pagination key allowlist", () => {
 			"tokenParam",
 			"tokenPath",
 			"totalCountPath",
+			"hasMorePath",
 		],
-		tokenBag: ["style", "itemsPath", "continuationParams", "totalCountPath"],
+		tokenBag: [
+			"style",
+			"itemsPath",
+			"continuationParams",
+			"totalCountPath",
+			"hasMorePath",
+		],
 	};
 	const STYLES = Object.keys(EXPECTED_KEYS) as PaginationStyle[];
 
@@ -1676,6 +1692,7 @@ describe("parseApiGuide — pagination key allowlist", () => {
 		},
 		continuationParams: { yaml: "[a, b]", parsed: ["a", "b"] },
 		totalCountPath: { yaml: "total", parsed: "total" },
+		hasMorePath: { yaml: "has_more", parsed: "has_more" },
 	};
 
 	function paginationYaml(style: PaginationStyle, indent: string): string {

@@ -43,7 +43,10 @@
   `charset` fallback (header charset always wins). Six pagination styles
   cover the recipe-library axes: `offset-limit`, `page`, `nextLink`,
   `cursor`, `resumptionToken`, `tokenBag`, with optional
-  `totalCountPath` for a server-reported total. Path expressions
+  `totalCountPath` for a server-reported total and optional
+  `hasMorePath` for a boolean done-flag (Stripe's `has_more` — a
+  resolved-falsy value stops a `gatherAll` walk cleanly; absent/typo'd
+  path never stops, string `"false"` advances by design). Path expressions
   resolve dot-containing keys via quoted bracket segments
   (`['@odata.nextLink']` — the OData v4 shape), negative array indexes
   (`results[-1].id` — the derived-id cursor shape), and numeric

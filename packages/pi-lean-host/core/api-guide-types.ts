@@ -229,6 +229,16 @@ export interface PaginationConfig {
 	 * `completeListSizePath` (removed pre-release, not aliased).
 	 */
 	totalCountPath?: string;
+	/**
+	 * Style-agnostic JSON path to a boolean/numeric "more pages" flag
+	 * (Stripe's `has_more` being the canonical shape). Resolved per page after
+	 * items are collected: a RESOLVED falsy value (`false`/`0`/`""`/`null`)
+	 * stops the walk cleanly; `undefined` (field absent, or the path missed)
+	 * never stops — pre-existing exhaustion semantics apply. Plain truthiness,
+	 * no string coercion: `"false"` advances (documented contract). Absent →
+	 * semantics identical to a guide without the field.
+	 */
+	hasMorePath?: string;
 	/** tokenBag: response keys read from each page and merged into the next request's query params. */
 	continuationParams?: string[];
 }

@@ -967,6 +967,17 @@ export async function paginate(
 			break;
 		}
 
+		// hasMorePath done-flag (style-agnostic, e.g. Stripe's `has_more`).
+		// Sits after the ceiling checks so ceilingHit still wins when both fire
+		// on the same page. The undefined carve-out is fail-open: a missing or
+		// typo'd path never stops the walk (pre-existing exhaustion semantics
+		// apply); a RESOLVED falsy value stops cleanly. Plain truthiness, no
+		// coercion — the string "false" advances by design.
+		if (pagCfg.hasMorePath !== undefined) {
+			const v = resolveJsonPath(data, pagCfg.hasMorePath);
+			if (v !== undefined && !v) break;
+		}
+
 		// Determine next page.
 		const advanced = advancePagination(
 			style,

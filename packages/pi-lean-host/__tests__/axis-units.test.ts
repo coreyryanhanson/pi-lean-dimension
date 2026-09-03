@@ -1065,3 +1065,242 @@ operations:
 		expect(result.urls[2]).toContain("id_above=4");
 	});
 });
+
+// ── Axis H — hasMorePath boolean exhaustion (style-agnostic done-flag) ─
+
+// Stripe-style envelopes carry no cursor-field exhaustion: `{ data: [...],
+// has_more: bool }` where the next cursor is DERIVED from the last item.
+// `hasMorePath` is the stop-condition half — resolved-falsy stops cleanly,
+// `undefined` never stops (fail-open toward the ceiling ⚠, never silent
+// truncation), plain truthiness with no coercion (`"false"` advances).
+describe("framework axis H — hasMorePath boolean exhaustion", () => {
+	async function parseGuide(yaml: string) {
+		const { parseApiGuide } = await import("../core/parse-api-guide.js");
+		const parsed = parseApiGuide(yaml);
+		if (!parsed.ok) throw new Error("guide failed to parse");
+		const guide = parsed.guide;
+		return { guide, op: guide.operations[0]! };
+	}
+
+	function stripeBody(ids: string[], hasMore: unknown): string {
+		return JSON.stringify({
+			data: ids.map((id) => ({ id })),
+			has_more: hasMore,
+		});
+	}
+
+	async function mockPages(pages: string[]) {
+		const { fetchUrl } = await import("../core/transport.js");
+		let mock = vi.mocked(fetchUrl);
+		for (const body of pages) {
+			mock = mock.mockResolvedValueOnce({
+				status: 200,
+				headers: {},
+				body,
+				cached: false,
+			});
+		}
+	}
+
+	// The plan's target recipe, verbatim — exercises the derived-id cursor
+	// (data[-1].id) and the new hasMorePath stop in one walk.
+	const STRIPE_GUIDE = `---
+kind: api
+domains: [api.test]
+apiHost: https://api.test
+auth: { kind: none }
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: listCharges
+    via: paginate
+    path: /v1/charges
+    pagination:
+      style: cursor
+      itemsPath: data
+      cursorParam: starting_after
+      cursorPath: "data[-1].id"
+      hasMorePath: has_more
+---
+`;
+
+	it("has_more: false stops cleanly (no ceilingHit); has_more: true advances", async () => {
+		const { paginate } = await import("../core/helpers.js");
+		const { guide, op } = await parseGuide(STRIPE_GUIDE);
+
+		await mockPages([
+			stripeBody(["ch_1", "ch_2"], true),
+			stripeBody(["ch_3"], false),
+		]);
+		const result = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+			skipSsrfGuard: true,
+		});
+		expect(result.pages).toBe(2);
+		expect(result.items).toEqual([
+			{ id: "ch_1" },
+			{ id: "ch_2" },
+			{ id: "ch_3" },
+		]);
+		expect(result.ceilingHit).toBe(false);
+		expect(result.urls[1]).toContain("starting_after=ch_2");
+	});
+
+	it("explicit null at the path stops (same truthiness class as false)", async () => {
+		const { paginate } = await import("../core/helpers.js");
+		const { guide, op } = await parseGuide(STRIPE_GUIDE);
+
+		await mockPages([stripeBody(["ch_1"], null)]);
+		const result = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+			skipSsrfGuard: true,
+		});
+		expect(result.pages).toBe(1);
+		expect(result.items).toEqual([{ id: "ch_1" }]);
+		expect(result.ceilingHit).toBe(false);
+	});
+
+	it("numeric 0 and empty string stop (truthiness contract)", async () => {
+		const { paginate } = await import("../core/helpers.js");
+		for (const falsy of [0, ""]) {
+			const { guide, op } = await parseGuide(STRIPE_GUIDE);
+			await mockPages([stripeBody(["ch_1"], falsy)]);
+			const result = await paginate("https://api.test", op, {}, guide, {
+				gatherAll: true,
+				gatherAllMax: 10,
+				skipSsrfGuard: true,
+			});
+			expect(result.pages, `has_more=${JSON.stringify(falsy)}`).toBe(1);
+			expect(result.ceilingHit).toBe(false);
+		}
+	});
+
+	it('the string "false" advances — no coercion, truthiness by design', async () => {
+		const { paginate } = await import("../core/helpers.js");
+		const { guide, op } = await parseGuide(STRIPE_GUIDE);
+
+		// "false" is truthy in JS → advances; the walk then ends on the
+		// empty-page rule (never via the flag).
+		await mockPages([stripeBody(["ch_1"], "false"), stripeBody([], "false")]);
+		const result = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+			skipSsrfGuard: true,
+		});
+		expect(result.pages).toBe(2);
+	});
+
+	it("declared-but-missing path (resolves undefined every page) never truncates the walk", async () => {
+		const { paginate } = await import("../core/helpers.js");
+		// Typo'd path → undefined carve-out → old semantics apply: the walk
+		// continues past page 1 (fail-open toward bounded annoyance) and ends
+		// on the pre-existing empty-page rule.
+		const { guide, op } = await parseGuide(
+			STRIPE_GUIDE.replace("hasMorePath: has_more", 'hasMorePath: "nope.missing"'),
+		);
+
+		await mockPages([
+			stripeBody(["ch_1"], true),
+			stripeBody(["ch_2"], true),
+			stripeBody([], true),
+		]);
+		const result = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+			skipSsrfGuard: true,
+		});
+		expect(result.pages).toBe(3);
+		expect(result.items).toEqual([{ id: "ch_1" }, { id: "ch_2" }]);
+		expect(result.ceilingHit).toBe(false);
+	});
+
+	it("ceiling and has_more: false on the same page → ceilingHit wins", async () => {
+		const { paginate } = await import("../core/helpers.js");
+		const { guide, op } = await parseGuide(STRIPE_GUIDE);
+
+		// Exactly fills the ceiling AND the flag says done — the run was
+		// genuinely cut short, so ceilingHit must win over the clean stop.
+		await mockPages([stripeBody(["ch_1", "ch_2"], false)]);
+		const capped = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 2,
+			skipSsrfGuard: true,
+		});
+		expect(capped.pages).toBe(1);
+		expect(capped.ceilingHit).toBe(true);
+
+		// Same body, roomier ceiling → the flag's clean stop.
+		const { guide: g2, op: op2 } = await parseGuide(STRIPE_GUIDE);
+		await mockPages([stripeBody(["ch_1", "ch_2"], false)]);
+		const clean = await paginate("https://api.test", op2, {}, g2, {
+			gatherAll: true,
+			gatherAllMax: 10,
+			skipSsrfGuard: true,
+		});
+		expect(clean.pages).toBe(1);
+		expect(clean.ceilingHit).toBe(false);
+	});
+
+	it("empty final page: the pre-existing empty-page break wins — the flag is never read on an itemless page", async () => {
+		const { fetchUrl } = await import("../core/transport.js");
+		const { paginate } = await import("../core/helpers.js");
+		const { guide, op } = await parseGuide(STRIPE_GUIDE);
+
+		// has_more: true on the empty page — if the check ran there it would
+		// advance to a page 3; the empty-page rule must break first. (Call-count
+		// delta: the transport mock is module-level and shared across tests.)
+		const callsBefore = vi.mocked(fetchUrl).mock.calls.length;
+		await mockPages([stripeBody(["ch_1"], true), stripeBody([], true)]);
+		const result = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+			skipSsrfGuard: true,
+		});
+		expect(result.pages).toBe(2);
+		expect(vi.mocked(fetchUrl).mock.calls.length - callsBefore).toBe(2);
+		expect(result.ceilingHit).toBe(false);
+	});
+
+	it("XML pin: lowercase <has_more>false</has_more> parses to real boolean false and stops", async () => {
+		const { paginate } = await import("../core/helpers.js");
+		const { guide, op } = await parseGuide(`---
+kind: api
+domains: [api.test]
+apiHost: https://api.test
+auth: { kind: none }
+responseShape:
+  format: xml
+  charset: utf-8
+operations:
+  - name: listThings
+    via: paginate
+    path: /things
+    accept: xml
+    pagination:
+      style: page
+      itemsPath: resp.items.item
+      pageParam: page
+      pageSizeParam: limit
+      hasMorePath: resp.has_more
+---
+`);
+
+		// Pins the repo's fast-xml-parser config: lowercase tag text converts
+		// to real booleans (capitalized variants stay strings — that's the
+		// documented bounded-annoyance corner, not a bug).
+		await mockPages([
+			"<resp><items><item><id>1</id></item><item><id>2</id></item></items><has_more>true</has_more></resp>",
+			"<resp><items><item><id>3</id></item></items><has_more>false</has_more></resp>",
+		]);
+		const result = await paginate("https://api.test", op, {}, guide, {
+			gatherAll: true,
+			gatherAllMax: 10,
+			skipSsrfGuard: true,
+		});
+		expect(result.pages).toBe(2);
+		expect(result.ceilingHit).toBe(false);
+	});
+});
