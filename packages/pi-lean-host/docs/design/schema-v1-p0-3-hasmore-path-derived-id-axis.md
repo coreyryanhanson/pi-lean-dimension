@@ -173,8 +173,15 @@ recipe) and `stripe` (boolean exhaustion + the full target recipe).
   `KEY_VALUES[k].yaml` — a table row without one crashes the fixture on the
   non-null assert) in the same commit — this file is load-bearing for
   Sprint 1, not optional.
-  - `docs/authoring.md` — `hasMorePath` section mirroring the `totalCountPath`
-  prose: the Stripe shape, the always-present-cursor + boolean done-flag
+  - `docs/authoring.md` — **four touchpoints, all in the same commit** (not
+  just a new section): (1) the pagination field table (~line 113) gains a
+  `hasMorePath` row; (2) the per-style key lists (~lines 146–159) gain it
+  in all six styles; (3) the allowlist sentence (~line 167) reading "plus
+  `totalCountPath`" becomes "plus `totalCountPath` and `hasMorePath`"; (4)
+  the path-syntax field list (~line 174) adds it alongside
+  `cursorPath`/`totalCountPath`. Plus the `hasMorePath` section mirroring
+  the `totalCountPath` prose: the Stripe shape, the always-present-cursor +
+  boolean done-flag
   family it rescues from the ceiling false-alarm (Solr `cursorMark` proper
   sends no boolean flag — its exhaustion is `numFound` vs. docs-fetched and
   is the `stopWhen` upgrade path, not this field; don't author Solr-shaped
