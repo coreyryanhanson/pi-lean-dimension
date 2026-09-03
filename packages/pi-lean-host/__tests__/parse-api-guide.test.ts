@@ -1500,6 +1500,72 @@ body
 		expect(err.field).toBe("operations[0].pagination.totalCountPath");
 	});
 
+	// B2 — hasMorePath mirrors totalCountPath: parses for any style, absent
+	// stays unset, empty rejected.
+	it("parses hasMorePath for an offset-limit pagination (any style)", () => {
+		const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: list
+    via: paginate
+    path: /search
+    pagination:
+      style: offset-limit
+      pageParam: offset
+      pageSizeParam: limit
+      itemsPath: results
+      hasMorePath: has_more
+---
+body
+`;
+		const guide = expectOk(raw);
+		const p = guide.operations[0]!.pagination!;
+		expect(p.hasMorePath).toBe("has_more");
+	});
+
+	it("parses hasMorePath without setting it when absent", () => {
+		const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: list
+    via: paginate
+    path: /search
+    pagination:
+      style: offset-limit
+      pageParam: offset
+      pageSizeParam: limit
+      itemsPath: results
+---
+body
+`;
+		const guide = expectOk(raw);
+		const p = guide.operations[0]!.pagination!;
+		expect(p.hasMorePath).toBeUndefined();
+	});
+
+	it("rejects an empty hasMorePath", () => {
+		const raw = `---
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: list
+    via: paginate
+    path: /search
+    pagination:
+      style: offset-limit
+      pageParam: offset
+      pageSizeParam: limit
+      itemsPath: results
+      hasMorePath: ""
+---
+body
+`;
+		const err = expectErr(raw);
+		expect(err.field).toBe("operations[0].pagination.hasMorePath");
+	});
+
 	it("resumptionToken missing tokenParam → ParseError", () => {
 		const raw = `---
 domains: [example.com]

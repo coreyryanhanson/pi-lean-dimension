@@ -136,9 +136,10 @@ routes each operation through the one its `via` names:
   (JSON/XML), and auth injection for auth-bearing guides (static-key
   store-backed `secretRefs` / `secretQueryRefs`; `oauth2` Bearer tokens).
 - **`paginate`** — wraps a list operation. The guide declares the style; the
-  helper follows it. Returns `{items, next?, serverTotal?}` so the agent can
-  stop or continue, plus a `gatherAll` flag for the "just get me everything"
-  case with a hard ceiling.
+  helper follows it. Returns `{items, totalFetched, serverTotal?, ceilingHit,
+  urls, pages, params}` (plus `failedItems?` when per-item transforms fail)
+  so the agent can stop or continue, plus a `gatherAll` flag for the "just
+  get me everything" case with a hard ceiling.
 - **`parseResponse`** — XML→JSON, declared per-endpoint (charset decoding happens in the transport).
   Agents mangle encodings constantly; fix it once here.
 

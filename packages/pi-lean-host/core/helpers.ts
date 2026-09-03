@@ -900,12 +900,12 @@ export async function paginate(
 		// Parse.
 		const data = parseResponse(result.body, shape);
 
-		// Extract the server's reported total from the first page — before the
-		// empty-page break below, so a zero-result page that still carries the
-		// count (e.g. `total_count: 0`) surfaces it rather than losing it to the
-		// early `break`. Accepts a number directly or a numeric string (coerced
-		// via Number()); any other value (or an unresolved path) leaves it
-		// undefined for that page and it stays unset for the whole run.
+		// Extract the server's reported total from the first page that resolves
+		// one — before the empty-page break below, so a zero-result page that
+		// still carries the count (e.g. `total_count: 0`) surfaces it rather
+		// than losing it to the early `break`. Accepts a number directly or a
+		// numeric string (coerced via Number()); a page that misses the path
+		// leaves it undefined and later pages can still supply it.
 		if (serverTotal === undefined && pagCfg.totalCountPath) {
 			const raw = resolveJsonPath(data, pagCfg.totalCountPath);
 			if (typeof raw === "number" && Number.isFinite(raw)) {

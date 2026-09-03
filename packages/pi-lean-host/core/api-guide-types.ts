@@ -224,8 +224,9 @@ export interface PaginationConfig {
 	/**
 	 * Style-agnostic JSON path to the server's reported total count, surfaced
 	 * as `serverTotal` in PaginateResult / the api-fetch footer. Guides whose
-	 * APIs expose a total opt in; guides that don't simply omit it. The count
-	 * is read from the first page only. Supersedes the old resumptionToken-only
+	 * APIs expose a total opt in; guides that don't simply omit it. The first
+	 * page that resolves a number wins — earlier pages that miss don't lock it
+	 * unset, later pages can still supply it. Supersedes the old resumptionToken-only
 	 * `completeListSizePath` (removed pre-release, not aliased).
 	 */
 	totalCountPath?: string;
