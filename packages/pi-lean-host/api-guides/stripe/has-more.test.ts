@@ -10,7 +10,15 @@
  * leaner.
  */
 
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
+import {
+	describe,
+	it,
+	expect,
+	vi,
+	beforeAll,
+	afterAll,
+	beforeEach,
+} from "vitest";
 import {
 	mkdtempSync,
 	mkdirSync,
