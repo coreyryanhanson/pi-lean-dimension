@@ -38,33 +38,7 @@
 
 # P0 — Act before release
 
-## P0-1. Dot-containing JSON keys break every path field (Microsoft Graph/OData v4 inexpressible)
-
-- **Pattern:** OData v4 (Microsoft Graph, SharePoint REST, Dynamics 365, SAP
-  OData) paginate via a literal top-level key `@odata.nextLink` and expose
-  totals via `@odata.count`
-  (`{"value":[…],"@odata.nextLink":"https://graph.microsoft.com/v1.0/users?$skiptoken=…"}`).
-  Evidence: <https://learn.microsoft.com/en-us/graph/paging>
-- **Gap:** `resolveJsonPath` (helpers.ts) normalizes `[n]` → `.n`, then
-  `split(".")`. `@odata.nextLink` → parts `["@odata","nextLink"]` → `undefined`
-  → `advancePagination` returns null → **gatherAll silently terminates after
-  page 1 with no error**. The existing bracket-quote regex makes it worse:
-  `['@odata.nextLink']` is rewritten to `.@odata.nextLink` then dot-split — the
-  apparent escape hatch degrades into the same bug. Hits `itemsPath`,
-  `nextLinkPath`, `cursorPath`, `tokenPath`, `totalCountPath` for any dotted
-  key. No workaround: local helpers are pre-call params-only; `transform` runs
-  post-parse and never sees pagination advance.
-- **Fix (behavior, no YAML change, no bump):** make quoted bracket segments
-  atomic keys in `resolveJsonPath` (capture `['…']` segments, dots included,
-  before dot-splitting). Unquoted legacy paths parse identically. Document the
-  escape in the authoring docs so caritas Graph recipes are written correctly
-  the first time.
-- **Tests:** `['@odata.nextLink']` resolves; unquoted `@odata.nextLink` keeps
-  failing loudly (no silent partial match).
-- **Grouping note:** land with P2-1 (numeric cursor coercion) — same function,
-  same test file.
-
-## P0-2. `secretPathRefs` — token-in-path APIs leak secrets today
+## P0-1. `secretPathRefs` — token-in-path APIs leak secrets today
 
 - **Pattern:** Telegram Bot API keys *every* method through the URL path:
   `https://api.telegram.org/bot<token>/getUpdates` — read-only GETs included.
@@ -91,58 +65,6 @@
   leaks tokens.
 - **Tests:** parse collision guard; executor fills from store; URL redaction;
   secret scrub on error bodies.
-
-## P0-3. Stripe-style exhaustion — negative-index cursors + `hasMorePath`
-
-**Conclusion from the review: fix now (capability gap + silent-failure footgun),
-even though strictly additive-later.** Stripe has a canonical spec, a testable
-shape, and a silent-truncation footgun; HMAC (P1-1) has neither, which is why
-these two "inexpressible" findings get opposite treatments.
-
-- **Pattern:** Stripe list endpoints return `{ data: [...], has_more: bool }`
-  with **no cursor field anywhere in the envelope**. Documented manual loop:
-  "If the value is `true`, get the ID of the last object returned, and make a
-  new API call with `starting_after` set."
-  Evidence: <https://docs.stripe.com/pagination> (fetched). Same family: Discord
-  message pagination (`after=<last message snowflake>`), SQL keyset/seek
-  pagination. Related exhaustion variant: Apache Solr `cursorMark` — every
-  response carries `nextCursorMark` and exhaustion is signaled by it *equaling
-  the cursor you sent* (the field is never absent, so "cursor missing → done"
-  never fires and a naive loop refetches the same page forever, bounded only by
-  `gatherAllMax`). Evidence:
-  <https://solr.apache.org/guide/solr/latest/query-guide/pagination-of-results.html>
-- **Gap:** `resolveJsonPath` supports dot-splitting + non-negative indexes
-  only — `data[-1].id` does a literal `"-1"` property lookup → `undefined` →
-  `advancePagination` returns null → **gatherAll stops after page 1 and
-  reports success, as if the list were complete** (silent, confident, wrong).
-  Separately, `advancePagination()` defines exhaustion exclusively as "the
-  cursor/next/token field is absent, empty, or unresolvable"; there is no
-  stop-condition field, so an always-present repeating cursor loops.
-- **Fix (two orthogonal pieces):**
-  1. Negative-index support in `resolveJsonPath` (`data[-1].id`). Behavior
-     relaxation, non-breaking. Note: Stripe's page-past-the-end returns
-     `data: []`, so negative-index *alone* gets Stripe working (last page →
-     cursor unresolvable → clean stop), at the cost of one extra request.
-  2. `pagination.hasMorePath?: string` (style-agnostic, mirrors
-     `totalCountPath`): when present and falsy on a page → stop; when absent →
-     keep current empty-page/unresolvable-cursor semantics. Covers Solr
-     (`hasMorePath` can't express equality-with-sent directly, but the common
-     boolean-flag case; ship the smaller field first — `stopWhen:
-     "cursorUnchanged"` is the documented upgrade if Solr is ever targeted).
-- **Target recipe (what becomes expressible):**
-
-  ```yaml
-  pagination:
-    style: cursor
-    itemsPath: data
-    cursorParam: starting_after
-    cursorPath: "data[-1].id"
-    hasMorePath: has_more
-  ```
-
-- **Tests:** `data[-1].id` resolves; `hasMorePath: false` stops;
-  `hasMorePath` absent → current semantics unchanged; parser validation of
-  `hasMorePath` (mirrors `totalCountPath`).
 
 ---
 
@@ -303,23 +225,7 @@ the trigger instead of re-litigated:
 
 # P2 — Additive backlog (safe anytime, ordered by expected recipe pain)
 
-## P2-1. Numeric cursor coercion (silent "last page" footgun)
-
-- **Pattern:** APIs returning numeric continuation values (integer
-  `next_cursor`, numeric page token); XML elements whose parsed form is an
-  object (OAI-PMH final `<resumptionToken/>` with attributes only).
-- **Gap:** all three value branches in `advancePagination` require
-  `typeof === "string"` and otherwise return null — indistinguishable from
-  genuine exhaustion. A numeric cursor yields a **silently truncated result
-  reported as a complete list** — the worst failure mode for an
-  agent-facing executor. `tokenBag` already coerces `String(v)`, so the
-  codebase disagrees with itself.
-- **Fix:** coerce numbers to strings like `tokenBag`; keep `""`/missing as
-  exhaustion. Behavior, not schema — no bump. One `axis-units` test asserting
-  numeric cursors advance.
-- **Pair with P0-1** (same function, same test file).
-
-## P2-2. Multi-value query params (`listStyle`) + array-value footgun
+## P2-1. Multi-value query params (`listStyle`) + array-value footgun
 
 - **Pattern (three real serializations):**
   - comma-joined: Bugzilla `GET /rest/bug?id=12434,43421`; GitHub search
@@ -351,7 +257,7 @@ the trigger instead of re-litigated:
   YAML keys with single values (`facets[stateid][]: CO`) are legal — keys are
   free-form strings; only multi-value is blocked.
 
-## P2-3. 200-with-error-envelope APIs (`errorPath` / `emptyIsError`)
+## P2-2. 200-with-error-envelope APIs (`errorPath` / `emptyIsError`)
 
 - **Pattern:** OAI-PMH providers return HTTP 200 with
   `<OAI-PMH><error code="noRecordsMatch">…</error></OAI-PMH>` (normative,
@@ -368,7 +274,7 @@ the trigger instead of re-litigated:
 - **Rationale for priority:** closes the "confidently wrong" lie — the worst
   failure mode an agent-facing executor can ship.
 
-## P2-4. ETag cache visibility (tool surface, not schema)
+## P2-3. ETag cache visibility (tool surface, not schema)
 
 - **Behavior (code-verified):** `transport.ts` caches every 2xx for
   `Cache-Control: max-age` **or a 60s default-TTL fallback — even when the
@@ -385,7 +291,7 @@ the trigger instead of re-litigated:
   default).
 - **Harm bounded at 60s**, hence P2.
 
-## P2-5. Paginated non-JSON formats (`csv` / `ndjson` in `ResponseFormat`)
+## P2-4. Paginated non-JSON formats (`csv` / `ndjson` in `ResponseFormat`)
 
 - **Pattern:** Socrata SODA — thousands of open-government datasets — serves
   the same resource as JSON or CSV, paginated with `$limit`/`$offset`; CSV
@@ -400,7 +306,7 @@ the trigger instead of re-litigated:
   NDJSON evidence is weak for plain-GET page-based APIs (mostly streaming
   endpoints) — fold in only when a real recipe needs it.
 
-## P2-6. `dateParams` extensions (epoch, epoch-millis, yyyy/mm/dd)
+## P2-5. `dateParams` extensions (epoch, epoch-millis, yyyy/mm/dd)
 
 - **Pattern:** StackExchange dates are unix epoch seconds
   (`fromdate=1293840000`, <https://api.stackexchange.com/docs/dates>); PubMed
@@ -410,9 +316,9 @@ the trigger instead of re-litigated:
   integers pass through unchanged only by accident of the regex failing.
 - **Fix:** add `"epoch"`, `"epoch-millis"`, `"yyyy/mm/dd"` — enum extension =
   non-event. Convenience only (the agent can always pre-format); bundle with
-  P2-2's serializer work if convenient.
+  P2-1's serializer work if convenient.
 
-## P2-7. Deep-paging guardrail (`pagination.maxOffset`)
+## P2-6. Deep-paging guardrail (`pagination.maxOffset`)
 
 - **Pattern:** GitLab caps offset pagination (50k on gitlab.com) and errors
   once exceeded (<https://docs.gitlab.com/api/rest/>,
@@ -425,7 +331,7 @@ the trigger instead of re-litigated:
   offset would exceed it, set a ceiling-hit flag. Cheap anytime; only huge
   collections hit it.
 
-## P2-8. `SecretRef.derive?: "base64"` (basic-auth provisioning friction)
+## P2-7. `SecretRef.derive?: "base64"` (basic-auth provisioning friction)
 
 - **Pattern:** Jira Cloud `Authorization: Basic base64("useremail:api_token")`
   (<https://developer.atlassian.com/cloud/jira/platform/basic-auth-for-rest-apis/>);
@@ -445,7 +351,7 @@ the trigger instead of re-litigated:
   — a different failure class served by P1-1's future auth kind, **not** by
   re-shaping SecretRef. Do not re-open SecretRef.
 
-## P2-9. OAuth2 grant coverage (device_code, ROPC, JWT assertions) — deferred
+## P2-8. OAuth2 grant coverage (device_code, ROPC, JWT assertions) — deferred
 
 - **Patterns:** Google device flow
   (<https://developers.google.com/identity/protocols/oauth2/limited-input-device>);
@@ -460,7 +366,7 @@ the trigger instead of re-litigated:
   current recipes need them. JWT assertions additionally ride P1-1's
   derived-credential class.
 
-## P2-10. Verified fine — cleared, no action (recorded to close the review)
+## P2-9. Verified fine — cleared, no action (recorded to close the review)
 
 Included so later reviewers don't re-litigate:
 
@@ -516,7 +422,6 @@ Each P0/P1/P2 item above is written to be self-seeding for a downstream doc:
 it carries the pattern, gap, fix shape, tests, and API evidence needed to
 elaborate it (with full caritas recipes and per-doc sprints) without
 re-reading the lane reports. Items that must land together are paired inline
-(P0-1 + P2-1 share a function and test file; P2-2's array-semantics decision
-spans two items; P2-8's conclusion feeds P1-1's seam). The verified-fine list
-(P2-10) and out-of-bounds drops belong in the authoring-reference doc, not a
-fix doc.
+(P2-1's array-semantics decision spans two items; P2-7's conclusion feeds
+P1-1's seam). The verified-fine list (P2-9) and out-of-bounds drops belong in
+the authoring-reference doc, not a fix doc.
