@@ -1,7 +1,7 @@
 {
 	"name": "pi-lean-host",
 	"version": "0.4.0",
-	"description": "REST API client for Pi. A YAML file per API covers endpoints and pagination; the agent calls through a fixed executor so an API encoded once is reusable forever, not re-derived each session. It can probe a live endpoint and write the YAML for you, and a TypeScript file alongside can add custom auth or reshape the request and response freely.",
+	"description": "Read-only REST API client for Pi. Your agent authors and calls YAML recipes handling the tedious parts: pagination, OAuth2, rate limits, backoff. Credentials live in a local store, injected in code, never in agent context. Churn-free research + retrieval",
 	"keywords": [
 		"pi-package",
 		"pi-extension",
