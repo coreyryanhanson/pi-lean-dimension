@@ -656,7 +656,7 @@ async function handleOauthInit(
 			`🔑 OAuth2 token for '${storeDomain}' provisioned via /api oauth init (grant ${synthetic.grant}).`,
 		];
 		if (storeDomain !== domain) {
-			// Ordering dependency the plan calls out: normalization matched the
+			// Ordering dependency worth flagging to the user: normalization matched the
 			// SECRETS store, but the eventual guide keys on its domains[0].
 			lines.push(
 				`Note: provision secrets under the same domain the guide will claim as domains[0] — the token was stamped at '${storeDomain}' (normalized from '${domain}').`,

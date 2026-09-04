@@ -528,6 +528,83 @@ describe("resolveJsonPath", () => {
 		const obj = { data: {} };
 		expect(resolveJsonPath(obj, "data.missing")).toBeUndefined();
 	});
+
+	it("resolves a quoted dot-containing key as atomic (OData nextLink)", () => {
+		const obj = { "@odata.nextLink": "https://api.test/page2" };
+		expect(resolveJsonPath(obj, "['@odata.nextLink']")).toBe(
+			"https://api.test/page2",
+		);
+	});
+
+	it("misses on the unquoted dot-containing key (no silent wrong match)", () => {
+		const obj = { "@odata.nextLink": "https://api.test/page2" };
+		// Unquoted dot-split looks for data at @odata.nextLink — undefined,
+		// never a wrong match against the literal key.
+		expect(resolveJsonPath(obj, "@odata.nextLink")).toBeUndefined();
+	});
+
+	it("parses unquoted legacy paths identically (regression)", () => {
+		const obj = {
+			data: { items: [{ id: 1 }, { id: 2 }] },
+			meta: { "key.with.dots": "found" },
+		};
+		expect(resolveJsonPath(obj, "data.items[0].id")).toBe(1);
+		expect(resolveJsonPath(obj, "$.data.items[1].id")).toBe(2);
+		expect(resolveJsonPath(obj, "data")).toEqual(obj.data);
+	});
+
+	it("resolves a double-quoted segment (quote-style parity)", () => {
+		const obj = { "@odata.nextLink": "https://api.test/page2" };
+		expect(resolveJsonPath(obj, '["@odata.nextLink"]')).toBe(
+			"https://api.test/page2",
+		);
+	});
+
+	it("mixes bracket index + quoted segment", () => {
+		const obj = { data: [{ "key.name": "value" }] };
+		expect(resolveJsonPath(obj, "data[0]['key.name']")).toBe("value");
+	});
+
+	it("treats a quoted segment containing a bracket as a miss (syntax limit)", () => {
+		const obj = { "a[3]": "literal" };
+		// Content is shielded from the numeric-index rewrite, but a `]` inside
+		// a quoted segment cannot match at all → malformed → miss.
+		expect(resolveJsonPath(obj, "['a[3]']")).toBeUndefined();
+	});
+
+	it("resolves a negative index from the end (derived-id cursor)", () => {
+		const obj = { results: [{ id: 1 }, { id: 2 }, { id: 3 }] };
+		expect(resolveJsonPath(obj, "results[-1].id")).toBe(3);
+		expect(resolveJsonPath(obj, "results[-3].id")).toBe(1);
+	});
+
+	it("misses a negative index on an empty array (clean miss, not wrong)", () => {
+		const obj = { results: [] };
+		expect(resolveJsonPath(obj, "results[-1].id")).toBeUndefined();
+	});
+
+	it("misses an out-of-bounds negative index (clean miss, not wrong)", () => {
+		const obj = { results: [{ id: 1 }, { id: 2 }] };
+		expect(resolveJsonPath(obj, "results[-5].id")).toBeUndefined();
+	});
+
+	it("treats [-0] as malformed (would silently match element 0)", () => {
+		const obj = { results: [{ id: 1 }, { id: 2 }] };
+		expect(resolveJsonPath(obj, "results[-0].id")).toBeUndefined();
+		expect(resolveJsonPath(obj, "results[-00].id")).toBeUndefined();
+	});
+
+	it("treats a bare [-] or [-x] as malformed", () => {
+		const obj = { results: [{ id: 1 }] };
+		expect(resolveJsonPath(obj, "results[-].id")).toBeUndefined();
+		expect(resolveJsonPath(obj, "results[-x].id")).toBeUndefined();
+	});
+
+	it("composes [-1] with quoted-bracket and numeric-index siblings", () => {
+		const obj = { pages: [{ items: [{ id: 1 }, { "key.name": "v" }] }] };
+		expect(resolveJsonPath(obj, "pages[0].items[-1]['key.name']")).toBe("v");
+		expect(resolveJsonPath(obj, "pages[0].items[-2].id")).toBe(1);
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════

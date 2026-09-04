@@ -43,7 +43,16 @@
   `charset` fallback (header charset always wins). Six pagination styles
   cover the recipe-library axes: `offset-limit`, `page`, `nextLink`,
   `cursor`, `resumptionToken`, `tokenBag`, with optional
-  `totalCountPath` for a server-reported total. Pagination blocks are
+  `totalCountPath` for a server-reported total and optional
+  `hasMorePath` for a boolean done-flag (a
+  resolved-falsy value stops a `gatherAll` walk cleanly; absent/typo'd
+  path never stops, string `"false"` advances by design). Path expressions
+  resolve dot-containing keys via quoted bracket segments
+  (`['@odata.nextLink']` — the OData v4 shape), negative array indexes
+  (`results[-1].id` — the derived-id cursor shape), and numeric
+  continuation values coerce to strings in the `cursor`/`resumptionToken`
+  styles (`nextLink` stays string-strict; `[-0]` is malformed;
+  out-of-bounds negatives are a clean miss). Pagination blocks are
   key-allowlisted per style — an unknown key (e.g. a `itemPath` typo) is a
   parse error naming the offender and the style's valid keys, never a
   silent single-page at runtime. `gatherAll` paginates
@@ -144,7 +153,8 @@
   contract; a failed helper is surfaced via `/api status` and the
   status-bar glyph.
 - **Shared transport, SSRF guard, and response spill** — a per-domain
-  undici `Agent` with a fixed UA, 429-retry (Retry-After HTTP-date /
+  undici `Agent` with a fixed UA, gzip/deflate response decompression,
+  429-retry (Retry-After HTTP-date /
   exponential backoff), redirect policy, and ETag/`Cache-Control`
   caching is the sanctioned way to reach even WAF'd hosts. The SSRF
   guard (`core/ssrf-guard.ts`) blocks loopback, private RFC1918 ranges,

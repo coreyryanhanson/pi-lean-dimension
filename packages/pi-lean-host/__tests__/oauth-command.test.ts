@@ -1,7 +1,7 @@
 /**
  * /api oauth init <domain> — guide-less OAuth2 bootstrap tests.
  *
- * Mocked transport; covers the plan's touch-list axes:
+ * Mocked transport; covers the init command's axes:
  *  - Headless flags, client_credentials: mint + stamp under the
  *    parent-normalized store domain, with the domains[0] ordering note.
  *  - Headless flags, authorization_code: start persists the pending flow and

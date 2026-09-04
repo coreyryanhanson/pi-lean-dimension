@@ -111,6 +111,7 @@ and copy a domain folder that matches your target.
 | `pagination.style` | guide / op | required when `via: paginate` | `offset-limit` \| `nextLink` \| `cursor` \| `page` \| `resumptionToken` \| `tokenBag` |
 | `pagination.itemsPath` | guide / op | — | JSON path to the items array in the body |
 | `pagination.totalCountPath` | guide / op | — | optional, any style → server-reported total surfaced as `serverTotal` / `server total: N` |
+| `pagination.hasMorePath` | guide / op | — | optional, any style → JSON path to a boolean/numeric done-flag; a resolved-falsy value stops a `gatherAll` walk cleanly (see [Has-more exhaustion](#has-more-exhaustion-hasmorepath)) |
 | `responseShape.format` | guide / op | `json` | `json` \| `xml` \| `text` → drives `parseResponse` (`text` is raw passthrough) |
 | `responseShape.charset` | guide / op | `utf-8` | `utf-8` or any IANA charset name (e.g. `iso-8859-1`); used as a fallback when the response's Content-Type header omits a charset — an explicit header charset wins |
 | `operations[].name` | op | — | the `operation` arg `api-fetch` takes |
@@ -135,9 +136,10 @@ routes each operation through the one its `via` names:
   (JSON/XML), and auth injection for auth-bearing guides (static-key
   store-backed `secretRefs` / `secretQueryRefs`; `oauth2` Bearer tokens).
 - **`paginate`** — wraps a list operation. The guide declares the style; the
-  helper follows it. Returns `{items, next?, serverTotal?}` so the agent can
-  stop or continue, plus a `gatherAll` flag for the "just get me everything"
-  case with a hard ceiling.
+  helper follows it. Returns `{items, totalFetched, serverTotal?, ceilingHit,
+  urls, pages, params}` (plus `failedItems?` when per-item transforms fail)
+  so the agent can stop or continue, plus a `gatherAll` flag for the "just
+  get me everything" case with a hard ceiling.
 - **`parseResponse`** — XML→JSON, declared per-endpoint (charset decoding happens in the transport).
   Agents mangle encodings constantly; fix it once here.
 
@@ -161,13 +163,115 @@ patterns the recipe library (caritas) pressure-tested:
 `totalCountPath` is optional on any style — a JSON path to the server's
 reported total, surfaced as `serverTotal` in the `paginate` result and as
 `server total: N` / `remaining: …` in the `api-fetch` footer. Omit it when
-the API exposes no total.
+the API exposes no total. The same style-agnostic optionality applies to
+`hasMorePath` — a JSON path to the server's done-flag (see the next
+section).
+
+#### Has-more exhaustion (`hasMorePath`)
+
+`hasMorePath` is optional on any style — a JSON path to a boolean/numeric
+"more pages" flag. Its canonical shape is Stripe's list envelope, which
+pairs a derived cursor with an explicit flag and **no cursor field that
+ever goes absent**:
+
+```yaml
+pagination:
+  style: cursor
+  itemsPath: data
+  cursorParam: starting_after
+  cursorPath: "data[-1].id"
+  hasMorePath: has_more
+```
+
+Without a stop-condition field, a walk over an always-present cursor (or one
+derived from the last item) only ends via the API's own past-the-end behavior
+or the `gatherAllMax` ceiling — surfacing a false-alarm `⚠ Ceiling reached`
+on a complete list. `hasMorePath` is the clean stop for that family: after a
+page's items are collected, the flag is resolved against the page body and a
+**resolved falsy** value (`false`, `0`, `""`, `null`) stops the walk cleanly
+(no ⚠, no ceilingHit). The contract is plain truthiness, deliberately with
+**no string coercion** — the string `"false"` is truthy in JS and therefore
+advances. Don't author against APIs that serve the flag as a capitalized or
+string-typed value (`<has_more>False</has_more>`, `"has_more": "false"`):
+they walk to the ceiling with the false-alarm ⚠. XML is mostly covered —
+the repo's XML parser converts lowercase `<has_more>false</has_more>` to
+real boolean `false` (only capitalized variants stay strings).
+
+The exhaustion rules, precisely:
+
+- **`undefined` never stops.** If the field is absent or the path misses
+  (typo'd), the walk continues under the pre-existing exhaustion semantics
+  (empty page / absent cursor) — a typo'd `hasMorePath` degrades to the
+  old behavior, never to a silent one-page truncation. Same for an API
+  that omits the flag on the final page — don't author against one without
+  testing it.
+- **Empty final page wins.** The flag is only consulted on pages that
+  produced items; a page with an empty `itemsPath` array exits via the
+  empty-page rule before the flag is read.
+- **Ceiling wins on the same page.** If the ceiling and a falsy flag fire
+  together, `ceilingHit: true` is reported — the run genuinely was cut
+  short. A final page that exactly fills the ceiling reports `ceilingHit`
+  even with the done-flag false (pre-existing ceiling semantics).
+- **`gatherAll` walks only.** Single-page ops break after page 1
+  regardless — don't expect the flag to gate a single read.
+- **Offset/page styles benefit most.** Those styles have no cursor-based
+  exhaustion at all (the loop walks until the ceiling), so `hasMorePath` is
+  the *only* clean stop condition for a `gatherAll` walk over an offset or
+  page-numbered API that exposes a done-flag.
+
+Not expressible: equality-with-sent stop conditions (Solr `cursorMark`'s
+"stop when the returned cursor equals the one we sent") — that stays a
+documented upgrade path (`stopWhen`), not this field. Solr-shaped guides:
+`cursorMark` sends no boolean flag; its exhaustion is `numFound` vs.
+docs-fetched — don't author Solr-shaped guides against `hasMorePath`.
 
 Pagination blocks are **key-allowlisted per style**: only the keys listed
-for the style above (plus `totalCountPath`) are accepted. An unknown key —
+for the style above (plus `totalCountPath` and `hasMorePath`) are accepted.
+An unknown key —
 e.g. a `itemPath` typo or a `cursorPath` on a `nextLink` op — is a parse
 error naming the offender and the style's valid keys, never a silent
 single-page at runtime.
+
+#### Path syntax (dot-splitting and the quoted-bracket escape hatch)
+
+Path fields (`itemsPath`, `nextLinkPath`, `cursorPath`, `tokenPath`,
+`totalCountPath`, `hasMorePath`) are dot-delimited: `data.items`,
+`resultados[0].campo`, and
+numeric indexes (`items[2].id`). Negative indexes address from the end —
+`results[-1].id` is the last item's `id` (the derived-id cursor pattern); an
+out-of-bounds negative is a clean miss (pagination terminates) and `[-0]` is
+malformed. When the API's
+key itself contains a dot — OData's `@odata.nextLink` / `@iot.nextLink` /
+`@odata.count` family is the common case — the dot is part of the key name,
+not a separator. Address it with a quoted bracket segment, which is treated
+as one atomic key: `nextLinkPath: "['@odata.nextLink']"` (single or double
+quotes both work). The unquoted form `@odata.nextLink` splits at the dot and
+silently misses — a miss resolves to nothing and pagination terminates after
+page 1, so always quote these keys.
+
+Two syntax limits, by design: a quoted segment's content may not contain
+`]` or a quote character — either ends the segment, so `['a]b']` and
+`['a'b']` are malformed (a key containing `]` or a quote cannot be
+addressed; note the pre-atomic-tokenizer resolver accidentally resolved
+`['a]b']` as key `a]b` — that is no longer the case, it is a clean miss
+now). And the numeric-continuation caveat: `cursor` and `resumptionToken`
+paths coerce numeric values to strings, so an API that uses `0` as an
+**end marker** (legacy Twitter-style `next_cursor: 0`) walks to the
+`gatherAllMax` ceiling and surfaces the `⚠ Ceiling reached` warning for a
+complete list — against such APIs, don't use `cursorPath` for the
+end-marker field, or treat the ceiling signal as normal completion.
+
+One declaration rule for sorted keyset walks (the derived-id family): a
+walk that feeds an item field back as a cursor is only stable if every page
+sorts identically on that field — and the executor serializes **only the
+params declared on the op**. An undeclared sort param is silently dropped
+and the API's own default sort applies, which turns the walk into a moving
+newest-items feed that re-reads rows (valid-shaped, wrong-meaning — page 1
+looks fine under any sort, so only a page-2+ non-overlap check catches it).
+Declare the sort params on the op with their stable-walk defaults — e.g.
+an `id`-keyed walk on an API whose sort params are named `order_by`/`order`
+and whose default order is newest-first would declare both with defaults
+`id` and `asc`.
 
 `pagination` and `responseShape` are top-level defaults; an individual
 operation overrides them with its own block.

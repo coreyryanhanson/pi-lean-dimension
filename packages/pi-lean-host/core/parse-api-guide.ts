@@ -151,6 +151,7 @@ export const PAGINATION_ALLOWLISTS: Record<
 		"pageSize",
 		"base",
 		"totalCountPath",
+		"hasMorePath",
 	]),
 	page: new Set([
 		"style",
@@ -160,8 +161,15 @@ export const PAGINATION_ALLOWLISTS: Record<
 		"pageSize",
 		"base",
 		"totalCountPath",
+		"hasMorePath",
 	]),
-	nextLink: new Set(["style", "itemsPath", "nextLinkPath", "totalCountPath"]),
+	nextLink: new Set([
+		"style",
+		"itemsPath",
+		"nextLinkPath",
+		"totalCountPath",
+		"hasMorePath",
+	]),
 	cursor: new Set([
 		"style",
 		"itemsPath",
@@ -170,6 +178,7 @@ export const PAGINATION_ALLOWLISTS: Record<
 		"pageSizeParam",
 		"pageSize",
 		"totalCountPath",
+		"hasMorePath",
 	]),
 	resumptionToken: new Set([
 		"style",
@@ -177,12 +186,14 @@ export const PAGINATION_ALLOWLISTS: Record<
 		"tokenParam",
 		"tokenPath",
 		"totalCountPath",
+		"hasMorePath",
 	]),
 	tokenBag: new Set([
 		"style",
 		"itemsPath",
 		"continuationParams",
 		"totalCountPath",
+		"hasMorePath",
 	]),
 };
 
@@ -591,6 +602,21 @@ function validatePagination(
 			);
 		}
 		cfg.totalCountPath = tcp;
+	}
+
+	// optional hasMorePath (any style) — JSON path to a boolean/numeric
+	// "more pages" flag; a resolved falsy value stops the walk cleanly.
+	const hmp = p["hasMorePath"];
+	if (hmp !== undefined) {
+		if (typeof hmp !== "string" || hmp === "") {
+			return fail(
+				file,
+				`${fieldPrefix}.hasMorePath`,
+				"a non-empty string (JSON path to the has-more flag)",
+				describeFound(hmp),
+			);
+		}
+		cfg.hasMorePath = hmp;
 	}
 
 	return cfg;

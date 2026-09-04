@@ -117,8 +117,8 @@ The toggle also manages a `SIBLING_TOOL_NAMES` set populated with `"web-search"`
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 8 | varies | Per-backend (auto-skip) |
 | MiniWoB behavioral | `bench/miniwob/suites/` | 8 | 130 tasks × 4 + user-backends + smoke* | Chromium + Firefox + Python + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 29 | No |
-| Host structural | `pi-lean-host/__tests__/` | 38 | ~850 | No |
-| Host recipe-validity | `pi-lean-host/api-guides/<domain>/*.test.ts` | 8 | ~30 | No |
+| Host structural | `pi-lean-host/__tests__/` | 38 | ~905 | No |
+| Host recipe-validity | `pi-lean-host/api-guides/<domain>/*.test.ts` | 12 | ~36 | No |
 
 Per-file detail for the portal-owned test lists (structural, python bridge, per-backend contract, shared test utilities) lives in [`packages/pi-lean-portal/AGENTS.md`](packages/pi-lean-portal/AGENTS.md) ("Testing (portal detail)"). Host-owned test detail lives in [`packages/pi-lean-host/AGENTS.md`](packages/pi-lean-host/AGENTS.md). MiniWoB suite detail (preflight gate, prerequisites, env overrides, suite files, coverage ceiling) lives in [`bench/AGENTS.md`](bench/AGENTS.md).
 

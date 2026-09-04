@@ -162,6 +162,14 @@ pagination:
   pageSizeParam: limit
   pageSize: 50
   itemsPath: results
+  # Path fields are dot-delimited. If the API's key itself contains a dot
+  # (OData's '@odata.nextLink' / '@iot.count' family), quote it as an atomic
+  # key or the dot splits the path and pagination silently misses:
+  #   nextLinkPath: "['@odata.nextLink']"   # single or double quotes
+  # For a cursor walk whose continuation value is an item field (derived-id
+  # cursor), declare the sort params on the op too — the executor serializes
+  # ONLY declared params, and an undeclared sort lets the API default apply,
+  # turning the walk into a moving feed that re-reads rows.
 
 responseShape:
   format: json
