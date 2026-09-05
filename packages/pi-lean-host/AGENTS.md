@@ -68,7 +68,8 @@
     no stamp. Opt-in params sidecar
     `~/.pi/agent/pi-lean-host/api-guides/<dirName>/verify.json`
     (`{ "<opName>": { "<param>": "<value>" } }`) supplies inputs for ops
-    with unsatisfiable params (path `{token}` / required query with no
+    with unsatisfiable params (path `{token}` unless store-filled via
+    `secretPathRefs` / required query with no
     default). Runs in **on** mode, not learn-gated, and not refused by the
     focus-mode guard (writes no toolset state). Shares the
     guide-resolution → helper → transform → auth → dispatch sequence with
@@ -220,18 +221,27 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `SecretRef` is `{ secret, prefix?, optional? }` — store holds the raw
   credential; the ref declares the scheme prefix e.g. `Authorization:
   "Bearer "`, applied at resolution time, and its own availability),
-  `secretQueryRefs` (`Record<paramName, SecretRef>`), plus literal
-  `headers`.
+  `secretQueryRefs` (`Record<paramName, SecretRef>`), `secretPathRefs`
+  (`Record<pathToken, SecretRef>` — store-backed path-token injection for
+  Telegram-class APIs; required-only: parse rejects `prefix`/`optional`/
+  non-`\w` names and any D1 collision — in-params, declared-but-unused,
+  cross-map shared key with `secretQueryRefs`), plus literal `headers`.
   - **Parser-enforced invariants**: every `secretRefs` value targets a name
     the secrets store would accept; a `secretQueryRefs` param colliding with
-    any op's `params` map is an error. (`oauth2` parses — see the
-    `GUIDE_SCHEMA_VERSION` section below; `validateOAuth2Auth` enforces its
-    grant invariants.)
+    any op's `params` map is an error; `secretPathRefs` collisions and
+    required-only violations are parse errors (see above). (`oauth2`
+    parses — see the `GUIDE_SCHEMA_VERSION` section below;
+    `validateOAuth2Auth` enforces its grant invariants.)
   - **Injection**: `api-fetch` resolves store secrets via
-    `resolveSecretHeaders()` / `resolveSecretQueryParams()` and injects them
-    in code — the value never enters agent context. A missing `requires`
-    secret **fails closed before the request**; `optional` absent proceeds
-    unauthenticated.
+    `resolveSecretHeaders()` / `resolveSecretQueryParams()` /
+    `resolveSecretPathParams()` and injects them in code — the value never
+    enters agent context. A missing required secret **fails closed before
+    the request** (path refs are always required — an absent token leaves
+    `{name}` unfilled); `optional` absent proceeds unauthenticated.
+    Path-secret values are dropped from agent-supplied params and never
+    leak into the query string or surfaced `params` (D2), every surfaced
+    URL is redacted (raw + encoded forms, D3), and path-secret-only guides
+    trip the transport's `hasAuth` gate (D4).
   - **Store key is decoupled from routing domain**: `canonicalStoreDomain(guide)
     = guide.domains[0]` (`core/auth.ts`), applied at the `api-fetch` call
     site — so `/api secrets github.com` feeds a guide whether the agent
@@ -315,7 +325,8 @@ Read-only subcommands (`status`, `helpers`, bare `/api`) stay unguarded.
   `verified:` stamp, `--force`, `verify.json` sidecar),
   `verify-stamp` logic lives in `parse-api-guide.ts` (`stampFrontmatterField`),
   `delete-command.ts` (`/api delete` — `rm -rf` + `invalidateCache()`),
-  `auth.ts` (static-key secret resolution + shared auth-status footer +
+  `auth.ts` (static-key secret resolution — headers, query params, and
+  path tokens via `resolveSecretPathParams` — + shared auth-status footer +
   OAuth2 token resolution: `resolveAccessToken` mint/refresh + per-slot
   lock + skew buffer, `exchangeAuthCode`, `forceRefreshToken`,
   `hasUsableTokenPath`, `revokeAccessToken`), `oauth-store.ts` (per-domain,
@@ -417,18 +428,21 @@ tarball (repo-only); the tests read them from disk.
 The membership is set by the axis-set audit (its matrix is encoded in
 `__tests__/axis-coverage.test.ts`). That test is the regression tripwire
 that pins the set: the kept union must cover every axis and the guide count
-must match (13 guides, auth kinds `none` + `static-key` + `oauth2`).
+must match (14 guides, auth kinds `none` + `static-key` + `oauth2`).
 Co-located mocked-transport tests live only for
 axes **not** consolidated into `__tests__/axis-units.test.ts` (local-helper,
 transform, static-key-auth, multi-recipe-domains, resumptionToken, tokenBag,
-oauth2, dotted-key [`frost-sensorthings`], numeric-cursor
+path-secret-auth [`telegram-bot`], oauth2, dotted-key [`frost-sensorthings`], numeric-cursor
 [`wikidata-search`], derived-id negative-index cursor [`inaturalist`],
 boolean hasMorePath [`stripe`]). The `oauth2` axis is carried by the sibling pair `twitch`
 (client_credentials — auto-mint, Bearer + `Client-Id` `secretRefs` merge,
 no-refresh re-mint) + `twitch-user` (authorization_code — fail-closed
 `oauth_token_missing`, multi-grant slot coexistence) on the shared
 `twitch.tv` store domain: compressed twins of the live-verified caritas
-recipes, grounded in real provider facts but never fetched live.
+recipes, grounded in real provider facts but never fetched live. The
+`path-secret-auth` axis is carried by `telegram-bot` (store-backed
+`secretPathRefs` on `telegram.org` — compressed twin of the caritas
+Telegram recipe, same grounding).
 No `_shared/`, `WAF-NOTES.md`, or `CONTRIBUTING.md` remain here — those moved
 to caritas along with the real recipes.
 

@@ -109,7 +109,8 @@
   and prefix are properties of each ref — the old flat rosters
   (`requires`/`optional`/`headerPrefixes`) are gone. `static-key` realizes
   `secretRefs` (header injection) + `secretQueryRefs` (query-param injection,
-  collision with any op's `params` rejected at parse); `oauth2` is realized
+  collision with any op's `params` rejected at parse) + `secretPathRefs`
+  (path-token injection, required-only); `oauth2` is realized
   at runtime (see the OAuth2 bullet below). Guides authoring against earlier
   snapshots of the flat shape should be migrated per
   `docs/migration-v1.md`. `api-fetch` resolves and injects values in
@@ -190,6 +191,19 @@
   `Caritas` repo.
 
 ### Changed
+
+- **`pi-lean-host` — executor signature: `restGet`/`paginate` options
+  object** — the two public executor functions collapse their optional
+  positional tail into the existing options parameter:
+  `restGet(apiHost, op, params, guide, opts?)` (was `..., opts?,
+  transformFn?, dirName?`); `transformFn` and `dirName` are now fields on
+  `RestGetOptions`/`PaginateOptions`. `fetchWithOpts`, the internal
+  transport adapter, takes a named options object instead of 11 positional
+  params. Breaking for any caller passing 6–7 positional args (internal
+  call sites and tests updated in the same commit; the Caritas recipe
+  corpus migrates in its 0.5.0 upgrade PR per its
+  `plan-restget-options-swap.md`). Guide YAML is unaffected — recipe
+  authors never call the executors directly.
 
 - **`web-fetch` 4xx failures now suggest `browser-navigate`** — when a
   plain HTTP fetch is rejected with a 4xx status (bot/UA gates, auth

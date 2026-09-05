@@ -33,6 +33,7 @@ import {
 } from "../tools/api-fetch.js";
 import { apiLearnTool, setStagingRoot } from "../tools/api-learn.js";
 import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
+import { writeSecret, setSecretsDir } from "../core/secrets-store.js";
 import {
 	parseApiGuide,
 	selectGuideByShortName,
@@ -100,6 +101,13 @@ async function createApiTestServer(): Promise<TestCtx> {
 					pagination: { nextCursor: cursor === "page2" ? "done" : "page2" },
 				}),
 			);
+			return;
+		}
+
+		// GET /auth<token>/get — path-secret guide route (token rides the path)
+		if (pathname.startsWith("/auth")) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ ok: true }));
 			return;
 		}
 
@@ -1669,5 +1677,53 @@ describe("api-fetch — cross-guide op-name resolution", () => {
 			error: "ambiguous_operation",
 			operation: "fetchThing",
 		});
+	});
+});
+
+// Companion — the save summary must name a path ref too, or a
+// path-secret-only guide saves with its token ref missing from the summary.
+it("save summary names the secretPathRefs token→secret mapping", async () => {
+	setUserGuidesDir(tmpGuidesDir);
+	invalidateCache();
+	const recipe = `---\nkind: api\ndomains: [path.example]\nshortName: PathKey\napiHost: https://api.path.example\nauth:\n  kind: static-key\n  secretPathRefs:\n    token:\n      secret: path_key\nresponseShape:\n  format: json\n  charset: utf-8\noperations:\n  - name: get\n    via: restGet\n    path: /auth{token}/get\n    accept: json\n---\n`;
+	const text = contentText(await callLearn("path.example", recipe));
+	expect(text).toContain("Auth: static-key");
+	expect(text).toContain("{token} ← secret path_key");
+	// Names only — never the store values.
+	expect(text).not.toContain("s3cr3t");
+});
+
+describe("api-fetch — path-secret guide (details-channel audit)", () => {
+	const TOKEN = "s3cr3t:PATH-key";
+
+	it("details.request.url is redacted; params carry no secret-owned token", async () => {
+		setUserGuidesDir(tmpGuidesDir);
+		invalidateCache();
+		// Provision the store BEFORE the fetch (required-only ref, fail-closed).
+		const tmpSecrets = mkdtempSync(join(tmpdir(), "host-tools-secrets-"));
+		setSecretsDir(tmpSecrets);
+		writeSecret("path.example", "path_key", TOKEN);
+		// Same guide recipe as the save-summary test, but with apiHost pointed
+		// at the test server so the fetch is local.
+		const recipe = `---\nkind: api\ndomains: [path.example]\nshortName: PathKey\napiHost: ${ctx.serverUrl}\nauth:\n  kind: static-key\n  secretPathRefs:\n    token:\n      secret: path_key\nresponseShape:\n  format: json\n  charset: utf-8\noperations:\n  - name: get\n    via: restGet\n    path: /auth{token}/get\n    accept: json\n---\n`;
+		contentText(await callLearn("path.example", recipe));
+		invalidateCache();
+
+		const res = await callFetch({ domain: "path.example", operation: "get" });
+		const details = res.details as {
+			request: { url: string; params: Record<string, unknown> };
+		};
+		// The details channel carries the REDACTED URL and agent-params-only
+		// map — same guarantee as the rendered text, asserted structurally.
+		expect(details.request.url).toContain("/auth***/get");
+		expect(details.request.url).not.toContain(TOKEN);
+		expect(details.request.url).not.toContain(encodeURIComponent(TOKEN));
+		expect(Object.values(details.request.params)).not.toContain(TOKEN);
+		expect(details.request.params["token"]).toBeUndefined();
+		// ...and the wire URL really was store-filled.
+		const text = contentText(res);
+		expect(text).toContain("/auth***/get");
+		expect(text).not.toContain(TOKEN);
+		rmSync(tmpSecrets, { recursive: true, force: true });
 	});
 });

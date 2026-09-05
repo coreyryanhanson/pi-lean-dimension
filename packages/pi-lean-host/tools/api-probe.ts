@@ -22,7 +22,12 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { confirmTokenUrl } from "../core/oauth-flow.js";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { fetchUrl, redactSecretParams } from "../core/transport.js";
+import {
+	fetchUrl,
+	redactSecretParams,
+	redactSecretPathValues,
+} from "../core/transport.js";
+import { splitPathSecretParams } from "../core/helpers.js";
 import {
 	extractPathTokens,
 	fillPathTemplate,
@@ -33,9 +38,11 @@ import {
 	buildSyntheticOAuth2Auth,
 	hostnameOf,
 	isTokenExpired,
+	pathScrubValues,
 	resolveAccessToken,
 	resolveProvisionedParentDomain,
 	resolveSecretHeaders,
+	resolveSecretPathParams,
 	resolveSecretQueryParams,
 	scrubSecretValues,
 } from "../core/auth.js";
@@ -99,6 +106,13 @@ export interface ProbeOptions {
 		/** Maps header name → secret name, same direction as the guide schema. */
 		secretRefs?: Record<string, string>;
 		secretQueryRefs?: Record<string, string>;
+		/**
+		 * Maps path token → secret name (Telegram-class token-in-path APIs:
+		 * `/bot{token}/getMe`). Store value fills `{token}` below the agent
+		 * params map; any agent-supplied value for the name is dropped, and the
+		 * token is redacted from every surfaced URL.
+		 */
+		secretPathRefs?: Record<string, string>;
 		/**
 		 * Header name → prefix prepended to the resolved secret value (e.g.
 		 * `Authorization: "Bearer "`). The store holds the raw token; the prefix
@@ -269,6 +283,10 @@ interface ProbeAuthCtx {
 	queryParams: Record<string, string>;
 	secretHeaderNames: Set<string>;
 	secretQueryParamNames: Set<string>;
+	/** path token → store-filled raw value (empty when no path refs / store miss). */
+	pathSecretParams: Record<string, string>;
+	/** path token → store secret NAME (for draft emission — never a value). */
+	pathSecretNames: Record<string, string>;
 	secretValues: string[];
 	missingNames: string[];
 	/** headerPrefixes declared but no secretRefs to apply them to — the
@@ -300,10 +318,15 @@ function flatToStaticKeyAuth(
 	for (const [param, secretName] of Object.entries(auth.secretQueryRefs ?? {})) {
 		secretQueryRefs[param] = { secret: secretName };
 	}
+	const secretPathRefs: Record<string, SecretRef> = {};
+	for (const [token, secretName] of Object.entries(auth.secretPathRefs ?? {})) {
+		secretPathRefs[token] = { secret: secretName };
+	}
 	return {
 		kind: "static-key",
 		...(Object.keys(secretRefs).length > 0 ? { secretRefs } : {}),
 		...(Object.keys(secretQueryRefs).length > 0 ? { secretQueryRefs } : {}),
+		...(Object.keys(secretPathRefs).length > 0 ? { secretPathRefs } : {}),
 	};
 }
 
@@ -332,7 +355,8 @@ async function resolveProbeAuth(
 	const hasRefs =
 		!!auth &&
 		(Object.keys(auth.secretRefs ?? {}).length > 0 ||
-			Object.keys(auth.secretQueryRefs ?? {}).length > 0);
+			Object.keys(auth.secretQueryRefs ?? {}).length > 0 ||
+			Object.keys(auth.secretPathRefs ?? {}).length > 0);
 	const useTokenStore = !!auth?.useTokenStore;
 	// Inline mint fields imply the token path even without useTokenStore.
 	const hasMintFields = !!auth?.tokenUrl && !!auth?.clientId;
@@ -347,6 +371,8 @@ async function resolveProbeAuth(
 			queryParams: {},
 			secretHeaderNames: new Set(),
 			secretQueryParamNames: new Set(),
+			pathSecretParams: {},
+			pathSecretNames: {},
 			secretValues: [],
 			missingNames: [],
 			misconfiguredPrefixes,
@@ -363,6 +389,8 @@ async function resolveProbeAuth(
 			queryParams: {},
 			secretHeaderNames: new Set(),
 			secretQueryParamNames: new Set(),
+			pathSecretParams: {},
+			pathSecretNames: {},
 			secretValues: [],
 			missingNames: [],
 			misconfiguredPrefixes,
@@ -372,6 +400,7 @@ async function resolveProbeAuth(
 	const staticKeyAuth = flatToStaticKeyAuth(auth!);
 	const headerRes = resolveSecretHeaders(staticKeyAuth, domain);
 	const queryRes = resolveSecretQueryParams(staticKeyAuth, domain);
+	const pathRes = resolveSecretPathParams(staticKeyAuth, domain);
 	// OAuth2 token injection: the token rides the same ctx as secret headers
 	// (scrub + redirect-strip cover it). Bearer-header only (ponytail: query
 	// paramStyle injection waits for a recipe that needs it). Two modes:
@@ -463,10 +492,18 @@ async function resolveProbeAuth(
 		queryParams: queryRes.queryParams,
 		secretHeaderNames: new Set(Object.keys(headers).map((h) => h.toLowerCase())),
 		secretQueryParamNames: new Set(Object.keys(queryRes.queryParams)),
+		pathSecretParams: pathRes.values,
+		pathSecretNames: Object.fromEntries(
+			Object.entries(staticKeyAuth.secretPathRefs ?? {}).map(([t, r]) => [
+				t,
+				r.secret,
+			]),
+		),
 		secretValues: [
 			...Object.values(headers),
 			...headerRes.rawHeaderValues,
 			...Object.values(queryRes.queryParams),
+			...pathScrubValues(pathRes.values),
 			...(rawTokenValue ? [rawTokenValue] : []),
 		],
 		missingNames: [
@@ -474,6 +511,7 @@ async function resolveProbeAuth(
 			...headerRes.absentOptional,
 			...queryRes.absentRequired,
 			...queryRes.absentOptional,
+			...pathRes.missing,
 		],
 		misconfiguredPrefixes,
 		tokenNote,
@@ -634,10 +672,26 @@ async function fetchOne(
 	domain: string,
 	prefix = "",
 ): Promise<ProbeResult> {
-	// Inject secret query params below the agent-supplied params map, then
-	// redact the surfaced URL so the real key never reaches the transcript.
-	const rawUrl = buildUrl(apiHost, path, { ...params, ...authCtx.queryParams });
-	const url = redactSecretParams(rawUrl, authCtx.secretQueryParamNames);
+	// Secret-owned path tokens: the path fill sees the merged map (store
+	// wins; agent-supplied values for secret-owned tokens dropped), while the
+	// query builder gets a deletion-only copy — a probe whose path lacks the
+	// token must not leak the plaintext into the query string.
+	const pathSecrets = authCtx.pathSecretParams;
+	const pathValues = Object.values(pathSecrets);
+	const { fillParams, queryParamsForBuild } = splitPathSecretParams(
+		params,
+		pathSecrets,
+	);
+	const rawUrl = buildUrl(apiHost, path, fillParams, {
+		...queryParamsForBuild,
+		...authCtx.queryParams,
+	});
+	const redactUrl = (u: string) =>
+		redactSecretPathValues(
+			redactSecretParams(u, authCtx.secretQueryParamNames),
+			pathValues,
+		);
+	const url = redactUrl(rawUrl);
 	const hasQuerySecret = Object.keys(authCtx.queryParams).length > 0;
 	const res = await fetchUrl(rawUrl, {
 		headers: { accept, ...authCtx.headers },
@@ -645,8 +699,17 @@ async function fetchOne(
 		...(authCtx.hasAuthBlock
 			? {
 					hasQuerySecret,
+					hasPathSecret: pathValues.length > 0,
 					secretHeaderNames: authCtx.secretHeaderNames,
 					secretQueryParamNames: authCtx.secretQueryParamNames,
+					...(pathValues.length > 0
+						? {
+								// Redaction closure (not raw values): keeps the
+								// transport's option surface value-agnostic; used
+								// on cross-domain redirect hops.
+								redactPathSecret: (u: string) => redactSecretPathValues(u, pathValues),
+							}
+						: {}),
 				}
 			: {}),
 	});
@@ -655,10 +718,7 @@ async function fetchOne(
 	// echoing the key must not leak it into agent context. Scrub before
 	// slicing so a secret straddling the cut can't leave a partial prefix.
 	const raw = scrubSecretValues(res.body, authCtx.secretValues).slice(0, 800);
-	const finalUrl = redactSecretParams(
-		res.finalUrl ?? rawUrl,
-		authCtx.secretQueryParamNames,
-	);
+	const finalUrl = redactUrl(res.finalUrl ?? rawUrl);
 
 	if (res.status >= 400) {
 		// 401 or 403 — both mean the request was rejected on auth grounds
@@ -734,7 +794,13 @@ async function fetchOne(
 
 	const shape = summarize(data);
 	const miss = authMissNote(authCtx, domain);
-	const draft = emitDraft(path, params, shape, prefix);
+	const draft = emitDraft(
+		path,
+		queryParamsForBuild,
+		shape,
+		prefix,
+		authCtx.pathSecretNames,
+	);
 	let note: string | undefined = miss;
 	if (authCtx.misconfiguredPrefixes) {
 		note = [note, MISCONFIGURED_PREFIXES_NOTE].filter(Boolean).join(" — ");
@@ -756,23 +822,24 @@ const RESERVED_PARAM_NAMES = new Set(["domain", "apiHost", "path", "auth"]);
 function buildUrl(
 	apiHost: string,
 	path: string,
-	params: Record<string, unknown>,
+	fillParams: Record<string, unknown>,
+	queryParams: Record<string, unknown>,
 ): string {
-	for (const key of Object.keys(params)) {
+	for (const key of Object.keys(fillParams).concat(Object.keys(queryParams))) {
 		if (RESERVED_PARAM_NAMES.has(key)) {
 			throw new Error(
 				`"${key}" is a top-level param, not a query param — move it out of params`,
 			);
 		}
 	}
-	// Substitute {token} → params[token] BEFORE building the URL, so a
+	// Substitute {token} → fillParams[token] BEFORE building the URL, so a
 	// templated path fetches real values instead of literal %7Bowner%7D.
 	// Missing tokens stay literal ({token}) — fine for probing an unfilled path.
 	const pathTokens = new Set(extractPathTokens(path));
-	const substituted = fillPathTemplate(path, params);
+	const substituted = fillPathTemplate(path, fillParams);
 	const qs = new URLSearchParams(
 		Object.fromEntries(
-			Object.entries(params)
+			Object.entries(queryParams)
 				.filter(([k, v]) => v !== undefined && !pathTokens.has(k))
 				.map(([k, v]) => [k, String(v)]),
 		),
@@ -789,6 +856,7 @@ export function emitDraft(
 	params: Record<string, unknown>,
 	shape: ShapeSummary,
 	prefix = "",
+	pathSecretRefs?: Record<string, string>,
 ): string {
 	// Idempotent: only prepend when the path doesn't already carry the prefix,
 	// so `apiHost: .../v3` + `path: /v3/items` doesn't become `/v3/v3/items`.
@@ -865,6 +933,28 @@ export function emitDraft(
 			`    # representative id: ${shape.representativeId.field}=${shape.representativeId.value}`,
 		);
 	}
+	// Path-secret tokens are store-filled (the agent must never hand-bake the
+	// token into the path — that's the transcript leak this surface closes),
+	// so the draft carries the guide-level auth block that backs them. Auth is
+	// frontmatter, not per-op — emitted commented, pasted above `operations:`.
+	// Only tokens the emitted path actually uses: a name in no op's path is
+	// rejected at parse (declared-but-unused), so emitting one would hand the
+	// author a guide that can't parse.
+	const pathRefEntries = Object.entries(pathSecretRefs ?? {}).filter(([t]) =>
+		pathTokens.includes(t),
+	);
+	if (pathRefEntries.length > 0) {
+		lines.push(
+			"# guide-level auth (paste into the frontmatter, above operations:) — the token fills from the secrets store, never params:",
+			"# auth:",
+			"#   kind: static-key",
+			"#   secretPathRefs:",
+		);
+		for (const [token, secret] of pathRefEntries) {
+			lines.push(`#     ${token}:`);
+			lines.push(`#       secret: ${secret}`);
+		}
+	}
 	return lines.join("\n");
 }
 
@@ -932,6 +1022,12 @@ export const apiProbeTool = defineTool({
 				{
 					secretRefs: Type.Optional(Type.Record(Type.String(), Type.String())),
 					secretQueryRefs: Type.Optional(Type.Record(Type.String(), Type.String())),
+					secretPathRefs: Type.Optional(
+						Type.Record(Type.String(), Type.String(), {
+							description:
+								"Path token → secret name for token-in-path APIs (e.g. {token: 'bot_token'} for /bot{token}/getMe). The store value fills {token}; agent-supplied values for the name are dropped and the token is redacted from surfaced URLs.",
+						}),
+					),
 					headerPrefixes: Type.Optional(Type.Record(Type.String(), Type.String())),
 					useTokenStore: Type.Optional(
 						Type.Boolean({
@@ -986,7 +1082,7 @@ export const apiProbeTool = defineTool({
 				},
 				{
 					description:
-						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Accepts secretRefs, secretQueryRefs, headerPrefixes, useTokenStore (+ grant + tokenUrl, the token-slot key), and client-credentials mint-on-demand fields (tokenUrl + clientId [+ clientSecret, scopes, tokenEndpointAuthMethod]) for bootstrapping a guide-less authoring loop. Values resolve from the secrets/token stores and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
+						"Store-backed auth injection for probing auth-gated endpoints (authoring loop). Accepts secretRefs, secretQueryRefs, secretPathRefs (token-in-path APIs), headerPrefixes, useTokenStore (+ grant + tokenUrl, the token-slot key), and client-credentials mint-on-demand fields (tokenUrl + clientId [+ clientSecret, scopes, tokenEndpointAuthMethod]) for bootstrapping a guide-less authoring loop. Values resolve from the secrets/token stores and never enter the transcript; a store miss fetches unauthenticated and reports the miss in the note.",
 					// Tight: unknown keys (e.g. a stray `domain`) are rejected before execute runs.
 					// The description above names the allowed fields explicitly — keep it in
 					// sync when adding/renaming a field here, or the prose lies to agents.

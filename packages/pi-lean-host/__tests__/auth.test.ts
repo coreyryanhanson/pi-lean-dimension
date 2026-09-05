@@ -24,6 +24,8 @@ import { restGet, HelperError } from "../core/helpers.js";
 import { stripSecretHeaders, fetchUrl } from "../core/transport.js";
 import {
 	resolveSecretHeaders,
+	resolveSecretPathParams,
+	declaredSecretRefNames,
 	authStatusLine,
 	canonicalStoreDomain,
 } from "../core/auth.js";
@@ -551,6 +553,60 @@ body
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// Path-secret resolution (secretPathRefs — required-only)
+// ═══════════════════════════════════════════════════════════════════
+
+describe("resolveSecretPathParams (store-backed path injection)", () => {
+	it("resolves the raw value per path token (no prefix applied)", () => {
+		writeSecret("auth.path", "path_key", "s3cr3t:PATH-key");
+		const res = resolveSecretPathParams(
+			{
+				kind: "static-key",
+				secretPathRefs: { token: { secret: "path_key" } },
+			},
+			"auth.path",
+		);
+		expect(res.values).toEqual({ token: "s3cr3t:PATH-key" });
+		expect(res.missing).toEqual([]);
+	});
+
+	it("a store miss joins the required fail-closed set (no optional arm)", () => {
+		const res = resolveSecretPathParams(
+			{
+				kind: "static-key",
+				secretPathRefs: { token: { secret: "absent_key" } },
+			},
+			"auth.unprovisioned",
+		);
+		expect(res.values).toEqual({});
+		expect(res.missing).toEqual(["absent_key"]);
+	});
+
+	it("declaredSecretRefNames includes path refs", () => {
+		expect(
+			declaredSecretRefNames({
+				domains: ["auth.path"],
+				auth: {
+					kind: "static-key",
+					secretPathRefs: { token: { secret: "path_key" } },
+				},
+			} as unknown as ApiGuide),
+		).toEqual(["path_key"]);
+	});
+
+	it("authStatusLine: a path-secret-only guide renders keyed states, not 'no auth'", () => {
+		const auth = {
+			kind: "static-key" as const,
+			secretPathRefs: { token: { secret: "path_key" } },
+		};
+		expect(authStatusLine(auth, "auth.path")).toBe("🔑 auth: ok");
+		const miss = authStatusLine(auth, "auth.unprovisioned");
+		expect(miss).toContain("requires path_key");
+		expect(miss).toContain("/api secrets auth.unprovisioned");
+	});
+});
+
 // Injection + fail-closed (store-backed resolution)
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1085,7 +1141,7 @@ describe("store sanity", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// canonicalStoreDomain (T1.1) — the canonical store-key seam
+// canonicalStoreDomain — the canonical store-key seam
 // ═══════════════════════════════════════════════════════════════════
 
 describe("canonicalStoreDomain", () => {

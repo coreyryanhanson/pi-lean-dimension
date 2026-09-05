@@ -101,6 +101,7 @@ and copy a domain folder that matches your target.
 | `auth.headers` | guide | — | literal extra headers merged into every request (e.g. X-Api-Key: DEMO_KEY) — **literal values only**, never the path for real credentials |
 | `auth.secretRefs` | guide | — | `Record<headerName, SecretRef>` — store-backed header injection (`static-key` + `oauth2`). Each ref is `{ secret, prefix?, optional? }`: `secret` is the store name, `prefix` is prepended to the stored value at resolution time (e.g. `"Bearer "`), `optional: true` → absent secret proceeds unauthenticated instead of failing closed |
 | `auth.secretQueryRefs` | guide | — | `Record<paramName, SecretRef>` — store-backed query-param injection (`static-key`); a param name colliding with any op's `params` map is a parse error |
+| `auth.secretPathRefs` | guide | — | `Record<pathToken, SecretRef>` — store-backed path-token injection (`static-key`), for APIs that key every method through the URL path (e.g. `/bot{token}/getMe`). Required-only (`prefix`/`optional` rejected); see [Static-key auth](#static-key-auth-in-the-guide) for the collision rules |
 | `auth.grant` | guide | required (`oauth2`) | `client_credentials` \| `authorization_code` |
 | `auth.tokenUrl` | guide | required (`oauth2`) | token endpoint (the only non-GET request host makes) |
 | `auth.clientId` / `auth.clientSecret` | guide | required / grant-dependent | `SecretRef`s resolving from the secrets store — per-user, never shipped in a guide. `clientSecret` is parser-required for `client_credentials` and forbidden for `authorization_code` (PKCE public clients have none) |
@@ -116,7 +117,7 @@ and copy a domain folder that matches your target.
 | `responseShape.charset` | guide / op | `utf-8` | `utf-8` or any IANA charset name (e.g. `iso-8859-1`); used as a fallback when the response's Content-Type header omits a charset — an explicit header charset wins |
 | `operations[].name` | op | — | the `operation` arg `api-fetch` takes |
 | `operations[].via` | op | — | executor: `restGet` \| `paginate` |
-| `operations[].path` | op | — | relative path; `{token}` = inferred path param (no re-declaration) |
+| `operations[].path` | op | — | relative path; `{token}` = inferred path param (no re-declaration); a token declared in `auth.secretPathRefs` is store-filled instead — see [Static-key auth](#static-key-auth-in-the-guide) |
 | `operations[].accept` | op | `json` | `json` \| `xml` \| `<any media-type string>` — request-side `Accept` header (distinct from `responseShape.format`) |
 | `operations[].params` | op | `{}` | query params; `{ required?, default?, description? }` per key |
 | `operations[].dateParams` | op | — | optional `{param: format}` → normalizes ISO dates to `iso8601` \| `yyyymmdd` \| `yyyy-mm-dd` (query params only) |
@@ -134,7 +135,8 @@ routes each operation through the one its `via` names:
 
 - **`restGet`** — path templating, query params, Accept negotiation
   (JSON/XML), and auth injection for auth-bearing guides (static-key
-  store-backed `secretRefs` / `secretQueryRefs`; `oauth2` Bearer tokens).
+  store-backed `secretRefs` / `secretQueryRefs` / `secretPathRefs`;
+  `oauth2` Bearer tokens).
 - **`paginate`** — wraps a list operation. The guide declares the style; the
   helper follows it. Returns `{items, totalFetched, serverTotal?, ceilingHit,
   urls, pages, params}` (plus `failedItems?` when per-item transforms fail)
@@ -377,6 +379,9 @@ auth:
     user_key:
       secret: user_key
       optional: true             # used if present, skipped if absent
+  secretPathRefs:
+    token:
+      secret: bot_token          # path-token injection (/bot{token}/getMe)
 ```
 
 Each ref is `{ secret, prefix?, optional? }` — availability and prefix are
@@ -396,6 +401,40 @@ properties of the ref itself, not separate rosters:
 - **`auth.secretQueryRefs`** — `Record<paramName, SecretRef>`: inject the
   store value as that query param. A param name colliding with any op's
   `params` map is a parse error.
+- **`auth.secretPathRefs`** — `Record<pathToken, SecretRef>`: fill a path
+  token from the store — for APIs that key every method through the URL
+  path (Telegram Bot API: `/bot<token>/getMe` → `path: /bot{token}/getMe`).
+  **Required-only**: `prefix` and `optional` are rejected at parse (an
+  absent token leaves `{name}` unfilled and the request never happens —
+  there is no "unauthenticated" state for a path-keyed API), and the name
+  must match `\w+` (that's the only thing `fillPathTemplate` can fill).
+  The executor fills the token from the store **below** the agent params
+  map: an agent-supplied value for a secret-owned token is dropped, never
+  used, and the token never leaks into the query string or surfaced
+  `params` — even for `passthrough: true` ops. Every surfaced URL
+  (`result.url`, pagination URLs including server-supplied `nextUrl`,
+  error URLs) redacts the value (raw + URL-encoded forms), 401 bodies are
+  scrubbed, and a missing ref fails closed before the request.
+  **Boundary**: only 4xx/5xx error bodies (and api-probe's full body) are
+  scrubbed — 2xx success bodies are **not**. A provider echoing the token
+  in a 200 response would leak; this is the documented posture
+  (Telegram-class errors arrive 200-wrapped with descriptions that don't
+  echo the token, and the agent-has-bash posture covers the rest).
+  Parse errors (fail loud, with a `fix:` hint):
+  - the name appears in any op's `params` map — secret-owned tokens are
+    never agent-suppliable (a docs-only `params.<name>.description` entry
+    is fine);
+  - the name appears in **no** op's `path` as `{name}` — declared-but-unused
+    is a typo;
+  - the same name appears in both `secretPathRefs` and `secretQueryRefs` —
+    one name can't inject into two surfaces;
+  - a ref entry carries `prefix` or `optional` — path injection is the raw
+    value, and path refs are required-only.
+  One store-filled token serves **every** op whose path contains it
+  (correct for Telegram-class APIs where one token keys every method); a
+  name used with two meanings in one guide is unsupported. See the shipped
+  `telegram-bot` axis guide (`api-guides/telegram-bot/guide.md`) for a
+  worked example.
 - **`auth.headers`** stays **literal-only** (demo keys, committed rate-limit
   tokens) — it is not the path for real credentials.
 
@@ -482,7 +521,8 @@ Bootstrap tool for the two artifacts the authoring loop needs but that
 `api-learn` can't draft from the recipe alone:
 
 - `{domain, verify: true}` → for every op with unsatisfiable params (path
-  `{token}`, required query with no default, `requiresAnyOf` group), writes
+  `{token}` unless store-filled via `secretPathRefs`, required query with
+  no default, `requiresAnyOf` group), writes
   `{ "<opName>": { "<param>": "__FILL_ME__" } }` to the staged
   `/tmp/pi-lean-host/<slug(shortName)>/verify.json`. `"__FILL_ME__"` is a
   sentinel: treated as unsupplied, so the op skips until you replace it. If a

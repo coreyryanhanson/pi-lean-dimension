@@ -46,7 +46,7 @@ import { readToken } from "../core/oauth-store.js";
 import { pickChecklist } from "../core/select-picker.js";
 import { appendFooter } from "./utils.js";
 
-/** The exact two-call completion command for the escape-hatch hint (D1). */
+/** The exact two-call completion command for the escape-hatch hint. */
 export function escapeHatchCommand(
 	domain: string,
 	fields: SyntheticOAuth2Fields,
@@ -192,7 +192,7 @@ export const oauthMintTool = defineTool({
 		// init wizard and probe use (matched against the SECRETS store).
 		const storeDomain = resolveProvisionedParentDomain(p.domain);
 
-		// Store-name precheck BEFORE any prompt (D1).
+		// Store-name precheck BEFORE any prompt.
 		const gap = credentialNameGap(
 			storeDomain,
 			fields.clientId,

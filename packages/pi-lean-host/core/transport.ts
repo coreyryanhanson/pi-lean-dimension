@@ -19,6 +19,9 @@ import { ssrfGuard } from "./ssrf-guard.js";
 // ponytail: module-level composed agents; closed only on process exit.
 // Add a close() in session_shutdown if leak-detection ever flags it.
 
+/** One-shot flag so a 1-char path secret warns once, not per redacted URL. */
+let warnedOneCharPathSecret = false;
+
 /** Auto-follows up to 5 redirects. Used when redirect targets are trusted
  *  (agent-supplied URLs — the agent has bash, so guarding them is theater). */
 const redirectAgent = new Agent().compose(
@@ -75,6 +78,26 @@ export interface FetchOptions {
 	 * private (never cached / served from cache) and redirects are guarded.
 	 */
 	hasQuerySecret?: boolean;
+	/**
+	 * True when this request carries store-injected path-token secrets
+	 * (kind: static-key `secretPathRefs`). Broadens `hasAuth` exactly like
+	 * `hasQuerySecret` — a path-secret-only guide (Telegram-class: no secret
+	 * header, no secret query param) must skip the cache and get guarded
+	 * redirects.
+	 */
+	hasPathSecret?: boolean;
+	/**
+	 * Redaction closure applied to every cross-domain redirect hop URL before
+	 * the next fetch: replaces store-injected path-token values (raw + both
+	 * hex-encoded forms) with `***`. A path token rides mid-segment
+	 * (`/bot<token>/getUpdates`), so a relative redirect would carry it to the
+	 * other host — this is a value replacement, not a segment deletion (that
+	 * would change the route). Built by the caller where the values are in
+	 * scope; the transport stays value-agnostic (no raw secrets in its
+	 * signature vocabulary). Only consulted on cross-domain hops — same-host
+	 * Location echoes keep the token (resolve-against-hopUrl semantics).
+	 */
+	redactPathSecret?: (url: string) => string;
 	/** Charset to decode the body with when the response's Content-Type
 	 *  header omits one. Honors a guide's `responseShape.charset` for APIs
 	 *  that serve e.g. ISO-8859-1 bytes without a charset parameter. An
@@ -176,6 +199,50 @@ export function redactSecretParams(
 	} catch {
 		return url;
 	}
+}
+
+/**
+ * Output-channel audit — path-token channel: redact store-injected path
+ * token values from a URL for surfacing. Unlike `redactSecretParams` (query
+ * params, name-keyed), a path token is embedded mid-segment
+ * (`/bot<token>/getUpdates`), so this is a string replace of each resolved
+ * value with `***` — raw, plus its `encodeURIComponent` form in BOTH hex
+ * cases (uppercase `%3A` from `fillPathTemplate` and lowercase `%3a` echoes
+ * from server-normalized URLs / error bodies). Deliberate asymmetry with
+ * `scrubSecretValues` (do not unify): the URL channel skips 1-char values
+ * because surfaced URLs are functional — a 1-char replace corrupts unrelated
+ * path text (`/things/1234/x` → `/things/***234/x`) with negligible security
+ * gain — while the body scrub takes any non-empty value (bodies are
+ * informational and tolerate collateral corruption). String needles only,
+ * never regex — same `$`-pattern pitfall `scrubSecretValues` avoids.
+ */
+export function redactSecretPathValues(
+	url: string,
+	secretPathValues?: string[],
+): string {
+	if (!secretPathValues || secretPathValues.length === 0) return url;
+	let out = url;
+	for (const v of secretPathValues) {
+		if (v.length === 0) continue;
+		if (v.length === 1) {
+			// ponytail: once-per-session flag — a long /api verify run would
+			// otherwise spam one warn per redacted URL; promote to a per-guide
+			// (or surfaced-details) channel if the once-per-session miss matters.
+			if (!warnedOneCharPathSecret) {
+				warnedOneCharPathSecret = true;
+				console.warn(
+					"⚠ path secret is 1 character — redact-unfriendly for URL surfaces; skipping URL redaction (the body scrub still applies)",
+				);
+			}
+			continue;
+		}
+		const enc = encodeURIComponent(v);
+		const encLower = enc.replace(/%../g, (s) => s.toLowerCase());
+		for (const needle of new Set([v, enc, encLower])) {
+			out = out.split(needle).join("***");
+		}
+	}
+	return out;
 }
 
 function parseHeaders(
@@ -406,6 +473,7 @@ async function getWithGuardedRedirects(
 	timeoutMs: number,
 	secretHeaderNames?: Set<string>,
 	secretQueryParamNames?: Set<string>,
+	redactPathSecret?: (url: string) => string,
 ): Promise<{
 	status: number;
 	headers: Record<string, string>;
@@ -419,13 +487,17 @@ async function getWithGuardedRedirects(
 		// the request's original host — a secret must never cross domains.
 		// Query secrets need the same treatment: a relative redirect preserves
 		// the original query string, so secret query params would ride the hop.
+		// Path tokens ride mid-segment, so the hop URL additionally gets the
+		// caller's redaction closure (value replace, never segment deletion).
 		const crossDomain = hostOf(current) !== originalHost;
 		const hopHeaders = crossDomain
 			? stripSecretHeaders(reqHeaders, secretHeaderNames)
 			: reqHeaders;
-		const hopUrl = crossDomain
-			? stripSecretQueryParams(current, secretQueryParamNames)
-			: current;
+		let hopUrl = current;
+		if (crossDomain) {
+			hopUrl = stripSecretQueryParams(current, secretQueryParamNames);
+			if (redactPathSecret) hopUrl = redactPathSecret(hopUrl);
+		}
 		const remaining = timeoutMs - (Date.now() - startTime);
 		const res = await singleGet(hopUrl, hopHeaders, remaining, noRedirectAgent);
 		const isRedirect =
@@ -492,11 +564,15 @@ export async function fetchUrl(
 	const hasAuthHeaders =
 		!!opts?.headers &&
 		Object.keys(opts.headers).some((h) => h.toLowerCase() !== "accept");
-	// Broader hasAuth gate: header-secrets ∨ query-secrets. A query-secret-only
-	// guide carries no non-accept header, so hasAuthHeaders alone would
-	// miss it — hasQuerySecret closes that gap. Every auth gate below keys on
-	// hasAuth: cache-skip, If-None-Match, and the guarded-redirect force.
-	const hasAuth = hasAuthHeaders || (opts?.hasQuerySecret ?? false);
+	// Broader hasAuth gate: header-secrets ∨ query-secrets ∨ path-secrets. A
+	// query- or path-secret-only guide carries no non-accept header, so
+	// hasAuthHeaders alone would miss it — hasQuerySecret/hasPathSecret close
+	// those gaps. Every auth gate below keys on hasAuth: cache-skip,
+	// If-None-Match, and the guarded-redirect force.
+	const hasAuth =
+		hasAuthHeaders ||
+		(opts?.hasQuerySecret ?? false) ||
+		(opts?.hasPathSecret ?? false);
 
 	// ── cache hit ───────────────────────────────────────────────
 	const key = cacheKey(url, opts);
@@ -546,6 +622,7 @@ export async function fetchUrl(
 						timeout,
 						opts?.secretHeaderNames,
 						opts?.secretQueryParamNames,
+						opts?.redactPathSecret,
 					)
 				: await singleGet(url, reqHeaders, remaining, redirectAgent);
 

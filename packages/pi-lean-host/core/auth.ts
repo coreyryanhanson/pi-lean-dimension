@@ -122,7 +122,37 @@ export function resolveSecretQueryParams(
 }
 
 /**
- * Secret store-names a guide's auth block declares, from `auth.secretRefs`
+ * Resolve store-secret path tokens for a `static-key` guide. Mirrors
+ * `resolveSecretQueryParams` minus the optional arm: `secretPathRefs` are
+ * required-only (parse rejects `optional` — a path-keyed API has no
+ * unauthenticated state), so any store miss joins a single `missing` list
+ * and the caller fails closed. Values are the RAW secret (no prefix — path
+ * injection is verbatim; parse rejects `prefix` on path refs) and never
+ * enter agent context — they fill `{name}` in the op path at fetch time.
+ */
+export interface PathSecretResolution {
+	/** pathTokenName → resolved raw value, injected below the agent params map. */
+	values: Record<string, string>;
+	/** secret names referenced by path refs that are absent from the store. */
+	missing: string[];
+}
+
+export function resolveSecretPathParams(
+	auth: StaticKeyAuth,
+	domain: string,
+): PathSecretResolution {
+	const values: Record<string, string> = {};
+	const missing: string[] = [];
+	for (const [tokenName, ref] of Object.entries(auth.secretPathRefs ?? {})) {
+		const value = readSecret(domain, ref.secret);
+		if (value === null) missing.push(ref.secret);
+		else values[tokenName] = value;
+	}
+	return { values, missing };
+}
+
+/**
+ * Secret store-names a guide's auth block declares, from `auth.secretRefs`,
  * and `auth.secretQueryRefs` (ref.secret values). For oauth2 the clientId/
  * clientSecret refs are declared too — their store names are resolved
  * per-user, so assisted provisioning should prompt for them. Empty for
@@ -136,6 +166,8 @@ export function declaredSecretRefNames(guide: ApiGuide): string[] {
 			for (const ref of Object.values(guide.auth.secretRefs ?? {}))
 				names.add(ref.secret);
 			for (const ref of Object.values(guide.auth.secretQueryRefs ?? {}))
+				names.add(ref.secret);
+			for (const ref of Object.values(guide.auth.secretPathRefs ?? {}))
 				names.add(ref.secret);
 			break;
 		case "oauth2":
@@ -171,19 +203,26 @@ export function authStatusLine(
 		case "none":
 			return undefined;
 		case "static-key": {
-			// Nothing to report when neither ref map has an entry (empty maps
-			// are valid = no injection).
+			// Nothing to report when no ref map has an entry (empty maps are
+			// valid = no injection). A path-secret-only guide must render as
+			// keyed auth, not "no auth".
 			if (
 				Object.keys(auth.secretRefs ?? {}).length === 0 &&
-				Object.keys(auth.secretQueryRefs ?? {}).length === 0
+				Object.keys(auth.secretQueryRefs ?? {}).length === 0 &&
+				Object.keys(auth.secretPathRefs ?? {}).length === 0
 			)
 				return undefined;
 			const headerRes = resolveSecretHeaders(auth, domain);
 			const queryRes = resolveSecretQueryParams(auth, domain);
-			// Dedupe across the two ref maps: a secret injected into both a
-			// header and a query param must be named once, not twice.
+			const pathRes = resolveSecretPathParams(auth, domain);
+			// Dedupe across the ref maps: a secret injected into a header, a
+			// query param, and a path token must be named once, not three times.
 			const absentRequired = [
-				...new Set([...headerRes.absentRequired, ...queryRes.absentRequired]),
+				...new Set([
+					...headerRes.absentRequired,
+					...queryRes.absentRequired,
+					...pathRes.missing,
+				]),
 			];
 			if (absentRequired.length > 0) {
 				return (
@@ -193,10 +232,13 @@ export function authStatusLine(
 				);
 			}
 			// The optional dimension only exists for refs actually marked
-			// optional (a ref with optional: true).
+			// optional (a ref with optional: true). Path refs are required-only
+			// (parse rejects `optional`), so they never contribute here — the
+			// spread is for hand-built auth symmetry only.
 			const referencedOptional = [
 				...Object.entries(auth.secretRefs ?? {}),
 				...Object.entries(auth.secretQueryRefs ?? {}),
+				...Object.entries(auth.secretPathRefs ?? {}),
 			]
 				.filter(([, r]) => r.optional)
 				.map(([, r]) => r.secret);
@@ -910,6 +952,21 @@ export function resolveProvisionedParentDomain(hostname: string): string {
 		.filter((d) => hostname.endsWith(`.${d}`))
 		.sort((a, b) => b.length - a.length)[0];
 	return parent ?? hostname;
+}
+
+/**
+ * Scrub-set forms for a resolved path-secret value: raw + both hex-encoded
+ * echo shapes (upper, as `fillPathTemplate` produces, and lower). A 401 body
+ * echoing the token inside a URL string (`bot123%3AABC…`) is the most likely
+ * echo shape — scrubSecretValues replaces raw values only. Single source for
+ * every site that folds path secrets into a body/header scrub set.
+ */
+export function pathScrubValues(values: Record<string, string>): string[] {
+	return Object.values(values).flatMap((v) => {
+		if (v.length === 0) return [];
+		const enc = encodeURIComponent(v);
+		return [v, enc, enc.replace(/%../g, (s) => s.toLowerCase())];
+	});
 }
 
 /** Hostname of an apiHost URL (falls back to the raw string). */

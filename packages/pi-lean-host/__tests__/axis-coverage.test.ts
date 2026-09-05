@@ -10,8 +10,8 @@
  * axis set keeps host green by construction).
  *
  * It encodes the axis-set audit matrix:
- *  - the kept set has exactly the finalized 13 synthetic guides;
- *  - the union covers all fifteen guide-driven axes;
+ *  - the kept set has exactly the finalized 14 synthetic guides;
+ *  - the union covers all sixteen guide-driven axes;
  *  - all six pagination styles are present (offset-limit, page, nextLink,
  *    cursor, resumptionToken, tokenBag);
  *  - all three realized auth kinds appear (none, static-key, oauth2).
@@ -51,6 +51,7 @@ const AXIS_DIRS = [
 	"wikidata-search",
 	"inaturalist",
 	"stripe",
+	"telegram-bot",
 ];
 
 const GUIDES: Record<string, ApiGuide> =
@@ -72,7 +73,7 @@ describe("axis-coverage — kept synthetic axis set", () => {
 	it(`is exactly the finalized ${AXIS_DIRS.length} guides (no drift from the audit)`, () => {
 		const found = Object.keys(GUIDES).sort();
 		expect(found).toEqual([...AXIS_DIRS].sort());
-		expect(found.length).toBe(13);
+		expect(found.length).toBe(14);
 	});
 
 	it("loads with no malformed guides", () => {
@@ -144,10 +145,16 @@ describe("axis-coverage — every guide-driven axis is covered by ≥1 guide", (
 		expect(covered).toBe(true);
 	});
 
-	it("static-key-auth", () => {
+	it("static-key-auth (incl. path-secret auth: a guide declaring secretPathRefs)", () => {
+		const pathSecret = Object.values(GUIDES).some(
+			(g) =>
+				g.auth.kind === "static-key" &&
+				Object.keys(g.auth.secretPathRefs ?? {}).length > 0,
+		);
 		expect(Object.values(GUIDES).some((g) => g.auth.kind === "static-key")).toBe(
 			true,
 		);
+		expect(pathSecret).toBe(true);
 	});
 
 	it("oauth2-auth (a client_credentials AND an authorization_code guide)", () => {
@@ -231,6 +238,19 @@ describe("axis-coverage — single-coverage guide ownership", () => {
 
 	it("static-key-auth is owned by github", () => {
 		expect(GUIDES["github"]?.auth.kind).toBe("static-key");
+	});
+
+	it("path-secret-auth is owned by telegram-bot (path-only secretPathRefs)", () => {
+		const g = GUIDES["telegram-bot"];
+		expect(g?.auth.kind).toBe("static-key");
+		if (g?.auth.kind === "static-key") {
+			// Path-only: no secret header or query refs — the token rides the URL path.
+			expect(g.auth.secretPathRefs).toEqual({ token: { secret: "bot_token" } });
+			expect(g.auth.secretRefs ?? {}).toEqual({});
+			expect(g.auth.secretQueryRefs ?? {}).toEqual({});
+		}
+		const getMe = opOf(g).find((o) => o.name === "getMe");
+		expect(getMe?.path).toContain("{token}");
 	});
 
 	it("ssrf-guard is owned by internet-archive's nextLink op", () => {

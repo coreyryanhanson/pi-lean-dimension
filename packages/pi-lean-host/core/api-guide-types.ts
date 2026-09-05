@@ -76,6 +76,17 @@ export interface StaticKeyAuth {
 	 * secretly-injected param.
 	 */
 	secretQueryRefs?: Record<string, SecretRef>;
+	/**
+	 * Maps path-token name → secret ref, for APIs that key every method
+	 * through the URL path (Telegram-class: `/bot<token>/getUpdates`). Values
+	 * fill `{name}` in every operation's path from the secrets store, below
+	 * the agent params map, and are redacted from every surfaced URL.
+	 * Required-only (parse rejects `optional` — an absent path token fails
+	 * closed before the request) and never prefixed (path injection is the
+	 * raw value). Parse rejects names the agent could supply or that no op
+	 * path uses.
+	 */
+	secretPathRefs?: Record<string, SecretRef>;
 }
 
 export const OAUTH2_GRANTS = [

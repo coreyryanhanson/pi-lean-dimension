@@ -128,12 +128,14 @@ describe("paginate post-response transform hookpoint", () => {
 			op,
 			{},
 			guide,
-			OPTS,
-			(item) => {
-				const it = item as { id: number };
-				return { ...it, t: true };
+			{
+				...OPTS,
+				transformFn: (item) => {
+					const it = item as { id: number };
+					return { ...it, t: true };
+				},
+				dirName: "fixture.test",
 			},
-			"fixture.test",
 		);
 
 		expect(result.items).toHaveLength(5);
@@ -160,13 +162,15 @@ describe("paginate post-response transform hookpoint", () => {
 			op,
 			{},
 			guide,
-			OPTS,
-			(item) => {
-				const it = item as { id: number };
-				if (it.id === 3) throw new Error("boom3");
-				return { ...it, t: true };
+			{
+				...OPTS,
+				transformFn: (item) => {
+					const it = item as { id: number };
+					if (it.id === 3) throw new Error("boom3");
+					return { ...it, t: true };
+				},
+				dirName: "fixture.test",
 			},
-			"fixture.test",
 		);
 
 		// The failing item (raw) is in failedItems; the rest are transformed.
@@ -194,11 +198,13 @@ describe("paginate post-response transform hookpoint", () => {
 			op,
 			{},
 			guide,
-			OPTS,
-			() => {
-				throw new Error("always");
+			{
+				...OPTS,
+				transformFn: () => {
+					throw new Error("always");
+				},
+				dirName: "fixture.test",
 			},
-			"fixture.test",
 		);
 
 		expect(result.items).toHaveLength(0);
@@ -228,9 +234,11 @@ describe("paginate post-response transform hookpoint", () => {
 			op,
 			{},
 			guide,
-			OPTS,
-			(item) => item,
-			"fixture.test",
+			{
+				...OPTS,
+				transformFn: (item) => item,
+				dirName: "fixture.test",
+			},
 		);
 
 		expect(result.items).toHaveLength(0);
@@ -255,13 +263,15 @@ describe("paginate post-response transform hookpoint", () => {
 			op,
 			{},
 			guide,
-			OPTS,
-			(item) => {
-				const it = item as { id: number };
-				if (it.id === 1 || it.id === 2) throw new Error("boom");
-				return { ...it, t: true };
+			{
+				...OPTS,
+				transformFn: (item) => {
+					const it = item as { id: number };
+					if (it.id === 1 || it.id === 2) throw new Error("boom");
+					return { ...it, t: true };
+				},
+				dirName: "fixture.test",
 			},
-			"fixture.test",
 		);
 
 		// Ceiling (3) caps the total raw items processed, failures included.

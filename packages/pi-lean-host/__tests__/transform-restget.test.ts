@@ -145,15 +145,10 @@ describe("restGet post-response transform hookpoint", () => {
 		});
 
 		const transformFn = await loadTransform("fixture");
-		const result = await restGet(
-			"https://fixture.test",
-			op,
-			{},
-			guide,
-			undefined,
-			transformFn ?? undefined,
-			"fixture",
-		);
+		const result = await restGet("https://fixture.test", op, {}, guide, {
+			transformFn: transformFn ?? undefined,
+			dirName: "fixture",
+		});
 
 		expect(result.data).toEqual({
 			rows: [
@@ -182,24 +177,14 @@ describe("restGet post-response transform hookpoint", () => {
 			transformFn!(d, { operation: "get", domain: "fixture.test" }),
 		);
 
-		const first = await restGet(
-			"https://fixture.test",
-			op,
-			{},
-			guide,
-			undefined,
-			spy,
-			"fixture",
-		);
-		const second = await restGet(
-			"https://fixture.test",
-			op,
-			{},
-			guide,
-			undefined,
-			spy,
-			"fixture",
-		);
+		const first = await restGet("https://fixture.test", op, {}, guide, {
+			transformFn: spy,
+			dirName: "fixture",
+		});
+		const second = await restGet("https://fixture.test", op, {}, guide, {
+			transformFn: spy,
+			dirName: "fixture",
+		});
 
 		// Raw body preserved on both calls; the transform was attempted twice.
 		expect(first.data).toEqual({ rows: [{ a: 1 }, { b: 2 }] });
@@ -235,24 +220,14 @@ describe("restGet post-response transform hookpoint", () => {
 			cached: false,
 		});
 
-		const undef = await restGet(
-			"https://fixture.test",
-			op,
-			{},
-			guide,
-			undefined,
-			() => undefined,
-			"fixture",
-		);
-		const nul = await restGet(
-			"https://fixture.test",
-			op,
-			{},
-			guide,
-			undefined,
-			() => null,
-			"fixture",
-		);
+		const undef = await restGet("https://fixture.test", op, {}, guide, {
+			transformFn: () => undefined,
+			dirName: "fixture",
+		});
+		const nul = await restGet("https://fixture.test", op, {}, guide, {
+			transformFn: () => null,
+			dirName: "fixture",
+		});
 
 		expect(undef.data).toBeUndefined();
 		expect(nul.data).toBeNull();

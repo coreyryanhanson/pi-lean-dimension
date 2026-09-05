@@ -46,6 +46,7 @@ import { pickGuideForCommand } from "./guide-picker.js";
 import {
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
+	resolveSecretPathParams,
 	canonicalStoreDomain,
 	hasUsableTokenPath,
 } from "./auth.js";
@@ -67,8 +68,9 @@ function helpText(): string {
 		"  /api verify <domain> --force    stamp verified: today WITHOUT running any ops (human-attested)",
 		"  /api verify --help              this help",
 		"",
-		"  Ops with unsatisfiable params (a path {token} or required query param with no default)",
-		"  are skipped, not failed. Scaffold a starter sidecar with api-scaffold({domain, verify: true})",
+		"  Ops with unsatisfiable params (a path {token} not store-filled via secretPathRefs, or a",
+		"  required query param with no default) are skipped, not failed. Scaffold a starter sidecar",
+		"  with api-scaffold({domain, verify: true})",
 		'  (writes to /tmp, with "__FILL_ME__" sentinels for every blocking param), then save via',
 		"  api-learn({domain, dir}) — the sidecar lives at:",
 		`    ~/.pi/agent/pi-lean-host/api-guides/<dirName>/verify.json`,
@@ -152,9 +154,11 @@ export async function handleVerifySubcommand(
 		case "static-key": {
 			const headerRes = resolveSecretHeaders(guide.auth, storeDomain);
 			const queryRes = resolveSecretQueryParams(guide.auth, storeDomain);
+			const pathRes = resolveSecretPathParams(guide.auth, storeDomain);
 			const missingRequired = [
 				...headerRes.absentRequired,
 				...queryRes.absentRequired,
+				...pathRes.missing,
 			];
 			if (missingRequired.length > 0) {
 				ctx.ui.notify(
@@ -208,6 +212,13 @@ export async function handleVerifySubcommand(
 	}
 	const verifyJson = sidecar && "data" in sidecar ? sidecar.data : {};
 
+	// Path tokens owned by secretPathRefs are store-filled, never
+	// caller-supplied — never unsatisfiable.
+	const secretPathTokens =
+		guide.auth.kind === "static-key"
+			? new Set(Object.keys(guide.auth.secretPathRefs ?? {}))
+			: new Set<string>();
+
 	// ── Fetch loop ──────────────────────────────────────────────
 	const ops = guide.operations;
 	const report: string[] = [];
@@ -223,7 +234,9 @@ export async function handleVerifySubcommand(
 		for (const [k, v] of Object.entries(rawSupplied)) {
 			if (v !== "__FILL_ME__") supplied[k] = v;
 		}
-		const missing = renderForReport(unsatisfiable(op, supplied));
+		const missing = renderForReport(
+			unsatisfiable(op, supplied, secretPathTokens),
+		);
 		if (missing.length > 0) {
 			skipped++;
 			report.push(
@@ -358,6 +371,12 @@ export async function handleVerifySubcommand(
  * supplied; group members are governed by the group, not per-param required
  * (the parser bans `required: true` on them), so they're skipped in the
  * per-param loop.
+ *
+ * `secretPathTokens`: path-token names owned by the guide's
+ * `auth.secretPathRefs` — store-filled, never caller-supplied, so never
+ * unsatisfiable. Both call sites (verify-command loop + api-scaffold
+ * sentinels) must pass it, or secret-owned tokens get misreported as
+ * needing a verify.json sentinel.
  */
 export type Unsatisfiable =
 	| { kind: "path"; param: string }
@@ -368,9 +387,11 @@ export type Unsatisfiable =
 export function unsatisfiable(
 	op: Operation,
 	supplied: Record<string, unknown>,
+	secretPathTokens?: ReadonlySet<string>,
 ): Unsatisfiable[] {
 	const missing: Unsatisfiable[] = [];
 	for (const token of op.pathParams) {
+		if (secretPathTokens?.has(token)) continue; // store-filled (secretPathRefs)
 		if (supplied[token] === undefined)
 			missing.push({ kind: "path", param: token });
 	}

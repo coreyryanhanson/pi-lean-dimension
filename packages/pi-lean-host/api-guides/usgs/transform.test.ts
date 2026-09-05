@@ -151,15 +151,10 @@ describe("restGet transform through the real pipeline (mocked transport)", () =>
 		const transformFn = await loadTransform("usgs");
 		expect(typeof transformFn).toBe("function");
 
-		const result = await restGet(
-			guide.apiHost,
-			op,
-			{},
-			guide,
-			undefined,
-			transformFn ?? undefined,
-			"usgs",
-		);
+		const result = await restGet(guide.apiHost, op, {}, guide, {
+			transformFn: transformFn ?? undefined,
+			dirName: "usgs",
+		});
 		const data = result.data as { features: Record<string, unknown>[] };
 		expect(data.features[0]!.lon).toBe(-122.4);
 		expect(data.features[0]!["geometry"]).toBeUndefined();
@@ -180,15 +175,10 @@ describe("restGet transform through the real pipeline (mocked transport)", () =>
 		const throwing = (): unknown => {
 			throw new Error("boom");
 		};
-		const result = await restGet(
-			guide.apiHost,
-			op,
-			{},
-			guide,
-			undefined,
-			throwing,
-			"usgs",
-		);
+		const result = await restGet(guide.apiHost, op, {}, guide, {
+			transformFn: throwing,
+			dirName: "usgs",
+		});
 		expect(result.data).toEqual(FC);
 		expect(result.transformWarning).toBe("boom");
 	});
@@ -208,15 +198,10 @@ describe("queryEvents per-item transform through the real pipeline (mocked trans
 		const op = findOp(guide, "queryEvents");
 		const transformFn = await loadTransform("usgs");
 
-		const result = await paginate(
-			guide.apiHost,
-			op,
-			{ minmagnitude: 4 },
-			guide,
-			{},
-			transformFn ?? undefined,
-			"usgs",
-		);
+		const result = await paginate(guide.apiHost, op, { minmagnitude: 4 }, guide, {
+			transformFn: transformFn ?? undefined,
+			dirName: "usgs",
+		});
 		expect(result.items.length).toBe(2);
 		const first = result.items[0] as Record<string, unknown>;
 		expect(first["lon"]).toBe(-122.4);
@@ -240,15 +225,10 @@ describe("queryEvents per-item transform through the real pipeline (mocked trans
 		const throwing = (): unknown => {
 			throw new Error("boom");
 		};
-		const result = await paginate(
-			guide.apiHost,
-			op,
-			{ minmagnitude: 4 },
-			guide,
-			{},
-			throwing,
-			"usgs",
-		);
+		const result = await paginate(guide.apiHost, op, { minmagnitude: 4 }, guide, {
+			transformFn: throwing,
+			dirName: "usgs",
+		});
 		expect(result.items.length).toBe(0);
 		expect(result.failedItems).toEqual([FEATURE_A, FEATURE_B]);
 		expect(result.totalFetched).toBe(2);

@@ -56,16 +56,21 @@ describe("all bundled guides parse correctly", () => {
 			const auth = result.guide.auth;
 			if (auth.kind === "static-key") {
 				// A keyed guide must declare a non-empty reference shape: header
-				// (secretRefs), query param (secretQueryRefs), or both. Every ref
-				// carries its own secret name (nested SecretRef — self-contained).
+				// (secretRefs), query param (secretQueryRefs), or URL path
+				// (secretPathRefs) — or any combination. Every ref carries its
+				// own secret name (nested SecretRef — self-contained).
 				const headerRefs = auth.secretRefs ?? {};
 				const queryRefs = auth.secretQueryRefs ?? {};
+				const pathRefs = auth.secretPathRefs ?? {};
 				expect(
-					Object.keys(headerRefs).length + Object.keys(queryRefs).length,
+					Object.keys(headerRefs).length +
+						Object.keys(queryRefs).length +
+						Object.keys(pathRefs).length,
 				).toBeGreaterThan(0);
 				for (const ref of [
 					...Object.values(headerRefs),
 					...Object.values(queryRefs),
+					...Object.values(pathRefs),
 				]) {
 					expect(ref.secret.length).toBeGreaterThan(0);
 				}

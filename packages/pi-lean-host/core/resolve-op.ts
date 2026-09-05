@@ -22,11 +22,15 @@ import {
 	paginate,
 	type RestGetResult,
 	type PaginateResult,
+	type PaginateOptions,
+	type SecretAuthOpts,
 } from "./helpers.js";
 import { callHelper, loadTransform } from "./local-helpers.js";
 import {
+	pathScrubValues,
 	resolveSecretHeaders,
 	resolveSecretQueryParams,
+	resolveSecretPathParams,
 	resolveAccessToken,
 	authStatusLine,
 	canonicalStoreDomain,
@@ -48,14 +52,11 @@ export interface ResolveOpOptions {
 }
 
 /** Store-injected auth opts, forwarded to the executor and reused by the
- *  caller for the output-channel audit (secret scrub). */
-interface AuthOpts {
-	authHeaders?: Record<string, string>;
-	secretHeaderNames?: Set<string>;
-	secretValues?: string[];
-	secretQueryParams?: Record<string, string>;
-	secretQueryParamNames?: Set<string>;
-}
+ *  caller for the output-channel audit (secret scrub). Field declarations
+ *  live in helpers.ts (SecretAuthOpts) — the executor boundary is typed
+ *  against the same interface, so a producer-side field can't be silently
+ *  dropped. */
+export type AuthOpts = SecretAuthOpts;
 
 export type ResolveOpResult =
 	| {
@@ -145,9 +146,11 @@ export async function resolveOpForExecution(
 		case "static-key": {
 			const headerRes = resolveSecretHeaders(guide.auth, storeDomain);
 			const queryRes = resolveSecretQueryParams(guide.auth, storeDomain);
+			const pathRes = resolveSecretPathParams(guide.auth, storeDomain);
 			const missingRequired = [
 				...headerRes.absentRequired,
 				...queryRes.absentRequired,
+				...pathRes.missing,
 			];
 			if (missingRequired.length > 0) {
 				return {
@@ -161,6 +164,9 @@ export async function resolveOpForExecution(
 				...headerRes.rawHeaderValues,
 			];
 			const queryValues = Object.values(queryRes.queryParams);
+			// Scrub set: raw + both hex-encoded forms (see pathScrubValues).
+			// The URL channel's redaction (redactSecretPathValues) handles
+			// the hex cases independently.
 			authOpts = {
 				...(Object.keys(headerRes.headers).length > 0
 					? {
@@ -176,7 +182,14 @@ export async function resolveOpForExecution(
 							secretQueryParamNames: new Set(Object.keys(queryRes.queryParams)),
 						}
 					: {}),
-				secretValues: [...headerValues, ...queryValues],
+				...(Object.keys(pathRes.values).length > 0
+					? { secretPathParams: pathRes.values }
+					: {}),
+				secretValues: [
+					...headerValues,
+					...queryValues,
+					...pathScrubValues(pathRes.values),
+				],
 			};
 			break;
 		}
@@ -208,15 +221,11 @@ export async function resolveOpForExecution(
 
 	// 4. Execute via the declared executor.
 	if (op.via === "restGet") {
-		const result = await restGet(
-			guide.apiHost,
-			op,
-			executeParams,
-			guide,
-			authOpts,
-			transformFn ?? undefined,
-			helperDirName,
-		);
+		const result = await restGet(guide.apiHost, op, executeParams, guide, {
+			...authOpts,
+			transformFn: transformFn ?? undefined,
+			dirName: helperDirName,
+		});
 		return {
 			ok: true,
 			via: "restGet",
@@ -227,10 +236,12 @@ export async function resolveOpForExecution(
 	}
 
 	if (op.via === "paginate") {
-		const paginateOpts: Parameters<typeof paginate>[4] = {
+		const paginateOpts: PaginateOptions = {
 			...authOpts,
 			...(opts?.skipSsrfGuard ? { skipSsrfGuard: true } : {}),
 			...(opts?.gatherAll === undefined ? {} : { gatherAll: opts.gatherAll }),
+			transformFn: transformFn ?? undefined,
+			dirName: helperDirName,
 		};
 		const result = await paginate(
 			guide.apiHost,
@@ -238,8 +249,6 @@ export async function resolveOpForExecution(
 			executeParams,
 			guide,
 			paginateOpts,
-			transformFn ?? undefined,
-			helperDirName,
 		);
 		return {
 			ok: true,

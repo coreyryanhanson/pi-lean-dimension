@@ -210,6 +210,9 @@ function authSummary(auth: AuthConfig): string {
 			for (const [param, ref] of Object.entries(auth.secretQueryRefs ?? {})) {
 				parts.push(`?${param} ← secret ${ref.secret}`);
 			}
+			for (const [token, ref] of Object.entries(auth.secretPathRefs ?? {})) {
+				parts.push(`{${token}} ← secret ${ref.secret}`);
+			}
 			break;
 		case "oauth2":
 			parts.push(
@@ -327,6 +330,7 @@ const AUTHORING_MANUAL = [
 	"  static-key (keyed APIs):",
 	`    \`secretRefs\`      — { <header name>: { secret: <store name>, prefix?, optional? } }  ← self-contained ref`,
 	`    \`secretQueryRefs\` — { <query param>: { secret: <store name>, optional? } }  ← query-param injection`,
+	`    \`secretPathRefs\`  — { <path token>: { secret: <store name> } }  ← path-token injection (/bot{token}/getMe); required-only: no prefix/optional`,
 	`    \`optional: true\` on a ref → proceeds unauthenticated if absent; default (required) → fail-closed. Values live in the secrets store; the store name must match /api secrets exactly.`,
 	"",
 	"## Executor semantics",

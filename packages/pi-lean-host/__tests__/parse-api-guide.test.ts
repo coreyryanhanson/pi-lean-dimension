@@ -26,6 +26,7 @@ import {
 	formatApiGuideCatalog,
 	stampFrontmatterField,
 	PAGINATION_ALLOWLISTS,
+	AUTH_ALLOWLISTS,
 } from "../core/parse-api-guide.js";
 import { slug } from "../core/path-template.js";
 import {
@@ -2361,5 +2362,247 @@ describe("stampFrontmatterField", () => {
 			"1",
 		);
 		expect(out).toBe("---\nfoo: bar\nschemaVersion: 1\n---\n");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// secretPathRefs — token-in-path secret injection
+// ═══════════════════════════════════════════════════════════════════
+
+describe("parseApiGuide — auth field allowlist tripwire", () => {
+	// Two-direction tripwire, per auth kind: the allowlist must EQUAL the keys
+	// the validator reads. The reverse direction is load-bearing — an
+	// allowlisted key the parser never assigns re-creates the silent-drop bug
+	// this allowlist kills (same pattern as the pagination allowlist tripwire).
+	it("allowlists exactly match the keys each auth validator reads", () => {
+		expect([...AUTH_ALLOWLISTS["none"]].sort()).toEqual(
+			["headers", "kind"].sort(),
+		);
+		expect([...AUTH_ALLOWLISTS["static-key"]].sort()).toEqual(
+			[
+				"headers",
+				"kind",
+				"secretPathRefs",
+				"secretQueryRefs",
+				"secretRefs",
+			].sort(),
+		);
+		expect([...AUTH_ALLOWLISTS["oauth2"]].sort()).toEqual(
+			[
+				"authorizeUrl",
+				"clientId",
+				"clientSecret",
+				"grant",
+				"kind",
+				"paramStyle",
+				"revokeUrl",
+				"scopes",
+				"secretRefs",
+				"tokenEndpointAuthMethod",
+				"tokenUrl",
+			].sort(),
+		);
+	});
+});
+
+describe("parseApiGuide — secretPathRefs", () => {
+	function guideWithOps(authYaml: string, opsYaml: string) {
+		return `---
+domains: [example.com]
+apiHost: https://api.example.com
+auth:
+${authYaml}
+operations:
+${opsYaml}
+---
+body
+`;
+	}
+
+	const tokenOps = `  - name: get
+    via: restGet
+    path: /auth{token}/get
+    accept: json
+  - name: list
+    via: restGet
+    path: /auth{token}/list
+    accept: json`;
+
+	it("a valid path-token guide parses (secret-owned {token} in paths)", () => {
+		const r = parseApiGuide(
+			guideWithOps(
+				`  kind: static-key
+  secretPathRefs:
+    token:
+      secret: path_key`,
+				tokenOps,
+			),
+			{ filename: "example.com" },
+		);
+		expect(r.ok).toBe(true);
+		if (r.ok && r.guide.auth.kind === "static-key") {
+			expect(r.guide.auth.secretPathRefs).toEqual({
+				token: { secret: "path_key" },
+			});
+		}
+	});
+
+	it("a docs-only params.<name>.description entry stays legal", () => {
+		const r = parseApiGuide(
+			guideWithOps(
+				`  kind: static-key
+  secretPathRefs:
+    token:
+      secret: path_key`,
+				`  - name: get
+    via: restGet
+    path: /auth{token}/get
+    accept: json
+    params:
+      token:
+        description: the auth token`,
+			),
+			{ filename: "example.com" },
+		);
+		expect(r.ok).toBe(true);
+	});
+
+	it("a name in an op's params map → ParseError (agent-suppliable collision)", () => {
+		// The op's path lacks {token}, so `params.token` is a real query-param
+		// entry reaching dOp.params — the in-params collision.
+		const r = parseApiGuide(
+			guideWithOps(
+				`  kind: static-key
+  secretPathRefs:
+    token:
+      secret: path_key`,
+				`  - name: list
+    via: restGet
+    path: /things
+    accept: json
+    params:
+      token:
+        required: true`,
+			),
+			{ filename: "example.com" },
+		);
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.secretPathRefs.token");
+			expect(r.error.fix).toContain("agent must not be able to set it");
+		}
+	});
+
+	it("a name in no op's path → ParseError (declared-but-unused typo)", () => {
+		const r = parseApiGuide(
+			guideWithOps(
+				`  kind: static-key
+  secretPathRefs:
+    token:
+      secret: path_key`,
+				`  - name: list
+    via: restGet
+    path: /things
+    accept: json`,
+			),
+			{ filename: "example.com" },
+		);
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.secretPathRefs.token");
+			expect(r.error.found).toContain("no operation's path contains {token}");
+		}
+	});
+
+	it("a name shared with secretQueryRefs → ParseError (cross-map shared key)", () => {
+		const r = parseApiGuide(
+			guideWithOps(
+				`  kind: static-key
+  secretPathRefs:
+    token:
+      secret: path_key
+  secretQueryRefs:
+    token:
+      secret: query_token`,
+				`  - name: get
+    via: restGet
+    path: /auth{token}/get
+    accept: json`,
+			),
+			{ filename: "example.com" },
+		);
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.secretPathRefs.token");
+			expect(r.error.fix).toContain("both secretPathRefs and secretQueryRefs");
+		}
+	});
+
+	it("an `optional` key on a path ref → ParseError (required-only, presence rejected)", () => {
+		const r = parseApiGuide(
+			guideWithOps(
+				`  kind: static-key
+  secretPathRefs:
+    token:
+      secret: path_key
+      optional: true`,
+				tokenOps,
+			),
+			{ filename: "example.com" },
+		);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error.field).toBe("auth.secretPathRefs.token.optional");
+	});
+
+	it("a `prefix` on a path ref → ParseError (path injection is the raw value)", () => {
+		const r = parseApiGuide(
+			guideWithOps(
+				`  kind: static-key
+  secretPathRefs:
+    token:
+      secret: path_key
+      prefix: "Bearer "`,
+				tokenOps,
+			),
+			{ filename: "example.com" },
+		);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error.field).toBe("auth.secretPathRefs.token.prefix");
+	});
+
+	it("a non-\\w ref name → ParseError with the {\\w+} grammar message", () => {
+		const r = parseApiGuide(
+			guideWithOps(
+				`  kind: static-key
+  secretPathRefs:
+    bad-name:
+      secret: path_key`,
+				tokenOps,
+			),
+			{ filename: "example.com" },
+		);
+		expect(r.ok).toBe(false);
+		if (!r.ok) {
+			expect(r.error.field).toBe("auth.secretPathRefs.bad-name");
+			expect(r.error.expected).toContain("\\w+");
+		}
+	});
+
+	it("an unknown auth key next to secretPathRefs → ParseError (allowlist typo)", () => {
+		const r = parseApiGuide(
+			guideWithOps(
+				`  kind: static-key
+  secretPathRefs:
+    token:
+      secret: path_key
+  secretPathRef:
+    token:
+      secret: path_key`,
+				tokenOps,
+			),
+			{ filename: "example.com" },
+		);
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error.field).toBe("auth.secretPathRef");
 	});
 });

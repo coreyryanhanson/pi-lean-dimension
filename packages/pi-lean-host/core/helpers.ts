@@ -26,6 +26,7 @@ import { serverMessage, isPlanGated } from "./status-hint.js";
 import {
 	fetchUrl,
 	redactSecretParams,
+	redactSecretPathValues,
 	type FetchOptions,
 } from "./transport.js";
 import { fillPathTemplate, joinUrl } from "./path-template.js";
@@ -453,26 +454,89 @@ function checkAuth(auth: ApiGuide["auth"]): void {
 }
 
 /**
- * Helper to conditionally include `fresh` in FetchOptions (exactOptionalPropertyTypes).
+ * Split the caller params around secret-owned path tokens: the
+ * path fill sees the merged map (store value wins; any agent-supplied value
+ * for a secret-owned token is dropped), while the query builder gets a
+ * deletion-only copy. The merged map must never reach buildQueryParams — a
+ * `passthrough: true` op without {token} in its path would otherwise leak
+ * the plaintext token into the query string and result.params.
  */
+export function splitPathSecretParams(
+	params: Record<string, unknown>,
+	pathSecrets: Record<string, string>,
+): {
+	fillParams: Record<string, unknown>;
+	queryParamsForBuild: Record<string, unknown>;
+} {
+	if (Object.keys(pathSecrets).length === 0)
+		return { fillParams: params, queryParamsForBuild: params };
+	return {
+		fillParams: { ...params, ...pathSecrets },
+		queryParamsForBuild: Object.fromEntries(
+			Object.entries(params).filter(([k]) => !(k in pathSecrets)),
+		),
+	};
+}
+
+/**
+ * Compose the two URL redaction channels for a surfaced URL — query params
+ * by name, path tokens by value. Both helpers early-return when their
+ * input is empty, so callers may pass values/set unconditionally.
+ */
+function redactSurfacedUrl(
+	url: string,
+	secretParamNames: Set<string>,
+	pathValues: string[],
+): string {
+	return redactSecretPathValues(
+		redactSecretParams(url, secretParamNames),
+		pathValues,
+	);
+}
+
+/** Named args for fetchWithOpts — replaced an 11-param positional tail
+ *  (review nit #4). Optional fields carry `| undefined` so callers can pass
+ *  through possibly-undefined values without spreads; falsy booleans are
+ *  no-ops (truthiness-checked below). */
+interface FetchWithOptsArgs {
+	/** Expanded Accept header value. */
+	accept: string;
+	/** Store-injected secret headers + literal auth.headers, merged. */
+	extraHeaders?: Record<string, string> | undefined;
+	/** Skip cache — force fresh fetch. */
+	fresh?: boolean | undefined;
+	/** Route through the transport's SSRF-guarded redirect path. */
+	guardRedirects?: boolean | undefined;
+	/** Charset fallback for servers that omit Content-Type charset. */
+	fallbackCharset?: string | undefined;
+	/** Lowercased injected header names — stripped on cross-domain redirects. */
+	secretHeaderNames?: Set<string> | undefined;
+	/** Suppress ETag cache when query secrets ride the URL. */
+	hasQuerySecret?: boolean | undefined;
+	/** Injected query-secret names — redacted from every surfaced URL. */
+	secretQueryParamNames?: Set<string> | undefined;
+	/** Path secrets present — cache-skip + guarded redirects. */
+	hasPathSecret?: boolean | undefined;
+	/** Redaction closure for cross-domain redirect hops. */
+	redactPathSecret?: ((url: string) => string) | undefined;
+}
+
 function fetchWithOpts(
 	url: string,
-	accept: string,
-	fresh: boolean | undefined,
-	extraHeaders?: Record<string, string>,
-	guardRedirects?: boolean,
-	fallbackCharset?: string,
-	secretHeaderNames?: Set<string>,
-	hasQuerySecret?: boolean,
-	secretQueryParamNames?: Set<string>,
+	args: FetchWithOptsArgs,
 ): ReturnType<typeof fetchUrl> {
-	const opts: FetchOptions = { headers: { accept, ...extraHeaders } };
-	if (fresh !== undefined) opts.fresh = fresh;
-	if (guardRedirects) opts.guardRedirects = true;
-	if (fallbackCharset) opts.fallbackCharset = fallbackCharset;
-	if (secretHeaderNames) opts.secretHeaderNames = secretHeaderNames;
-	if (hasQuerySecret) opts.hasQuerySecret = true;
-	if (secretQueryParamNames) opts.secretQueryParamNames = secretQueryParamNames;
+	const opts: FetchOptions = {
+		headers: { accept: args.accept, ...args.extraHeaders },
+	};
+	if (args.fresh !== undefined) opts.fresh = args.fresh;
+	if (args.guardRedirects) opts.guardRedirects = true;
+	if (args.fallbackCharset) opts.fallbackCharset = args.fallbackCharset;
+	if (args.secretHeaderNames) opts.secretHeaderNames = args.secretHeaderNames;
+	if (args.hasQuerySecret) opts.hasQuerySecret = true;
+	if (args.secretQueryParamNames)
+		opts.secretQueryParamNames = args.secretQueryParamNames;
+	if (args.hasPathSecret) opts.hasPathSecret = true;
+	if (args.redactPathSecret) opts.redactPathSecret = args.redactPathSecret;
 	return fetchUrl(url, opts);
 }
 
@@ -538,9 +602,15 @@ function checkResponseStatus(
 // restGet
 // ═══════════════════════════════════════════════════════════════════
 
-export interface RestGetOptions {
-	/** Skip cache — force fresh fetch. */
-	fresh?: boolean;
+// ═══════════════════════════════════════════════════════════════════
+// Store-injected secret auth opts (single source of truth)
+// ═══════════════════════════════════════════════════════════════════
+
+/** Store-injected auth opts, forwarded to the executor and reused by the
+ *  caller for the output-channel audit (secret scrub). Declared once here;
+ *  RestGetOptions / PaginateOptions / resolve-op's AuthOpts extend it so a
+ *  producer-side field can't be silently dropped at the executor boundary. */
+export interface SecretAuthOpts {
 	/** Store-injected secret headers (kind: static-key). Merged with guide.auth.headers. */
 	authHeaders?: Record<string, string>;
 	/** Lowercased injected header names — stripped on cross-domain redirects. */
@@ -551,6 +621,17 @@ export interface RestGetOptions {
 	secretQueryParams?: Record<string, string>;
 	/** The injected query-param names — redacted from every surfaced URL. */
 	secretQueryParamNames?: Set<string>;
+	/** Store-injected path tokens (kind: static-key secretPathRefs) — pathTokenName → resolved value. Fills {name} in the op path below the agent params map. */
+	secretPathParams?: Record<string, string>;
+}
+
+export interface RestGetOptions extends SecretAuthOpts {
+	/** Skip cache — force fresh fetch. */
+	fresh?: boolean;
+	/** Built-in post-response transform, applied when op.transform === true. */
+	transformFn?: TransformFn | undefined;
+	/** Guide directory name — transform context domain / helper routing. */
+	dirName?: string | undefined;
 }
 
 /**
@@ -574,14 +655,26 @@ export async function restGet(
 	params: Record<string, unknown>,
 	guide: ApiGuide,
 	opts?: RestGetOptions,
-	transformFn?: TransformFn,
-	dirName?: string,
 ): Promise<RestGetResult> {
+	// Secret-owned path tokens: the store fills them BELOW the agent
+	// params map (see splitPathSecretParams).
+	const pathSecrets = opts?.secretPathParams ?? {};
+	const pathValues = Object.values(pathSecrets);
+	const hasPathSecrets = pathValues.length > 0;
+	const { fillParams, queryParamsForBuild } = splitPathSecretParams(
+		params,
+		pathSecrets,
+	);
+
 	// Steps 1/2 unchanged: fill path, build query (agent-supplied only —
 	// secret param names are excluded, incl. from the passthrough branch).
-	const resolvedPath = fillPathStrict(operation.path, params);
+	const resolvedPath = fillPathStrict(operation.path, fillParams);
 	const secretParamNames = opts?.secretQueryParamNames ?? new Set<string>();
-	const query = buildQueryParams(operation, params, secretParamNames);
+	const query = buildQueryParams(
+		operation,
+		queryParamsForBuild,
+		secretParamNames,
+	);
 
 	// 3. Auth dispatch.
 	checkAuth(guide.auth);
@@ -597,14 +690,17 @@ export async function restGet(
 	// 4. Build URL. Secret query params are injected BELOW the
 	// agent-supplied map — never into it — so the returned `params` stays
 	// agent-supplied-only. The fetch uses the raw URL; every surfaced copy
-	// (result.url, the URL stored on HelperError.url) is redacted.
+	// (result.url, the URL stored on HelperError.url) is redacted. Path
+	// secrets redact via redactSecretPathValues (value replace, raw +
+	// both hex forms); they ride the path, not the query, so
+	// redactSecretParams alone can't touch them.
 	const secretParams = opts?.secretQueryParams ?? {};
 	const hasQuerySecret = Object.keys(secretParams).length > 0;
 	const fetchUrlRaw = buildUrl(apiHost, resolvedPath, {
 		...query,
 		...secretParams,
 	});
-	const url = redactSecretParams(fetchUrlRaw, secretParamNames);
+	const url = redactSurfacedUrl(fetchUrlRaw, secretParamNames, pathValues);
 
 	// 5. Build Accept header — json/xml shorthands expand; everything
 	// else passes through as-is (e.g. application/atom+xml, */*).
@@ -614,17 +710,22 @@ export async function restGet(
 	//    for servers that omit a Content-Type charset (e.g. legacy Latin-1
 	//    APIs); an explicit header charset always wins.
 	const shape = operation.parse ?? guide.responseShape;
-	const result = await fetchWithOpts(
-		fetchUrlRaw,
+	// Redaction closure for cross-domain redirect hops — built here where
+	// the values are already in scope; the transport stays value-agnostic.
+	const redactPathSecret = hasPathSecrets
+		? (u: string) => redactSecretPathValues(u, pathValues)
+		: undefined;
+	const result = await fetchWithOpts(fetchUrlRaw, {
 		accept,
-		opts?.fresh,
 		extraHeaders,
-		undefined,
-		shape.charset,
-		opts?.secretHeaderNames,
+		fresh: opts?.fresh,
+		fallbackCharset: shape.charset,
+		secretHeaderNames: opts?.secretHeaderNames,
 		hasQuerySecret,
-		opts?.secretQueryParamNames,
-	);
+		secretQueryParamNames: opts?.secretQueryParamNames,
+		hasPathSecret: hasPathSecrets,
+		redactPathSecret,
+	});
 
 	// 7. Check HTTP status before attempting to parse the body.
 	// This turns "Invalid JSON response: <?xml..." into a clean
@@ -643,11 +744,11 @@ export async function restGet(
 	// can surface "⚠ Transform failed:" — the op is NOT disabled, so a
 	// subsequent call re-attempts the transform.
 	let transformWarning: string | undefined;
-	if (transformFn) {
+	if (opts?.transformFn) {
 		try {
-			data = transformFn(data, {
+			data = opts.transformFn(data, {
 				operation: operation.name,
-				domain: dirName ?? "",
+				domain: opts.dirName ?? "",
 			});
 		} catch (err) {
 			transformWarning = err instanceof Error ? err.message : String(err);
@@ -667,7 +768,7 @@ export async function restGet(
 // paginate
 // ═══════════════════════════════════════════════════════════════════
 
-export interface PaginateOptions {
+export interface PaginateOptions extends SecretAuthOpts {
 	/** When true, gather items up to `gatherAllMax`. Default false. */
 	gatherAll?: boolean;
 	/** Max items to gather when `gatherAll` is true. Overrides guide/operation default. */
@@ -676,16 +777,10 @@ export interface PaginateOptions {
 	fresh?: boolean;
 	/** Bypass the nextLink SSRF guard (for testing against local servers). */
 	skipSsrfGuard?: boolean;
-	/** Store-injected secret headers (kind: static-key). Merged with guide.auth.headers. */
-	authHeaders?: Record<string, string>;
-	/** Lowercased injected header names — stripped on cross-domain redirects. */
-	secretHeaderNames?: Set<string>;
-	/** Store-injected secret values — scrubbed from error bodies (output-channel audit). */
-	secretValues?: string[];
-	/** Store-injected secret query params — appended below the agent params map. */
-	secretQueryParams?: Record<string, string>;
-	/** The injected query-param names — redacted from every surfaced URL. */
-	secretQueryParamNames?: Set<string>;
+	/** Built-in per-item transform, applied when op.transform === true. */
+	transformFn?: TransformFn | undefined;
+	/** Guide directory name — transform context domain / helper routing. */
+	dirName?: string | undefined;
 }
 
 /**
@@ -707,8 +802,6 @@ export async function paginate(
 	params: Record<string, unknown>,
 	guide: ApiGuide,
 	opts?: PaginateOptions,
-	transformFn?: TransformFn,
-	dirName?: string,
 ): Promise<PaginateResult> {
 	const pagCfg = operation.pagination ?? guide.pagination;
 	if (!pagCfg) {
@@ -771,10 +864,25 @@ export async function paginate(
 		if (isNaN(page)) page = fallback;
 	}
 
+	// Secret-owned path tokens (see splitPathSecretParams): store fills
+	// below the agent params map, agent-supplied values dropped, and the
+	// query builder gets a deletion-only params copy (never the merged map).
+	const pathSecrets = opts?.secretPathParams ?? {};
+	const pathValues = Object.values(pathSecrets);
+	const hasPathSecrets = pathValues.length > 0;
+	const { fillParams, queryParamsForBuild } = splitPathSecretParams(
+		params,
+		pathSecrets,
+	);
+
 	// Compute effective params once — used for both per-page building and result transparency.
 	// Agent-supplied only (secret param names excluded, incl. passthrough).
 	const secretParamNames = opts?.secretQueryParamNames ?? new Set<string>();
-	const effectiveParams = buildQueryParams(operation, params, secretParamNames);
+	const effectiveParams = buildQueryParams(
+		operation,
+		queryParamsForBuild,
+		secretParamNames,
+	);
 
 	// Resolve the effective page size once for the seeding styles — the
 	// caller's value, else the op's declared default (both already folded into
@@ -809,6 +917,11 @@ export async function paginate(
 	// Secret query params injected below the agent map on every page's fetch URL.
 	const secretParams = opts?.secretQueryParams ?? {};
 	const hasQuerySecret = Object.keys(secretParams).length > 0;
+	// Redaction closure for cross-domain redirect hops — built once where
+	// the values are already in scope; the transport stays value-agnostic.
+	const redactPathSecret = hasPathSecrets
+		? (u: string) => redactSecretPathValues(u, pathValues)
+		: undefined;
 	const urls: string[] = [];
 
 	while (true) {
@@ -833,7 +946,7 @@ export async function paginate(
 		}
 
 		// Build URL.
-		const resolvedPath = fillPathStrict(operation.path, params);
+		const resolvedPath = fillPathStrict(operation.path, fillParams);
 
 		let url: string;
 		if (style === "nextLink" && nextUrl) {
@@ -850,8 +963,9 @@ export async function paginate(
 		}
 
 		// Every surfaced URL (incl. a server-supplied nextUrl that may
-		// already carry the secret) is redacted at the capture point.
-		urls.push(redactSecretParams(url, secretParamNames));
+		// already carry the secret) is redacted at the capture point — query
+		// params by name, path tokens by value.
+		urls.push(redactSurfacedUrl(url, secretParamNames, pathValues));
 
 		// NextLink guard — the URL comes from the remote server, so this is
 		// the one place SSRF protection is load-bearing. `guardThisFetch`
@@ -864,7 +978,9 @@ export async function paginate(
 		if (guardThisFetch) {
 			const guard = ssrfGuard(url);
 			if (!guard.ok) {
-				const errUrl = redactSecretParams(url, secretParamNames);
+				// The SSRF-block error's errUrl is built separately from the other
+				// surfaced URLs — redact it the same way (query by name, path by value).
+				const errUrl = redactSurfacedUrl(url, secretParamNames, pathValues);
 				throw new HelperError(
 					"url",
 					`URL blocked during pagination: ${guard.reason}`,
@@ -877,23 +993,24 @@ export async function paginate(
 		}
 
 		// Fetch.
-		const result = await fetchWithOpts(
-			url,
+		const result = await fetchWithOpts(url, {
 			accept,
-			opts?.fresh,
 			extraHeaders,
-			guardThisFetch,
-			shape.charset,
-			opts?.secretHeaderNames,
+			fresh: opts?.fresh,
+			guardRedirects: guardThisFetch,
+			fallbackCharset: shape.charset,
+			secretHeaderNames: opts?.secretHeaderNames,
 			hasQuerySecret,
-			opts?.secretQueryParamNames,
-		);
+			secretQueryParamNames: opts?.secretQueryParamNames,
+			hasPathSecret: hasPathSecrets,
+			redactPathSecret,
+		});
 
 		// Check HTTP status before attempting to parse. Secret values scrubbed
 		// from the error excerpt (output-channel audit). The URL stored on
 		// the error object is redacted, computed upstream of checkResponseStatus.
 		checkResponseStatus(
-			{ ...result, url: redactSecretParams(url, secretParamNames) },
+			{ ...result, url: redactSurfacedUrl(url, secretParamNames, pathValues) },
 			opts?.secretValues,
 		);
 
@@ -937,12 +1054,12 @@ export async function paginate(
 					? pageItems.slice(0, remaining)
 					: pageItems;
 			for (const item of toProcess) {
-				if (transformFn) {
+				if (opts?.transformFn) {
 					try {
 						items.push(
-							transformFn(item, {
+							opts.transformFn(item, {
 								operation: operation.name,
-								domain: dirName ?? "",
+								domain: opts.dirName ?? "",
 							}),
 						);
 					} catch {

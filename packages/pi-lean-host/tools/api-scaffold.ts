@@ -9,10 +9,10 @@
  *  - `{domain, helper: true}` → commented-out helper stub (default +
  *    `transform` exports) with doc comments. Self-documenting.
  *  - `{domain, verify: true}` → `verify.json` with `"__FILL_ME__"` sentinels
- *    for every unsatisfiable param (path `{token}`, required-no-default
- *    query, each `requiresAnyOf` member). Existing guides-dir `verify.json`
- *    real values are additive-merged; new sentinels added for newly-
- *    unsatisfiable params.
+ *    for every unsatisfiable param (a path `{token}` NOT store-filled via
+ *    `secretPathRefs`, required-no-default query, each `requiresAnyOf`
+ *    member). Existing guides-dir `verify.json` real values are
+ *    additive-merged; new sentinels added for newly-unsatisfiable params.
  *  - `{domain, verify: true, helper: true}` → both files, same staged dir.
  *
  * Refuses to overwrite an existing staged sibling (delete from /tmp +
@@ -118,7 +118,12 @@ function mergeVerifySentinels(
 		merged[opName] = { ...params };
 	}
 	for (const op of guide.operations) {
-		const sentinels = renderForSentinels(unsatisfiable(op, {}));
+		// Path tokens owned by secretPathRefs are store-filled — no sentinel.
+		const secretPathTokens =
+			guide.auth.kind === "static-key"
+				? new Set(Object.keys(guide.auth.secretPathRefs ?? {}))
+				: new Set<string>();
+		const sentinels = renderForSentinels(unsatisfiable(op, {}, secretPathTokens));
 		if (sentinels.length === 0) continue; // runnable op → no entry
 		const entry = merged[op.name] ?? {};
 		for (const p of sentinels) {
@@ -155,7 +160,7 @@ export const apiScaffoldTool = defineTool({
 		verify: Type.Optional(
 			Type.Boolean({
 				description:
-					'true → scaffold a starter verify.json with "__FILL_ME__" sentinels for every unsatisfiable param.',
+					'true → scaffold a starter verify.json with "__FILL_ME__" sentinels for every unsatisfiable param (path tokens store-filled via secretPathRefs are excluded).',
 			}),
 		),
 		helper: Type.Optional(
@@ -187,7 +192,7 @@ export const apiScaffoldTool = defineTool({
 						type: "text",
 						text:
 							`⚠ Nothing to scaffold — at least one of verify: true or helper: true is required.\n` +
-							`  verify: true → starter verify.json (sentinels for unsatisfiable params)\n` +
+							`  verify: true → starter verify.json (sentinels for unsatisfiable params — store-filled path tokens excluded)\n` +
 							`  helper: true → commented-out helper.ts stub`,
 					},
 				],

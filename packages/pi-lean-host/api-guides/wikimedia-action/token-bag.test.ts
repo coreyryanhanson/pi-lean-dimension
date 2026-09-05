@@ -100,15 +100,11 @@ describe("wikimedia-action tokenBag + transform (mocked transport)", () => {
 		const transformFn = await loadTransform("wikimedia-action");
 		expect(typeof transformFn).toBe("function");
 
-		const result = await paginate(
-			guide.apiHost,
-			op,
-			{},
-			guide,
-			{ gatherAll: true },
-			transformFn ?? undefined,
-			"wikimedia-action",
-		);
+		const result = await paginate(guide.apiHost, op, {}, guide, {
+			gatherAll: true,
+			transformFn: transformFn ?? undefined,
+			dirName: "wikimedia-action",
+		});
 
 		// Two pages: 2 + 1 recentchanges, each projected by the transform.
 		expect(result.items.length).toBe(3);
@@ -161,15 +157,10 @@ describe("wikimedia-action tokenBag + transform (mocked transport)", () => {
 			throw new Error("boom");
 		};
 
-		const result = await paginate(
-			guide.apiHost,
-			op,
-			{},
-			guide,
-			{},
-			throwing,
-			"wikimedia-action",
-		);
+		const result = await paginate(guide.apiHost, op, {}, guide, {
+			transformFn: throwing,
+			dirName: "wikimedia-action",
+		});
 
 		expect(result.items.length).toBe(0);
 		expect(result.failedItems).toHaveLength(2);

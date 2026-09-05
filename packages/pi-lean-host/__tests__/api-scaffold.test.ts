@@ -485,3 +485,48 @@ describe("api-scaffold TUI rendering", () => {
 		);
 	});
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// secretPathRefs carve-out — store-owned tokens get no sentinel
+// ═══════════════════════════════════════════════════════════════════
+
+describe("api-scaffold — secretPathRefs sentinels", () => {
+	it("stages no sentinel for a secret-owned path token; caller-supplied tokens still get one", async () => {
+		const recipe = `---
+kind: api
+domains: [path.example]
+shortName: PathKey
+apiHost: https://api.path.example
+auth:
+  kind: static-key
+  secretPathRefs:
+    token:
+      secret: path_key
+responseShape:
+  format: json
+  charset: utf-8
+operations:
+  - name: whoami
+    via: restGet
+    path: /auth{token}/get
+    accept: json
+  - name: getItem
+    via: restGet
+    path: /item/{id}
+    accept: json
+    params:
+      id:
+        description: item id
+---
+`;
+		writeGuide("PathKey", "path.example", recipe);
+		const res = await callScaffold({ domain: "path.example", verify: true });
+		expect(res.details).toMatchObject({ mode: "verify", dirName: "pathkey" });
+		const merged = JSON.parse(
+			readFileSync(join(stagedDir("pathkey"), "verify.json"), "utf-8"),
+		);
+		// whoami (secret-owned {token}) contributes no entry; getItem still does.
+		expect(merged).toEqual({ getItem: { id: "__FILL_ME__" } });
+		expect(JSON.stringify(merged)).not.toContain("whoami");
+	});
+});

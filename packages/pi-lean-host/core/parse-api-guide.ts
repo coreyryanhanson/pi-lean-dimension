@@ -113,9 +113,17 @@ const VALID_PAGINATION_STYLE: ReadonlySet<string> = new Set([
 // it (stricter than the old single global set: a `tokenUrl` on a static-key
 // block or a `headerPrefixes` on an oauth2 block now fails at parse). The old
 // `none`-kind field-presence check is subsumed by the NoneAuth allowlist.
-const AUTH_ALLOWLISTS: Record<AuthKind, ReadonlySet<string>> = {
+// Exported for the allowlist↔parser tripwire in __tests__/parse-api-guide.test.ts
+// (same two-direction shape as PAGINATION_ALLOWLISTS).
+export const AUTH_ALLOWLISTS: Record<AuthKind, ReadonlySet<string>> = {
 	none: new Set(["kind", "headers"]),
-	"static-key": new Set(["kind", "headers", "secretRefs", "secretQueryRefs"]),
+	"static-key": new Set([
+		"kind",
+		"headers",
+		"secretRefs",
+		"secretQueryRefs",
+		"secretPathRefs",
+	]),
 	oauth2: new Set([
 		"kind",
 		"grant",
@@ -944,10 +952,71 @@ function validateStaticKeyAuth(
 		if (isParseErr(qr)) return qr;
 		secretQueryRefs = qr;
 	}
+	let secretPathRefs: Record<string, SecretRef> | undefined;
+	if (a["secretPathRefs"] !== undefined) {
+		const pr = parseSecretRefs(
+			a["secretPathRefs"],
+			file,
+			fm,
+			"auth.secretPathRefs",
+		);
+		if (isParseErr(pr)) return pr;
+		// Path-ref entry checks — fail loud, never silently ignore:
+		//  - `prefix` is rejected: path injection is the raw value (the store
+		//    value fills {name} verbatim).
+		//  - `optional` is rejected (presence, not just `true`): path refs are
+		//    required-only — an absent token fails closed in fillPathStrict
+		//    before any request, so an optional arm is an error-shaped
+		//    pseudostate, not a feature.
+		//  - a non-\w name is rejected: fillPathTemplate/extractPathTokens
+		//    only match {\w+}, so such a name could never fill — reject with
+		//    the grammar message instead of a confusing declared-but-unused
+		//    typo error downstream.
+		for (const [name, ref] of Object.entries(pr)) {
+			if (!/^\w+$/.test(name)) {
+				return fail(
+					file,
+					`auth.secretPathRefs.${name}`,
+					"a \\w+ path-token name (the {token} grammar matches \\w+ only)",
+					`"${name}"`,
+					{
+						snippet: snippetFor(fm, "auth"),
+						fix: `Rename the ref to an \\w+ name that matches a {token} in some operation's path — e.g. bot_token → {bot_token}.`,
+					},
+				);
+			}
+			if (ref.prefix !== undefined) {
+				return fail(
+					file,
+					`auth.secretPathRefs.${name}.prefix`,
+					"no prefix key — path injection is the raw secret value",
+					`prefix: ${JSON.stringify(ref.prefix)}`,
+					{
+						snippet: snippetFor(fm, "auth"),
+						fix: `Remove prefix from secretPathRefs.${name} — the value fills {${name}} in the path verbatim.`,
+					},
+				);
+			}
+			if (ref.optional !== undefined) {
+				return fail(
+					file,
+					`auth.secretPathRefs.${name}.optional`,
+					"no optional key — path refs are required-only (an absent path token fails closed before the request)",
+					`optional: ${JSON.stringify(ref.optional)}`,
+					{
+						snippet: snippetFor(fm, "auth"),
+						fix: `Remove optional from secretPathRefs.${name} — a path-keyed API has no unauthenticated state.`,
+					},
+				);
+			}
+		}
+		secretPathRefs = pr;
+	}
 	const result: StaticKeyAuth = { kind: "static-key" };
 	if (headers !== undefined) result.headers = headers;
 	if (secretRefs !== undefined) result.secretRefs = secretRefs;
 	if (secretQueryRefs !== undefined) result.secretQueryRefs = secretQueryRefs;
+	if (secretPathRefs !== undefined) result.secretPathRefs = secretPathRefs;
 	return result;
 }
 
@@ -1893,6 +1962,59 @@ export function parseApiGuide(
 						},
 					);
 				}
+			}
+		}
+	}
+
+	// Cross-field: secretPathRefs rules. Every path-ref name is a
+	// secret-owned path token — the agent must never be able to set it, and
+	// it must be load-bearing. Checked after operations (the operative fact
+	// is that this runs after BOTH parses):
+	//  - a name in any op's `params` map (agent-suppliable). Path-token-keyed
+	//    params entries never reach dOp.params (the parser routes them to
+	//    pathParamDocs, description-only), so `in dOp.params` is exactly
+	//    "agent-suppliable" — a docs-only params.<name>.description entry
+	//    stays legal.
+	//  - a name in NO op's path as {name} → declared-but-unused (typo).
+	//  - a name shared with secretQueryRefs — would inject one secret into
+	//    the path and another into the query under the same name.
+	if (auth.kind === "static-key" && auth.secretPathRefs) {
+		for (const paramName of Object.keys(auth.secretPathRefs)) {
+			if (auth.secretQueryRefs && paramName in auth.secretQueryRefs) {
+				return fail(
+					file,
+					`auth.secretPathRefs.${paramName}`,
+					"a path-token name not shared with secretQueryRefs",
+					`also a secretQueryRefs key`,
+					{
+						fix: `"${paramName}" is declared in both secretPathRefs and secretQueryRefs — one would fill it in the path and the other in the query under the same name. Rename one.`,
+					},
+				);
+			}
+			for (const dOp of operations) {
+				if (paramName in dOp.params) {
+					return fail(
+						file,
+						`auth.secretPathRefs.${paramName}`,
+						"a path-token name not declared in any operation's params",
+						`also a param of operation "${dOp.name}"`,
+						{
+							fix: `Remove "${paramName}" from operation "${dOp.name}"'s params map — it is code-injected from the secrets store and the agent must not be able to set it. (A docs-only params.${paramName}.description entry is fine.)`,
+						},
+					);
+				}
+			}
+			const used = operations.some((dOp) => dOp.pathParams.includes(paramName));
+			if (!used) {
+				return fail(
+					file,
+					`auth.secretPathRefs.${paramName}`,
+					`a path-token name used by at least one operation's path as {${paramName}}`,
+					"no operation's path contains {" + paramName + "}",
+					{
+						fix: `Use {${paramName}} in at least one operation's path, or remove the secretPathRefs entry (declared-but-unused is usually a typo).`,
+					},
+				);
 			}
 		}
 	}

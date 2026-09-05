@@ -755,3 +755,70 @@ describe("/api verify — helper-disabled + transform", () => {
 		expect(readGuide()).toContain(`verified: ${TODAY()}`);
 	});
 });
+
+// ═══════════════════════════════════════════════════════════════════
+// secretPathRefs carve-out — store-owned tokens are never
+// unsatisfiable; the fail-fast precheck covers the path arm
+// ═══════════════════════════════════════════════════════════════════
+
+const OP_WHOAMI: OpDef = { name: "whoami", path: "/auth{token}/get" };
+
+function pathAuthBlock(provisioned: boolean): string {
+	// Provision the secret BEFORE the guide parse when requested.
+	if (provisioned) writeSecret("verify.test", "path_key", "PATHSECRET123:ABC");
+	return (
+		"auth:\n" +
+		"  kind: static-key\n" +
+		"  secretPathRefs:\n" +
+		"    token:\n" +
+		"      secret: path_key"
+	);
+}
+
+describe("/api verify — secretPathRefs carve-out", () => {
+	it("a path-token op runs with NO verify.json entry for the token", async () => {
+		setupGuide(recipe(opBlock(OP_WHOAMI), pathAuthBlock(true)));
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("✓ whoami — /auth{token}/get (restGet)");
+		expect(text).toContain("skipped 0");
+		expect(text).not.toContain("⏭");
+		expect(text).toContain("✅ All runnable ops passed");
+		expect(readGuide()).toContain(`verified: ${TODAY()}`);
+		// The token was store-filled into the fetched URL (never in the report).
+		expect(requestedUrls()[0]).toContain("/authPATHSECRET123%3AABC/get");
+		expect(text).not.toContain("PATHSECRET123");
+	});
+
+	it("a genuinely caller-supplied path token still needs a sentinel", async () => {
+		// Two ops: whoami consumes the secret-owned {token}; get has a
+		// caller-supplied {id} that stays unsatisfiable.
+		setupGuide(
+			recipe(`${opBlock(OP_WHOAMI)}\n${opBlock(OP_GET)}`, pathAuthBlock(true)),
+		);
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("skipped: requires agent-supplied params (id)");
+		// The secret-owned token did not block: the get op's only missing param is id.
+		expect(text).toContain("(id)");
+		expect(text).not.toContain("(id, token)");
+		expect(text).not.toContain("(token)");
+	});
+
+	it("an unprovisioned path_key fail-fasts via the precheck (one message, no HTTP)", async () => {
+		setupGuide(recipe(opBlock(OP_WHOAMI), pathAuthBlock(false)));
+		const before = readGuide();
+		const ctx = mockCtx();
+		await handleVerifySubcommand("verify.test", ctx);
+
+		const text = notifyText(ctx);
+		expect(text).toContain("requires a secret not yet provisioned: path_key");
+		expect(text).toContain("Run /api secrets verify.test");
+		expect(vi.mocked(fetchUrl)).not.toHaveBeenCalled();
+		expect(readGuide()).toBe(before);
+	});
+});

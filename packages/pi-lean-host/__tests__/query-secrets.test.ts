@@ -466,6 +466,175 @@ describe("api-probe store-backed auth (authoring loop)", () => {
 	});
 });
 
+// ═════════════════════════════════════════════════════════════════
+// api-probe inline secretPathRefs (token-in-path injection)
+// ═════════════════════════════════════════════════════════════════
+
+describe("api-probe inline secretPathRefs (token-in-path)", () => {
+	const TOKEN = "s3cr3t:PROBE-key";
+
+	function mockJson(
+		status = 200,
+		body: unknown = { ok: true, result: { id: 1 } },
+	) {
+		fetchUrlMock.mockResolvedValue({
+			status,
+			headers: {},
+			body: JSON.stringify(body),
+			cached: false,
+		});
+	}
+
+	it("store-fills the path token in the fetched URL and redacts both surfaced URLs", async () => {
+		writeSecret("q.test", "path_key", TOKEN);
+		mockJson();
+		const result = await probe(
+			"https://api.q.test",
+			"/auth{token}/get",
+			{},
+			{ auth: { secretPathRefs: { token: "path_key" } }, domain: "q.test" },
+		);
+		const calledUrl = fetchUrlMock.mock.calls[0]![0] as string;
+		expect(calledUrl).toBe(
+			"https://api.q.test/auths3cr3t%3APROBE-key/get",
+		);
+		expect(result.url).not.toContain(TOKEN);
+		expect(result.url).toContain("/auth***/get");
+		expect(result.finalUrl).not.toContain(TOKEN);
+		expect(result.finalUrl).toContain("/auth***/get");
+		expect(result.ok).toBe(true);
+		// the transport gate sees the path secret (cache-skip + guarded redirects)
+		const opts = fetchUrlMock.mock.calls[0]![1] as Record<string, unknown>;
+		expect(opts.hasPathSecret).toBe(true);
+		expect(typeof opts.redactPathSecret).toBe("function");
+	});
+
+	it("drops an agent-supplied value for a secret-owned token", async () => {
+		writeSecret("q.test", "path_key", TOKEN);
+		mockJson();
+		const result = await probe(
+			"https://api.q.test",
+			"/auth{token}/get",
+			{ token: "AGENT-SUPPLIED" },
+			{ auth: { secretPathRefs: { token: "path_key" } }, domain: "q.test" },
+		);
+		const calledUrl = fetchUrlMock.mock.calls[0]![0] as string;
+		expect(calledUrl).toContain("/auths3cr3t%3APROBE-key/");
+		expect(calledUrl).not.toContain("AGENT-SUPPLIED");
+		expect(result.url).not.toContain(TOKEN);
+	});
+
+	it("a path-token probe with no {token} in the path leaks nothing into the query", async () => {
+		writeSecret("q.test", "path_key", TOKEN);
+		mockJson();
+		const result = await probe(
+			"https://api.q.test",
+			"/things",
+			{},
+			{ auth: { secretPathRefs: { token: "path_key" } }, domain: "q.test" },
+		);
+		const calledUrl = fetchUrlMock.mock.calls[0]![0] as string;
+		expect(calledUrl).toBe("https://api.q.test/things"); // no query string
+		const opts = fetchUrlMock.mock.calls[0]![1] as Record<string, unknown>;
+		expect(opts.hasPathSecret).toBe(true);
+		expect(result.ok).toBe(true);
+	});
+
+	it("a 401 body echoing the token scrubs raw + both hex forms", async () => {
+		writeSecret("q.test", "path_key", TOKEN);
+		const enc = encodeURIComponent(TOKEN); // s3cr3t%3APROBE-key
+		const encLower = enc.replace(/%../g, (s) => s.toLowerCase()); // %3a
+		mockJson(401, {
+			error: `bad ${TOKEN} / ${enc} / ${encLower}`,
+		});
+		const result = await probe(
+			"https://api.q.test",
+			"/auth{token}/get",
+			{},
+			{ auth: { secretPathRefs: { token: "path_key" } }, domain: "q.test" },
+		);
+		expect(result.status).toBe(401);
+		expect(result.raw).not.toContain(TOKEN);
+		expect(result.raw).not.toContain(enc);
+		expect(result.raw).not.toContain(encLower);
+		expect(result.raw).toContain("***");
+	});
+
+	it("store-miss surfaces the nudge and fetches unauthenticated (literal {token})", async () => {
+		mockJson(401);
+		const result = await probe(
+			"https://api.qmiss.test",
+			"/auth{token}/get",
+			{},
+			{ auth: { secretPathRefs: { token: "path_key" } }, domain: "q.miss" },
+		);
+		const calledUrl = fetchUrlMock.mock.calls[0]![0] as string;
+		expect(calledUrl).toContain("%7Btoken%7D"); // unfilled, not agent-supplied
+		expect(result.note).toContain(
+			'secret "path_key" not found in store for domain "q.miss"',
+		);
+	});
+
+	it("404 version-walk: every surfaced URL redacted (fetchOne-level)", async () => {
+		writeSecret("q.test", "path_key", TOKEN);
+		fetchUrlMock.mockImplementation(async (url: string) => {
+			const hit = !url.includes("/v3/");
+			return {
+				status: hit ? 200 : 404,
+				headers: {},
+				body: JSON.stringify(hit ? { data: [{ id: 1 }] } : { error: "not found" }),
+				cached: false,
+			};
+		});
+		const result = await probe(
+			"https://api.q.test/v3",
+			"/auth{token}/get",
+			{},
+			{ auth: { secretPathRefs: { token: "path_key" } }, domain: "q.test" },
+		);
+		// walk fired (v3 404 → v2 hit) — both the miss and the hit surfaced
+		// through fetchOne, so redaction covers the walk too.
+		expect(fetchUrlMock.mock.calls.length).toBe(2);
+		for (const [u] of fetchUrlMock.mock.calls)
+			expect(String(u)).toContain("s3cr3t%3APROBE-key"); // fetched with the token
+		expect(result.note).toContain("version walk → /v2");
+		expect(result.url).toContain("/auth***/get");
+		expect(result.url).not.toContain(TOKEN);
+		expect(result.finalUrl).not.toContain(TOKEN);
+		expect(result.draft).toContain("path: /v2/auth{token}/get");
+	});
+
+	it("draft emits the secretPathRefs auth block (names only, never a value)", async () => {
+		writeSecret("q.test", "path_key", TOKEN);
+		mockJson();
+		const result = await probe(
+			"https://api.q.test",
+			"/auth{token}/get",
+			{},
+			{ auth: { secretPathRefs: { token: "path_key" } }, domain: "q.test" },
+		);
+		expect(result.draft).toContain("path: /auth{token}/get");
+		expect(result.draft).toContain("#   kind: static-key");
+		expect(result.draft).toContain("#   secretPathRefs:");
+		expect(result.draft).toContain("#       secret: path_key");
+		expect(result.draft).not.toContain(TOKEN);
+	});
+
+	it("draft omits the auth block when the emitted path uses no secret token", async () => {
+		writeSecret("q.test", "path_key", TOKEN);
+		mockJson();
+		const result = await probe(
+			"https://api.q.test",
+			"/things",
+			{},
+			{ auth: { secretPathRefs: { token: "path_key" } }, domain: "q.test" },
+		);
+		// A name in no op's path is rejected at parse (declared-but-unused) —
+		// emitting the block would hand the author an unparseable guide.
+		expect(result.draft).not.toContain("secretPathRefs");
+	});
+});
+
 describe("cross-domain redirect hop — secret query params", () => {
 	// Mirrors the stripSecretHeaders unit in auth.test.ts (case c): the
 	// guarded-redirect loop strips secret headers on cross-domain hops;

@@ -495,8 +495,8 @@ plugin is GET-only, so a read-only key is always enough for what it does.
 In `guide.md`, set `auth.kind: static-key` and point at store secrets by name
 — the value never lives in the guide (a real key committed there would be one
 `cat` from the agent's context). The full guide-side YAML (`secretRefs` /
-`secretQueryRefs`, `prefix`, `optional`, and the parser-enforced invariants)
-is documented in
+`secretQueryRefs` / `secretPathRefs`, `prefix`, `optional`, and the
+parser-enforced invariants) is documented in
 [docs/authoring.md](docs/authoring.md#static-key-auth-in-the-guide).
 
 Migrating a guide from the old flat shape (`requires`/`optional` rosters,
@@ -523,7 +523,8 @@ starts (a one-line `install -m 600` + `cat >` step). Secrets persist at
 ### The status footer
 
 Every `api-guide` / `api-fetch` result on an auth-bearing guide (static-key
-`secretRefs`/`secretQueryRefs`, or an `oauth2` token slot) ends with a
+`secretRefs`/`secretQueryRefs`/`secretPathRefs`, or an `oauth2` token slot)
+ends with a
 `🔑 auth:` line — `ok`, `requires <name> — not provisioned`, or an optional
 state — showing name and presence only, never the value, so it's safe
 anywhere it renders.
