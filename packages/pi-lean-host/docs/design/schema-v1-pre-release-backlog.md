@@ -1,5 +1,5 @@
 <!-- markdownlint-disable MD025 -- multiple top-level headings are deliberate:
-     one H1 per priority tier (P0/P1/P2) for backlog tooling. -->
+     one H1 per priority tier (P1/P2) for backlog tooling. -->
 
 # Schema v1 Pre-Release Backlog — Adversarial Schema Review
 
@@ -25,46 +25,11 @@
 
 ## Priority model
 
-- **P0 — act before release.** Breaking-shaped fixes, silent-failure footguns,
-  and capability gaps whose fix shape should exist before guides accrete.
-  The unpublished window is exactly what makes these free.
 - **P1 — freeze decisions now (cheap, prevents later breaks).** Doc/commitment
   items: reserved seams, upgrade-shape freezes, contract pinning. Almost no
   code, but each one forecloses a future breaking "natural fix".
 - **P2 — additive backlog.** Genuinely expressible-today gaps or footguns with
   clean additive fixes; safe to land anytime, ordered by expected recipe pain.
-
----
-
-# P0 — Act before release
-
-## P0-1. `secretPathRefs` — token-in-path APIs leak secrets today
-
-- **Pattern:** Telegram Bot API keys *every* method through the URL path:
-  `https://api.telegram.org/bot<token>/getUpdates` — read-only GETs included.
-  Evidence: <https://core.telegram.org/bots/api> ("Making requests").
-- **Gap:** `StaticKeyAuth` has exactly two injection surfaces: `secretRefs`
-  (headers) and `secretQueryRefs` (query). `Operation.path` tokens are
-  inferred agent params filled by `fillPathStrict` from **caller-supplied**
-  params; redaction (`redactSecretParams`) covers query params only. The only
-  today-expression for Telegram is `path: /bot{token}/getUpdates` with the
-  caller passing the token — **the secret enters agent context and the
-  transcript, unredacted** (the output-channel audit only tracks
-  store-injected header/query values). The schema invites the exact leak the
-  design forbids.
-- **Fix (new optional field, mirrors `secretQueryRefs` one-for-one):**
-  - TS: `StaticKeyAuth.secretPathRefs?: Record<string, SecretRef>`
-  - Parser: validate like `secretQueryRefs` + symmetric collision rule — a
-    path token named in `secretPathRefs` must NOT be caller-suppliable
-    (reject; `fillPathStrict` fills it from the store instead).
-  - Executor: fill secret-owned path tokens from the store before
-    `fillPathStrict`; add resolved values to `secretValues` so error bodies
-    scrub them; redact the token from every surfaced URL.
-- **Cost:** ~an afternoon; zero existing-guide breakage. The asymmetry that
-  makes it P0: every guide written before this field either can't exist or
-  leaks tokens.
-- **Tests:** parse collision guard; executor fills from store; URL redaction;
-  secret scrub on error bodies.
 
 ---
 
@@ -418,7 +383,7 @@ Included so later reviewers don't re-litigate:
 
 ## Downstream doc note
 
-Each P0/P1/P2 item above is written to be self-seeding for a downstream doc:
+Each P1/P2 item above is written to be self-seeding for a downstream doc:
 it carries the pattern, gap, fix shape, tests, and API evidence needed to
 elaborate it (with full caritas recipes and per-doc sprints) without
 re-reading the lane reports. Items that must land together are paired inline
