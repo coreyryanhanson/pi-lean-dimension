@@ -314,6 +314,27 @@ Included so later reviewers don't re-litigate:
 
 ---
 
+# Completed — removed from the backlog
+
+- **Pagination allowlists** — `PAGINATION_ALLOWLISTS` in
+  `core/parse-api-guide.ts` rejects unknown pagination keys per style.
+- **Dot-containing JSON keys** — quoted bracket segments (`['@odata.nextLink']`)
+  are atomic keys in `resolveJsonPath`.
+- **Path-secret auth** — `secretPathRefs` (`core/auth.ts`): store-filled path
+  tokens, redacted URLs, cache/auth gating; `telegram-bot` axis guide.
+- **Negative-index cursors + `hasMorePath`** — `data[-1].id` resolves;
+  `hasMorePath` stop-condition; `stripe` axis guide.
+- **Numeric cursor coercion** — `advancePagination` coerces numeric
+  cursors instead of treating them as exhaustion.
+- **Multi-value query params** — `listStyle` (`comma` / `repeat` /
+  `bracket` / `semicolon`) on `QueryParamSpec`.
+- **200-with-error envelopes** — op-level `errorPath` via the shared
+  `checkErrorEnvelope` in both executors; `dnb` axis guide.
+- **ETag cache visibility** — `fresh` param on `api-fetch`, `cached`
+  footer note, explicit-server-grant-only caching in `core/transport.ts`.
+
+---
+
 ## Downstream doc note
 
 Each P1/P2 item above is written to be self-seeding for a downstream doc:
