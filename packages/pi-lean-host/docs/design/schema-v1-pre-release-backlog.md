@@ -327,7 +327,7 @@ Included so later reviewers don't re-litigate:
 - **Numeric cursor coercion** — `advancePagination` coerces numeric
   cursors instead of treating them as exhaustion.
 - **Multi-value query params** — `listStyle` (`comma` / `repeat` /
-  `bracket` / `semicolon`) on `QueryParamSpec`.
+  `bracket`) on `QueryParamSpec`.
 - **200-with-error envelopes** — op-level `errorPath` via the shared
   `checkErrorEnvelope` in both executors; `dnb` axis guide.
 - **ETag cache visibility** — `fresh` param on `api-fetch`, `cached`
