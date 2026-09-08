@@ -1,5 +1,5 @@
 <!-- markdownlint-disable MD025 -- multiple top-level headings are deliberate:
-     one H1 per priority tier (P1/P2) for backlog tooling. -->
+     one H1 per priority tier (P0/P1/P2) for backlog tooling. -->
 
 # Schema v1 Pre-Release Backlog — Adversarial Schema Review
 
@@ -12,7 +12,12 @@
 > **Why this backlog exists.** The schema is unpublished and at
 > `schemaVersion` 1 — per the bump rule (post-v1 section of the root
 > `AGENTS.md`), breaking fixes are free NOW and expensive later. This doc is
-> the complete findings ledger from that review, priority-ordered. It is
+> the complete findings ledger from that review, priority-ordered. A second
+> adversarial pass (post-v1-reshape code re-audit + live web evidence; reports
+> at
+> [`schema-review-lane-reports/second-pass/`](./schema-review-lane-reports/second-pass/))
+> reinstated the P0 tier (P0-1) and added P1-6, P2-6, and closures to the
+> verified-fine list. It is
 > deliberately broader-scope than the authoring/design docs: each item here
 > seeds a downstream doc, where it will be elaborated with full caritas
 > recipes and its own sprint planning. This doc only records findings,
@@ -25,11 +30,67 @@
 
 ## Priority model
 
+- **P0 — free only now.** Parse-behavior tightenings whose lazy future
+  landing forces a `schemaVersion` bump (the closed-schema window the
+  completed pagination-allowlist item already used).
 - **P1 — freeze decisions now (cheap, prevents later breaks).** Doc/commitment
   items: reserved seams, upgrade-shape freezes, contract pinning. Almost no
   code, but each one forecloses a future breaking "natural fix".
 - **P2 — additive backlog.** Genuinely expressible-today gaps or footguns with
   clean additive fixes; safe to land anytime, ordered by expected recipe pain.
+
+---
+
+# P0 — Free only now (parse tightenings that would bump after publish)
+
+## P0-1. Closed-schema pass — op blocks, guide frontmatter, and `responseShape` silently ignore unknown keys
+
+- **Pattern:** N/A (schema-integrity — the exact class of the completed
+  pagination-allowlist item). The trigger is every authoring session: an
+  author writing `errorPaths:` instead of `errorPath:`, `paggination:`, a
+  stray `unknownOpKey:` on an op, or a guide-level
+  `totallyUnknownGuideKey:` gets a **parse-OK guide that silently no-ops**
+  the intended behavior. Worst instance: the typo'd error envelope never
+  fires — the guide runs and returns data while the author believes
+  200-with-error pages are being caught.
+- **Gap:** the unknown-key tripwire landed for four authored sections —
+  param-spec (`PARAM_SPEC_KEYS`), auth (`AUTH_ALLOWLISTS`), pagination
+  (`PAGINATION_ALLOWLISTS`), SecretRef — but not the three largest
+  surfaces: `validateOperation` reads its known keys and constructs the op
+  without rejecting `Object.keys(o)` members outside the legal set; the
+  guide frontmatter in `parseApiGuide` reads keys selectively into
+  `const guide` with no allowlist; `validateResponseShape` reads
+  `format`/`charset` only. Empirically confirmed by a live `parseApiGuide`
+  probe (second-pass report).
+- **Classification: P0.** Completing the allowlists later is a
+  parse-behavior tightening — per the bump rule it forces a
+  `schemaVersion` bump after publish. Same shape, severity, and free-now
+  rationale as the pagination allowlist item this doc already shipped.
+- **Fix shape (free only now):** mirror the existing pattern three times,
+  each with the both-directions allowlist↔parser tripwire test:
+  `OP_ALLOWLIST` (name, via, path, accept, params, pathParamDocs,
+  requiresAnyOf, dateParams, helper, transform, passthrough, parse,
+  errorPath, pagination, gatherAllMax), `GUIDE_ALLOWLIST` (kind, domains,
+  shortName, updated, icon, apiHost, verified, docs, organization,
+  description, schemaVersion, gatherAllMax, auth, responseShape,
+  operations, pagination — nothing else), `RESPONSE_SHAPE_ALLOWLIST`
+  (format, charset). Fold in two adjacent dead-declaration rejections while
+  the window is open: (a) a `dateParams` key naming a **path token** is
+  declared-but-dead (normalization runs only in query assembly;
+  `fillPathTemplate` fills path tokens raw) — reject it like
+  `secretPathRefs` rejects declared-but-unused; a future relaxation that
+  actually normalizes path-token dates is additive (real pattern:
+  Polygon.io aggregates `{from}`/`{to}` and Frankfurter v1 `/{date}` put ISO
+  dates in path segments, no query alternative —
+  <https://polygon.io/docs/stocks/get_v2_aggs_ticker__stocksticker__range__multiplier___timespan___from____to>,
+  <https://frankfurter.dev/v1/>); (b) `secretQueryRefs` names are checked
+  against op `params` maps but **not** against effective pagination wire
+  names (`pageParam`/`cursorParam`/`tokenParam`/tokenBag continuation
+  keys) — an injected query secret can be dead or overwritten by
+  continuation writes. Caveat: audit the caritas corpus and any
+  user-authored guides for benign stray keys before flipping the frontmatter
+  allowlist on.
+- **Confidence:** high — code-verified and empirically probed.
 
 ---
 
@@ -65,11 +126,14 @@ is a reserved-seam note plus an ordering discipline, not a v1 implementation.
   auth).
 - **Why not build now:** new auth `kind` = additive whenever it lands (new enum
   values are non-events under the bump rule), so waiting is free schema-wise.
-  Zero bundled recipes need it (crypto/trading/AWS APIs — plausible caritas
-  territory, not the current doc-data corpus), and SigV4's canonical-request
-  machinery (header sorting, URI-encoding rules, payload hashes) is too
-  intricate to spec blind — an untestable, unused implementation would be
-  wrong and still have to be redone.
+  Zero current recipes need it. **Re-audit correction (evidence):** the class
+  is *not* confined to crypto/trading/AWS — the HathiTrust Data API, squarely
+  in the doc-data corpus, signs its read GETs with OAuth 1.0 HMAC-SHA1 query
+  signatures (recorded under the trigger below). Still not a build-now: no
+  recipe targets it, and signing machinery (SigV4's canonical requests, OAuth 1
+  nonce/timestamp/base-string) is too intricate to spec blind — an
+  untestable, unused implementation would be wrong and still have to be
+  redone.
 - **The cheap-now action (doc-only):** add a reserved-seam paragraph next to
   the `tokenKey` one in `core/api-guide-types.ts` (and/or the authoring docs):
   > **Reserved seam — request-derived credentials.** HMAC/SigV4/digest-signed
@@ -79,9 +143,21 @@ is a reserved-seam note plus an ordering discipline, not a v1 implementation.
   > now so the sequencing is never further entrenched.
   Plus one discipline rule: when touching resolve-op, do not entrench
   auth→URL ordering further.
-- **Trigger to act for real:** a caritas recipe targets Binance/AWS-class
-  signed GETs. At that point, design the kind against the live provider, not
-  speculatively.
+  **Status (re-audit): not landed** — `core/api-guide-types.ts` contains
+  neither the seam paragraph nor the `tokenKey` reserved-seam paragraph it
+  sits "next to" (`tokenKey` appears nowhere under `core/`; it lives only in
+  AGENTS.md). Add BOTH paragraphs to the types file — AGENTS.md is
+  agent-facing; the types file is where author/developer eyes land.
+- **Trigger to act for real:** a caritas recipe targets a signed GET. First
+  recorded in-class candidate (re-audit): the **HathiTrust Data API** —
+  OAuth 1.0 HMAC-SHA1-signed read GETs (`getmeta`, `getstructure`,
+  `getpageocr`, …), spec at
+  <https://www.hathitrust.org/documents/hathitrust-data-api-v2_20150526.pdf>
+  (v0.9 revision line: "Updated to reflect OAuth 1.0 signed URL
+  requirements"), corroborated by the widely-used wrapper
+  <https://github.com/rlmv/hathitrust-api/blob/master/hathitrust_api/data_api.py>.
+  Binance/AWS-class signed GETs remain the other trigger family. At that
+  point, design the kind against the live provider, not speculatively.
 
 ## P1-2. Link-header pagination — freeze the additive shape now
 
@@ -137,6 +213,12 @@ is a reserved-seam note plus an ordering discipline, not a v1 implementation.
   each). "Mutually exclusive" is the wrong model and could mislead the future
   multi-group design (e.g. wrongly auto-deriving exactly-one semantics, which
   WOULD be a re-meaning). The `default`-ban on members remains correct.
+  **Status (re-audit): the fix is still outstanding in three code locations** —
+  `core/api-guide-types.ts:325` (the field's doc comment) and two parser
+  messages (`core/parse-api-guide.ts:1564` and `:1620`, the latter inside a
+  user-visible `fix:` string). The additive escape itself IS already reserved
+  in code (`api-guide-types.ts`: "a multi-group `requiresAnyOfGroups` upgrade
+  is purely additive").
 - **Classification: doc-only now; the delta itself stays reserved, not built**
   (no real case found).
 
@@ -163,6 +245,14 @@ any of them retro-breaks every recipe that encodes them. Free to pin now.
    authoring docs + a test so authors don't guess.
    <https://dev.socrata.com/docs/formats/json>
 3. **`requiresAnyOf` comment correction** — folded into P1-3 above.
+4. **`transform`'s per-item semantics on `paginate`** (added by the re-audit):
+   `transform: true` on `via: paginate` is per-item by documented contract
+   (both executors; the escape-valve doc). Whole-envelope transforms — an
+   OpenAlex-style `{meta, results}` page where `meta` is what a transform
+   author wants alongside per-item shaping — land as a NEW field
+   (`transformPage?: boolean`), never by changing what `transform` receives
+   on paginate ops: that is a behavior-level re-meaning of an existing field
+   that every paginating guide with a transform can never take back cheaply.
 
 ## P1-5. Reserved-seam watch items (recognized-trigger discipline, `tokenKey` precedent)
 
@@ -185,6 +275,34 @@ the trigger instead of re-litigated:
 - **Per-op `host?` override** (regional hosts): additive; multi-recipe domains
   cover the clean split today. Mixed version prefixes are already expressible
   via op `path` (EIA v1/v2, Graph v1.0/beta — `path` may carry the prefix).
+
+---
+
+## P1-6. Reserved seam — local-helper return contract (magic-wrapper trap)
+
+- **Pattern:** the escape-valve doc anticipates helper upgrades ("break
+  freely to generalize"); the foreseeable one is a helper that also needs to
+  set **request headers** (per-op `Accept-Version`, required X-headers) or
+  tweak the **path** pre-call. No single named API required — the freeze
+  exists so the fix shape stays additive whenever the first one arrives.
+- **Gap:** `HelperFn` returns the params record itself (`local-helpers.ts`;
+  the escape-valve doc pins `(params, ctx) => params`). The lazy future fix —
+  treating a returned object that happens to contain reserved wrapper keys
+  (`{ params, headers, path }`) as a structured result — **re-means a
+  legitimate params record** whose query params are literally named
+  `params`, `headers`, or `path`. Same magic-value class as the
+  `nextLinkPath: "header:Link"` overload P1-2 exists to prevent.
+- **Classification: P1 freeze, doc-only.** No code, no schema field — a
+  commitment, same class as P1-3.
+- **Frozen shape:** reserved-seam note in `local-helpers.ts` next to the
+  contract block + the escape-valve doc: *"The default export's return stays
+  the params record. Richer pre-call control (headers, path rewrite) lands
+  as a NEW named export (e.g. `buildRequest`) or a new op field — never by
+  overloading the default export's return shape with reserved wrapper
+  keys."*
+- **Confidence:** high on the trap mechanics (contract read directly); the
+  first demand's timing is unknowable — which is exactly why it's a freeze,
+  not a build.
 
 ---
 
@@ -264,7 +382,25 @@ the trigger instead of re-litigated:
   current recipes need them. JWT assertions additionally ride P1-1's
   derived-credential class.
 
-## P2-6. Verified fine — cleared, no action (recorded to close the review)
+## P2-6. `listStyle` enum gaps — `semicolon` and `pipe`
+
+- **Pattern:** StackExchange `tagged` is semicolon-delimited with no comma
+  fallback (live-checked: `tagged=java,python` → `total: 0`) —
+  <https://api.stackexchange.com/docs/questions>. Stronger adjacent case:
+  MediaWiki Action API list params are **pipe**-exclusive
+  (`siprop=general|namespaces|…`, no comma form) — and MediaWiki/Wikidata is
+  squarely in the corpus (`wikidata-search` axis fixture) —
+  <https://en.wikipedia.org/w/api.php?action=help&modules=query+siteinfo>.
+- **Gap:** `LIST_STYLES = [comma, repeat, bracket]`; the prior operations
+  lane proposed `semicolon` and it silently didn't land in the
+  implementation.
+- **Classification:** additive convenience (agents can pre-join `;`/`|`;
+  undeclared values pass through raw) — enum extension is a non-event.
+- **Fix shape:** add the enum values when a recipe needs them; if the
+  closed-schema pass (P0-1) touches the list-style surface, add both at
+  once.
+
+## P2-7. Verified fine — cleared, no action (recorded to close the review)
 
 Included so later reviewers don't re-litigate:
 
@@ -304,6 +440,19 @@ Included so later reviewers don't re-litigate:
 - **Response-spill/truncation:** adequate for read-only research use.
 - **Agent wants meta + items from a paginate op:** `totalCountPath` covers
   the common need; richer → parallel `restGet` op.
+- **OAuth2 Bearer + second credential on one endpoint (Etsy-shaped):** Etsy
+  v3 requires `x-api-key: <keystring>:<secret>` AND `Authorization: Bearer`
+  simultaneously on scoped read GETs — expressible today via oauth2
+  `secretRefs` (the store holds the composite; the scrub still works).
+  <https://developers.etsy.com/documentation/essentials/authentication/>
+  No prominent read API was found requiring Bearer **plus a query-param or
+  path-token** credential (Amadeus refuted — key/secret are exchanged once
+  for the token, nothing rides the calls:
+  <https://developers.amadeus.com/self-service/apis-docs/guides/developer-guides/API-Keys/authorization/>).
+  If one ever appears, the fix is adding `secretQueryRefs` /
+  `secretPathRefs` / literal `headers` to the `OAuth2Auth` allowlist — an
+  allowlist addition, a non-event, not a SecretRef reshape. Recorded so it
+  isn't re-derived.
 - **Out-of-bounds (noted, dropped):** POST-based pagination (GitHub GraphQL),
   cookie-jar sessions (deferred by design), params in HTTP headers on GET
   (EIA's URL form works), cursor echo in a request *header* (additive
@@ -341,5 +490,5 @@ Each P1/P2 item above is written to be self-seeding for a downstream doc:
 it carries the pattern, gap, fix shape, tests, and API evidence needed to
 elaborate it (with full caritas recipes and per-doc sprints) without
 re-reading the lane reports. Items that must land together are paired inline
-(P2-4's conclusion feeds P1-1's seam). The verified-fine list (P2-6) and
+(P2-4's conclusion feeds P1-1's seam). The verified-fine list (P2-7) and
 out-of-bounds drops belong in the authoring-reference doc, not a fix doc.
