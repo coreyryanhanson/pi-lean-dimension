@@ -1,5 +1,5 @@
 <!-- markdownlint-disable MD025 -- multiple top-level headings are deliberate:
-     one H1 per priority tier (P0/P1/P2) for backlog tooling. -->
+     one H1 per priority tier (P1/P2) for backlog tooling. -->
 
 # Schema v1 Pre-Release Backlog — Adversarial Schema Review
 
@@ -16,8 +16,7 @@
 > adversarial pass (post-v1-reshape code re-audit + live web evidence; reports
 > at
 > [`schema-review-lane-reports/second-pass/`](./schema-review-lane-reports/second-pass/))
-> reinstated the P0 tier (P0-1) and added P1-6, P2-6, and closures to the
-> verified-fine list. It is
+> added P1-6, P2-6, and closures to the verified-fine list. It is
 > deliberately broader-scope than the authoring/design docs: each item here
 > seeds a downstream doc, where it will be elaborated with full caritas
 > recipes and its own sprint planning. This doc only records findings,
@@ -30,67 +29,11 @@
 
 ## Priority model
 
-- **P0 — free only now.** Parse-behavior tightenings whose lazy future
-  landing forces a `schemaVersion` bump (the closed-schema window the
-  completed pagination-allowlist item already used).
 - **P1 — freeze decisions now (cheap, prevents later breaks).** Doc/commitment
   items: reserved seams, upgrade-shape freezes, contract pinning. Almost no
   code, but each one forecloses a future breaking "natural fix".
 - **P2 — additive backlog.** Genuinely expressible-today gaps or footguns with
   clean additive fixes; safe to land anytime, ordered by expected recipe pain.
-
----
-
-# P0 — Free only now (parse tightenings that would bump after publish)
-
-## P0-1. Closed-schema pass — op blocks, guide frontmatter, and `responseShape` silently ignore unknown keys
-
-- **Pattern:** N/A (schema-integrity — the exact class of the completed
-  pagination-allowlist item). The trigger is every authoring session: an
-  author writing `errorPaths:` instead of `errorPath:`, `paggination:`, a
-  stray `unknownOpKey:` on an op, or a guide-level
-  `totallyUnknownGuideKey:` gets a **parse-OK guide that silently no-ops**
-  the intended behavior. Worst instance: the typo'd error envelope never
-  fires — the guide runs and returns data while the author believes
-  200-with-error pages are being caught.
-- **Gap:** the unknown-key tripwire landed for four authored sections —
-  param-spec (`PARAM_SPEC_KEYS`), auth (`AUTH_ALLOWLISTS`), pagination
-  (`PAGINATION_ALLOWLISTS`), SecretRef — but not the three largest
-  surfaces: `validateOperation` reads its known keys and constructs the op
-  without rejecting `Object.keys(o)` members outside the legal set; the
-  guide frontmatter in `parseApiGuide` reads keys selectively into
-  `const guide` with no allowlist; `validateResponseShape` reads
-  `format`/`charset` only. Empirically confirmed by a live `parseApiGuide`
-  probe (second-pass report).
-- **Classification: P0.** Completing the allowlists later is a
-  parse-behavior tightening — per the bump rule it forces a
-  `schemaVersion` bump after publish. Same shape, severity, and free-now
-  rationale as the pagination allowlist item this doc already shipped.
-- **Fix shape (free only now):** mirror the existing pattern three times,
-  each with the both-directions allowlist↔parser tripwire test:
-  `OP_ALLOWLIST` (name, via, path, accept, params, pathParamDocs,
-  requiresAnyOf, dateParams, helper, transform, passthrough, parse,
-  errorPath, pagination, gatherAllMax), `GUIDE_ALLOWLIST` (kind, domains,
-  shortName, updated, icon, apiHost, verified, docs, organization,
-  description, schemaVersion, gatherAllMax, auth, responseShape,
-  operations, pagination — nothing else), `RESPONSE_SHAPE_ALLOWLIST`
-  (format, charset). Fold in two adjacent dead-declaration rejections while
-  the window is open: (a) a `dateParams` key naming a **path token** is
-  declared-but-dead (normalization runs only in query assembly;
-  `fillPathTemplate` fills path tokens raw) — reject it like
-  `secretPathRefs` rejects declared-but-unused; a future relaxation that
-  actually normalizes path-token dates is additive (real pattern:
-  Polygon.io aggregates `{from}`/`{to}` and Frankfurter v1 `/{date}` put ISO
-  dates in path segments, no query alternative —
-  <https://polygon.io/docs/stocks/get_v2_aggs_ticker__stocksticker__range__multiplier___timespan___from____to>,
-  <https://frankfurter.dev/v1/>); (b) `secretQueryRefs` names are checked
-  against op `params` maps but **not** against effective pagination wire
-  names (`pageParam`/`cursorParam`/`tokenParam`/tokenBag continuation
-  keys) — an injected query secret can be dead or overwritten by
-  continuation writes. Caveat: audit the caritas corpus and any
-  user-authored guides for benign stray keys before flipping the frontmatter
-  allowlist on.
-- **Confidence:** high — code-verified and empirically probed.
 
 ---
 
@@ -396,9 +339,7 @@ the trigger instead of re-litigated:
   implementation.
 - **Classification:** additive convenience (agents can pre-join `;`/`|`;
   undeclared values pass through raw) — enum extension is a non-event.
-- **Fix shape:** add the enum values when a recipe needs them; if the
-  closed-schema pass (P0-1) touches the list-style surface, add both at
-  once.
+- **Fix shape:** add the enum values when a recipe needs them.
 
 ## P2-7. Verified fine — cleared, no action (recorded to close the review)
 
@@ -465,6 +406,11 @@ Included so later reviewers don't re-litigate:
 
 # Completed — removed from the backlog
 
+- **Closed-schema pass** — `OP_ALLOWLIST` / `GUIDE_ALLOWLIST` /
+  `RESPONSE_SHAPE_ALLOWLIST` in `core/parse-api-guide.ts` reject unknown keys
+  on op blocks, frontmatter, and `responseShape`; dead `dateParams` path-token
+  declarations and `secretQueryRefs` ↔ pagination-wire-name collisions are
+  parse errors too.
 - **Pagination allowlists** — `PAGINATION_ALLOWLISTS` in
   `core/parse-api-guide.ts` rejects unknown pagination keys per style.
 - **Dot-containing JSON keys** — quoted bracket segments (`['@odata.nextLink']`)
