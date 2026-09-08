@@ -190,24 +190,7 @@ the trigger instead of re-litigated:
 
 # P2 — Additive backlog (safe anytime, ordered by expected recipe pain)
 
-## P2-1. ETag cache visibility (tool surface, not schema)
-
-- **Behavior (code-verified):** `transport.ts` caches every 2xx for
-  `Cache-Control: max-age` **or a 60s default-TTL fallback — even when the
-  server sent no cache headers at all** — and revalidates with
-  `If-None-Match`. Auth-bearing requests opt out; plain public GETs silently
-  serve ≤60s-stale bodies that render identically to live ones.
-  `api-fetch` exposes no `fresh` param and `RestGetResult` drops the
-  transport's `cached` flag at the result boundary.
-- **Fix (additive, no schema):** (a) optional `fresh?: boolean` on api-fetch →
-  `ResolveOpOptions.fresh` → executors (plumbing already exists end-to-end,
-  just never set from the tool layer); (b) surface `cached: true` as a footer
-  note; (c) consider caching only on explicit server cache headers
-  (absence of `Cache-Control` → no-store is the conservative read-only-client
-  default).
-- **Harm bounded at 60s**, hence P2.
-
-## P2-2. Paginated non-JSON formats (`csv` / `ndjson` in `ResponseFormat`)
+## P2-1. Paginated non-JSON formats (`csv` / `ndjson` in `ResponseFormat`)
 
 - **Pattern:** Socrata SODA — thousands of open-government datasets — serves
   the same resource as JSON or CSV, paginated with `$limit`/`$offset`; CSV
@@ -222,7 +205,7 @@ the trigger instead of re-litigated:
   NDJSON evidence is weak for plain-GET page-based APIs (mostly streaming
   endpoints) — fold in only when a real recipe needs it.
 
-## P2-3. `dateParams` extensions (epoch, epoch-millis, yyyy/mm/dd)
+## P2-2. `dateParams` extensions (epoch, epoch-millis, yyyy/mm/dd)
 
 - **Pattern:** StackExchange dates are unix epoch seconds
   (`fromdate=1293840000`, <https://api.stackexchange.com/docs/dates>); PubMed
@@ -233,7 +216,7 @@ the trigger instead of re-litigated:
 - **Fix:** add `"epoch"`, `"epoch-millis"`, `"yyyy/mm/dd"` — enum extension =
   non-event. Convenience only (the agent can always pre-format).
 
-## P2-4. Deep-paging guardrail (`pagination.maxOffset`)
+## P2-3. Deep-paging guardrail (`pagination.maxOffset`)
 
 - **Pattern:** GitLab caps offset pagination (50k on gitlab.com) and errors
   once exceeded (<https://docs.gitlab.com/api/rest/>,
@@ -246,7 +229,7 @@ the trigger instead of re-litigated:
   offset would exceed it, set a ceiling-hit flag. Cheap anytime; only huge
   collections hit it.
 
-## P2-5. `SecretRef.derive?: "base64"` (basic-auth provisioning friction)
+## P2-4. `SecretRef.derive?: "base64"` (basic-auth provisioning friction)
 
 - **Pattern:** Jira Cloud `Authorization: Basic base64("useremail:api_token")`
   (<https://developer.atlassian.com/cloud/jira/platform/basic-auth-for-rest-apis/>);
@@ -266,7 +249,7 @@ the trigger instead of re-litigated:
   — a different failure class served by P1-1's future auth kind, **not** by
   re-shaping SecretRef. Do not re-open SecretRef.
 
-## P2-6. OAuth2 grant coverage (device_code, ROPC, JWT assertions) — deferred
+## P2-5. OAuth2 grant coverage (device_code, ROPC, JWT assertions) — deferred
 
 - **Patterns:** Google device flow
   (<https://developers.google.com/identity/protocols/oauth2/limited-input-device>);
@@ -281,7 +264,7 @@ the trigger instead of re-litigated:
   current recipes need them. JWT assertions additionally ride P1-1's
   derived-credential class.
 
-## P2-7. Verified fine — cleared, no action (recorded to close the review)
+## P2-6. Verified fine — cleared, no action (recorded to close the review)
 
 Included so later reviewers don't re-litigate:
 
@@ -337,5 +320,5 @@ Each P1/P2 item above is written to be self-seeding for a downstream doc:
 it carries the pattern, gap, fix shape, tests, and API evidence needed to
 elaborate it (with full caritas recipes and per-doc sprints) without
 re-reading the lane reports. Items that must land together are paired inline
-(P2-5's conclusion feeds P1-1's seam). The verified-fine list (P2-7) and
+(P2-4's conclusion feeds P1-1's seam). The verified-fine list (P2-6) and
 out-of-bounds drops belong in the authoring-reference doc, not a fix doc.
