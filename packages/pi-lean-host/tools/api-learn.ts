@@ -27,7 +27,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { appendFooter, contentText } from "./utils.js";
+import {
+	appendFooter,
+	contentText,
+	disambiguationMenuResult,
+	shortNameErrorResult,
+} from "./utils.js";
 import {
 	existsSync,
 	mkdirSync,
@@ -43,11 +48,7 @@ import {
 	parseApiGuide,
 	stampFrontmatterField,
 } from "../core/parse-api-guide.js";
-import {
-	formatGuideListings,
-	selectGuideByShortName,
-	shortNameErrorText,
-} from "../core/guide-catalog.js";
+import { selectGuideByShortName } from "../core/guide-catalog.js";
 import {
 	GUIDE_SCHEMA_VERSION,
 	type ApiGuide,
@@ -415,25 +416,6 @@ function stageFetchedRecipe(
 	};
 }
 
-/** Disambiguation menu for the N-guide fetch-recipe case (mirrors
- * api-guide's menu). */
-function renderFetchMenu(
-	domain: string,
-	matches: { guide: ApiGuide; dirName: string }[],
-): AgentToolResult<unknown> {
-	const lines: string[] = [];
-	lines.push(`${matches.length} API guides for '${domain}':`);
-	lines.push(formatGuideListings(matches));
-	const example = matches[0]!.guide.shortName;
-	lines.push(
-		`Call api-learn({domain: "${domain}", guide: "${example}"}) to fetch one guide's recipe.`,
-	);
-	return {
-		content: [{ type: "text", text: lines.join("\n") }],
-		details: { mode: "menu", domain, disambiguation: matches.length },
-	};
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // Tool definition
 // ═══════════════════════════════════════════════════════════════════
@@ -541,34 +523,23 @@ export const apiLearnTool = defineTool({
 				const { guide, dirName } = matches[0]!;
 				return stageFetchedRecipe(domain, guide, dirName);
 			}
-			// N guides → disambiguation by shortName (mirrors api-guide).
+			// N guides → disambiguation by shortName (shared menu helper).
 			if (!guideSelector) {
-				return renderFetchMenu(domain, matches);
+				return disambiguationMenuResult(
+					domain,
+					matches,
+					(shortName) =>
+						`Call api-learn({domain: "${domain}", guide: "${shortName}"}) to fetch one guide's recipe.`,
+				);
 			}
 			const sel = selectGuideByShortName(matches, guideSelector);
 			if (!sel.ok) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: shortNameErrorText(
-								sel,
-								domain,
-								guideSelector,
-								`Call api-learn({domain: "${domain}"}) to see the menu.`,
-							),
-						},
-					],
-					details:
-						sel.reason === "no_match"
-							? { error: "no_guide_by_shortname", domain, guide: guideSelector }
-							: {
-									error: "ambiguous_shortname",
-									domain,
-									guide: guideSelector,
-									directories: sel.directories,
-								},
-				};
+				return shortNameErrorResult(
+					sel,
+					domain,
+					guideSelector,
+					`Call api-learn({domain: "${domain}"}) to see the menu.`,
+				);
 			}
 			return stageFetchedRecipe(domain, sel.guide, sel.dirName);
 		}

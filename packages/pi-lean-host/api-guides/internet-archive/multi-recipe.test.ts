@@ -12,13 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import {
-	mkdtempSync,
-	mkdirSync,
-	writeFileSync,
-	rmSync,
-	readFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,11 +24,8 @@ vi.mock("../../core/transport.js", async () => ({
 	fetchUrl: vi.fn(),
 }));
 
-import {
-	findGuidesByDomain,
-	setUserGuidesDir,
-	invalidateCache,
-} from "../../core/guide-store.js";
+import { findGuidesByDomain } from "../../core/guide-store.js";
+import { stageGuides } from "../../__tests__/test-utils.js";
 
 // Folder keys (slug(shortName)) for the two guides claiming archive.org.
 const DOMAINS = ["internet-archive", "wayback-availability"] as const;
@@ -42,20 +33,9 @@ const DOMAINS = ["internet-archive", "wayback-availability"] as const;
 let tmpBase: string;
 
 async function setupRecipe(): Promise<void> {
-	const guidesDir = mkdtempSync(join(tmpBase, "guides-"));
-	for (const d of DOMAINS) {
-		const dir = join(guidesDir, d);
-		mkdirSync(dir, { recursive: true });
-		// The test lives in api-guides/archive.org/, so the guide dirs are one
-		// level up: ../<d>/guide.md.
-		const source = readFileSync(
-			new URL(`../${d}/guide.md`, import.meta.url),
-			"utf-8",
-		);
-		writeFileSync(join(dir, "guide.md"), source, "utf-8");
-	}
-	setUserGuidesDir(guidesDir);
-	invalidateCache();
+	// The test lives in api-guides/archive.org/; the guide dirs are siblings
+	// under api-guides/ — exactly what stageGuides copies from.
+	stageGuides(tmpBase, new URL("../", import.meta.url), DOMAINS);
 }
 
 /** Resolve an op across all guides claiming the domain — mirrors api-fetch. */

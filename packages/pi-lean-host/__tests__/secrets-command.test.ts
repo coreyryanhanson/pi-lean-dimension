@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { mockCtx, notifyText } from "./test-utils.js";
 import { handleSecretsSubcommand } from "../core/secrets-command.js";
 import {
 	listDomains,
@@ -28,28 +29,11 @@ afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
-function mockCtx(overrides: Record<string, unknown> = {}): any {
-	return {
-		hasUI: true,
-		ui: {
-			input: vi.fn(async () => undefined),
-			confirm: vi.fn(async () => true),
-			notify: vi.fn(),
-		},
-		...overrides,
-	};
-}
-
-/** Collect notify() calls as a single string. */
-function notified(ctx: any): string {
-	return ctx.ui.notify.mock.calls.map((c: any[]) => c[0]).join("\n");
-}
-
 describe("/api secrets — list", () => {
 	it("reports (no secrets stored) with a --help hint when empty (instructions moved to --help)", async () => {
 		const ctx = mockCtx();
 		await handleSecretsSubcommand("", ctx);
-		const text = notified(ctx);
+		const text = notifyText(ctx);
 		expect(text).toContain("(no secrets stored)");
 		expect(text).toContain("--help");
 		// The full instructions block no longer clutters the bare list.
@@ -62,7 +46,7 @@ describe("/api secrets — list", () => {
 
 		const ctx = mockCtx();
 		await handleSecretsSubcommand("", ctx);
-		const text = notified(ctx);
+		const text = notifyText(ctx);
 		expect(text).toContain("d.example");
 		expect(text).toContain("api_key");
 		expect(text).not.toContain("super-secret-value");
@@ -75,7 +59,7 @@ describe("/api secrets --help", () => {
 	it("prints usage + full file-write instructions", async () => {
 		const ctx = mockCtx();
 		await handleSecretsSubcommand("--help", ctx);
-		const text = notified(ctx);
+		const text = notifyText(ctx);
 		expect(text).toContain("Usage: /api secrets");
 		expect(text).toContain("/<domain>.json");
 	});
@@ -83,7 +67,7 @@ describe("/api secrets --help", () => {
 	it("accepts the bare 'help' alias", async () => {
 		const ctx = mockCtx();
 		await handleSecretsSubcommand("help", ctx);
-		expect(notified(ctx)).toContain("Usage: /api secrets");
+		expect(notifyText(ctx)).toContain("Usage: /api secrets");
 	});
 });
 
@@ -98,8 +82,8 @@ describe("/api secrets <domain> <name> — manual entry", () => {
 		expect(promptTitle).toContain("d.example");
 		expect(promptTitle).toContain("api_key");
 		expect(readSecret("d.example", "api_key")).toBe("demo-key-abc");
-		expect(notified(ctx)).toContain("Stored secret 'api_key'");
-		expect(notified(ctx)).not.toContain("demo-key-abc");
+		expect(notifyText(ctx)).toContain("Stored secret 'api_key'");
+		expect(notifyText(ctx)).not.toContain("demo-key-abc");
 	});
 
 	it("aborts on cancel (undefined) without writing", async () => {
@@ -113,7 +97,7 @@ describe("/api secrets <domain> <name> — manual entry", () => {
 		const ctx = mockCtx();
 		ctx.ui.input.mockResolvedValueOnce("   ");
 		await handleSecretsSubcommand("d.example k", ctx);
-		expect(notified(ctx)).toContain("Aborted");
+		expect(notifyText(ctx)).toContain("Aborted");
 		expect(listNames("d.example")).toEqual([]);
 	});
 
@@ -121,7 +105,7 @@ describe("/api secrets <domain> <name> — manual entry", () => {
 		const ctx = mockCtx({ hasUI: false });
 		await handleSecretsSubcommand("d.example k", ctx);
 		expect(ctx.ui.input).not.toHaveBeenCalled();
-		expect(notified(ctx)).toContain("d.example.json");
+		expect(notifyText(ctx)).toContain("d.example.json");
 	});
 });
 
@@ -135,7 +119,7 @@ describe("/api secrets <domain> — assisted entry", () => {
 		await handleSecretsSubcommand("d.example", ctx);
 
 		expect(readSecret("d.example", "api_key")).toBe("demo-key-xyz");
-		const text = notified(ctx);
+		const text = notifyText(ctx);
 		expect(text).toContain("Secrets for 'd.example'");
 		expect(text).not.toContain("demo-key-xyz");
 	});
@@ -146,7 +130,7 @@ describe("/api secrets <domain> — assisted entry", () => {
 		const ctx = mockCtx({ hasUI: false });
 		await handleSecretsSubcommand("d.example", ctx);
 		expect(ctx.ui.input).not.toHaveBeenCalled();
-		const text = notified(ctx);
+		const text = notifyText(ctx);
 		expect(text).toContain("k");
 		expect(text).not.toContain("secret-42");
 	});
@@ -188,7 +172,7 @@ body
 			expect(prompt).toContain("d.example");
 			expect(prompt).toContain("api_key");
 			expect(readSecret("d.example", "api_key")).toBe("demo-key-abc");
-			const text = notified(ctx);
+			const text = notifyText(ctx);
 			expect(text).toContain("Declared (guide): api_key");
 			expect(text).not.toContain("demo-key-abc");
 		} finally {
@@ -248,7 +232,7 @@ describe("/api secrets <domain> <name> --delete", () => {
 
 		expect(ctx.ui.confirm).not.toHaveBeenCalled();
 		expect(readSecret("d.example", "k")).toBeNull();
-		const text = notified(ctx);
+		const text = notifyText(ctx);
 		expect(text).toContain("Deleted secret 'k'");
 		expect(text).not.toContain("secret-42");
 	});
@@ -259,7 +243,7 @@ describe("/api secrets <domain> <name> --delete", () => {
 		const ctx = mockCtx();
 		await handleSecretsSubcommand("d.example nope --delete", ctx);
 		expect(readSecret("d.example", "keep")).toBe("1");
-		expect(notified(ctx)).toContain("No secret 'nope'");
+		expect(notifyText(ctx)).toContain("No secret 'nope'");
 	});
 
 	it("prunes the domain file after deleting the last secret", async () => {
@@ -289,7 +273,7 @@ describe("/api secrets <domain> --delete", () => {
 		expect(ctx.ui.confirm).toHaveBeenCalledTimes(1);
 		expect(readSecret("d.example", "a")).toBeNull();
 		expect(readSecret("d.example", "b")).toBeNull();
-		expect(notified(ctx)).toContain("Deleted all secrets for 'd.example'.");
+		expect(notifyText(ctx)).toContain("Deleted all secrets for 'd.example'.");
 	});
 
 	it("aborts (nothing deleted) when the user declines the confirm", async () => {
@@ -300,7 +284,7 @@ describe("/api secrets <domain> --delete", () => {
 
 		await handleSecretsSubcommand("d.example --delete", ctx);
 		expect(readSecret("d.example", "a")).toBe("1");
-		expect(notified(ctx)).toContain("Cancelled");
+		expect(notifyText(ctx)).toContain("Cancelled");
 	});
 
 	it("headless deletes all without prompting or hanging", async () => {
@@ -314,7 +298,7 @@ describe("/api secrets <domain> --delete", () => {
 	it("reports when a domain has no secrets", async () => {
 		const ctx = mockCtx();
 		await handleSecretsSubcommand("empty.example --delete", ctx);
-		expect(notified(ctx)).toContain("No secrets stored");
+		expect(notifyText(ctx)).toContain("No secrets stored");
 	});
 });
 
@@ -322,12 +306,12 @@ describe("/api secrets --delete misuse", () => {
 	it("bare --delete without a domain is a usage warning", async () => {
 		const ctx = mockCtx();
 		await handleSecretsSubcommand("--delete", ctx);
-		expect(notified(ctx)).toContain("Usage");
+		expect(notifyText(ctx)).toContain("Usage");
 	});
 
 	it("--help wins over --delete", async () => {
 		const ctx = mockCtx();
 		await handleSecretsSubcommand("--delete --help", ctx);
-		expect(notified(ctx)).toContain("Usage: /api secrets");
+		expect(notifyText(ctx)).toContain("Usage: /api secrets");
 	});
 });

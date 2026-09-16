@@ -8,13 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import {
-	mkdtempSync,
-	mkdirSync,
-	writeFileSync,
-	rmSync,
-	readFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ApiGuide } from "../../core/api-guide-types.js";
@@ -29,25 +23,20 @@ vi.mock("../../core/transport.js", async () => ({
 
 import { restGet } from "../../core/helpers.js";
 import { callHelper } from "../../core/local-helpers.js";
-import { loadApiGuidesFromDir } from "../../core/guide-catalog.js";
-import { setUserGuidesDir, invalidateCache } from "../../core/guide-store.js";
+import { stageGuides } from "../../__tests__/test-utils.js";
 
 const XML_BODY = `<diarios><diario id="1"><titulo>Test diary</titulo></diario></diarios>`;
 
 let tmpBase: string;
 
 async function setupRecipe(): Promise<{ guide: ApiGuide }> {
-	const guidesDir = mkdtempSync(join(tmpBase, "guides-"));
-	const domainDir = join(guidesDir, "boe");
-	mkdirSync(domainDir, { recursive: true });
-	for (const file of ["guide.md", "helper.ts"] as const) {
-		const source = readFileSync(new URL(`./${file}`, import.meta.url), "utf-8");
-		writeFileSync(join(domainDir, file), source, "utf-8");
-	}
-	setUserGuidesDir(guidesDir);
-	invalidateCache();
-	const loaded = loadApiGuidesFromDir(guidesDir);
-	return { guide: loaded.guides["boe"]! };
+	const { guides } = stageGuides(
+		tmpBase,
+		new URL("../", import.meta.url),
+		["boe"],
+		["guide.md", "helper.ts"],
+	);
+	return { guide: guides["boe"]! };
 }
 
 beforeAll(() => {

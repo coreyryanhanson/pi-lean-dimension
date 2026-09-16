@@ -150,6 +150,32 @@ describe("fetchUrl content-encoding handling", () => {
 	});
 });
 
+// ═══════════════════════════════════════════════════════════════
+// Body-size ceiling — a response body past MAX_BODY_BYTES aborts the
+// collect loop with BodyTooLargeError, which fetchUrl's retry logic
+// classifies as non-transient (exactly one request, no retry).
+// ═══════════════════════════════════════════════════════════════
+
+describe("fetchUrl body-size ceiling", () => {
+	it("throws BodyTooLargeError on an oversized body without retrying", async () => {
+		let requests = 0;
+		const server = createServer((_req, res) => {
+			requests++;
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(Buffer.alloc(10 * 1024 * 1024 + 1));
+		});
+		const port = await listenAsync(server);
+		try {
+			await expect(
+				fetchUrl(`http://127.0.0.1:${port}/huge`, { fresh: true }),
+			).rejects.toMatchObject({ name: "BodyTooLargeError" });
+			expect(requests).toBe(1);
+		} finally {
+			server.close();
+		}
+	});
+});
+
 // ═══════════════════════════════════════════════════════════════════
 // Grant-based caching — a body is served from cache only when the
 // server granted freshness: a time grant (Cache-Control: max-age) or a
@@ -207,6 +233,15 @@ async function startCacheServer(
 	};
 }
 
+/** Cache-suite teardown: restore the real clock and close the server in
+ *  one step, so a test can't reset one and forget the other. */
+function stopCacheServer(
+	srv: Awaited<ReturnType<typeof startCacheServer>>,
+): Promise<void> {
+	_setClockForTest(() => Date.now());
+	return srv.close();
+}
+
 /** Fixed test epoch so all clock math is deterministic. */
 const T0 = 1_700_000_000_000;
 
@@ -236,8 +271,7 @@ describe("grant-based caching", () => {
 			expect(r3.cached).toBe(false);
 			expect(srv.requestCount()).toBe(2);
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 
@@ -271,8 +305,7 @@ describe("grant-based caching", () => {
 			expect(JSON.parse(r3.body)).toEqual({ n: 3, changed: true });
 			expect(srv.ifNoneMatches[2]).toBe('"v1"');
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 
@@ -292,8 +325,7 @@ describe("grant-based caching", () => {
 			expect(r3.cached).toBe(false);
 			expect(srv.requestCount()).toBe(3);
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 
@@ -314,8 +346,7 @@ describe("grant-based caching", () => {
 			expect(srv.ifNoneMatches[1]).toBeUndefined();
 			expect(srv.requestCount()).toBe(2);
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 
@@ -344,8 +375,7 @@ describe("grant-based caching", () => {
 			expect(r3.cached).toBe(true);
 			expect(srv.requestCount()).toBe(3);
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 
@@ -370,8 +400,7 @@ describe("grant-based caching", () => {
 				expect(srv.requestCount()).toBe(2);
 				expect(srv.ifNoneMatches[1]).toBeUndefined();
 			} finally {
-				_setClockForTest(() => Date.now());
-				await srv.close();
+				await stopCacheServer(srv);
 			}
 		},
 	);
@@ -395,8 +424,7 @@ describe("grant-based caching", () => {
 			expect(srv.requestCount()).toBe(2);
 			expect(srv.ifNoneMatches[1]).toBe('"ncx"');
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 
@@ -424,8 +452,7 @@ describe("grant-based caching", () => {
 			expect(r3.cached).toBe(true);
 			expect(srv.requestCount()).toBe(2);
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 
@@ -455,8 +482,7 @@ describe("grant-based caching", () => {
 			expect(r3.cached).toBe(true);
 			expect(srv.requestCount()).toBe(2);
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 
@@ -502,8 +528,7 @@ describe("grant-based caching", () => {
 			expect(srv.requestCount()).toBe(5); // conditional GET, not a header hit
 			expect(srv.ifNoneMatches[4]).toBe('"nc304"');
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 
@@ -530,8 +555,7 @@ describe("grant-based caching", () => {
 			expect(srv.requestCount()).toBe(3);
 			expect(srv.ifNoneMatches[2]).toBeUndefined();
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 
@@ -583,8 +607,7 @@ describe("grant-based caching", () => {
 			expect(targetInms[1]).toBe('"race"'); // second: conditional GET
 			expect(srv.requestCount()).toBe(103);
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 
@@ -612,8 +635,7 @@ describe("grant-based caching", () => {
 			expect(r3.cached).toBe(true);
 			expect(srv.requestCount()).toBe(2);
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 
@@ -636,8 +658,7 @@ describe("grant-based caching", () => {
 			expect(r3.cached).toBe(false);
 			expect(srv.requestCount()).toBe(3);
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 
@@ -667,8 +688,7 @@ describe("grant-based caching", () => {
 			expect(r2.body).not.toContain("public");
 			expect(srv.requestCount()).toBe(2);
 		} finally {
-			_setClockForTest(() => Date.now());
-			await srv.close();
+			await stopCacheServer(srv);
 		}
 	});
 });

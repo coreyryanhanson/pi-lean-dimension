@@ -730,16 +730,25 @@ function buildExecutorEnv(
 	const literalHeaders =
 		guide.auth.kind === "oauth2" ? undefined : guide.auth.headers;
 	const extraHeaders = { ...literalHeaders, ...opts?.authHeaders };
+	// Shared fetch-args base: the env-owned slice of the FetchWithOptsArgs
+	// literal, assembled once so a new secret channel can't be wired into one
+	// executor and missed in the other. Callers add the situational fields
+	// (accept, fresh, guardRedirects, fallbackCharset).
+	const baseFetchArgs: Omit<FetchWithOptsArgs, "accept"> = {
+		extraHeaders,
+		secretHeaderNames: opts?.secretHeaderNames,
+		hasQuerySecret,
+		secretQueryParamNames: opts?.secretQueryParamNames,
+		hasPathSecret: hasPathSecrets,
+		redactPathSecret,
+	};
 	return {
 		fillParams,
 		queryParamsForBuild,
 		pathValues,
 		secretParamNames,
 		secretParams,
-		hasQuerySecret,
-		hasPathSecrets,
-		redactPathSecret,
-		extraHeaders,
+		baseFetchArgs,
 	};
 }
 
@@ -807,10 +816,7 @@ export async function restGet(
 		pathValues,
 		secretParamNames,
 		secretParams,
-		hasQuerySecret,
-		hasPathSecrets,
-		redactPathSecret,
-		extraHeaders,
+		baseFetchArgs,
 	} = buildExecutorEnv(guide, params, opts);
 
 	// Steps 1/2: fill path, build query (agent-supplied only — secret
@@ -847,15 +853,10 @@ export async function restGet(
 	//    APIs); an explicit header charset always wins.
 	const shape = operation.parse ?? guide.responseShape;
 	const result = await fetchWithOpts(fetchUrlRaw, {
+		...baseFetchArgs,
 		accept,
-		extraHeaders,
 		fresh: opts?.fresh,
 		fallbackCharset: shape.charset,
-		secretHeaderNames: opts?.secretHeaderNames,
-		hasQuerySecret,
-		secretQueryParamNames: opts?.secretQueryParamNames,
-		hasPathSecret: hasPathSecrets,
-		redactPathSecret,
 	});
 
 	// 7. Check HTTP status before attempting to parse the body.
@@ -973,10 +974,7 @@ export async function paginate(
 		pathValues,
 		secretParamNames,
 		secretParams,
-		hasQuerySecret,
-		hasPathSecrets,
-		redactPathSecret,
-		extraHeaders,
+		baseFetchArgs,
 	} = buildExecutorEnv(guide, params, opts);
 
 	// State for the styles.
@@ -1092,8 +1090,10 @@ export async function paginate(
 
 		// Every surfaced URL (incl. a server-supplied nextUrl that may
 		// already carry the secret) is redacted at the capture point — query
-		// params by name, path tokens by value.
-		urls.push(redactSurfacedUrl(url, secretParamNames, pathValues));
+		// params by name, path tokens by value. One redaction serves the
+		// surfaced list, the status check, and the error-envelope URL below.
+		const redactedUrl = redactSurfacedUrl(url, secretParamNames, pathValues);
+		urls.push(redactedUrl);
 
 		// NextLink guard — the URL comes from the remote server, so this is
 		// the one place SSRF protection is load-bearing. `guardThisFetch`
@@ -1122,23 +1122,17 @@ export async function paginate(
 
 		// Fetch.
 		const result = await fetchWithOpts(url, {
+			...baseFetchArgs,
 			accept,
-			extraHeaders,
 			fresh: opts?.fresh,
 			guardRedirects: guardThisFetch,
 			fallbackCharset: shape.charset,
-			secretHeaderNames: opts?.secretHeaderNames,
-			hasQuerySecret,
-			secretQueryParamNames: opts?.secretQueryParamNames,
-			hasPathSecret: hasPathSecrets,
-			redactPathSecret,
 		});
 
 		// Check HTTP status before attempting to parse. Secret values scrubbed
 		// from the error excerpt (output-channel audit). The URL stored on
 		// the error object is redacted, computed upstream of checkResponseStatus.
-		const redactedPageUrl = redactSurfacedUrl(url, secretParamNames, pathValues);
-		checkResponseStatus({ ...result, url: redactedPageUrl }, opts?.secretValues);
+		checkResponseStatus({ ...result, url: redactedUrl }, opts?.secretValues);
 
 		// Parse.
 		const data = parseResponse(result.body, shape);
@@ -1152,7 +1146,7 @@ export async function paginate(
 			checkErrorEnvelope(
 				data,
 				operation.errorPath,
-				redactedPageUrl,
+				redactedUrl,
 				opts?.secretValues,
 			);
 		}

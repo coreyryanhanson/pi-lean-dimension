@@ -31,6 +31,7 @@ import {
 	_resetLoadWarningsForTest,
 } from "../core/guide-store.js";
 import { handleDeleteSubcommand } from "../core/delete-command.js";
+import { mockCtx, notifyText } from "./test-utils.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Fixtures
@@ -74,18 +75,6 @@ function setupGuide(dirName: string, recipeText: string): void {
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(join(dir, "guide.md"), recipeText, "utf-8");
 	invalidateCache();
-}
-
-function mockCtx(overrides: Record<string, unknown> = {}): any {
-	return {
-		ui: { notify: vi.fn(), confirm: vi.fn(() => true) },
-		hasUI: true,
-		...overrides,
-	};
-}
-
-function notifyText(ctx: any): string {
-	return ctx.ui.notify.mock.calls.map((c: unknown[]) => c[0]).join("\n");
 }
 
 // ═══════════════════════════════════════════════════════════════════

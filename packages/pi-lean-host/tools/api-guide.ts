@@ -13,18 +13,18 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { appendFooter } from "./utils.js";
+import {
+	appendFooter,
+	disambiguationMenuResult,
+	shortNameErrorResult,
+} from "./utils.js";
 import {
 	loadAllGuides,
 	findGuidesByDomain,
 	getCatalogText,
 } from "../core/guide-store.js";
 import { TODAY } from "../core/parse-api-guide.js";
-import {
-	formatGuideListings,
-	selectGuideByShortName,
-	shortNameErrorText,
-} from "../core/guide-catalog.js";
+import { selectGuideByShortName } from "../core/guide-catalog.js";
 import { authStatusLine, canonicalStoreDomain } from "../core/auth.js";
 import { INLINE_LIMIT } from "../core/response-spill.js";
 import type { ApiGuide } from "../core/api-guide-types.js";
@@ -90,28 +90,12 @@ export const apiGuideTool = defineTool({
 		if (guideSelector) {
 			const sel = selectGuideByShortName(matches, guideSelector);
 			if (!sel.ok) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: shortNameErrorText(
-								sel,
-								domain,
-								guideSelector,
-								`Call api-guide({domain: "${domain}"}) to see the menu.`,
-							),
-						},
-					],
-					details:
-						sel.reason === "no_match"
-							? { error: "no_guide_by_shortname", domain, guide: guideSelector }
-							: {
-									error: "ambiguous_shortname",
-									domain,
-									guide: guideSelector,
-									directories: sel.directories,
-								},
-				};
+				return shortNameErrorResult(
+					sel,
+					domain,
+					guideSelector,
+					`Call api-guide({domain: "${domain}"}) to see the menu.`,
+				);
 			}
 			return renderGuideDetail(sel.guide, domain);
 		}
@@ -121,7 +105,12 @@ export const apiGuideTool = defineTool({
 		}
 
 		// Multiple guides for one domain → disambiguation menu.
-		return renderDisambiguationMenu(domain, matches);
+		return disambiguationMenuResult(
+			domain,
+			matches,
+			(shortName) =>
+				`Call api-guide({domain: "${domain}", guide: "${shortName}"}) for details.`,
+		);
 	},
 
 	renderCall(args, theme, _context) {
@@ -290,33 +279,5 @@ function renderGuideDetail(
 			apiHost: guide.apiHost,
 			operations: guide.operations.length,
 		},
-	};
-}
-
-/**
- * Disambiguation menu for a domain claimed by more than one guide. Lists
- * each guide's shortName (+ description when present) and a truncated op-name
- * summary; the org header shows only when all matches share one organization.
- */
-function renderDisambiguationMenu(
-	domain: string,
-	matches: { guide: ApiGuide; dirName: string }[],
-): AgentToolResult<unknown> {
-	const orgs = new Set(
-		matches.map((m) => m.guide.organization).filter((o): o is string => !!o),
-	);
-	const orgName = [...orgs][0];
-	const orgPart =
-		orgs.size === 1 && orgName ? ` (organization: ${orgName})` : "";
-	const lines: string[] = [];
-	lines.push(`${matches.length} API guides for '${domain}'${orgPart}:`);
-	lines.push(formatGuideListings(matches));
-	const example = matches[0]!.guide.shortName;
-	lines.push(
-		`Call api-guide({domain: "${domain}", guide: "${example}"}) for details.`,
-	);
-	return {
-		content: [{ type: "text", text: lines.join("\n") }],
-		details: { domain, disambiguation: matches.length },
 	};
 }

@@ -6,16 +6,10 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import {
-	mkdtempSync,
-	mkdirSync,
-	writeFileSync,
-	rmSync,
-	readFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ApiGuide, Operation } from "../../core/api-guide-types.js";
+import type { ApiGuide } from "../../core/api-guide-types.js";
 
 // Mock the transport layer BEFORE any imports that use it.
 vi.mock("../../core/transport.js", async () => ({
@@ -27,8 +21,7 @@ vi.mock("../../core/transport.js", async () => ({
 
 import { restGet, paginate } from "../../core/helpers.js";
 import { loadTransform } from "../../core/local-helpers.js";
-import { loadApiGuidesFromDir } from "../../core/guide-catalog.js";
-import { setUserGuidesDir, invalidateCache } from "../../core/guide-store.js";
+import { stageGuides, findOp } from "../../__tests__/test-utils.js";
 import { transform } from "./helper.ts";
 
 // ── Fixture — a GeoJSON FeatureCollection ───────────────────────────
@@ -77,23 +70,13 @@ const FC_BODY = JSON.stringify(FC);
 let tmpBase: string;
 
 async function setupRecipe(): Promise<{ guide: ApiGuide }> {
-	const guidesDir = mkdtempSync(join(tmpBase, "guides-"));
-	const domainDir = join(guidesDir, "usgs");
-	mkdirSync(domainDir, { recursive: true });
-	for (const file of ["guide.md", "helper.ts"] as const) {
-		const source = readFileSync(new URL(`./${file}`, import.meta.url), "utf-8");
-		writeFileSync(join(domainDir, file), source, "utf-8");
-	}
-	setUserGuidesDir(guidesDir);
-	invalidateCache();
-	const loaded = loadApiGuidesFromDir(guidesDir);
-	return { guide: loaded.guides["usgs"]! };
-}
-
-function findOp(guide: ApiGuide, name: string): Operation {
-	const op = guide.operations.find((o) => o.name === name);
-	if (!op) throw new Error(`op ${name} not found`);
-	return op;
+	const { guides } = stageGuides(
+		tmpBase,
+		new URL("../", import.meta.url),
+		["usgs"],
+		["guide.md", "helper.ts"],
+	);
+	return { guide: guides["usgs"]! };
 }
 
 beforeAll(() => {

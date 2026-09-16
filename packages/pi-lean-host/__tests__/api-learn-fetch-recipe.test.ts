@@ -130,6 +130,9 @@ describe("api-learn fetch-recipe", () => {
 		expect(draft).toContain("<short>");
 		expect(draft).toContain("<emoji>");
 		expect(draft).not.toMatch(/apidatos|boe\.es|BOE|searchDiary|listConsolidada/);
+		// The prose-body (agent-instructions) ability is surfaced, not lost.
+		expect(draft).toContain("agent-instruction prose");
+		expect(draft).toContain("the closing ---");
 		// Fail-closed: the as-is template cannot save (placeholder apiHost
 		// is rejected by requireHttpUrl).
 		expect(parseApiGuide(draft, { filename: "fresh.example" }).ok).toBe(false);
@@ -403,16 +406,6 @@ describe("api-learn save path (dir)", () => {
 		expect(props.recipe).toBeUndefined();
 		expect(props.recipeFile).toBeUndefined();
 		expect(props.dir).toBeDefined();
-	});
-
-	it("path-traversal domain still rejected by assertSafeDomain", async () => {
-		const res = await callLearn("../../escape", stagedDirPath("../../escape"));
-		const text = contentText(res);
-		expect(text).toContain("Invalid domain");
-		expect(res.details).toMatchObject({
-			error: "invalid_domain",
-			domain: "../../escape",
-		});
 	});
 });
 

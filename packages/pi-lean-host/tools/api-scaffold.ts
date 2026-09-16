@@ -27,14 +27,15 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { appendFooter, contentText } from "./utils.js";
+import {
+	appendFooter,
+	contentText,
+	disambiguationMenuResult,
+	shortNameErrorResult,
+} from "./utils.js";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-	formatGuideListings,
-	selectGuideByShortName,
-	shortNameErrorText,
-} from "../core/guide-catalog.js";
+import { selectGuideByShortName } from "../core/guide-catalog.js";
 import type { ApiGuide } from "../core/api-guide-types.js";
 import { findGuidesByDomain, getUserGuidesDir } from "../core/guide-store.js";
 import { assertSafeDomain, slug } from "../core/path-template.js";
@@ -235,45 +236,22 @@ export const apiScaffoldTool = defineTool({
 		} else if (guideSelector) {
 			const sel = selectGuideByShortName(matches, guideSelector);
 			if (!sel.ok) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: shortNameErrorText(
-								sel,
-								domain,
-								guideSelector,
-								`Call api-scaffold({domain: "${domain}", verify: true}) to see the menu.`,
-							),
-						},
-					],
-					details:
-						sel.reason === "no_match"
-							? { error: "no_guide_by_shortname", domain, guide: guideSelector }
-							: {
-									error: "ambiguous_shortname",
-									domain,
-									guide: guideSelector,
-									directories: sel.directories,
-								},
-				};
+				return shortNameErrorResult(
+					sel,
+					domain,
+					guideSelector,
+					`Call api-scaffold({domain: "${domain}", verify: true}) to see the menu.`,
+				);
 			}
 			selected = sel;
 		} else {
-			// N guides, no selector → disambiguation menu (mirrors api-learn).
-			return {
-				content: [
-					{
-						type: "text",
-						text: [
-							`${matches.length} API guides for '${domain}':`,
-							formatGuideListings(matches),
-							`Call api-scaffold({domain: "${domain}", guide: "${matches[0]!.guide.shortName}", verify: true}) to scaffold one.`,
-						].join("\n"),
-					},
-				],
-				details: { mode: "menu", domain, disambiguation: matches.length },
-			};
+			// N guides, no selector → disambiguation menu.
+			return disambiguationMenuResult(
+				domain,
+				matches,
+				(shortName) =>
+					`Call api-scaffold({domain: "${domain}", guide: "${shortName}", verify: true}) to scaffold one.`,
+			);
 		}
 
 		const { guide, dirName } = selected;

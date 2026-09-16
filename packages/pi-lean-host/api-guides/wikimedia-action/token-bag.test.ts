@@ -7,13 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import {
-	mkdtempSync,
-	mkdirSync,
-	writeFileSync,
-	rmSync,
-	readFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ApiGuide } from "../../core/api-guide-types.js";
@@ -28,8 +22,7 @@ vi.mock("../../core/transport.js", async () => ({
 
 import { paginate } from "../../core/helpers.js";
 import { loadTransform } from "../../core/local-helpers.js";
-import { loadApiGuidesFromDir } from "../../core/guide-catalog.js";
-import { setUserGuidesDir, invalidateCache } from "../../core/guide-store.js";
+import { stageGuides } from "../../__tests__/test-utils.js";
 import { transform } from "./helper.ts";
 
 const PAGE1 = JSON.stringify({
@@ -55,17 +48,13 @@ const PAGE2 = JSON.stringify({
 let tmpBase: string;
 
 async function setupRecipe(): Promise<{ guide: ApiGuide }> {
-	const guidesDir = mkdtempSync(join(tmpBase, "guides-"));
-	const domainDir = join(guidesDir, "wikimedia-action");
-	mkdirSync(domainDir, { recursive: true });
-	for (const file of ["guide.md", "helper.ts"] as const) {
-		const source = readFileSync(new URL(`./${file}`, import.meta.url), "utf-8");
-		writeFileSync(join(domainDir, file), source, "utf-8");
-	}
-	setUserGuidesDir(guidesDir);
-	invalidateCache();
-	const loaded = loadApiGuidesFromDir(guidesDir);
-	return { guide: loaded.guides["wikimedia-action"]! };
+	const { guides } = stageGuides(
+		tmpBase,
+		new URL("../", import.meta.url),
+		["wikimedia-action"],
+		["guide.md", "helper.ts"],
+	);
+	return { guide: guides["wikimedia-action"]! };
 }
 
 beforeAll(() => {

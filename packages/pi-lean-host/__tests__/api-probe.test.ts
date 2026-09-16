@@ -43,6 +43,45 @@ import { join } from "node:path";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
+// ═════════════════════════════════════════════════════════
+// Loopback-server + store-isolation scaffolding
+// ═════════════════════════════════════════════════════════
+
+/** Start a loopback server on an ephemeral port; `base` is its root URL
+ *  (with optional path prefix), `port` for final-URL assertions. */
+async function startProbeServer(
+	handler: http.RequestListener,
+	basePath = "",
+): Promise<{ server: http.Server; base: string; port: number }> {
+	const server = http.createServer(handler);
+	await new Promise<void>((r) => server.listen(0, r));
+	const port = (server.address() as AddressInfo).port;
+	return { server, port, base: `http://127.0.0.1:${port}${basePath}` };
+}
+
+/** Close a probe server and any keep-alive connections it holds. */
+function closeProbeServer(server: http.Server): void {
+	server.close();
+	server.closeAllConnections?.();
+}
+
+/** Point a dir-backed module store (secrets/oauth) at a fresh tmp dir;
+ *  returns the finally-callback that restores the previous dir and
+ *  removes the tmp dir. */
+function stageStoreDir(
+	prefix: string,
+	set: (dir: string) => void,
+	get: () => string,
+): () => void {
+	const tmp = mkdtempSync(join(tmpdir(), prefix));
+	const prev = get();
+	set(tmp);
+	return () => {
+		set(prev);
+		rmSync(tmp, { recursive: true, force: true });
+	};
+}
+
 describe("summarize", () => {
 	it("maps an envelope with an array-valued key to paginate + itemsPath", () => {
 		const s = summarize({
@@ -242,7 +281,7 @@ describe("#4 probe draft carries the verified version", () => {
 
 	it("walkVersions: over-claimed /v3 404 → walks backward to /v2 (via probe)", async () => {
 		const urls: string[] = [];
-		const server = http.createServer((req, res) => {
+		const { server, base } = await startProbeServer((req, res) => {
 			urls.push(req.url ?? "");
 			if (req.url === "/v3/items") {
 				res.writeHead(404);
@@ -251,9 +290,7 @@ describe("#4 probe draft carries the verified version", () => {
 			}
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(JSON.stringify({ data: [{ id: 1 }] }));
-		});
-		await new Promise<void>((r) => server.listen(0, r));
-		const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v3`;
+		}, "/v3");
 		try {
 			const result = await probe(base, "/items");
 			expect(result.status).toBe(200);
@@ -262,26 +299,22 @@ describe("#4 probe draft carries the verified version", () => {
 			// base (/v3) + one walk (/v2) — never guesses /v1 upward.
 			expect(urls).toEqual(["/v3/items", "/v2/items"]);
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 
 	it("base case via probe: apiHost with trailing /v3 → draft path carries /v3", async () => {
-		const server = http.createServer((_req, res) => {
+		const { server, base } = await startProbeServer((_req, res) => {
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(JSON.stringify({ data: [{ id: 1 }], total_count: 10 }));
-		});
-		await new Promise<void>((r) => server.listen(0, r));
-		const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v3`;
+		}, "/v3");
 		try {
 			const result = await probe(base, "/cryptocurrency/listings/latest");
 			expect(result.status).toBe(200);
 			expect(result.url).toBe(`${base}/cryptocurrency/listings/latest`);
 			expect(result.draft).toContain("path: /v3/cryptocurrency/listings/latest");
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 });
@@ -291,7 +324,7 @@ describe("probe version walk (backward recovery)", () => {
 
 	it("version gaps: /v4 and /v3 404, /v2 live → /v2", async () => {
 		const urls: string[] = [];
-		const server = http.createServer((req, res) => {
+		const { server, base } = await startProbeServer((req, res) => {
 			urls.push(req.url ?? "");
 			if (req.url === "/v4/items" || req.url === "/v3/items") {
 				res.writeHead(404);
@@ -300,9 +333,7 @@ describe("probe version walk (backward recovery)", () => {
 			}
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(json({ data: [{ id: 1 }] }));
-		});
-		await new Promise<void>((r) => server.listen(0, r));
-		const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v4`;
+		}, "/v4");
 		try {
 			const result = await probe(base, "/items");
 			expect(result.status).toBe(200);
@@ -310,13 +341,12 @@ describe("probe version walk (backward recovery)", () => {
 			expect(result.draft).toContain("path: /v2/items");
 			expect(urls).toEqual(["/v4/items", "/v3/items", "/v2/items"]);
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 
 	it("walk hit that redirects notes finalUrl (draft version vs redirect target)", async () => {
-		const server = http.createServer((req, res) => {
+		const { server, base, port } = await startProbeServer((req, res) => {
 			if (req.url === "/v3/items") {
 				res.writeHead(404);
 				res.end();
@@ -329,10 +359,7 @@ describe("probe version walk (backward recovery)", () => {
 			}
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(JSON.stringify({ data: [{ id: 1 }] }));
-		});
-		await new Promise<void>((r) => server.listen(0, r));
-		const port = (server.address() as AddressInfo).port;
-		const base = `http://127.0.0.1:${port}/v3`;
+		}, "/v3");
 		try {
 			const result = await probe(base, "/items");
 			expect(result.status).toBe(200);
@@ -340,106 +367,90 @@ describe("probe version walk (backward recovery)", () => {
 			expect(result.finalUrl).toBe(`http://127.0.0.1:${port}/real/items`);
 			expect(result.note ?? "").toContain("verify finalUrl (redirect target)");
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 
 	it("same-version 200: no extra requests fired", async () => {
 		const urls: string[] = [];
-		const server = http.createServer((req, res) => {
+		const { server, base } = await startProbeServer((req, res) => {
 			urls.push(req.url ?? "");
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(json({ data: [{ id: 1 }] }));
-		});
-		await new Promise<void>((r) => server.listen(0, r));
-		const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v3`;
+		}, "/v3");
 		try {
 			const result = await probe(base, "/items");
 			expect(result.status).toBe(200);
 			expect(urls).toEqual(["/v3/items"]);
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 
 	it("walk cap: /v10 with all lower 404 fires at most MAX_VERSION_WALK walks", async () => {
 		const urls: string[] = [];
-		const server = http.createServer((req, res) => {
+		const { server, base } = await startProbeServer((req, res) => {
 			urls.push(req.url ?? "");
 			res.writeHead(404);
 			res.end();
-		});
-		await new Promise<void>((r) => server.listen(0, r));
-		const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v10`;
+		}, "/v10");
 		try {
 			const result = await probe(base, "/items");
 			expect(result.status).toBe(404);
 			// base (v10) + MAX_VERSION_WALK walks (v9…v5); floor = max(10-5,1) = 5.
 			expect(urls.length).toBe(MAX_VERSION_WALK + 1);
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 
 	it("bare host 404: no probing, walk-skip note (regression of removed forward-guess)", async () => {
 		const urls: string[] = [];
-		const server = http.createServer((req, res) => {
+		const { server, base } = await startProbeServer((req, res) => {
 			urls.push(req.url ?? "");
 			res.writeHead(404);
 			res.end();
 		});
-		await new Promise<void>((r) => server.listen(0, r));
-		const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 		try {
 			const result = await probe(base, "/items");
 			expect(result.status).toBe(404);
 			expect(result.note ?? "").toContain("no version walk");
 			expect(urls).toEqual(["/items"]); // bare fetch only
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 
 	it("non-integer pathname host: no walk, walk-skip note", async () => {
 		const urls: string[] = [];
-		const server = http.createServer((req, res) => {
+		const { server, base } = await startProbeServer((req, res) => {
 			urls.push(req.url ?? "");
 			res.writeHead(404);
 			res.end();
-		});
-		await new Promise<void>((r) => server.listen(0, r));
-		const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+		}, "/api");
 		try {
 			const result = await probe(base, "/items");
 			expect(result.status).toBe(404);
 			expect(result.note ?? "").toContain("no version walk");
 			expect(urls).toEqual(["/api/items"]);
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 
 	it("version-in-path (mixed convention): no host walk", async () => {
 		const urls: string[] = [];
-		const server = http.createServer((req, res) => {
+		const { server, base } = await startProbeServer((req, res) => {
 			urls.push(req.url ?? "");
 			res.writeHead(404);
 			res.end();
-		});
-		await new Promise<void>((r) => server.listen(0, r));
-		const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v3`;
+		}, "/v3");
 		try {
 			const result = await probe(base, "/v3/data");
 			expect(result.status).toBe(404);
 			expect(urls).toEqual(["/v3/v3/data"]); // single fetch, no host walk
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 });
@@ -479,7 +490,7 @@ describe("formatProbeResult docs-first nudge", () => {
 
 describe("probe redirect handling (live localhost)", () => {
 	it("follows a 301 and reports the final URL + parsed body (the /packs → /packs/ case)", async () => {
-		const server = http.createServer((req, res) => {
+		const { server, base } = await startProbeServer((req, res) => {
 			if (req.url === "/packs") {
 				res.writeHead(301, { Location: "/packs/" });
 				res.end();
@@ -488,8 +499,6 @@ describe("probe redirect handling (live localhost)", () => {
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(JSON.stringify({ data: [{ id: 1 }], meta: { total: 1 } }));
 		});
-		await new Promise<void>((r) => server.listen(0, r));
-		const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 		try {
 			const result = await probe(base, "/packs");
 			expect(result.status).toBe(200);
@@ -500,8 +509,7 @@ describe("probe redirect handling (live localhost)", () => {
 			expect(result.shape?.suggestedItemsPath).toBe("data");
 			expect(result.draft).toContain("path: /packs");
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 
@@ -509,16 +517,16 @@ describe("probe redirect handling (live localhost)", () => {
 	describe("probe store-miss note lists provisioned domains", () => {
 		it("a missing ref names the other provisioned domains", async () => {
 			// Isolated store with one generic provisioned domain (no real hosts).
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-miss-secrets-"));
-			const prevDir = getSecretsDir();
-			setSecretsDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-miss-secrets-",
+				setSecretsDir,
+				getSecretsDir,
+			);
 			writeSecret("example.com", "api_key", "K");
-			const server = http.createServer((_req, res) => {
+			const { server, base } = await startProbeServer((_req, res) => {
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ data: [{ id: 1 }] }));
 			});
-			await new Promise<void>((r) => server.listen(0, r));
-			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 			try {
 				const result = await probe(
 					base,
@@ -536,10 +544,8 @@ describe("probe redirect handling (live localhost)", () => {
 				// Prescriptive: a miss tells the author to pass domain: <one>.
 				expect(result.note ?? "").toContain("pass domain:");
 			} finally {
-				server.close();
-				server.closeAllConnections?.();
-				setSecretsDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				closeProbeServer(server);
+				cleanupStore();
 			}
 		});
 	});
@@ -548,9 +554,11 @@ describe("probe redirect handling (live localhost)", () => {
 	// store — the value never enters the transcript; miss/expiry nudge /api oauth.
 	describe("probe useTokenStore (oauth2 bearer injection)", () => {
 		it("injects Authorization: Bearer from the token store; value never surfaces", async () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-ok-"));
-			const prevDir = getOAuthDir();
-			setOAuthDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-token-ok-",
+				setOAuthDir,
+				getOAuthDir,
+			);
 			writeToken(
 				"example.com",
 				"client_credentials",
@@ -561,14 +569,12 @@ describe("probe redirect handling (live localhost)", () => {
 				},
 			);
 			let seenAuth: string | undefined;
-			const server = http.createServer((req, res) => {
+			const { server, base } = await startProbeServer((req, res) => {
 				seenAuth = req.headers.authorization;
 				// Echo the header back so the scrub path is exercised too.
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ auth: req.headers.authorization ?? null }));
 			});
-			await new Promise<void>((r) => server.listen(0, r));
-			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 			try {
 				const result = await probe(
 					base,
@@ -589,25 +595,23 @@ describe("probe redirect handling (live localhost)", () => {
 				expect(result.raw).not.toContain("tok_secret_value");
 				expect(result.note ?? "").not.toContain("tok_secret_value");
 			} finally {
-				server.close();
-				server.closeAllConnections?.();
-				setOAuthDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				closeProbeServer(server);
+				cleanupStore();
 			}
 		});
 
 		it("a missing token proceeds unauthenticated and nudges /api oauth", async () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-miss-"));
-			const prevDir = getOAuthDir();
-			setOAuthDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-token-miss-",
+				setOAuthDir,
+				getOAuthDir,
+			);
 			let sawAuthHeader = false;
-			const server = http.createServer((req, res) => {
+			const { server, base } = await startProbeServer((req, res) => {
 				sawAuthHeader = req.headers.authorization !== undefined;
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ data: [{ id: 1 }] }));
 			});
-			await new Promise<void>((r) => server.listen(0, r));
-			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 			try {
 				const result = await probe(
 					base,
@@ -629,17 +633,17 @@ describe("probe redirect handling (live localhost)", () => {
 					'no cached token for "example.com"; run /api oauth example.com to mint one',
 				);
 			} finally {
-				server.close();
-				server.closeAllConnections?.();
-				setOAuthDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				closeProbeServer(server);
+				cleanupStore();
 			}
 		});
 
 		it("an expired token is not injected; the note nudges --refresh", async () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-exp-"));
-			const prevDir = getOAuthDir();
-			setOAuthDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-token-exp-",
+				setOAuthDir,
+				getOAuthDir,
+			);
 			writeToken(
 				"example.com",
 				"client_credentials",
@@ -650,13 +654,11 @@ describe("probe redirect handling (live localhost)", () => {
 				},
 			);
 			let sawAuthHeader = false;
-			const server = http.createServer((req, res) => {
+			const { server, base } = await startProbeServer((req, res) => {
 				sawAuthHeader = req.headers.authorization !== undefined;
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ data: [{ id: 1 }] }));
 			});
-			await new Promise<void>((r) => server.listen(0, r));
-			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 			try {
 				const result = await probe(
 					base,
@@ -677,17 +679,17 @@ describe("probe redirect handling (live localhost)", () => {
 					'token for "example.com" is expired; run /api oauth example.com --refresh',
 				);
 			} finally {
-				server.close();
-				server.closeAllConnections?.();
-				setOAuthDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				closeProbeServer(server);
+				cleanupStore();
 			}
 		});
 
 		it("useTokenStore without grant + tokenUrl is a loud validation error, not a silent miss", async () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-badkey-"));
-			const prevDir = getOAuthDir();
-			setOAuthDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-token-badkey-",
+				setOAuthDir,
+				getOAuthDir,
+			);
 			try {
 				await expect(
 					probe(
@@ -701,8 +703,7 @@ describe("probe redirect handling (live localhost)", () => {
 					),
 				).rejects.toThrow(/auth\.useTokenStore requires auth\.grant/);
 			} finally {
-				setOAuthDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				cleanupStore();
 			}
 		});
 
@@ -710,11 +711,16 @@ describe("probe redirect handling (live localhost)", () => {
 			// secretRefs: { Authorization } + a store token would emit two
 			// same-named headers (case-split keys) — fetch merges them into one
 			// garbled header. Loud validation, same posture as the slot-key check.
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-token-clash-"));
-			const prevDir = getOAuthDir();
-			const prevSecrets = getSecretsDir();
-			setOAuthDir(join(tmp, "oauth"));
-			setSecretsDir(join(tmp, "secrets"));
+			const cleanupOAuth = stageStoreDir(
+				"host-probe-token-clash-oauth-",
+				setOAuthDir,
+				getOAuthDir,
+			);
+			const cleanupStore = stageStoreDir(
+				"host-probe-token-clash-secrets-",
+				setSecretsDir,
+				getSecretsDir,
+			);
 			writeSecret("example.com", "api_key", "K");
 			writeToken(
 				"example.com",
@@ -740,9 +746,8 @@ describe("probe redirect handling (live localhost)", () => {
 					),
 				).rejects.toThrow(/collides with the static 'Authorization' header/);
 			} finally {
-				setOAuthDir(prevDir);
-				setSecretsDir(prevSecrets);
-				rmSync(tmp, { recursive: true, force: true });
+				cleanupOAuth();
+				cleanupStore();
 			}
 		});
 	});
@@ -752,16 +757,21 @@ describe("probe redirect handling (live localhost)", () => {
 	// injects the fresh Bearer. Failures ride the note — never fail-closed.
 	describe("probe mint-on-demand (client-credentials bootstrap)", () => {
 		it("absent token + mint fields → POSTs tokenUrl, stamps the store, injects the Bearer", async () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-ok-"));
-			const prevDir = getOAuthDir();
-			const prevSecrets = getSecretsDir();
-			setOAuthDir(tmp);
-			setSecretsDir(tmp);
+			const cleanupOAuth = stageStoreDir(
+				"host-probe-mint-ok-oauth-",
+				setOAuthDir,
+				getOAuthDir,
+			);
+			const cleanupStore = stageStoreDir(
+				"host-probe-mint-ok-secrets-",
+				setSecretsDir,
+				getSecretsDir,
+			);
 			writeSecret("example.com", "client_id", "cid_value");
 			writeSecret("example.com", "client_secret", "cs_value");
 			let tokenPosts = 0;
 			let seenAuth: string | undefined;
-			const server = http.createServer((req, res) => {
+			const { server, base } = await startProbeServer((req, res) => {
 				if (req.method === "POST" && req.url === "/token") {
 					tokenPosts++;
 					res.writeHead(200, { "Content-Type": "application/json" });
@@ -778,8 +788,6 @@ describe("probe redirect handling (live localhost)", () => {
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ data: [{ id: 1 }] }));
 			});
-			await new Promise<void>((r) => server.listen(0, r));
-			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 			try {
 				const result = await probe(
 					base,
@@ -805,26 +813,24 @@ describe("probe redirect handling (live localhost)", () => {
 				// Output-channel audit: the minted token never surfaces.
 				expect(result.raw).not.toContain("minted_tok");
 			} finally {
-				server.close();
-				server.closeAllConnections?.();
-				setOAuthDir(prevDir);
-				setSecretsDir(prevSecrets);
-				rmSync(tmp, { recursive: true, force: true });
+				closeProbeServer(server);
+				cleanupOAuth();
+				cleanupStore();
 			}
 		});
 
 		it("mint fields + non-cc grant → loud note, no mint, no slot stamp", async () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-grant-"));
-			const prevDir = getOAuthDir();
-			setOAuthDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-mint-grant-",
+				setOAuthDir,
+				getOAuthDir,
+			);
 			let tokenPosts = 0;
-			const server = http.createServer((req, res) => {
+			const { server, base } = await startProbeServer((req, res) => {
 				if (req.method === "POST") tokenPosts++;
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ data: [{ id: 1 }] }));
 			});
-			await new Promise<void>((r) => server.listen(0, r));
-			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 			try {
 				const result = await probe(
 					base,
@@ -848,25 +854,23 @@ describe("probe redirect handling (live localhost)", () => {
 					readToken("example.com", "client_credentials", `${base}/token`) ?? null,
 				).toBeNull();
 			} finally {
-				server.close();
-				server.closeAllConnections?.();
-				setOAuthDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				closeProbeServer(server);
+				cleanupStore();
 			}
 		});
 
 		it("bad mint field combo (cc without client-secret) degrades to a note, not a throw", async () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-invalid-"));
-			const prevDir = getOAuthDir();
-			setOAuthDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-mint-invalid-",
+				setOAuthDir,
+				getOAuthDir,
+			);
 			let tokenPosts = 0;
-			const server = http.createServer((req, res) => {
+			const { server, base } = await startProbeServer((req, res) => {
 				if (req.method === "POST") tokenPosts++;
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ data: [{ id: 1 }] }));
 			});
-			await new Promise<void>((r) => server.listen(0, r));
-			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 			try {
 				// client_credentials without clientSecret: buildSyntheticOAuth2Auth
 				// throws — but the probe's mint arm must ride the note instead.
@@ -883,20 +887,20 @@ describe("probe redirect handling (live localhost)", () => {
 				expect(result.ok).toBe(true);
 				expect(result.note ?? "").toContain("client-secret");
 			} finally {
-				server.close();
-				server.closeAllConnections?.();
-				setOAuthDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				closeProbeServer(server);
+				cleanupStore();
 			}
 		});
 
 		it("a fresh cached token short-circuits the mint (no POST)", async () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-cache-"));
-			const prevDir = getOAuthDir();
-			setOAuthDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-mint-cache-",
+				setOAuthDir,
+				getOAuthDir,
+			);
 			let tokenPosts = 0;
 			let seenAuth: string | undefined;
-			const server = http.createServer((req, res) => {
+			const { server, base } = await startProbeServer((req, res) => {
 				if (req.method === "POST") {
 					tokenPosts++;
 					res.writeHead(200, { "Content-Type": "application/json" });
@@ -907,8 +911,6 @@ describe("probe redirect handling (live localhost)", () => {
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ data: [{ id: 1 }] }));
 			});
-			await new Promise<void>((r) => server.listen(0, r));
-			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 			try {
 				// Same slot the mint stamps: (client_credentials, ${base}/token).
 				writeToken("example.com", "client_credentials", `${base}/token`, {
@@ -932,21 +934,24 @@ describe("probe redirect handling (live localhost)", () => {
 				expect(seenAuth).toBe("Bearer cached_tok");
 				expect(result.ok).toBe(true);
 			} finally {
-				server.close();
-				server.closeAllConnections?.();
-				setOAuthDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				closeProbeServer(server);
+				cleanupStore();
 			}
 		});
 
 		it("mint failure rides the note; the probe proceeds unauthenticated", async () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-mint-miss-"));
-			const prevDir = getOAuthDir();
-			const prevSecrets = getSecretsDir();
-			setOAuthDir(tmp);
-			setSecretsDir(tmp); // isolated empty store — clientId will miss
+			const cleanupOAuth = stageStoreDir(
+				"host-probe-mint-miss-oauth-",
+				setOAuthDir,
+				getOAuthDir,
+			);
+			const cleanupStore = stageStoreDir(
+				"host-probe-mint-miss-secrets-",
+				setSecretsDir,
+				getSecretsDir,
+			);
 			let sawAuthHeader = false;
-			const server = http.createServer((req, res) => {
+			const { server, base } = await startProbeServer((req, res) => {
 				if (req.method === "POST") {
 					res.writeHead(200, { "Content-Type": "application/json" });
 					res.end(JSON.stringify({ access_token: "x" }));
@@ -956,8 +961,6 @@ describe("probe redirect handling (live localhost)", () => {
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ data: [{ id: 1 }] }));
 			});
-			await new Promise<void>((r) => server.listen(0, r));
-			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 			try {
 				const result = await probe(
 					base,
@@ -976,11 +979,9 @@ describe("probe redirect handling (live localhost)", () => {
 				expect(result.ok).toBe(true);
 				expect(result.note ?? "").toContain("client id 'client_id'");
 			} finally {
-				server.close();
-				server.closeAllConnections?.();
-				setOAuthDir(prevDir);
-				setSecretsDir(prevSecrets);
-				rmSync(tmp, { recursive: true, force: true });
+				closeProbeServer(server);
+				cleanupOAuth();
+				cleanupStore();
 			}
 		});
 	});
@@ -989,36 +990,40 @@ describe("probe redirect handling (live localhost)", () => {
 	// registrable domain must be found when the probe hits an api subdomain.
 	describe("resolveProbeStoreDomain (secret-domain fallback)", () => {
 		it("falls back to the provisioned parent domain (pro-api → registrable) when the hostname isn't provisioned", () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-fallback-secrets-"));
-			const prevDir = getSecretsDir();
-			setSecretsDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-fallback-secrets-",
+				setSecretsDir,
+				getSecretsDir,
+			);
 			writeSecret("example.dev", "api_key", "K");
 			try {
 				expect(resolveProbeStoreDomain("pro-api.example.dev")).toBe("example.dev");
 			} finally {
-				setSecretsDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				cleanupStore();
 			}
 		});
 
 		it("exact-match hostname beats the parent fallback", () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-exact-secrets-"));
-			const prevDir = getSecretsDir();
-			setSecretsDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-exact-secrets-",
+				setSecretsDir,
+				getSecretsDir,
+			);
 			writeSecret("api.example.com", "api_key", "EXACT");
 			writeSecret("example.com", "api_key", "PARENT");
 			try {
 				expect(resolveProbeStoreDomain("api.example.com")).toBe("api.example.com");
 			} finally {
-				setSecretsDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				cleanupStore();
 			}
 		});
 
 		it("picks the longest matching parent when several are provisioned", () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-longest-secrets-"));
-			const prevDir = getSecretsDir();
-			setSecretsDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-longest-secrets-",
+				setSecretsDir,
+				getSecretsDir,
+			);
 			writeSecret("example.com", "api_key", "A");
 			writeSecret("api.example.com", "api_key", "B");
 			try {
@@ -1026,37 +1031,38 @@ describe("probe redirect handling (live localhost)", () => {
 					"api.example.com",
 				);
 			} finally {
-				setSecretsDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				cleanupStore();
 			}
 		});
 
 		it("no provisioned parent → returns the hostname as-is", () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-noparent-secrets-"));
-			const prevDir = getSecretsDir();
-			setSecretsDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-noparent-secrets-",
+				setSecretsDir,
+				getSecretsDir,
+			);
 			try {
 				expect(resolveProbeStoreDomain("api.unknown.test")).toBe(
 					"api.unknown.test",
 				);
 			} finally {
-				setSecretsDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				cleanupStore();
 			}
 		});
 
 		it("leading-dot guard: a sibling hostname never matches (malicious-example.com ≠ example.com)", () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-dotguard-secrets-"));
-			const prevDir = getSecretsDir();
-			setSecretsDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-dotguard-secrets-",
+				setSecretsDir,
+				getSecretsDir,
+			);
 			writeSecret("example.com", "api_key", "K");
 			try {
 				expect(resolveProbeStoreDomain("malicious-example.com")).toBe(
 					"malicious-example.com",
 				);
 			} finally {
-				setSecretsDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				cleanupStore();
 			}
 		});
 	});
@@ -1098,19 +1104,19 @@ describe("probe redirect handling (live localhost)", () => {
 
 	describe("probe inline auth.headerPrefixes", () => {
 		it("prepends the prefix on the wire and scrubs the raw token from the body", async () => {
-			const tmp = mkdtempSync(join(tmpdir(), "host-probe-prefix-secrets-"));
-			const prevDir = getSecretsDir();
-			setSecretsDir(tmp);
+			const cleanupStore = stageStoreDir(
+				"host-probe-prefix-secrets-",
+				setSecretsDir,
+				getSecretsDir,
+			);
 			writeSecret("api.example.com", "api_key", "RAW-TOKEN");
 			let sawAuthHeader = "";
-			const server = http.createServer((req, res) => {
+			const { server, base } = await startProbeServer((req, res) => {
 				sawAuthHeader = (req.headers["x-api-key"] ?? "") as string;
 				// Echo the BARE token in the body — the probe scrub must redact it.
 				res.writeHead(200, { "Content-Type": "application/json" });
 				res.end(JSON.stringify({ data: [{ id: 1, echoed: "RAW-TOKEN" }] }));
 			});
-			await new Promise<void>((r) => server.listen(0, r));
-			const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 			try {
 				const result = await probe(
 					base,
@@ -1127,10 +1133,8 @@ describe("probe redirect handling (live localhost)", () => {
 				expect(sawAuthHeader).toBe("Bearer RAW-TOKEN");
 				expect(result.raw).not.toContain("RAW-TOKEN");
 			} finally {
-				server.close();
-				server.closeAllConnections?.();
-				setSecretsDir(prevDir);
-				rmSync(tmp, { recursive: true, force: true });
+				closeProbeServer(server);
+				cleanupStore();
 			}
 		});
 
@@ -1160,12 +1164,10 @@ async function stubProbeServer(
 	status: number,
 	body: unknown = { data: [{ id: 1 }] },
 ): Promise<{ server: http.Server; base: string }> {
-	const server = http.createServer((_req, res) => {
+	const { server, base } = await startProbeServer((_req, res) => {
 		res.writeHead(status, { "Content-Type": "application/json" });
 		res.end(JSON.stringify(body));
 	});
-	await new Promise<void>((r) => server.listen(0, r));
-	const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 	return { server, base };
 }
 
@@ -1179,15 +1181,16 @@ describe("api-probe 401/403 wording", () => {
 			);
 			expect(result.note ?? "").not.toContain("guide is auth:none");
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 
 	it("auth injected (secret provisioned) but server 401 → injected-but-rejected wording", async () => {
-		const tmp = mkdtempSync(join(tmpdir(), "host-probe-401-secrets-"));
-		const prevDir = getSecretsDir();
-		setSecretsDir(tmp);
+		const cleanupStore = stageStoreDir(
+			"host-probe-401-secrets-",
+			setSecretsDir,
+			getSecretsDir,
+		);
 		writeSecret("api.example.com", "api_key", "K");
 		const { server, base } = await stubProbeServer(401);
 		try {
@@ -1204,17 +1207,17 @@ describe("api-probe 401/403 wording", () => {
 			expect(note).toContain("auth injected but rejected; verify header name");
 			expect(note).not.toContain("not found in store");
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
-			setSecretsDir(prevDir);
-			rmSync(tmp, { recursive: true, force: true });
+			closeProbeServer(server);
+			cleanupStore();
 		}
 	});
 
 	it("auth injected, secret missing from store → auth rejected; names the secret", async () => {
-		const tmp = mkdtempSync(join(tmpdir(), "host-probe-401-miss-"));
-		const prevDir = getSecretsDir();
-		setSecretsDir(tmp);
+		const cleanupStore = stageStoreDir(
+			"host-probe-401-miss-",
+			setSecretsDir,
+			getSecretsDir,
+		);
 		const { server, base } = await stubProbeServer(401);
 		try {
 			const result = await probe(
@@ -1232,17 +1235,17 @@ describe("api-probe 401/403 wording", () => {
 				'secret "api_key" not found in store for domain "api.example.com"',
 			);
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
-			setSecretsDir(prevDir);
-			rmSync(tmp, { recursive: true, force: true });
+			closeProbeServer(server);
+			cleanupStore();
 		}
 	});
 
 	it("auth injected, nothing missing, server 403 with no message → bare status, not verify-header", async () => {
-		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-secrets-"));
-		const prevDir = getSecretsDir();
-		setSecretsDir(tmp);
+		const cleanupStore = stageStoreDir(
+			"host-probe-403-secrets-",
+			setSecretsDir,
+			getSecretsDir,
+		);
 		writeSecret("api.example.com", "api_key", "K");
 		const { server, base } = await stubProbeServer(403);
 		try {
@@ -1260,17 +1263,17 @@ describe("api-probe 401/403 wording", () => {
 			expect(result.note ?? "").toBe("403");
 			expect(result.note ?? "").not.toContain("verify header name");
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
-			setSecretsDir(prevDir);
-			rmSync(tmp, { recursive: true, force: true });
+			closeProbeServer(server);
+			cleanupStore();
 		}
 	});
 
 	it("auth injected, 403 → server's own message surfaced, not verify-header", async () => {
-		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-msg-"));
-		const prevDir = getSecretsDir();
-		setSecretsDir(tmp);
+		const cleanupStore = stageStoreDir(
+			"host-probe-403-msg-",
+			setSecretsDir,
+			getSecretsDir,
+		);
 		writeSecret("api.example.com", "api_key", "sk-abc123");
 		const { server, base } = await stubProbeServer(403, {
 			status: {
@@ -1299,17 +1302,17 @@ describe("api-probe 401/403 wording", () => {
 			expect(note).toContain("plan/subscription limitation");
 			expect(note).not.toContain("verify header name");
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
-			setSecretsDir(prevDir);
-			rmSync(tmp, { recursive: true, force: true });
+			closeProbeServer(server);
+			cleanupStore();
 		}
 	});
 
 	it("auth injected, 403 with message field → server's words surfaced", async () => {
-		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-plantext-"));
-		const prevDir = getSecretsDir();
-		setSecretsDir(tmp);
+		const cleanupStore = stageStoreDir(
+			"host-probe-403-plantext-",
+			setSecretsDir,
+			getSecretsDir,
+		);
 		writeSecret("api.example.com", "api_key", "sk-abc123");
 		const { server, base } = await stubProbeServer(403, {
 			error: "Your plan does not include access to this endpoint",
@@ -1328,17 +1331,17 @@ describe("api-probe 401/403 wording", () => {
 			expect(note).toContain("Your plan does not include access to this endpoint");
 			expect(note).not.toContain("verify header name");
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
-			setSecretsDir(prevDir);
-			rmSync(tmp, { recursive: true, force: true });
+			closeProbeServer(server);
+			cleanupStore();
 		}
 	});
 
 	it("auth injected, 403 with detail field (Django/FastAPI) → server's words surfaced", async () => {
-		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-detail-"));
-		const prevDir = getSecretsDir();
-		setSecretsDir(tmp);
+		const cleanupStore = stageStoreDir(
+			"host-probe-403-detail-",
+			setSecretsDir,
+			getSecretsDir,
+		);
 		writeSecret("api.example.com", "api_key", "sk-abc123");
 		const { server, base } = await stubProbeServer(403, {
 			detail: "You do not have permission to perform this action.",
@@ -1357,17 +1360,17 @@ describe("api-probe 401/403 wording", () => {
 			expect(note).toContain("You do not have permission to perform this action.");
 			expect(note).not.toContain("verify header name");
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
-			setSecretsDir(prevDir);
-			rmSync(tmp, { recursive: true, force: true });
+			closeProbeServer(server);
+			cleanupStore();
 		}
 	});
 
 	it("auth injected, 403 echoing the secret → scrubbed to *** in the note", async () => {
-		const tmp = mkdtempSync(join(tmpdir(), "host-probe-403-scrub-"));
-		const prevDir = getSecretsDir();
-		setSecretsDir(tmp);
+		const cleanupStore = stageStoreDir(
+			"host-probe-403-scrub-",
+			setSecretsDir,
+			getSecretsDir,
+		);
 		writeSecret("api.example.com", "api_key", "sk-abc123");
 		const { server, base } = await stubProbeServer(403, {
 			error: "Invalid key: sk-abc123",
@@ -1386,17 +1389,17 @@ describe("api-probe 401/403 wording", () => {
 			expect(note).toContain("Invalid key: ***");
 			expect(note).not.toContain("sk-abc123");
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
-			setSecretsDir(prevDir);
-			rmSync(tmp, { recursive: true, force: true });
+			closeProbeServer(server);
+			cleanupStore();
 		}
 	});
 
 	it("auth injected, 401 → stays verify-header (message surfacing is 403-only)", async () => {
-		const tmp = mkdtempSync(join(tmpdir(), "host-probe-401-plan-"));
-		const prevDir = getSecretsDir();
-		setSecretsDir(tmp);
+		const cleanupStore = stageStoreDir(
+			"host-probe-401-plan-",
+			setSecretsDir,
+			getSecretsDir,
+		);
 		writeSecret("api.example.com", "api_key", "K");
 		const { server, base } = await stubProbeServer(401, {
 			error: "Your plan does not include access to this endpoint",
@@ -1415,10 +1418,8 @@ describe("api-probe 401/403 wording", () => {
 			expect(note).toContain("auth injected but rejected; verify header name");
 			expect(note).not.toContain("key accepted");
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
-			setSecretsDir(prevDir);
-			rmSync(tmp, { recursive: true, force: true });
+			closeProbeServer(server);
+			cleanupStore();
 		}
 	});
 });
@@ -1437,8 +1438,7 @@ describe("api-probe headerPrefixes without secretRefs", () => {
 			);
 			expect(result.note ?? "").toContain(ROOT_CAUSE);
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 
@@ -1455,8 +1455,7 @@ describe("api-probe headerPrefixes without secretRefs", () => {
 			expect(note).toContain("endpoint requires auth; configure auth injection");
 			expect(note).toContain(ROOT_CAUSE);
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 
@@ -1471,8 +1470,7 @@ describe("api-probe headerPrefixes without secretRefs", () => {
 			);
 			expect(result.note ?? "").toContain(ROOT_CAUSE);
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 
@@ -1492,15 +1490,16 @@ describe("api-probe headerPrefixes without secretRefs", () => {
 			);
 			expect(result.note ?? "").toContain(ROOT_CAUSE);
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
+			closeProbeServer(server);
 		}
 	});
 
 	it("correct shape (secretRefs + headerPrefixes) with secret provisioned → no warning", async () => {
-		const tmp = mkdtempSync(join(tmpdir(), "host-probe-prefix-ok-"));
-		const prevDir = getSecretsDir();
-		setSecretsDir(tmp);
+		const cleanupStore = stageStoreDir(
+			"host-probe-prefix-ok-",
+			setSecretsDir,
+			getSecretsDir,
+		);
 		writeSecret("api.example.com", "api_key", "K");
 		const { server, base } = await stubProbeServer(200);
 		try {
@@ -1518,10 +1517,8 @@ describe("api-probe headerPrefixes without secretRefs", () => {
 			);
 			expect(result.note ?? "").not.toContain("headerPrefixes ignored");
 		} finally {
-			server.close();
-			server.closeAllConnections?.();
-			setSecretsDir(prevDir);
-			rmSync(tmp, { recursive: true, force: true });
+			closeProbeServer(server);
+			cleanupStore();
 		}
 	});
 });

@@ -93,8 +93,6 @@ export interface ProbeResult {
 }
 
 export interface ProbeOptions {
-	/** Accept header (default application/json). */
-	accept?: string;
 	/** On 404, walk the apiHost version backward (vN→v1). Default true. */
 	walkVersions?: boolean;
 	/**
@@ -563,7 +561,6 @@ export async function probe(
 	opts: ProbeOptions = {},
 	ctx?: ExtensionContext,
 ): Promise<ProbeResult> {
-	const accept = opts.accept ?? "application/json";
 	const walkVersions = opts.walkVersions ?? true;
 	const domain =
 		opts.domain ?? resolveProvisionedParentDomain(hostnameOf(apiHost));
@@ -575,7 +572,6 @@ export async function probe(
 		apiHost,
 		path,
 		params,
-		accept,
 		authCtx,
 		domain,
 		versionPrefixOf(apiHost),
@@ -593,7 +589,7 @@ export async function probe(
 		return base;
 	}
 	const hit = await walkBackward(
-		{ apiHost, path, params, accept, authCtx, domain },
+		{ apiHost, path, params, authCtx, domain },
 		Number(stated),
 	);
 	return hit ?? base;
@@ -615,7 +611,6 @@ async function walkBackward(
 		apiHost: string;
 		path: string;
 		params: Record<string, unknown>;
-		accept: string;
 		authCtx: ProbeAuthCtx;
 		domain: string;
 	},
@@ -628,7 +623,6 @@ async function walkBackward(
 			withVersion(ctx.apiHost, k),
 			ctx.path,
 			ctx.params,
-			ctx.accept,
 			ctx.authCtx,
 			ctx.domain,
 			`/v${k}`,
@@ -667,7 +661,6 @@ async function fetchOne(
 	apiHost: string,
 	path: string,
 	params: Record<string, unknown>,
-	accept: string,
 	authCtx: ProbeAuthCtx,
 	domain: string,
 	prefix = "",
@@ -694,7 +687,7 @@ async function fetchOne(
 	const url = redactUrl(rawUrl);
 	const hasQuerySecret = Object.keys(authCtx.queryParams).length > 0;
 	const res = await fetchUrl(rawUrl, {
-		headers: { accept, ...authCtx.headers },
+		headers: { accept: "application/json", ...authCtx.headers },
 		fresh: true,
 		...(authCtx.hasAuthBlock
 			? {
@@ -787,8 +780,7 @@ async function fetchOne(
 			shape: null,
 			draft: "",
 			raw,
-			note:
-				"non-JSON body (set opts.accept for XML/HTML, or use a different path)",
+			note: "non-JSON body (use a different path)",
 		};
 	}
 

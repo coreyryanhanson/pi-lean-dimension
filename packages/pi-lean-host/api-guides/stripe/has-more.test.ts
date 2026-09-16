@@ -19,13 +19,7 @@ import {
 	afterAll,
 	beforeEach,
 } from "vitest";
-import {
-	mkdtempSync,
-	mkdirSync,
-	writeFileSync,
-	rmSync,
-	readFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ApiGuide } from "../../core/api-guide-types.js";
@@ -40,8 +34,7 @@ vi.mock("../../core/transport.js", async () => ({
 
 import { fetchUrl } from "../../core/transport.js";
 import { paginate } from "../../core/helpers.js";
-import { loadApiGuidesFromDir } from "../../core/guide-catalog.js";
-import { setUserGuidesDir, invalidateCache } from "../../core/guide-store.js";
+import { stageGuides } from "../../__tests__/test-utils.js";
 
 // Drain any under-consumed Once-queue so a leaky test can't shift its
 // leftover pages into the next test (mockReset also clears calls).
@@ -80,15 +73,10 @@ const PAGE3_EMPTY = page([], false);
 let tmpBase: string;
 
 async function setupRecipe(): Promise<{ guide: ApiGuide }> {
-	const guidesDir = mkdtempSync(join(tmpBase, "guides-"));
-	const domainDir = join(guidesDir, "stripe");
-	mkdirSync(domainDir, { recursive: true });
-	const source = readFileSync(new URL("./guide.md", import.meta.url), "utf-8");
-	writeFileSync(join(domainDir, "guide.md"), source, "utf-8");
-	setUserGuidesDir(guidesDir);
-	invalidateCache();
-	const loaded = loadApiGuidesFromDir(guidesDir);
-	return { guide: loaded.guides["stripe"]! };
+	const { guides } = stageGuides(tmpBase, new URL("../", import.meta.url), [
+		"stripe",
+	]);
+	return { guide: guides["stripe"]! };
 }
 
 beforeAll(() => {

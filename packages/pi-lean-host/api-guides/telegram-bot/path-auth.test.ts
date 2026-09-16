@@ -28,16 +28,10 @@ import {
 	beforeEach,
 	afterAll,
 } from "vitest";
-import {
-	mkdtempSync,
-	mkdirSync,
-	writeFileSync,
-	rmSync,
-	readFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ApiGuide, Operation } from "../../core/api-guide-types.js";
+import type { ApiGuide } from "../../core/api-guide-types.js";
 
 // Mock the transport layer BEFORE any imports that use it.
 vi.mock("../../core/transport.js", async () => ({
@@ -50,8 +44,7 @@ vi.mock("../../core/transport.js", async () => ({
 import { fetchUrl } from "../../core/transport.js";
 const fetchUrlMock = vi.mocked(fetchUrl);
 
-import { loadApiGuidesFromDir } from "../../core/guide-catalog.js";
-import { setUserGuidesDir, invalidateCache } from "../../core/guide-store.js";
+import { stageGuides, findOp } from "../../__tests__/test-utils.js";
 import { resolveOpForExecution } from "../../core/resolve-op.js";
 import { setSecretsDir, writeSecret } from "../../core/secrets-store.js";
 
@@ -65,21 +58,10 @@ let tmpBase: string;
 
 /** Stage the on-disk guide into a tmp guides dir and load it. */
 async function setupRecipe(): Promise<{ guide: ApiGuide }> {
-	const guidesDir = mkdtempSync(join(tmpBase, "guides-"));
-	const domainDir = join(guidesDir, "telegram-bot");
-	mkdirSync(domainDir, { recursive: true });
-	const source = readFileSync(new URL("./guide.md", import.meta.url), "utf-8");
-	writeFileSync(join(domainDir, "guide.md"), source, "utf-8");
-	setUserGuidesDir(guidesDir);
-	invalidateCache();
-	const loaded = loadApiGuidesFromDir(guidesDir);
-	return { guide: loaded.guides["telegram-bot"]! };
-}
-
-function findOp(guide: ApiGuide, name: string): Operation {
-	const op = guide.operations.find((o) => o.name === name);
-	if (!op) throw new Error(`op ${name} not found`);
-	return op;
+	const { guides } = stageGuides(tmpBase, new URL("../", import.meta.url), [
+		"telegram-bot",
+	]);
+	return { guide: guides["telegram-bot"]! };
 }
 
 beforeAll(() => {

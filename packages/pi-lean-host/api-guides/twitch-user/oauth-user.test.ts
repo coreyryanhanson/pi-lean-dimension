@@ -19,20 +19,10 @@
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import {
-	mkdtempSync,
-	mkdirSync,
-	writeFileSync,
-	rmSync,
-	readFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-	ApiGuide,
-	OAuth2Auth,
-	Operation,
-} from "../../core/api-guide-types.js";
+import type { ApiGuide, OAuth2Auth } from "../../core/api-guide-types.js";
 
 // Mock the transport layer BEFORE any imports that use it.
 vi.mock("../../core/transport.js", async () => ({
@@ -42,32 +32,18 @@ vi.mock("../../core/transport.js", async () => ({
 	fetchUrl: vi.fn(),
 }));
 
-import { loadApiGuidesFromDir } from "../../core/guide-catalog.js";
-import { setUserGuidesDir, invalidateCache } from "../../core/guide-store.js";
 import { resolveOpForExecution } from "../../core/resolve-op.js";
 import { setSecretsDir, writeSecret } from "../../core/secrets-store.js";
 import { setOAuthDir, readToken, writeToken } from "../../core/oauth-store.js";
+import {
+	stageGuides,
+	findOp,
+	stubTokenEndpoint,
+	tokenResponse,
+} from "../../__tests__/test-utils.js";
 
 const TT = "https://id.twitch.tv/oauth2/token";
 const STORE_DOMAIN = "twitch.tv"; // canonicalStoreDomain = guide.domains[0]
-
-function stubTokenEndpoint(
-	handler: (url: string, init: RequestInit) => Response,
-): void {
-	vi.stubGlobal(
-		"fetch",
-		vi.fn((url: unknown, init?: RequestInit) =>
-			Promise.resolve(handler(String(url), init ?? {})),
-		),
-	);
-}
-
-function tokenResponse(body: unknown, status = 200): Response {
-	return new Response(JSON.stringify(body), {
-		status,
-		headers: { "content-type": "application/json" },
-	});
-}
 
 let tmpBase: string;
 
@@ -75,26 +51,9 @@ let tmpBase: string;
 async function setupRecipes(
 	dirs: string[],
 ): Promise<{ guides: Record<string, ApiGuide> }> {
-	const guidesDir = mkdtempSync(join(tmpBase, "guides-"));
-	for (const dir of dirs) {
-		const domainDir = join(guidesDir, dir);
-		mkdirSync(domainDir, { recursive: true });
-		const source = readFileSync(
-			new URL(`../${dir}/guide.md`, import.meta.url),
-			"utf-8",
-		);
-		writeFileSync(join(domainDir, "guide.md"), source, "utf-8");
-	}
-	setUserGuidesDir(guidesDir);
-	invalidateCache();
-	const loaded = loadApiGuidesFromDir(guidesDir);
-	return { guides: loaded.guides as Record<string, ApiGuide> };
-}
-
-function findOp(guide: ApiGuide, name: string): Operation {
-	const op = guide.operations.find((o) => o.name === name);
-	if (!op) throw new Error(`op ${name} not found`);
-	return op;
+	// The test lives in api-guides/twitch-user/; sibling guide dirs resolve
+	// from the api-guides/ root.
+	return stageGuides(tmpBase, new URL("../", import.meta.url), dirs);
 }
 
 function provisionCreds(): void {

@@ -43,6 +43,7 @@ import { setOAuthDir, writeToken } from "../core/oauth-store.js";
 import { handleVerifySubcommand } from "../core/verify-command.js";
 import { TODAY } from "../core/parse-api-guide.js";
 import { resetDisabledHelpers } from "../core/local-helpers.js";
+import { mockCtx, notifyText } from "./test-utils.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // Fixtures
@@ -232,14 +233,6 @@ function readGuide(): string {
 
 function readGuideIn(dirName: string): string {
 	return readFileSync(join(tmpGuidesDir, dirName, "guide.md"), "utf-8");
-}
-
-function mockCtx(overrides: Record<string, unknown> = {}): any {
-	return { ui: { notify: vi.fn() }, hasUI: true, ...overrides };
-}
-
-function notifyText(ctx: any): string {
-	return ctx.ui.notify.mock.calls.map((c: unknown[]) => c[0]).join("\n");
 }
 
 function requestedUrls(): string[] {

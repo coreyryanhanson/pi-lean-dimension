@@ -28,6 +28,7 @@ import { fetchUrl } from "../core/transport.js";
 import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
 import { handleVerifySubcommand } from "../core/verify-command.js";
 import { TODAY } from "../core/parse-api-guide.js";
+import { mockCtx } from "./test-utils.js";
 
 let tmpGuidesDir: string;
 
@@ -79,10 +80,6 @@ function setupGuide(raw: string): void {
 
 function readGuide(): string {
 	return readFileSync(join(tmpGuidesDir, "verify", "guide.md"), "utf-8");
-}
-
-function mockCtx(): any {
-	return { ui: { notify: vi.fn() }, hasUI: true };
 }
 
 describe("/api verify stamp routine", () => {

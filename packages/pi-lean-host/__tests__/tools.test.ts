@@ -35,7 +35,6 @@ import { apiLearnTool } from "../tools/api-learn.js";
 import { setStagingRoot } from "../core/staging.js";
 import { setUserGuidesDir, invalidateCache } from "../core/guide-store.js";
 import { writeSecret, setSecretsDir } from "../core/secrets-store.js";
-import { parseApiGuide } from "../core/parse-api-guide.js";
 import { selectGuideByShortName } from "../core/guide-catalog.js";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -854,31 +853,6 @@ describe("api-learn", () => {
 		}
 	});
 
-	// The template is a placeholder skeleton, not a worked example. It
-	// must fail closed (placeholder apiHost rejected) and carry no foreign API
-	// literals.
-	it("template is a placeholder skeleton that fails closed", async () => {
-		const text = contentText(
-			await callLearn("example.com", undefined, { new: true }),
-		);
-		// Result surfaces the staged path, not an inline yaml block.
-		expect(text).toContain(stagedPath("example.com"));
-		const template = readFileSync(stagedPath("example.com"), "utf-8");
-		expect(template).toContain("domains: [example.com]");
-		expect(template).toContain("<base url>");
-		expect(template).toContain("<short>");
-		expect(template).toContain("<emoji>");
-		expect(template).not.toMatch(
-			/apidatos|boe\.es|BOE|searchDiary|listConsolidada/,
-		);
-		// The prose-body (agent-instructions) ability is surfaced, not lost.
-		expect(template).toContain("agent-instruction prose");
-		expect(template).toContain("the closing ---");
-		// Fail-closed: the as-is template cannot save (placeholder apiHost
-		// is rejected by requireHttpUrl).
-		expect(parseApiGuide(template, { filename: "example.com" }).ok).toBe(false);
-	});
-
 	it("validates and writes a valid recipe", async () => {
 		const text = contentText(await callLearn("boe.es", boeRecipe(ctx.serverUrl)));
 		expect(text).toContain("Guide saved");
@@ -971,41 +945,6 @@ operations:
 		const fmText = contentText(await callLearn("fmbad.example", "just prose"));
 		expect(fmText).toContain("frontmatter");
 		expect(fmText).toContain("NOT saved");
-	});
-
-	it("returns a domain template when no recipe and no guide exists", async () => {
-		const text = contentText(await callLearn("somedomain.com"));
-		expect(text).toContain(stagedPath("somedomain.com"));
-		// The authoring manual travels with the staged template.
-		expect(text).toContain("authoring manual");
-		const draft = readFileSync(stagedPath("somedomain.com"), "utf-8");
-		expect(draft).toContain("domains: [somedomain.com]");
-	});
-
-	it("rejects a path-traversal domain without writing", async () => {
-		// Guards assertSafeDomain at the api-learn write boundary.
-		setUserGuidesDir(tmpGuidesDir);
-		const result = await apiLearnTool.execute(
-			"test",
-			{
-				domain: "../../escape",
-				// assertSafeDomain rejects before this path is ever read.
-				dir: join(tmpStagingRoot, "escape"),
-			},
-			undefined,
-			undefined,
-			undefined as any,
-		);
-		const text = contentText(result);
-		expect(text).toContain("Invalid domain");
-		expect(result.details).toMatchObject({
-			error: "invalid_domain",
-			domain: "../../escape",
-		});
-		// Nothing written outside the guides dir.
-		expect(() =>
-			readFileSync(join(tmpGuidesDir, "..", "..", "escape", "guide.md"), "utf-8"),
-		).toThrow();
 	});
 
 	it("rejects a description over 200 chars without writing", async () => {
@@ -1241,21 +1180,6 @@ operations:
 		expect(example).toContain("secret: <secret-name>");
 		expect(example).toContain("secretRefs:");
 		expect(example).toContain('prefix: "Bearer "');
-	});
-
-	// Write path — api-learn stamps schemaVersion on save.
-	it("stamps schemaVersion on save when the recipe omits it", async () => {
-		setUserGuidesDir(tmpGuidesDir);
-		invalidateCache();
-		const recipe = `---\nkind: api\ndomains: [stamp-absent.example]\nshortName: StampAbsent\napiHost: ${ctx.serverUrl}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\nProse body.\n`;
-		await callLearn("stamp-absent.example", recipe);
-		const raw = readFileSync(
-			join(tmpGuidesDir, "stampabsent", "guide.md"),
-			"utf-8",
-		);
-		expect(raw).toMatch(/^schemaVersion: 1$/m);
-		// Prose body untouched.
-		expect(raw).toContain("Prose body.");
 	});
 
 	it("replaces an explicit divergent schemaVersion on save", async () => {

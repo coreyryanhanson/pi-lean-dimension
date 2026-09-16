@@ -13,6 +13,7 @@ import type {
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { TOOLSET_EVENTS } from "pi-tool-masking";
+import { captureApiHandler } from "./test-utils.js";
 import initApiToggle, {
 	getApiToggleState,
 	_getApiLearnStateForTest,
@@ -130,13 +131,6 @@ function mockCtx(overrides: Partial<ExtensionContext> = {}): any {
 		modelRegistry: {} as any,
 		...overrides,
 	};
-}
-
-/** Capture the /api command handler from registerCommand. */
-function captureApiHandler(
-	pi: ExtensionAPI,
-): (args: string, ctx: any) => Promise<void> {
-	return (pi.registerCommand as any).mock.calls[0][1].handler;
 }
 
 // ==================================================================

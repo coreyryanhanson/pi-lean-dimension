@@ -24,6 +24,7 @@ import {
 	writeSecret,
 } from "../core/secrets-store.js";
 import initApiToggle, { _resetToggleStateForTest } from "../core/api-toggle.js";
+import { captureApiHandler } from "./test-utils.js";
 
 // Clean globalThis registry between test files (same as api-toggle.test.ts).
 const REGISTRY_KEY = "__piToolMaskingRegistry";
@@ -120,13 +121,6 @@ function mockCtx(overrides: Partial<ExtensionContext> = {}): any {
 		isIdle: () => true,
 		...overrides,
 	};
-}
-
-function captureApiHandler(pi: ExtensionAPI) {
-	return (pi.registerCommand as any).mock.calls[0][1].handler as (
-		args: string,
-		ctx: any,
-	) => Promise<void>;
 }
 
 async function runBootstrap(
