@@ -15,6 +15,8 @@
  *  - Missing `dir` → clear error, `guide.md` untouched.
  *  - Inline `recipe` param is no longer a parameter (YAGNI removal).
  *  - Path-traversal domain still rejected by `assertSafeDomain`.
+ *  - Write-path behaviour (validation refusals, collision warnings,
+ *    stamping, authoring manual) — moved here from tools.test.ts.
  *  - TUI rendering — `renderCall` shows the 📝 icon for a `dir`-
  *    bearing save call and 📖 for fetch; `renderResult` labels unchanged.
  *
@@ -428,5 +430,282 @@ describe("api-learn TUI rendering", () => {
 		);
 		expect((out as unknown as { text: string }).text).toContain("📖");
 		expect((out as unknown as { text: string }).text).not.toContain("📝");
+	});
+});
+
+// ═════════════════════════════════════════════════════════════════
+// api-learn — validate, write, no-half-write, example
+// (moved from tools.test.ts; recipes use the dummy API host — no network)
+// ═════════════════════════════════════════════════════════════════
+
+/** An invalid recipe (missing leading / in path). */
+const INVALID_RECIPE = `---
+schemaVersion: 1
+domains: [example.com]
+apiHost: https://api.example.com
+operations:
+  - name: get
+    via: restGet
+    path: things/{id}
+---
+body
+`;
+
+describe("api-learn", () => {
+	it("prepends the authoring manual to template and fetch-recipe pulls", async () => {
+		// Template path ({domain, new: true}) — the manual travels with the
+		// staged draft.
+		const templateText = contentText(
+			await callLearn("example.com", undefined, { new: true }),
+		);
+		// Fetch-existing path ({domain}, no dir) — the manual travels
+		// with the staged raw recipe.
+		await saveRecipe("boe.es", recipe("boe.es", "BOE", "searchDiary"));
+		invalidateCache();
+		const fetchText = contentText(await callLearn("boe.es"));
+		for (const text of [templateText, fetchText]) {
+			expect(text).toContain("authoring manual");
+			// Field reference + defaults + semantics stay.
+			expect(text).toContain("Required fields");
+			expect(text).toContain("a LIST of operation mappings");
+			expect(text).toContain("Key defaults");
+			expect(text).toContain("Executor semantics");
+			expect(text).toContain("joinUrl` strips a leading `/");
+			expect(text).toContain("pagination.base` seeds the page param");
+			expect(text).toContain("Page-size resolution (offset-limit/page)");
+			expect(text).toContain("→ omit (server default applies)");
+			expect(text).toContain("optional: true` on a ref");
+			// Guide-prose (agent-instructions) ability is taught, not lost.
+			expect(text).toContain("Guide prose");
+			expect(text).toContain("Guide notes");
+			// Points at the template entry point; no recipe body.
+			expect(text).toContain("new: true");
+			expect(text).not.toContain("searchDiary");
+			expect(text).not.toContain("```yaml");
+		}
+	});
+
+	it("validates and writes a valid recipe", async () => {
+		const text = contentText(
+			await saveRecipe("boe.es", recipe("boe.es", "BOE", "searchDiary")),
+		);
+		expect(text).toContain("Guide saved");
+		expect(text).toContain("boe.es");
+		expect(text).toContain("searchDiary");
+		expect(text).toContain("api-fetch");
+
+		const filepath = join(tmpGuidesDir, "boe", "guide.md");
+		const content = readFileSync(filepath, "utf-8");
+		expect(content).toContain("apiHost:");
+	});
+
+	// Companion — save summary echoes the resolved auth mapping (names only,
+	// never values): wrong-shape is loud, right-shape-but-wrong-name
+	// is eyeballable at save.
+	it("save summary names the auth header→secret mapping, never values", async () => {
+		const recipeText = `---\nkind: api\ndomains: [authmap.example]\nshortName: AuthMap\napiHost: ${API}\nauth:\n  kind: static-key\n  secretRefs:\n    Authorization:\n      secret: apiKey\n      prefix: "Bearer "\n    X-Example-Pro-Key:\n      secret: example_key\n      prefix: ""\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		const text = contentText(await saveRecipe("authmap.example", recipeText));
+		expect(text).toContain("Auth: static-key");
+		expect(text).toContain("Authorization ← secret apiKey (Bearer )");
+		expect(text).toContain("X-Example-Pro-Key ← secret example_key");
+		// Empty prefix (bare-key header) renders without an empty paren.
+		expect(text).not.toContain("example_key ()");
+		// Names only — never the store values.
+		expect(text).not.toContain("s3cr3t");
+	});
+
+	it("rejects an invalid recipe without writing", async () => {
+		const text = contentText(await saveRecipe("broken", INVALID_RECIPE));
+		expect(text).toContain("Validation error");
+		expect(text).toContain("operations[0].path");
+		expect(text).toContain("NOT saved");
+
+		const filepath = join(tmpGuidesDir, "broken", "guide.md");
+		expect(() => readFileSync(filepath, "utf-8")).toThrow();
+	});
+
+	// A validation failure names the failing field with expected/found and
+	// never writes. The manual-pointer tail is gone — the author already saw
+	// the manual on the pull that staged the draft.
+	it("reports validation failures with field/expected/found and does not save", async () => {
+		// Wrong-auth shape: name/secret fields instead of secretRefs/headerPrefixes.
+		const authText = contentText(
+			await saveRecipe(
+				"authbad.example",
+				`---\nschemaVersion: 1\ndomains: [authbad.example]\napiHost: https://api.example.com\nauth:\n  kind: static-key\n  name: X-EXAMPLE_PRO_API_KEY\n  secret: api_key\noperations:\n  - name: get\n    via: restGet\n    path: /things\n---\n`,
+			),
+		);
+		expect(authText).toContain("auth.name");
+		expect(authText).toContain("NOT saved");
+
+		// Bad via.
+		const viaText = contentText(
+			await saveRecipe(
+				"viabad.example",
+				`---\nschemaVersion: 1\ndomains: [viabad.example]\napiHost: https://api.example.com\noperations:\n  - name: get\n    via: post\n    path: /things\n---\n`,
+			),
+		);
+		expect(viaText).toContain("operations[0].via");
+		expect(viaText).toContain("NOT saved");
+
+		// Unmapped field (frontmatter).
+		const fmText = contentText(await saveRecipe("fmbad.example", "just prose"));
+		expect(fmText).toContain("frontmatter");
+		expect(fmText).toContain("NOT saved");
+	});
+
+	it("rejects a description over 200 chars without writing", async () => {
+		// Strict-on-write: the parser accepts any length (lenient-on-read),
+		// but api-learn rejects >200 before writing.
+		const longDesc = "x".repeat(201);
+		const long = `---\nschemaVersion: 1\nkind: api\ndomains: [toolong.example]\ndescription: ${longDesc}\napiHost: ${API}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		const result = await saveRecipe("toolong.example", long);
+		const text = contentText(result);
+		expect(text).toContain("NOT saved");
+		expect(text).toContain("description");
+		expect(text).toContain("201");
+		expect(result.details).toMatchObject({ error: "description_too_long" });
+		expect(() =>
+			readFileSync(join(tmpGuidesDir, "toolong-example", "guide.md"), "utf-8"),
+		).toThrow();
+	});
+
+	it("accepts a description at exactly 200 chars", async () => {
+		const desc = "x".repeat(200);
+		const boundary = `---\nschemaVersion: 1\nkind: api\ndomains: [boundary.example]\ndescription: ${desc}\napiHost: ${API}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		const text = contentText(await saveRecipe("boundary.example", boundary));
+		expect(text).toContain("Guide saved");
+	});
+
+	it("warns (does not reject) when domains collide with another guide", async () => {
+		// Two guides, same `domains:` key, different directories. Valid — that's
+		// the multi-recipe point. The write succeeds with a warning.
+		const first = `---\nschemaVersion: 1\nkind: api\ndomains: [collide.example]\norganization: collide.org\ndescription: First surface.\nshortName: First\napiHost: ${API}\noperations:\n  - name: getFirst\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		const second = `---\nschemaVersion: 1\nkind: api\ndomains: [collide.example]\norganization: collide.org\ndescription: Second surface.\nshortName: Second\napiHost: ${API}\noperations:\n  - name: getSecond\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		const firstText = contentText(await saveRecipe("collide-first", first));
+		expect(firstText).toContain("Guide saved");
+		expect(firstText).not.toContain("Multi-recipe");
+		invalidateCache();
+		const secondText = contentText(await saveRecipe("collide-second", second));
+		expect(secondText).toContain("Guide saved");
+		expect(secondText).toContain("Multi-recipe");
+		// The collision warning renders the slug (slug("Second") = "second"),
+		// not the `domain` arg "collide-second".
+		expect(secondText).toContain("writing to directory `second`");
+		expect(secondText).toContain("collide.example");
+	});
+
+	it("warns about a missing description when colliding", async () => {
+		// When the second guide collides and omits description:, api-learn
+		// recommends adding one (the primary disambiguation signal).
+		const first = `---\nschemaVersion: 1\nkind: api\ndomains: [nodesc.example]\norganization: nodesc.org\ndescription: First surface.\nshortName: First\napiHost: ${API}\noperations:\n  - name: getFirst\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		const second = `---\nschemaVersion: 1\nkind: api\ndomains: [nodesc.example]\norganization: nodesc.org\nshortName: Second\napiHost: ${API}\noperations:\n  - name: getSecond\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		await saveRecipe("nodesc-first", first);
+		invalidateCache();
+		const text = contentText(await saveRecipe("nodesc-second", second));
+		expect(text).toContain("Guide saved");
+		expect(text).toContain("Multi-recipe");
+		expect(text).toContain("description");
+		expect(text).toContain("recommended");
+	});
+
+	it("collision warning names /api delete as the recovery gesture", async () => {
+		// The agent has no delete tool — when an existing guide is wrong, the
+		// collision warning must point at the human-typed /api delete command,
+		// naming the colliding directory (the one to remove).
+		const first = `---\nschemaVersion: 1\nkind: api\ndomains: [recover.example]\norganization: recover.org\nshortName: First\napiHost: ${API}\noperations:\n  - name: getFirst\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		const second = `---\nschemaVersion: 1\nkind: api\ndomains: [recover.example]\norganization: recover.org\nshortName: Second\napiHost: ${API}\noperations:\n  - name: getSecond\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		await saveRecipe("recover-first", first);
+		invalidateCache();
+		const text = contentText(await saveRecipe("recover-second", second));
+		expect(text).toContain("Multi-recipe");
+		// The existing guide's dirName is slug(shortName) = "first".
+		expect(text).toContain("/api delete first");
+		expect(text).toContain("the agent has no delete tool");
+	});
+
+	it("does not warn when updating the same guide's own directory", async () => {
+		// Updating `foo.example` when `foo.example` already claims the domain is
+		// not a collision — same dirName. No warning.
+		const r1 = `---\nschemaVersion: 1\nkind: api\ndomains: [solo.example]\nshortName: Solo\napiHost: ${API}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		const r2 = r1.replace("name: get\n", "name: getMore\n");
+		await saveRecipe("solo.example", r1);
+		invalidateCache();
+		const text = contentText(await saveRecipe("solo.example", r2));
+		expect(text).toContain("Guide saved");
+		expect(text).not.toContain("Multi-recipe");
+	});
+
+	// The template is the docs-side discoverability: no hardcoded
+	// updated/verified dates (the tool stamps them when omitted) and a
+	// static-key auth block to crib from.
+	it("template has no hardcoded updated/verified dates", async () => {
+		const text = contentText(
+			await callLearn("example.com", undefined, { new: true }),
+		);
+		expect(text).toContain(stagedPath("example.com"));
+		const example = readFileSync(stagedPath("example.com"), "utf-8");
+		expect(example).not.toMatch(/^updated:/m);
+		expect(example).not.toMatch(/^verified:/m);
+		expect(example).toContain("stamped by the tool when omitted");
+	});
+
+	it("template documents the static-key auth block", async () => {
+		const text = contentText(
+			await callLearn("example.com", undefined, { new: true }),
+		);
+		expect(text).toContain(stagedPath("example.com"));
+		const example = readFileSync(stagedPath("example.com"), "utf-8");
+		expect(example).toContain("kind: static-key");
+		expect(example).toContain("secret: <secret-name>");
+		expect(example).toContain("secretRefs:");
+		expect(example).toContain('prefix: "Bearer "');
+	});
+
+	it("replaces an explicit divergent schemaVersion on save", async () => {
+		const stampReplace = `---\nkind: api\nschemaVersion: 5\ndomains: [stamp-replace.example]\nshortName: StampReplace\napiHost: ${API}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		await saveRecipe("stamp-replace.example", stampReplace);
+		const raw = readFileSync(
+			join(tmpGuidesDir, "stampreplace", "guide.md"),
+			"utf-8",
+		);
+		expect(raw).toMatch(/^schemaVersion: 1$/m);
+		expect(raw).not.toMatch(/^schemaVersion: 5$/m);
+	});
+
+	it("never touches a schemaVersion string in the prose body", async () => {
+		const stampProse = `---\nkind: api\ndomains: [stamp-prose.example]\nshortName: StampProse\napiHost: ${API}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\nThe schemaVersion: 5 in this prose must stay untouched.\n`;
+		await saveRecipe("stamp-prose.example", stampProse);
+		const raw = readFileSync(
+			join(tmpGuidesDir, "stampprose", "guide.md"),
+			"utf-8",
+		);
+		// Frontmatter got the stamp...
+		expect(raw).toMatch(/^schemaVersion: 1$/m);
+		// ...and the prose line is untouched (still schemaVersion: 5).
+		expect(raw).toContain(
+			"The schemaVersion: 5 in this prose must stay untouched.",
+		);
+	});
+
+	it("preserves comments and key order when stamping", async () => {
+		const stampOrder = `---\nkind: api\ndomains: [stamp-order.example]\n# a comment that must survive\nshortName: StampOrder\napiHost: ${API}\noperations:\n  - name: get\n    via: restGet\n    path: /x\n    accept: json\n---\n`;
+		await saveRecipe("stamp-order.example", stampOrder);
+		const raw = readFileSync(
+			join(tmpGuidesDir, "stamporder", "guide.md"),
+			"utf-8",
+		);
+		expect(raw).toContain("# a comment that must survive");
+		// Key order preserved; schemaVersion inserted after operations, before
+		// the closing --- (no YAML round-trip).
+		const idxDomains = raw.indexOf("domains:");
+		const idxShort = raw.indexOf("shortName:");
+		const idxApi = raw.indexOf("apiHost:");
+		const idxOps = raw.indexOf("operations:");
+		const idxSV = raw.indexOf("schemaVersion: 1");
+		expect(idxDomains).toBeLessThan(idxShort);
+		expect(idxShort).toBeLessThan(idxApi);
+		expect(idxApi).toBeLessThan(idxOps);
+		expect(idxOps).toBeLessThan(idxSV);
 	});
 });

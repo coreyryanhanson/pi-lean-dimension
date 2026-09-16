@@ -419,9 +419,11 @@ speculatively.
   read-only both-stores inspection — see the tool bullet above;
   `TokenSlotMeta`/`collectDomainReport`/`collectUnscoped`), `api-probe.ts`, `utils.ts`, `index.ts`.
 - `__tests__/` — framework structural tests (no network): `smoke`,
-  `parse-api-guide`, `all-guides-parse` (every bundled `guide.md` parses
+  `parse-api-guide`, `guide-catalog` (projectToGuide/slug/loader/catalog/
+  frontmatter-stamp — split out of parse-api-guide), `all-guides-parse` (every bundled `guide.md` parses
   cleanly), `tools`, `api-learn-fetch-recipe` (fetch-recipe + entry-point
-  split + N-guide disambiguation + file staging), `helpers`, `local-helpers`,
+  split + N-guide disambiguation + file staging + the api-learn write-path
+  tests moved out of tools), `helpers`, `local-helpers`,
   `api-toggle`, `api-scaffold`, `api-store` (bare orphan view, per-domain
   combined view, declared-slot gap, learn-gate refusal, redaction asserted
   against `details`, scope "(assumed)" fallback), `api-learn-multi-file` (multi-file staging,
@@ -449,7 +451,10 @@ speculatively.
   429, so the unit test is the proof — plus the grant-based cache suite:
   no-grant-not-stored matrix, `no-cache` stickiness, 304 grant
   refresh/no-store delete, eviction-race (arrival-order independent),
-  fresh-seeding, and the auth/fresh 304-arm gates),
+  fresh-seeding, and the auth/fresh 304-arm gates — and the fetchUrl
+  fallbackCharset/guardRedirects suites moved out of helpers),
+  `ssrf-guard` (ssrfGuard unit tests: IPv4-mapped-IPv6 bypass + baseline
+  blocks — pure function, no server or fixtures),
   `path-secrets` (secretPathRefs executor + resolve-op contract: token
   fill + agent-param drop, query isolation, URL/error redaction, 401
   scrub, fail-closed on missing ref),

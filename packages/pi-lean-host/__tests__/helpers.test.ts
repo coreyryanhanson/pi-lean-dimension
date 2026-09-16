@@ -24,8 +24,6 @@ import {
 	normalizeDateParam,
 	type RestGetResult,
 } from "../core/helpers.js";
-import { ssrfGuard } from "../core/ssrf-guard.js";
-import { fetchUrl } from "../core/transport.js";
 import type { ApiGuide, Operation } from "../core/api-guide-types.js";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -193,19 +191,6 @@ async function createTestServer(): Promise<TestContext> {
 			const next = `http://${host}/api/paginate/next-link-ssrf-bypass?page=${page + 1}`;
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(JSON.stringify({ data: items, next }));
-			return;
-		}
-
-		// 302 redirect to the cloud metadata endpoint — used by the
-		// fetchUrl guardRedirects test (M3). The initial URL is on the
-		// test server (127.0.0.1); fetchUrl does NOT ssrf-check the
-		// initial URL, only redirect targets, so this isolates the
-		// redirect-guard behaviour from paginate's pre-fetch guard.
-		if (pathname === "/redirect-to-metadata") {
-			res.writeHead(302, {
-				Location: "http://169.254.169.254/latest/meta-data/",
-			});
-			res.end();
 			return;
 		}
 
@@ -456,24 +441,6 @@ async function createTestServer(): Promise<TestContext> {
 				"Content-Type": "application/xml; charset=iso-8859-1",
 			});
 			res.end(xml);
-			return;
-		}
-
-		if (pathname === "/api/latin1-no-charset") {
-			// ISO-8859-1 bytes for áéíóú, served with NO charset parameter —
-			// the transport must fall back to the caller's fallbackCharset.
-			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end(Buffer.from([0xe1, 0xe9, 0xed, 0xf3, 0xfa]));
-			return;
-		}
-
-		if (pathname === "/api/utf8-with-charset") {
-			// Real UTF-8 bytes for áéíóú, served WITH charset=utf-8 — the
-			// header charset must win even if a fallbackCharset is supplied.
-			res.writeHead(200, {
-				"Content-Type": "application/json; charset=utf-8",
-			});
-			res.end(Buffer.from("áéíóú", "utf-8"));
 			return;
 		}
 
@@ -2143,105 +2110,6 @@ describe("errorPath — 200-with-error-envelope", () => {
 	// same two executors, so an erroring op fails verify (strict threshold,
 	// no stamp) and a declared-absent errorPath keeps legitimately-empty
 	// runs passing — pinned here once, not re-tested in verify-command.
-});
-
-// ═══════════════════════════════════════════════════════════════════
-// SSRF guard (M1) — IPv4-mapped IPv6 bypass + baseline blocks
-// ═══════════════════════════════════════════════════════════════════
-
-describe("ssrfGuard — IPv4-mapped IPv6 (M1)", () => {
-	it("blocks IPv4-mapped loopback in hex form", () => {
-		// Node renders http://[::ffff:127.0.0.1]/ as "[::ffff:7f00:1]" —
-		// the old decimal "::ffff:127" check never matched this.
-		expect(ssrfGuard("http://[::ffff:127.0.0.1]/").ok).toBe(false);
-	});
-
-	it("blocks IPv4-mapped private + metadata ranges", () => {
-		expect(ssrfGuard("http://[::ffff:10.0.0.1]/").ok).toBe(false);
-		expect(ssrfGuard("http://[::ffff:192.168.1.1]/").ok).toBe(false);
-		expect(ssrfGuard("http://[::ffff:169.254.169.254]/").ok).toBe(false);
-	});
-
-	it("still blocks plain IPv4 private/metadata/loopback", () => {
-		expect(ssrfGuard("http://127.0.0.1/").ok).toBe(false);
-		expect(ssrfGuard("http://10.0.0.1/").ok).toBe(false);
-		expect(ssrfGuard("http://169.254.169.254/").ok).toBe(false);
-	});
-
-	it("allows public hostnames", () => {
-		expect(ssrfGuard("https://api.example.com/v1/foo").ok).toBe(true);
-	});
-});
-
-// ═══════════════════════════════════════════════════════════════════
-// fetchUrl guardRedirects (M3) — redirect-target SSRF guarding
-// ═══════════════════════════════════════════════════════════════════
-
-describe("fetchUrl — fallbackCharset", () => {
-	let ctx: TestContext;
-
-	beforeAll(async () => {
-		ctx = await createTestServer();
-	});
-	afterAll(async () => {
-		await ctx.stop();
-	});
-
-	it("falls back to fallbackCharset when the response omits a charset", async () => {
-		// Server serves ISO-8859-1 bytes with no charset parameter.
-		const { body } = await fetchUrl(`${ctx.serverUrl}/api/latin1-no-charset`, {
-			fallbackCharset: "iso-8859-1",
-			fresh: true,
-		});
-		expect(body).toBe("áéíóú");
-	});
-
-	it("uses utf-8 by default when no fallbackCharset is supplied", async () => {
-		const { body } = await fetchUrl(`${ctx.serverUrl}/api/latin1-no-charset`, {
-			fresh: true,
-		});
-		expect(body).not.toBe("áéíóú");
-		expect(body).toBe("�����");
-	});
-
-	it("header charset wins over fallbackCharset", async () => {
-		// Server declares charset=utf-8; supplying a latin-1 fallback must
-		// NOT override it — the header charset always wins.
-		const { body } = await fetchUrl(`${ctx.serverUrl}/api/utf8-with-charset`, {
-			fallbackCharset: "iso-8859-1",
-			fresh: true,
-		});
-		expect(body).toBe("áéíóú");
-	});
-});
-
-describe("fetchUrl — guardRedirects (M3)", () => {
-	let ctx: TestContext;
-
-	beforeAll(async () => {
-		ctx = await createTestServer();
-	});
-
-	afterAll(async () => {
-		await ctx.stop();
-	});
-
-	it("blocks a 302 redirect to the cloud metadata endpoint", async () => {
-		// fetchUrl does NOT ssrf-check the initial URL (paginate owns that),
-		// so hitting the 127.0.0.1 test server is fine. The redirect target
-		// (169.254.169.254) must be blocked before it is fetched.
-		const before = ctx.requestCounts.get("/redirect-to-metadata") ?? 0;
-		await expect(
-			fetchUrl(`${ctx.serverUrl}/redirect-to-metadata`, {
-				guardRedirects: true,
-			}),
-		).rejects.toThrow(/Redirect to blocked host/i);
-
-		// The redirect endpoint was hit exactly once (the SSRF block is not
-		// transient, so fetchUrl must not retry).
-		const after = ctx.requestCounts.get("/redirect-to-metadata") ?? 0;
-		expect(after - before).toBe(1);
-	});
 });
 
 // ═══════════════════════════════════════════════════════════════════

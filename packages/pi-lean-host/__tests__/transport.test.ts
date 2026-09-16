@@ -16,7 +16,7 @@
  * regression guard for that exact boundary.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
 	waitForRetry,
 	redactSecretParams,
@@ -690,5 +690,132 @@ describe("grant-based caching", () => {
 		} finally {
 			await stopCacheServer(srv);
 		}
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════
+// fetchUrl — fallbackCharset + guardRedirects (moved from helpers.test.ts)
+// ═══════════════════════════════════════════════════════════════
+
+interface CharsetTestCtx {
+	serverUrl: string;
+	stop: () => Promise<void>;
+	requestCounts: Map<string, number>;
+}
+
+/** Serves the latin-1 / charset-declaration / redirect-metadata routes. */
+async function startCharsetServer(): Promise<CharsetTestCtx> {
+	const requestCounts = new Map<string, number>();
+	const server = createServer((req, res) => {
+		const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+		requestCounts.set(pathname, (requestCounts.get(pathname) ?? 0) + 1);
+
+		if (pathname === "/api/latin1-no-charset") {
+			// ISO-8859-1 bytes for áéíóú, served with NO charset parameter —
+			// the transport must fall back to the caller's fallbackCharset.
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end(Buffer.from([0xe1, 0xe9, 0xed, 0xf3, 0xfa]));
+			return;
+		}
+
+		if (pathname === "/api/utf8-with-charset") {
+			// Real UTF-8 bytes for áéíóú, served WITH charset=utf-8 — the
+			// header charset must win even if a fallbackCharset is supplied.
+			res.writeHead(200, {
+				"Content-Type": "application/json; charset=utf-8",
+			});
+			res.end(Buffer.from("áéíóú", "utf-8"));
+			return;
+		}
+
+		// 302 redirect to the cloud metadata endpoint (guardRedirects). The
+		// initial URL is on 127.0.0.1 — fetchUrl does NOT ssrf-check the
+		// initial URL (paginate owns that), only redirect targets.
+		if (pathname === "/redirect-to-metadata") {
+			res.writeHead(302, {
+				Location: "http://169.254.169.254/latest/meta-data/",
+			});
+			res.end();
+			return;
+		}
+
+		res.writeHead(404);
+		res.end();
+	});
+	const port = await listenAsync(server);
+	return {
+		serverUrl: `http://127.0.0.1:${port}`,
+		requestCounts,
+		stop: () =>
+			new Promise<void>((resolve, reject) =>
+				server.close((err) => (err ? reject(err) : resolve())),
+			),
+	};
+}
+
+describe("fetchUrl — fallbackCharset", () => {
+	let ctx: CharsetTestCtx;
+
+	beforeAll(async () => {
+		ctx = await startCharsetServer();
+	});
+	afterAll(async () => {
+		await ctx.stop();
+	});
+
+	it("falls back to fallbackCharset when the response omits a charset", async () => {
+		// Server serves ISO-8859-1 bytes with no charset parameter.
+		const { body } = await fetchUrl(`${ctx.serverUrl}/api/latin1-no-charset`, {
+			fallbackCharset: "iso-8859-1",
+			fresh: true,
+		});
+		expect(body).toBe("áéíóú");
+	});
+
+	it("uses utf-8 by default when no fallbackCharset is supplied", async () => {
+		const { body } = await fetchUrl(`${ctx.serverUrl}/api/latin1-no-charset`, {
+			fresh: true,
+		});
+		expect(body).not.toBe("áéíóú");
+		expect(body).toBe("�����");
+	});
+
+	it("header charset wins over fallbackCharset", async () => {
+		// Server declares charset=utf-8; supplying a latin-1 fallback must
+		// NOT override it — the header charset always wins.
+		const { body } = await fetchUrl(`${ctx.serverUrl}/api/utf8-with-charset`, {
+			fallbackCharset: "iso-8859-1",
+			fresh: true,
+		});
+		expect(body).toBe("áéíóú");
+	});
+});
+
+describe("fetchUrl — guardRedirects (M3)", () => {
+	let ctx: CharsetTestCtx;
+
+	beforeAll(async () => {
+		ctx = await startCharsetServer();
+	});
+
+	afterAll(async () => {
+		await ctx.stop();
+	});
+
+	it("blocks a 302 redirect to the cloud metadata endpoint", async () => {
+		// fetchUrl does NOT ssrf-check the initial URL (paginate owns that),
+		// so hitting the 127.0.0.1 test server is fine. The redirect target
+		// (169.254.169.254) must be blocked before it is fetched.
+		const before = ctx.requestCounts.get("/redirect-to-metadata") ?? 0;
+		await expect(
+			fetchUrl(`${ctx.serverUrl}/redirect-to-metadata`, {
+				guardRedirects: true,
+			}),
+		).rejects.toThrow(/Redirect to blocked host/i);
+
+		// The redirect endpoint was hit exactly once (the SSRF block is not
+		// transient, so fetchUrl must not retry).
+		const after = ctx.requestCounts.get("/redirect-to-metadata") ?? 0;
+		expect(after - before).toBe(1);
 	});
 });
