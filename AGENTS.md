@@ -120,7 +120,7 @@ Co-activation with `web-search` is **search-owned**: `pi-lean-search` mirrors `p
 | Python bridge unit | `pi-lean-portal/backends/python-base/tests/` | 6 | 248 | No (pytest only) |
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 8 | varies | Per-backend (auto-skip) |
 | MiniWoB behavioral | `bench/miniwob/suites/` | 8 | 130 tasks × 4 + user-backends + smoke* | Chromium + Firefox + Python + MiniWoB content |
-| Search | `pi-lean-search/` | 2 | 29 | No |
+| Search | `pi-lean-search/` | 2 | 32 | No |
 | Host structural | `pi-lean-host/__tests__/` | 43 | ~1060 | No |
 | Host recipe-validity | `pi-lean-host/api-guides/<domain>/*.test.ts` | 14 | ~46 | No |
 

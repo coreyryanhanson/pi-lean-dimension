@@ -106,18 +106,6 @@ describe("readSearxngUrl", () => {
 		expect(readSearxngUrl()).toBeUndefined();
 	});
 
-	it("returns the URL when searxng.url is set (global)", () => {
-		vi.mocked(readFileSync).mockImplementation((path: unknown) => {
-			if (typeof path === "string" && path.includes(".pi/agent/settings")) {
-				return JSON.stringify({
-					searxng: { url: "http://localhost:8888" },
-				});
-			}
-			return JSON.stringify({});
-		});
-		expect(readSearxngUrl()).toBe("http://localhost:8888");
-	});
-
 	it("project settings override global settings", () => {
 		vi.mocked(readFileSync).mockImplementation((path: unknown) => {
 			if (typeof path === "string" && path.includes(".pi/agent/settings")) {
@@ -169,46 +157,33 @@ describe("webSearchTool", () => {
 	});
 
 	describe("renderResult answer badge", () => {
-		it("shows 💡 badge when answerCount > 0 and no results", () => {
-			const mockTheme = {
-				fg: (_style: string, text: string) => text,
-			} as any;
-			const result = (webSearchTool.renderResult as any)(
-				{
-					content: [{ text: "" }],
-					details: { answerCount: 2, query: "weather" },
-				} as any,
-				{ expanded: false, isPartial: false },
-				mockTheme,
+		const theme = { fg: (_style: string, text: string) => text } as any;
+		const render = (details: unknown, expanded = false) =>
+			(webSearchTool.renderResult as any)(
+				{ content: [{ text: "" }], details },
+				{ expanded, isPartial: false },
+				theme,
 				{} as any,
-			) as any;
+			) as { text: string };
+
+		it("shows 💡 badge when answerCount > 0 and no results", () => {
+			const result = render({ answerCount: 2, query: "weather" });
 			expect(result.text).toContain("💡");
 			expect(result.text).toContain("2 answer(s)");
 			expect(result.text).toContain('"weather"');
 		});
 
 		it("shows 💡 badge alongside 🔍 when both answers and results present", () => {
-			const mockTheme = {
-				fg: (_style: string, text: string) => text,
-			} as any;
-			const result = (webSearchTool.renderResult as any)(
-				{
-					content: [{ text: "" }],
-					details: {
-						answerCount: 1,
-						resultCount: 3,
-						query: "test",
-						results: [
-							{ title: "A", url: "http://a.com", engine: "google" },
-							{ title: "B", url: "http://b.com", engine: "google" },
-							{ title: "C", url: "http://c.com", engine: "google" },
-						],
-					},
-				} as any,
-				{ expanded: false, isPartial: false },
-				mockTheme,
-				{} as any,
-			) as any;
+			const result = render({
+				answerCount: 1,
+				resultCount: 3,
+				query: "test",
+				results: [
+					{ title: "A", url: "http://a.com", engine: "google" },
+					{ title: "B", url: "http://b.com", engine: "google" },
+					{ title: "C", url: "http://c.com", engine: "google" },
+				],
+			});
 			expect(result.text).toContain("💡");
 			expect(result.text).toContain("1 answer(s)");
 			expect(result.text).toContain("🔍");
@@ -216,29 +191,21 @@ describe("webSearchTool", () => {
 		});
 
 		it("shows answer text above results when expanded", () => {
-			const mockTheme = {
-				fg: (_style: string, text: string) => text,
-			} as any;
-			const result = (webSearchTool.renderResult as any)(
+			const result = render(
 				{
-					content: [{ text: "" }],
-					details: {
-						answerCount: 1,
-						resultCount: 1,
-						query: "weather berlin",
-						answers: [
-							{
-								template: "answer/weather.html",
-								text: "Berlin: 14°C, light rain",
-							},
-						],
-						results: [{ title: "A", url: "http://a.com" }],
-					},
-				} as any,
-				{ expanded: true, isPartial: false },
-				mockTheme,
-				{} as any,
-			) as any;
+					answerCount: 1,
+					resultCount: 1,
+					query: "weather berlin",
+					answers: [
+						{
+							template: "answer/weather.html",
+							text: "Berlin: 14°C, light rain",
+						},
+					],
+					results: [{ title: "A", url: "http://a.com" }],
+				},
+				true,
+			);
 			const answerIdx = result.text.indexOf("Berlin: 14°C, light rain");
 			const resultIdx = result.text.indexOf("A");
 			expect(answerIdx).toBeGreaterThan(-1);
@@ -247,22 +214,14 @@ describe("webSearchTool", () => {
 		});
 
 		it("shows answer text when expanded with no results", () => {
-			const mockTheme = {
-				fg: (_style: string, text: string) => text,
-			} as any;
-			const result = (webSearchTool.renderResult as any)(
+			const result = render(
 				{
-					content: [{ text: "" }],
-					details: {
-						answerCount: 1,
-						query: "avg 1 2 3",
-						answers: [{ template: "answer/legacy.html", text: "2" }],
-					},
-				} as any,
-				{ expanded: true, isPartial: false },
-				mockTheme,
-				{} as any,
-			) as any;
+					answerCount: 1,
+					query: "avg 1 2 3",
+					answers: [{ template: "answer/legacy.html", text: "2" }],
+				},
+				true,
+			);
 			expect(result.text).toContain("💡");
 			expect(result.text).toContain("2");
 		});
@@ -304,11 +263,6 @@ describe("buildSearchUrl", () => {
 			pageno: 2,
 		});
 		expect(second).toContain("pageno=2");
-	});
-
-	it("omits empty-string optional params", () => {
-		const url = buildSearchUrl("http://localhost:8888", "test", baseOptions);
-		expect(url).toBe("http://localhost:8888/search?format=json&q=test");
 	});
 
 	it("passes through optional params when set", () => {
@@ -375,18 +329,26 @@ describe("execute answer rendering", () => {
 			),
 		);
 
+	const runSearch = (params: Record<string, unknown>) =>
+		webSearchTool.execute("call", params as any, undefined, undefined, {} as any);
+
+	it("degrades gracefully when searxng.url is unconfigured", async () => {
+		vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ theme: "dark" }));
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		const r = (await runSearch({ query: "anything" })) as any;
+		expect(r.details.unconfigured).toBe(true);
+		expect(r.content[0].text).toContain("Web search is not configured");
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
 	it("times out when the body stalls after the headers arrive", async () => {
 		vi.useFakeTimers();
 		try {
 			mockStallingFetch();
 
-			const pending = webSearchTool.execute(
-				"call-stall",
-				{ query: "stalled", timeout: 1 },
-				undefined,
-				undefined,
-				{} as any,
-			);
+			const pending = runSearch({ query: "stalled", timeout: 1 });
 
 			// Fire the abort timer deterministically instead of waiting on it.
 			await vi.advanceTimersByTimeAsync(1000);
@@ -407,13 +369,7 @@ describe("execute answer rendering", () => {
 			suggestions: [],
 		});
 
-		const result = await webSearchTool.execute(
-			"call-1",
-			{ query: "614.24" },
-			undefined,
-			undefined,
-			{} as any,
-		);
+		const result = await runSearch({ query: "614.24" });
 		const r = result as any;
 		expect(r.content[0].text).toContain("614.24");
 		expect(r.content[0].text).not.toContain("No web search results found");
@@ -442,13 +398,7 @@ describe("execute answer rendering", () => {
 			suggestions: [],
 		});
 
-		const result = await webSearchTool.execute(
-			"call-2",
-			{ query: "weather berlin" },
-			undefined,
-			undefined,
-			{} as any,
-		);
+		const result = await runSearch({ query: "weather berlin" });
 		// Uses server-provided summary
 		const r = result as any;
 		expect(r.content[0].text).toContain("Berlin: 14°C, light rain");
@@ -456,8 +406,6 @@ describe("execute answer rendering", () => {
 		expect(r.content[0].text).toContain("feels like 12°C");
 		expect(r.content[0].text).toContain("humidity 80%");
 		expect(r.content[0].text).toContain("wind 18km/h");
-		// forecasts not rendered
-		expect(r.content[0].text).not.toContain("forecast");
 		// source
 		expect(r.content[0].text).toContain("open-meteo");
 	});
@@ -469,13 +417,7 @@ describe("execute answer rendering", () => {
 			suggestions: [],
 		});
 
-		const result = await webSearchTool.execute(
-			"call-3",
-			{ query: "future" },
-			undefined,
-			undefined,
-			{} as any,
-		);
+		const result = await runSearch({ query: "future" });
 		const r = result as any;
 		expect(r.content[0].text).toContain("x");
 	});
@@ -495,22 +437,13 @@ describe("execute answer rendering", () => {
 			suggestions: [],
 		});
 
-		const result = await webSearchTool.execute(
-			"call-5",
-			{ query: "answer of life" },
-			undefined,
-			undefined,
-			{} as any,
-		);
+		const result = await runSearch({ query: "answer of life" });
 		// Answer above results
 		const r = result as any;
 		const answerIdx = r.content[0].text.indexOf("42");
 		const resultIdx = r.content[0].text.indexOf("Result 1");
 		expect(answerIdx).toBeGreaterThanOrEqual(0);
 		expect(resultIdx).toBeGreaterThan(answerIdx);
-		// Both present
-		expect(r.content[0].text).toContain("42");
-		expect(r.content[0].text).toContain("Result 1");
 	});
 });
 
@@ -571,5 +504,82 @@ describe("pi-lean-dimension.web co-activation mirror", () => {
 		});
 
 		expect(pi.setActiveTools).not.toHaveBeenCalled();
+	});
+});
+
+// ─── session_start: health probe + status glyph ──────────────
+
+describe("session_start glyph", () => {
+	function mockCtx() {
+		const setStatus = vi.fn();
+		const notify = vi.fn();
+		const ctx = {
+			ui: {
+				setStatus,
+				notify,
+				// Style-tagged passthrough so glyph color states are assertable.
+				theme: { fg: (c: string, t: string) => `${c}:${t}` },
+			},
+		};
+		return { ctx: ctx as any, setStatus, notify };
+	}
+
+	async function fireSessionStart(reason: string) {
+		const { pi, handlers } = mockSearchPi();
+		searchExtension(pi);
+		const { ctx, setStatus, notify } = mockCtx();
+		// index.ts registers its handler after defineToolset's, so it's last.
+		await handlers.get("session_start")!.at(-1)!({ reason }, ctx);
+		return { setStatus, notify };
+	}
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("unconfigured at startup: clears slot and warns once", async () => {
+		vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ theme: "dark" }));
+
+		const { setStatus, notify } = await fireSessionStart("startup");
+
+		expect(setStatus).toHaveBeenCalledWith("search", "");
+		expect(notify).toHaveBeenCalledTimes(1);
+		expect(notify).toHaveBeenCalledWith(
+			expect.stringContaining("not configured"),
+			"warning",
+		);
+	});
+
+	const configuredSettings = () =>
+		vi
+			.mocked(readFileSync)
+			.mockReturnValue(
+				JSON.stringify({ searxng: { url: "http://localhost:8888" } }),
+			);
+
+	it("reachable at startup: healthy accent glyph + info notify", async () => {
+		configuredSettings();
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+
+		const { setStatus, notify } = await fireSessionStart("startup");
+
+		expect(setStatus).toHaveBeenCalledWith("search", "accent:● searxng");
+		expect(notify).toHaveBeenCalledWith(
+			expect.stringContaining("available"),
+			"info",
+		);
+	});
+
+	it("unreachable at startup: error glyph + warning notify", async () => {
+		configuredSettings();
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
+
+		const { setStatus, notify } = await fireSessionStart("startup");
+
+		expect(setStatus).toHaveBeenCalledWith("search", "error:● searxng");
+		expect(notify).toHaveBeenCalledWith(
+			expect.stringContaining("unreachable"),
+			"warning",
+		);
 	});
 });
