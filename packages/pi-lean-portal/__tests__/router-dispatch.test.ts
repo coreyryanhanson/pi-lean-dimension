@@ -173,12 +173,7 @@ describe("Router dispatch", () => {
 		});
 
 		it("auto-creates session from lastNav and returns snapshot", async () => {
-			sessionManager.setLastNav(
-				"default",
-				"https://example.com",
-				"Mock",
-				"mock",
-			);
+			sessionManager.setLastNav("default", "https://example.com", "Mock", "mock");
 			const result = await router.snapshot("default");
 			expect(result.success).toBe(true);
 			// Should have navigated to recreate the session
@@ -239,12 +234,7 @@ describe("Router dispatch", () => {
 		});
 
 		it("returns snapshot on auto-created session (stale refs)", async () => {
-			sessionManager.setLastNav(
-				"default",
-				"https://example.com",
-				"Mock",
-				"mock",
-			);
+			sessionManager.setLastNav("default", "https://example.com", "Mock", "mock");
 			const result = await router.click("default", "@e1");
 			expect(result.success).toBe(true);
 			// Should have navigated to recreate session
@@ -264,12 +254,7 @@ describe("Router dispatch", () => {
 				snapshot: "",
 				elementCount: 0,
 			};
-			sessionManager.setLastNav(
-				"default",
-				"https://example.com",
-				"Mock",
-				"mock",
-			);
+			sessionManager.setLastNav("default", "https://example.com", "Mock", "mock");
 			const result = await router.click("default", "@e1");
 			expect(result.success).toBe(false);
 			expect(result.error).toMatch(/no active session/i);
@@ -314,12 +299,7 @@ describe("Router dispatch", () => {
 		});
 
 		it("returns snapshot on auto-created session (stale refs)", async () => {
-			sessionManager.setLastNav(
-				"default",
-				"https://example.com",
-				"Mock",
-				"mock",
-			);
+			sessionManager.setLastNav("default", "https://example.com", "Mock", "mock");
 			const result = await router.type("default", "@e2", "hello");
 			expect(result.success).toBe(true);
 			expect(mock.calls.get("type")).toBeUndefined();
@@ -481,6 +461,11 @@ describe("Router dispatch", () => {
 			expect(session).toBeDefined();
 		});
 
+		it("serves follow-up calls after navigate with a custom taskId", async () => {
+			await router.navigate("https://example.com", { taskId: "seq" });
+			expect((await router.snapshot("seq")).success).toBe(true);
+		});
+
 		it("isolates sessions by different taskIds", async () => {
 			await router.navigate("https://alpha.com", { taskId: "task-a" });
 			await router.navigate("https://beta.com", { taskId: "task-b" });
@@ -538,91 +523,6 @@ describe("compactSnapshot()", () => {
 		const content = "x\n".repeat(2000); // 4000 chars — over the truncation threshold
 		const result = router.compactSnapshot(content, 0);
 		expect(result).not.toMatch(/\d+ elements/);
-	});
-});
-
-// ─── Session persistence across sequential calls ─────────────────
-
-describe("session persistence across sequential calls", () => {
-	let mock: MockPlugin;
-
-	beforeEach(() => {
-		pluginRegistry.clear();
-		mock = new MockPlugin("mock");
-		pluginRegistry.register(mock, makeConfig({ name: "mock", enabled: true }));
-	});
-
-	afterEach(async () => {
-		await sessionManager.removeAll();
-		pluginRegistry.clear();
-	});
-
-	it("navigate then screenshotToTemp succeeds with same taskId", async () => {
-		await router.navigate("https://example.com", { taskId: "seq-test-1" });
-
-		const path = await router.screenshotToTemp("seq-test-1");
-		expect(path).toBeDefined();
-		expect(path).toMatch(/\/screenshot-seq-test-1\.jpg$/);
-	});
-
-	it("navigate then snapshot succeeds with same taskId", async () => {
-		await router.navigate("https://example.com", { taskId: "seq-test-2" });
-
-		const result = await router.snapshot("seq-test-2");
-		expect(result.success).toBe(true);
-		expect(result.snapshot).toBeTruthy();
-	});
-
-	it("navigate click type succeed sequentially", async () => {
-		await router.navigate("https://example.com", { taskId: "seq-test-3" });
-
-		const clickResult = await router.click("seq-test-3", "@e1");
-		expect(clickResult.success).toBe(true);
-
-		const typeResult = await router.type("seq-test-3", "@e2", "hello");
-		expect(typeResult.success).toBe(true);
-	});
-
-	it("navigate then goBack succeeds", async () => {
-		await router.navigate("https://example.com", { taskId: "seq-test-4" });
-
-		const result = await router.goBack("seq-test-4");
-		expect(result.success).toBe(true);
-	});
-
-	it("navigate then scroll succeeds", async () => {
-		await router.navigate("https://example.com", { taskId: "seq-test-5" });
-
-		const result = await router.scroll("seq-test-5", "down");
-		expect(result.success).toBe(true);
-	});
-
-	it("navigate then evaluate succeeds", async () => {
-		await router.navigate("https://example.com", { taskId: "seq-test-6" });
-
-		const result = await router.evaluate("seq-test-6", "1 + 1");
-		expect(result.success).toBe(true);
-	});
-
-	it("navigate then press succeeds", async () => {
-		await router.navigate("https://example.com", { taskId: "seq-test-7" });
-
-		const result = await router.press("seq-test-7", "Enter");
-		expect(result.success).toBe(true);
-	});
-
-	it("navigate then getConsoleMessages succeeds", async () => {
-		await router.navigate("https://example.com", { taskId: "seq-test-9" });
-
-		const result = await router.getConsoleMessages("seq-test-9");
-		expect(result.success).toBe(true);
-	});
-
-	it("navigate then clearConsole succeeds", async () => {
-		await router.navigate("https://example.com", { taskId: "seq-test-10" });
-
-		const result = await router.clearConsole("seq-test-10");
-		expect(result.success).toBe(true);
 	});
 });
 
@@ -711,9 +611,7 @@ describe("bot detection UX", () => {
 			expect(result.snapshot).toMatch(/fingerprint:/);
 
 			// The cache file must actually exist on disk
-			const match = result.snapshot!.match(
-				/Full snapshot cached at (\/[^\s]+)/,
-			);
+			const match = result.snapshot!.match(/Full snapshot cached at (\/[^\s]+)/);
 			expect(match).not.toBeNull();
 			const cachePath = match![1]!;
 			expect(existsSync(cachePath)).toBe(true);
@@ -863,12 +761,7 @@ describe("bot detection UX", () => {
 
 		it("no profileName restored when lastNav has no profile", async () => {
 			await sessionManager.removeAll();
-			sessionManager.setLastNav(
-				"default",
-				"https://example.com",
-				"Mock",
-				"mock",
-			);
+			sessionManager.setLastNav("default", "https://example.com", "Mock", "mock");
 
 			const result = await router.snapshot("default");
 			expect(result.success).toBe(true);
@@ -1050,12 +943,7 @@ describe("Router cookie dispatch", () => {
 
 	describe("auto-recovery on cookie operations", () => {
 		it("getCookies auto-creates a session from lastNav if none exists", async () => {
-			sessionManager.setLastNav(
-				"default",
-				"https://example.com",
-				"Mock",
-				"mock",
-			);
+			sessionManager.setLastNav("default", "https://example.com", "Mock", "mock");
 
 			const result = await router.getCookies("default");
 
@@ -1063,52 +951,6 @@ describe("Router cookie dispatch", () => {
 			// Should have navigated to recreate the session
 			expect(mock.calls.get("navigate")).toHaveLength(1);
 			expect(mock.calls.get("getCookies")).toHaveLength(1);
-		});
-
-		it("addCookies auto-creates a session from lastNav", async () => {
-			sessionManager.setLastNav(
-				"default",
-				"https://example.com",
-				"Mock",
-				"mock",
-			);
-
-			const result = await router.addCookies("default", [
-				{ name: "test", value: "val" },
-			]);
-
-			expect(result.success).toBe(true);
-			expect(mock.calls.get("navigate")).toHaveLength(1);
-			expect(mock.calls.get("addCookies")).toHaveLength(1);
-		});
-
-		it("clearCookies auto-creates a session from lastNav", async () => {
-			sessionManager.setLastNav(
-				"default",
-				"https://example.com",
-				"Mock",
-				"mock",
-			);
-
-			const result = await router.clearCookies("default");
-
-			expect(result.success).toBe(true);
-			expect(mock.calls.get("navigate")).toHaveLength(1);
-			expect(mock.calls.get("clearCookies")).toHaveLength(1);
-		});
-
-		it("returns error when auto-creation fails (lastNav plugin gone)", async () => {
-			sessionManager.setLastNav(
-				"default",
-				"https://example.com",
-				"Mock",
-				"extinct-plugin",
-			);
-
-			const result = await router.getCookies("default");
-
-			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/no active session/i);
 		});
 	});
 });

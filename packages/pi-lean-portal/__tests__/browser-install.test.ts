@@ -27,6 +27,7 @@ import {
 	detectInstalledBrowsers,
 	resolveNodeInterpreter,
 } from "../browser-install.js";
+import { mockCtx, captureWebHandler } from "./helpers/mock-pi.js";
 
 // ─── Module mocks ────────────────────────────────────────────────
 
@@ -64,21 +65,6 @@ beforeEach(() => {
 afterAll(() => {
 	requireState.impl = null;
 });
-
-// ─── Fixtures ────────────────────────────────────────────────────
-
-function mockCtx(overrides: Record<string, unknown> = {}): any {
-	return {
-		mode: "tui",
-		hasUI: true,
-		ui: {
-			notify: vi.fn(),
-			setWidget: vi.fn(),
-			custom: vi.fn(),
-		},
-		...overrides,
-	};
-}
 
 /** Stub the module resolution so browser-install sees a fake playwright. */
 function stubPlaywrightResolution(
@@ -700,12 +686,6 @@ describe("/web install dispatcher wiring", () => {
 				};
 			},
 		};
-	}
-
-	function captureWebHandler(
-		pi: any,
-	): (args: string, ctx: any) => Promise<void> {
-		return (pi.registerCommand as Mock).mock.calls[0]![1].handler;
 	}
 
 	beforeEach(() => {

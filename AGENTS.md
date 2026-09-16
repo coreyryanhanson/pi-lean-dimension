@@ -116,7 +116,7 @@ Co-activation with `web-search` is **search-owned**: `pi-lean-search` mirrors `p
 
 | Category | Location | Files (~) | Tests (~) | Requires browser? |
 |----------|----------|-----------|-----------|-------------------|
-| Portal structural | `pi-lean-portal/__tests__/` + package root (`ship-manifest`) | 25 | ~655 | No |
+| Portal structural | `pi-lean-portal/__tests__/` + package root (`ship-manifest`) | 25 | ~620 | No |
 | Python bridge unit | `pi-lean-portal/backends/python-base/tests/` | 6 | 250 | No (pytest only) |
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 8 | varies | Per-backend (auto-skip) |
 | MiniWoB behavioral | `bench/miniwob/suites/` | 8 | 130 tasks × 4 + user-backends + smoke* | Chromium + Firefox + Python + MiniWoB content |

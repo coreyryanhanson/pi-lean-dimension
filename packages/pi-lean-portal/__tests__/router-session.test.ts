@@ -120,6 +120,29 @@ describe("Router session / profile dispatch", () => {
 			const result = await router.navigate("https://example.com");
 			expect(result.profileMode).toBe("none");
 		});
+
+		it('profile="none" destroys existing session with profile', async () => {
+			// First create a session with a named profile
+			await router.navigate("https://example.com", {
+				profile: "work",
+			});
+			expect(sessionManager.getSession("default")?.profileName).toBe("work");
+			expect(sessionManager.getSession("default")?.persistState).toBe(true);
+			mock.calls.delete("navigate");
+
+			// Switch to none — should destroy old context
+			const result = await router.navigate("https://example.com/other", {
+				profile: "none",
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.profileMode).toBe("none");
+			expect(result.profileName).toBeUndefined();
+
+			const session = sessionManager.getSession("default");
+			expect(session?.persistState).toBeFalsy();
+			expect(session?.profileName).toBeUndefined();
+		});
 	});
 
 	// ─── profile="session" ───────────────────────────────────────
@@ -174,6 +197,22 @@ describe("Router session / profile dispatch", () => {
 
 			const session = sessionManager.getSession("default");
 			expect(session?.persistState).toBeFalsy();
+		});
+
+		it('clears persistState and profileName for profile="none"', async () => {
+			await router.navigate("https://example.com", {
+				profile: "session",
+				piSessionId: TEST_PI_SESSION_ID,
+			});
+			expect(sessionManager.getSession("default")?.persistState).toBe(true);
+
+			await router.navigate("https://example.com/other", {
+				profile: "none",
+			});
+
+			const session = sessionManager.getSession("default");
+			expect(session?.persistState).toBe(false);
+			expect(session?.profileName).toBeUndefined();
 		});
 	});
 
@@ -266,157 +305,6 @@ describe("Router session / profile dispatch", () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain("Invalid profile name");
-		});
-	});
-
-	// ─── profile parameter ─────────────────────────────────────
-
-	describe("profile parameter", () => {
-		it('profile="none" creates ephemeral session', async () => {
-			const result = await router.navigate("https://example.com", {
-				profile: "none",
-			});
-
-			expect(result.success).toBe(true);
-			expect(result.profileMode).toBe("none");
-			expect(result.profileName).toBeUndefined();
-
-			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBeFalsy();
-		});
-
-		it('profile="session" with piSessionId resolves to _session-<id>', async () => {
-			const result = await router.navigate("https://example.com", {
-				profile: "session",
-				piSessionId: TEST_PI_SESSION_ID,
-			});
-
-			expect(result.success).toBe(true);
-			expect(result.profileMode).toBe("session");
-			expect(result.profileName).toContain("_session-");
-			expect(result.profileName).toContain(TEST_PI_SESSION_ID);
-
-			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBe(true);
-			expect(session?.profileName).toContain("_session-");
-		});
-
-		it('profile="session" without piSessionId falls back to "none"', async () => {
-			const result = await router.navigate("https://example.com", {
-				profile: "session",
-			});
-
-			expect(result.success).toBe(true);
-			expect(result.profileMode).toBe("none");
-			expect(result.profileName).toBeUndefined();
-
-			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBeFalsy();
-		});
-
-		it('profile="work" creates named profile session', async () => {
-			const result = await router.navigate("https://example.com", {
-				profile: "work",
-			});
-
-			expect(result.success).toBe(true);
-			expect(result.profileMode).toBe("named");
-			expect(result.profileName).toBe("work");
-
-			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBe(true);
-			expect(session?.profileName).toBe("work");
-		});
-
-		it('profile="none" destroys existing session with profile', async () => {
-			// First create a session with a named profile
-			await router.navigate("https://example.com", {
-				profile: "work",
-			});
-			expect(sessionManager.getSession("default")?.profileName).toBe("work");
-			expect(sessionManager.getSession("default")?.persistState).toBe(true);
-			mock.calls.delete("navigate");
-
-			// Switch to none — should destroy old context
-			const result = await router.navigate("https://example.com/other", {
-				profile: "none",
-			});
-
-			expect(result.success).toBe(true);
-			expect(result.profileMode).toBe("none");
-			expect(result.profileName).toBeUndefined();
-
-			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBeFalsy();
-			expect(session?.profileName).toBeUndefined();
-		});
-	});
-
-	// ─── profileMode / profileName in result ────────────────────
-
-	describe("result fields", () => {
-		it("shows profileMode none and no profileName for default", async () => {
-			const result = await router.navigate("https://example.com");
-			expect(result.profileMode).toBe("none");
-			expect(result.profileName).toBeUndefined();
-		});
-
-		it("includes profileMode and profileName for named profile", async () => {
-			const result = await router.navigate("https://example.com", {
-				profile: "test-profile",
-			});
-			expect(result.profileMode).toBe("named");
-			expect(result.profileName).toBe("test-profile");
-		});
-
-		it('includes profileMode and profileName for profile="session" with piSessionId', async () => {
-			const result = await router.navigate("https://example.com", {
-				profile: "session",
-				piSessionId: TEST_PI_SESSION_ID,
-			});
-			expect(result.profileMode).toBe("session");
-			expect(result.profileName).toContain("_session-");
-		});
-	});
-
-	// ─── BrowserSession fields ──────────────────────────────────
-
-	describe("BrowserSession fields", () => {
-		it("sets persistState=true and profileName for named profile", async () => {
-			await router.navigate("https://example.com", {
-				profile: "my-projects",
-			});
-
-			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBe(true);
-			expect(session?.profileName).toBe("my-projects");
-		});
-
-		it('sets persistState=true and profileName for profile="session" with piSessionId', async () => {
-			await router.navigate("https://example.com", {
-				profile: "session",
-				piSessionId: TEST_PI_SESSION_ID,
-			});
-
-			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBe(true);
-			expect(session?.profileName).toContain("_session-");
-		});
-
-		it('clears persistState and profileName for profile="none"', async () => {
-			await router.navigate("https://example.com", {
-				profile: "session",
-				piSessionId: TEST_PI_SESSION_ID,
-			});
-			expect(sessionManager.getSession("default")?.persistState).toBe(true);
-
-			await router.navigate("https://example.com/other", {
-				profile: "none",
-			});
-
-			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBe(false);
-			expect(session?.profileName).toBeUndefined();
 		});
 	});
 });

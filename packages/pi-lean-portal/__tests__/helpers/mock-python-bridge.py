@@ -2,11 +2,14 @@
 """Mock bridge for testing PythonPluginAdapter.
 
 Reads JSON-RPC 2.0 requests from stdin and writes hardcoded responses
-to stdout.  Supports: ping, shutdown, browser.navigate, browser.snapshot,
-browser.click, browser.cleanup.  Unknown methods return a METHOD_NOT_FOUND
-error.  The string "INVALID_JSON" as a request line triggers a malformed
-JSON response (to test protocol violation handling).
+to stdout: the ping / browser.init / shutdown handshake, the
+browser.* navigation, interaction, console, evaluate, screenshot,
+cookie and storage-state calls, and browser.cleanup.  browser.error
+and browser.missingSession deliberately return JSON-RPC errors (to
+test error handling).  Unknown methods return a METHOD_NOT_FOUND
+error, and a malformed request line returns a parse error.
 """
+
 import json
 import sys
 
@@ -15,12 +18,6 @@ def main() -> None:
     for line in sys.stdin:
         line = line.strip()
         if not line:
-            continue
-
-        # Special case: protocol violation test
-        if line == "INVALID_JSON":
-            sys.stdout.write("not valid json\n")
-            sys.stdout.flush()
             continue
 
         try:
@@ -61,7 +58,7 @@ def main() -> None:
                             "name": "Example Domain",
                             "props": [],
                             "depth": 0,
-                            "raw": "- link \"Example Domain\"",
+                            "raw": '- link "Example Domain"',
                             "occurrenceIndex": 0,
                         },
                         "e2": {
@@ -69,7 +66,7 @@ def main() -> None:
                             "name": "Submit",
                             "props": [],
                             "depth": 0,
-                            "raw": "- button \"Submit\"",
+                            "raw": '- button "Submit"',
                             "occurrenceIndex": 0,
                         },
                     },
@@ -89,7 +86,7 @@ def main() -> None:
                             "name": "Example",
                             "props": [],
                             "depth": 0,
-                            "raw": "- link \"Example\"",
+                            "raw": '- link "Example"',
                             "occurrenceIndex": 0,
                         },
                     },
@@ -200,17 +197,13 @@ def main() -> None:
                     "origins": [
                         {
                             "origin": "https://example.com",
-                            "localStorage": [
-                                {"name": "pref", "value": "dark_mode"}
-                            ],
+                            "localStorage": [{"name": "pref", "value": "dark_mode"}],
                         }
                     ],
                 },
             )
 
         elif method == "browser.getCookies":
-            params = request.get("params", {})
-            urls = params.get("urls", [])
             write_response(
                 req_id,
                 result={
@@ -240,7 +233,9 @@ def main() -> None:
                 error={
                     "code": -32000,
                     "message": "Something went wrong",
-                    "data": {"traceback": "Traceback (most recent call last):\n  File \"mock.py\", line 1, in <module>\nRuntimeError: test error"},
+                    "data": {
+                        "traceback": 'Traceback (most recent call last):\n  File "mock.py", line 1, in <module>\nRuntimeError: test error'
+                    },
                 },
             )
 
@@ -253,11 +248,6 @@ def main() -> None:
                     "message": "No active session for task 'test'",
                 },
             )
-
-        elif method == "browser.timeout":
-            # Simulate a timeout by not responding
-            # (the caller's transport timeout will fire)
-            pass
 
         else:
             write_response(

@@ -11,11 +11,9 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { TOOLSET_EVENTS } from "pi-tool-masking";
+import { mockCtx, captureWebHandler } from "./helpers/mock-pi.js";
 import browserToggle, {
 	getToggleState,
 	getLearnState,
@@ -109,31 +107,6 @@ function mockPi(initialTools?: string[]): MockPi {
 	} as unknown as ExtensionAPI;
 
 	return { pi, events: eventEmitter, handlers, entryCalls };
-}
-
-function mockCtx(overrides: Partial<ExtensionContext> = {}): any {
-	return {
-		sessionManager: { getBranch: () => [] },
-		ui: {
-			setStatus: vi.fn(),
-			theme: { fg: (_c: string, t: string) => t },
-			notify: vi.fn(),
-			custom: vi.fn(async () => undefined), // dialog opens → Esc cancels
-		},
-		mode: "tui",
-		cwd: "/mock",
-		hasUI: true,
-		isIdle: () => true,
-		modelRegistry: {} as any,
-		...overrides,
-	};
-}
-
-/** Capture the /web command handler from registerCommand. */
-function captureWebHandler(
-	pi: ExtensionAPI,
-): (args: string, ctx: any) => Promise<void> {
-	return (pi.registerCommand as any).mock.calls[0][1].handler;
 }
 
 // ==================================================================

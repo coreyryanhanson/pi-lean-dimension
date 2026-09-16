@@ -27,6 +27,7 @@ vi.mock("node:fs", () => ({
 
 import browserToggle from "../browser-toggle.js";
 import { listProfiles, formatProfileList } from "../browser-profile.js";
+import { captureWebHandler } from "./helpers/mock-pi.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
@@ -55,20 +56,13 @@ function mockPi(tools?: string[]): ExtensionAPI {
 }
 
 /**
- * Capture the command handler from registerCommand.
+ * Register the /web command and capture its handler.
  */
 function captureHandler(
 	pi: ExtensionAPI,
 ): (args: string, ctx: any) => Promise<void> {
-	let capturedHandler: ((args: string, ctx: any) => Promise<void>) | undefined;
-	(pi.registerCommand as Mock).mockImplementation(
-		(_name: string, opts: any) => {
-			capturedHandler = opts.handler;
-		},
-	);
 	browserToggle(pi);
-	if (!capturedHandler) throw new Error("Handler was not registered");
-	return capturedHandler;
+	return captureWebHandler(pi);
 }
 
 beforeEach(() => {

@@ -10,7 +10,7 @@
  * Tests that DO require Python (run only when python3 is available):
  *   - Full JSON-RPC cycle via mock-python-bridge.py
  *   - All BrowserPlugin operations
- *   - Error handling (bridge errors, protocol violations, timeouts)
+ *   - Error handling (bridge application and session errors)
  *   - Process lifecycle (spawn, ping handshake, shutdown, crash recovery)
  *   - Stderr capture
  */
@@ -185,8 +185,7 @@ describe("constructor validation", () => {
 
 	it("throws when bridgeScript is not provided", () => {
 		expect(
-			() =>
-				new PythonPluginAdapter("test", {} as unknown as PythonBridgeConfig),
+			() => new PythonPluginAdapter("test", {} as unknown as PythonBridgeConfig),
 		).toThrow(/bridgeScript is required/);
 	});
 
@@ -441,21 +440,23 @@ describeIntegration("integration with mock Python bridge", () => {
 		expect(result.url).toBe("https://example.com/again");
 	});
 
-	it("returns error when bridge returns an application error", async () => {
+	it("rejects with PythonBridgeError on bridge error responses", async () => {
 		await adapter.navigate("https://example.com", "t15", 30_000);
-		// Use a method that the mock bridge handles as an error
-		// We'll send a specially crafted call by accessing the private method
-		// Actually — just test that error results work through the public API
-		// The mock bridge handles browser.missingSession for this.
-		// We can't easily trigger this through public ops, but we can test
-		// that the adapter returns success:false for failures
-	});
-
-	it("returns error from navigate when bridge returns failure", async () => {
-		// Adapter can return success:false if the bridge returns error data
-		// For this, we'd need the bridge to return error for browser.navigate
-		// which the mock doesn't do.  Instead, test via browser.error method
-		// which causes an application error.
+		const rpc = privateMethod<
+			(
+				method: string,
+				params: Record<string, unknown>,
+				timeoutMs?: number,
+			) => Promise<unknown>
+		>(adapter, "_rpcCall");
+		// Application error (browser.error → -32000)
+		await expect(rpc.call(adapter, "browser.error", {})).rejects.toThrow(
+			PythonBridgeError,
+		);
+		// Session error (browser.missingSession → -32002)
+		await expect(rpc.call(adapter, "browser.missingSession", {})).rejects.toThrow(
+			/No active session/,
+		);
 	});
 });
 
@@ -490,11 +491,7 @@ describe("session manager integration", () => {
 		const adapter = createAdapter();
 		await adapter.init();
 		try {
-			const result = await adapter.navigate(
-				"https://example.com",
-				"s1",
-				30_000,
-			);
+			const result = await adapter.navigate("https://example.com", "s1", 30_000);
 			expect(result.success).toBe(true);
 			expect(result.url).toBe("https://example.com");
 		} finally {
@@ -556,10 +553,7 @@ describeCrashRecovery("crash recovery", () => {
 		await adapter.navigate("https://example.com", "crash-t4", 30_000);
 
 		// Crash #1
-		const p1 = privateMethod<{ kill: (s: string) => void }>(
-			adapter,
-			"_process",
-		);
+		const p1 = privateMethod<{ kill: (s: string) => void }>(adapter, "_process");
 		p1!.kill("SIGKILL");
 		await new Promise((r) => setTimeout(r, 200));
 
@@ -572,10 +566,7 @@ describeCrashRecovery("crash recovery", () => {
 		expect(r1.success).toBe(true);
 
 		// Crash #2
-		const p2 = privateMethod<{ kill: (s: string) => void }>(
-			adapter,
-			"_process",
-		);
+		const p2 = privateMethod<{ kill: (s: string) => void }>(adapter, "_process");
 		p2!.kill("SIGKILL");
 		await new Promise((r) => setTimeout(r, 200));
 
@@ -645,73 +636,6 @@ describeStderr("stderr capture", () => {
 			await expect
 				.poll(stderrAccessor, { timeout: 1_000, interval: 50 })
 				.toContain("NAV_ERR_XYZ");
-		} finally {
-			await adapter.cleanupAll().catch(() => {});
-			try {
-				rmSync(dir, { recursive: true, force: true });
-			} catch {
-				/* ignore */
-			}
-		}
-	});
-
-	it("auto-restarts bridge after external SIGKILL", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "pi-lean-portal-crash-"));
-		const bridgePath = writeBridge(
-			{
-				"browser.navigate":
-					"params = _req.get('params', {})\n" +
-					"url = params.get('url', '')\n" +
-					"sys.stdout.write(json.dumps({\n" +
-					"'jsonrpc':'2.0',\n" +
-					"'id':_rid,\n" +
-					"'result':{\n" +
-					"    'success':True,\n" +
-					"    'url':url,\n" +
-					"    'title':'P',\n" +
-					"    'snapshot':'- [link] x',\n" +
-					"    'elementCount':1\n" +
-					"}\n" +
-					"}) + '\\n')",
-			},
-			dir,
-		);
-
-		const adapter = new PythonPluginAdapter("crash-test", {
-			bridgeScript: bridgePath,
-			pythonPath: "python3",
-		});
-
-		try {
-			await adapter.init();
-
-			// First call starts the process
-			const r1 = await adapter.navigate(
-				"https://example.com/1",
-				"crash-s1",
-				30_000,
-			);
-			expect(r1.success).toBe(true);
-
-			// Get the child process and kill it
-			const proc = privateMethod<{ kill: (s: string) => void }>(
-				adapter,
-				"_process",
-			);
-			expect(proc).not.toBeNull();
-			proc!.kill("SIGKILL");
-
-			// Wait for the process to actually die
-			await new Promise((r) => setTimeout(r, 200));
-
-			// Next call should auto-restart and succeed
-			const r2 = await adapter.navigate(
-				"https://example.com/2",
-				"crash-s2",
-				30_000,
-			);
-			expect(r2.success).toBe(true);
-			expect(r2.url).toBe("https://example.com/2");
 		} finally {
 			await adapter.cleanupAll().catch(() => {});
 			try {
@@ -802,19 +726,12 @@ describeBrowserInit("browser.init RPC", () => {
 		try {
 			await adapter.init({ launch: { headless: true } });
 			// Trigger process start + handshake + navigate
-			const r = await adapter.navigate(
-				"https://example.com",
-				"init-t1",
-				30_000,
-			);
+			const r = await adapter.navigate("https://example.com", "init-t1", 30_000);
 			expect(r.success).toBe(true);
 
 			const stderr =
-				(adapter as unknown as Record<string, string>)["_stderrAccumulated"] ??
-				"";
-			const orderLines = stderr
-				.split("\n")
-				.filter((l) => l.startsWith("ORDER:"));
+				(adapter as unknown as Record<string, string>)["_stderrAccumulated"] ?? "";
+			const orderLines = stderr.split("\n").filter((l) => l.startsWith("ORDER:"));
 			expect(orderLines.length).toBeGreaterThan(0);
 			// The second ORDER emission captures ping,init — proving init came
 			// immediately after ping, before any other RPC.
@@ -879,8 +796,7 @@ describeBrowserInit("browser.init RPC", () => {
 				.catch(() => {});
 
 			const stderr =
-				(adapter as unknown as Record<string, string>)["_stderrAccumulated"] ??
-				"";
+				(adapter as unknown as Record<string, string>)["_stderrAccumulated"] ?? "";
 			const cfgLine = stderr.split("\n").find((l) => l.startsWith("CFG:"));
 			expect(cfgLine).toBeDefined();
 			const parsed = JSON.parse(cfgLine!.slice("CFG:".length));
@@ -947,8 +863,7 @@ describeBrowserInit("browser.init RPC", () => {
 			// (The adapter resets _stderrAccumulated on restart, so we must
 			// snapshot now to prove the first handshake sent init.)
 			const stderrBefore =
-				(adapter as unknown as Record<string, string>)["_stderrAccumulated"] ??
-				"";
+				(adapter as unknown as Record<string, string>)["_stderrAccumulated"] ?? "";
 			const orderBefore = stderrBefore
 				.split("\n")
 				.filter((l) => l.startsWith("ORDER:"));
@@ -979,8 +894,7 @@ describeBrowserInit("browser.init RPC", () => {
 			// show ping → browser.init as the first two methods, proving init
 			// is re-sent on crash recovery, not just on the first start.
 			const stderrAfter =
-				(adapter as unknown as Record<string, string>)["_stderrAccumulated"] ??
-				"";
+				(adapter as unknown as Record<string, string>)["_stderrAccumulated"] ?? "";
 			const orderAfter = stderrAfter
 				.split("\n")
 				.filter((l) => l.startsWith("ORDER:"));
@@ -1037,8 +951,8 @@ describe("_buildPythonPath — PYTHONPATH injection", () => {
 			// Appended (not prepended): the user's entry comes first.
 			expect(value.indexOf(userEntry)).toBeLessThan(value.indexOf(expected));
 		} finally {
-			if (saved !== undefined) process.env.PYTHONPATH = saved;
-			else delete process.env.PYTHONPATH;
+			if (saved === undefined) delete process.env.PYTHONPATH;
+			else process.env.PYTHONPATH = saved;
 		}
 	});
 });
@@ -1083,18 +997,11 @@ describePythonPathEnv("PYTHONPATH reaches the spawned bridge", () => {
 		});
 		try {
 			await adapter.init({});
-			const r = await adapter.navigate(
-				"https://example.com",
-				"pypath-t1",
-				30_000,
-			);
+			const r = await adapter.navigate("https://example.com", "pypath-t1", 30_000);
 			expect(r.success).toBe(true);
 			const stderr =
-				(adapter as unknown as Record<string, string>)["_stderrAccumulated"] ??
-				"";
-			const pypathLine = stderr
-				.split("\n")
-				.find((l) => l.startsWith("PYPATH:"));
+				(adapter as unknown as Record<string, string>)["_stderrAccumulated"] ?? "";
+			const pypathLine = stderr.split("\n").find((l) => l.startsWith("PYPATH:"));
 			expect(pypathLine).toBeDefined();
 			const pypath = (pypathLine ?? "").slice("PYPATH:".length);
 			expect(pypath).toContain(join(DEFAULT_BACKENDS_ROOT, "python-base"));

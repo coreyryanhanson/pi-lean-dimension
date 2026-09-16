@@ -255,6 +255,7 @@ The monorepo root owns the test split principle and the summary counts table; th
 
 - `plugin-contract.ts` — `runContractTests(name, factory, opts?)` validates any BrowserPlugin
 - `mock-plugin.ts` — MockPlugin for structural contract validation
+- `mock-pi.ts` — `mockCtx()` ExtensionContext stub + `captureWebHandler()` for command-handler tests
 - `test-server.ts` — `startTestServer()` returns a local HTTP server for integration tests
 - `mock-python-bridge.py` — Python bridge stub used by python-adapter tests
 

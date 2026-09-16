@@ -148,21 +148,6 @@ describe("parseSnapshot — duplicate occurrences", () => {
 	});
 });
 
-// ─── buildLocator — structural verification ───────────────────────
-
-describe("buildLocator occurrenceIndex behavior", () => {
-	it("always uses .nth(occurrenceIndex) even when index is 0", () => {
-		// buildLocator now ALWAYS calls .nth(occurrenceIndex) to avoid strict-
-		// mode violations from duplicate role+name elements.  For unique
-		// elements with occurrenceIndex=0, .nth(0) is equivalent to the bare
-		// locator in Playwright — it targets element at index 0 which is the
-		// same as the only match.
-		const result = parseSnapshot('- button "Unique"');
-		const node = result.elements.get("e1")!;
-		expect(node.occurrenceIndex).toBe(0);
-	});
-});
-
 // ─── Snapshot text format — @e refs ──────────────────────────────
 
 describe("parseSnapshot text format", () => {

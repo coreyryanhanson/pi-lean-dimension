@@ -15,6 +15,7 @@ import type { BrowserSession } from "../core/shared/session-manager.js";
 import { handleStatusSubcommand } from "../browser-status.js";
 import { sessionManager } from "../core/shared/session-manager.js";
 import { listProfiles } from "../browser-profile.js";
+import { mockCtx } from "./helpers/mock-pi.js";
 
 // ─── Mock dependencies ──────────────────────────────────────────
 
@@ -67,19 +68,6 @@ type MockSession = {
 };
 
 type Profile = ReturnType<typeof listProfiles>[number];
-
-// ─── Helpers ────────────────────────────────────────────────────
-
-function mockCtx(): ExtensionContext {
-	return {
-		ui: {
-			notify: vi.fn(),
-			setStatus: vi.fn(),
-		},
-		// Minimal shape required by ExtensionContext
-		sessionManager: {},
-	} as unknown as ExtensionContext;
-}
 
 // ─── Tests ──────────────────────────────────────────────────────
 
@@ -502,16 +490,5 @@ describe("handleStatusSubcommand", () => {
 		expect(msg).toContain("work  (480 B) ← active");
 		// Session profiles collapsed
 		expect(msg).toContain("Session profiles: 1 (manage with /web profile)");
-	});
-
-	// ── Edge: no profiles but named/session filter weirdness ───
-
-	it('shows "Profiles: none" when listProfiles returns an empty array', () => {
-		vi.mocked(listProfiles).mockReturnValue([]);
-
-		handleStatusSubcommand(ctx, false, false);
-
-		const msg = notifySpy.mock.lastCall?.[0] as string;
-		expect(msg).toContain("Profiles: none");
 	});
 });

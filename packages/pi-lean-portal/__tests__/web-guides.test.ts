@@ -1,14 +1,13 @@
 /**
  * Tests for Web Navigation Guides (core/guides.ts)
  *
- * Covers types, resolveApplicableGuides, formatGuideFooter, formatGuideList,
+ * Covers resolveApplicableGuides, formatGuideFooter, formatGuideList,
  * parseGuideFile, buildDomainMap, and guide structure.
  * All tests run without Chromium.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-	type Guide,
 	type ApplicableGuide,
 	resolveApplicableGuides,
 	parseGuideContent,
@@ -35,48 +34,6 @@ vi.mock("node:fs", async (importActual) => {
 				? false
 				: actual.existsSync(p as string),
 	};
-});
-
-// ─── Types ──────────────────────────────────────────────────────
-
-describe("types", () => {
-	it("Guide interface is structural — icon and shortName now required", () => {
-		const g: Guide = {
-			content: "test",
-			updated: "2026-01-01",
-			category: "site",
-			source: "builtin",
-			icon: "📖",
-			shortName: "test",
-		};
-		expect(g.icon).toBe("📖");
-		expect(g.shortName).toBe("test");
-	});
-
-	it("triggerSignal field on Guide works correctly", () => {
-		const g: Guide = {
-			content: "test",
-			updated: "2026-01-01",
-			category: "pattern",
-			source: "builtin",
-			icon: "⚠",
-			shortName: "test",
-			triggerSignal: "botDetected",
-		};
-		expect(g.triggerSignal).toBe("botDetected");
-	});
-
-	it("ApplicableGuide interface — name, icon, shortName, reason, category required", () => {
-		const r: ApplicableGuide = {
-			name: "test",
-			icon: "⚠",
-			shortName: "test",
-			reason: "test reason",
-			category: "pattern",
-		};
-		expect(r.name).toBe("test");
-		expect(r.category).toBe("pattern");
-	});
 });
 
 // ─── resolveApplicableGuides ────────────────────────────────────
