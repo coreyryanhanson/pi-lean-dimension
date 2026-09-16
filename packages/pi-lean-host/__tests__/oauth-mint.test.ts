@@ -71,6 +71,10 @@ function makeToolCtx(
 		redirectResult?: string;
 		/** If true, the paste input returns undefined (user cancels at the paste). */
 		cancelPaste?: boolean;
+		/** Sequence of recovery-input results (the paste-loop Esc recovery;
+		 *  default undefined = Esc → abort — NEVER "", which would loop
+		 *  the cancelPaste test forever with no failing assertion). */
+		recoveryResults?: (string | undefined)[];
 	} = {},
 ): {
 	ctx: any;
@@ -107,18 +111,24 @@ function makeToolCtx(
 			}),
 			input: vi.fn(async (title: string) => {
 				orders.push("input");
-				// The redirect-URI edit is identified by title (it only fires when
-				// "Change redirect URI" was selected); everything else is a paste.
-				const isRedirectEdit = title.includes("Redirect URI for");
-				const r = isRedirectEdit
-					? (opts.redirectResult ?? "")
-					: opts.cancelPaste
+				// The paste-loop recovery input is identified by title (opened by Esc
+				// at the paste); the redirect-URI edit by "Redirect URI for" (it only
+				// fires when "Change redirect URI" was selected); everything else is
+				// a paste.
+				let r: string | undefined;
+				if (title.includes("Redirect URI — Enter to keep")) {
+					r = opts.recoveryResults?.shift() ?? undefined; // default: Esc → abort
+				} else if (title.includes("Redirect URI for")) {
+					r = opts.redirectResult ?? "";
+				} else {
+					r = opts.cancelPaste
 						? undefined
 						: // Paste: simulate the user having authorized and pasting the
 							// address-bar URL with the pending flow's state.
 							`${REDIRECT_URI}?code=CB&state=${
 								readPendingFlow("mint.invalid", "authorization_code", TOKEN_URL)?.state
 							}`;
+				}
 				inputs.push([title, r]);
 				return r;
 			}),
@@ -548,6 +558,69 @@ describe("oauth-mint — authorization_code arm", () => {
 			readPendingFlow("mint.invalid", "authorization_code", TOKEN_URL),
 		).not.toBeNull();
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("tripwire: Esc at the paste reaches the recovery input, whose default (undefined, never '') aborts", async () => {
+		writeSecret("mint.invalid", "client_id", "MY_CLIENT");
+		const m = makeToolCtx({ mode: "rpc", cancelPaste: true });
+		await expect(
+			oauthMintTool.execute(
+				"test",
+				{
+					domain: "mint.invalid",
+					grant: "authorization_code",
+					tokenUrl: TOKEN_URL,
+					clientId: "client_id",
+					authorizeUrl: AUTHORIZE_URL,
+				},
+				undefined,
+				undefined,
+				m.ctx,
+			),
+		).rejects.toThrow(/--code <redirect-url-or-code>/);
+		// The double routed by title: paste Esc → recovery input → its
+		// undefined default aborted. A "" default here would have looped the
+		// paste-undefined → recovery-"" → paste-undefined cycle forever.
+		const recovery = m.inputs.find(([t]) =>
+			t.includes("Redirect URI — Enter to keep"),
+		);
+		expect(recovery).toBeDefined();
+		expect(
+			readPendingFlow("mint.invalid", "authorization_code", TOKEN_URL),
+		).not.toBeNull();
+	});
+
+	it("recovery input: a garbage-typed URI restarts (regenerated flow) and a later Esc still aborts — no loop", async () => {
+		writeSecret("mint.invalid", "client_id", "MY_CLIENT");
+		const m = makeToolCtx({
+			mode: "rpc",
+			cancelPaste: true,
+			recoveryResults: ["not a uri at all"],
+		});
+		await expect(
+			oauthMintTool.execute(
+				"test",
+				{
+					domain: "mint.invalid",
+					grant: "authorization_code",
+					tokenUrl: TOKEN_URL,
+					clientId: "client_id",
+					authorizeUrl: AUTHORIZE_URL,
+				},
+				undefined,
+				undefined,
+				m.ctx,
+			),
+		).rejects.toThrow(/--code <redirect-url-or-code>/);
+		// Terminates: initial flow + one garbage restart, then the exhausted
+		// recovery queue (undefined) aborts.
+		const authorizeBuilds = m.inputs.filter(([t]) =>
+			t.includes("Open this URL in YOUR browser"),
+		);
+		expect(authorizeBuilds).toHaveLength(2);
+		expect(
+			readPendingFlow("mint.invalid", "authorization_code", TOKEN_URL),
+		).not.toBeNull();
 	});
 
 	it("auth-code redirect-URI edit: proposes the default, human can override inline; the override reaches the exchange", async () => {

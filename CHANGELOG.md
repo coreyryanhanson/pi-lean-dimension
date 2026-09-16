@@ -4,6 +4,15 @@
 
 ### Added
 
+- **`pi-lean-host` — OAuth paste-prompt recovery** — Esc at the auth-code
+  paste prompt no longer discards the flow. It now opens a recovery input:
+  Enter repastes into the untouched pending flow, typing a corrected
+  redirect URI restarts the authorization (fresh PKCE/state/authorize URL)
+  with every wizard answer preserved, and Esc still aborts to the
+  `--code` nudge. Fixes the dead end where a wrong redirect URI — never
+  registered at the provider, so no code was ever issued — cost the whole
+  wizard redo.
+
 - **`pi-lean-portal` — `/web install` browser installer** — a
   user-triggered command that downloads the Node-backend browsers
   through the **bundled** Playwright CLI, so the revisions always match

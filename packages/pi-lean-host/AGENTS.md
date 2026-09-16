@@ -378,7 +378,8 @@ speculatively.
   disambiguates 2+ slot domains) — local-only clear, no `revokeUrl`), `oauth-flow.ts` (headless paste-based
   auth-code + PKCE dance: PKCE pair gen, `buildAuthorizeUrl`,
   `parsePastedRedirect` (full redirect URL / bare code, state check,
-  `?error=` surfacing), `mintAuthCodeToken` orchestration, the
+  `?error=` surfacing), Esc-at-paste recovery input (repaste / corrected-URI
+  restart / abort), `mintAuthCodeToken` orchestration, the
   `http://127.0.0.1/callback` redirect convention (RFC 8252 §7.3) —
   host-only, no portal import, no listener, no inbound network surface),
   `transport.ts` (shared fetch pipeline: UA, charset, gzip/deflate
@@ -429,7 +430,8 @@ speculatively.
   output-channel audit/SSRF/footer structural tests), `oauth`
   (client_credentials mint/cache/refresh/scrub), `oauth-flow` (auth-code +
   PKCE: paste-parse (full URL with state / bare code / `?error=`),
-  headless `--code` completion, interactive inline prompt, --refresh), `query-secrets`
+  headless `--code` completion, interactive inline prompt, --refresh,
+  paste-restart recovery input + title-routed doubles), `query-secrets`
   (query-param-secret injection, output-channel redaction, api-probe inline
   auth / probe inline-auth `domain` override), `portal-projection`, `render-result`,
   `pinned-idioms` (load-bearing parsing idioms pinned as contract: XML `@_`

@@ -513,6 +513,62 @@ describe("oauth init — interactive wizard", () => {
 		).toBe(true);
 	});
 
+	it("wizard paste Esc → recovery input: a typed corrected URI restarts in-flow — the seven wizard answers are not re-asked", async () => {
+		writeSecret("wzdr2.invalid", "client_id", "MY_CLIENT");
+		const CUSTOM = "http://localhost:5173/callback";
+		const seenBodies: string[] = [];
+		stubTokenEndpoint((_url, init) => {
+			seenBodies.push(String(init.body));
+			return tokenResponse({ access_token: "WZDR2", expires_in: 3600 });
+		});
+		const m = makeCtx({ hasUI: true });
+		const { inputs } = m;
+		// grant (select) → redirect URI (default) → tokenUrl, authorizeUrl,
+		// scopes (empty) + client-id / client-secret (omit) — seven answers.
+		m.selects.push("authorization_code", "client_id", OMIT);
+		m.inputs.push("", TOKEN_URL, AUTHORIZE_URL, "");
+		let pasteCalls = 0;
+		let recoveryCalls = 0;
+		(m.ctx.ui.input as ReturnType<typeof vi.fn>).mockImplementation(
+			async (title: string) => {
+				const queued = inputs.shift();
+				if (queued !== undefined) return queued; // the wizard answers
+				if (title.includes("Redirect URI — Enter to keep")) {
+					recoveryCalls++;
+					return CUSTOM; // corrected URI → in-flow restart
+				}
+				pasteCalls++;
+				const pending = readPendingFlow(
+					"wzdr2.invalid",
+					"authorization_code",
+					TOKEN_URL,
+				);
+				if (pasteCalls === 1) return undefined; // Esc at the first paste
+				return `${CUSTOM}?code=CB&state=${pending?.state}`;
+			},
+		);
+		await handleOauthSubcommand("init wzdr2.invalid", m.ctx);
+		// The mint completed with the corrected URI.
+		expect(
+			readToken("wzdr2.invalid", "authorization_code", TOKEN_URL)?.accessToken,
+		).toBe("WZDR2");
+		expect(
+			seenBodies.some((b) =>
+				b.includes(`redirect_uri=${encodeURIComponent(CUSTOM)}`),
+			),
+		).toBe(true);
+		// Only the paste was re-asked (Esc at paste → recovery → paste);
+		// the wizard's 3 selects + 4 inputs were never repeated.
+		expect(recoveryCalls).toBe(1);
+		expect(pasteCalls).toBe(2);
+		expect((m.ctx.ui.select as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
+			3,
+		);
+		expect((m.ctx.ui.input as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
+			7, // 4 wizard + 2 pastes + 1 recovery
+		);
+	});
+
 	it("wizard redirect-URI prompt: Esc cancels, nothing provisioned", async () => {
 		writeSecret("wzdc.invalid", "client_id", "MY_CLIENT");
 		const m = makeCtx({ hasUI: true });
@@ -525,6 +581,45 @@ describe("oauth init — interactive wizard", () => {
 			readPendingFlow("wzdc.invalid", "authorization_code", TOKEN_URL),
 		).toBeNull();
 		expect(readToken("wzdc.invalid", "authorization_code", TOKEN_URL)).toBeNull();
+	});
+
+	it("wizard paste cancel: after Esc at the paste and Esc at the recovery input, the wizard cancel message still prints with all seven answers intact", async () => {
+		writeSecret("wzdp.invalid", "client_id", "MY_CLIENT");
+		const m = makeCtx({ hasUI: true });
+		const { inputs } = m;
+		// grant (select) → redirect URI (empty = default) → tokenUrl,
+		// authorizeUrl, scopes (empty) + client-id / client-secret (omit) —
+		// the seven wizard answers. The queue is then exhausted, so the paste
+		// prompt gets undefined (Esc) and so does the recovery input.
+		m.selects.push("authorization_code", "client_id", OMIT);
+		m.inputs.push("", TOKEN_URL, AUTHORIZE_URL, "");
+		let restarts = 0;
+		(m.ctx.ui.input as ReturnType<typeof vi.fn>).mockImplementation(
+			async (title: string) => {
+				if (title.includes("Redirect URI — Enter to keep")) {
+					restarts++;
+					return undefined; // Esc at recovery → abort
+				}
+				return inputs.shift(); // wizard answers, then paste Esc (undefined)
+			},
+		);
+		await handleOauthSubcommand("init wzdp.invalid", m.ctx);
+		// The wizard's answers were consumed before the paste — the restart
+		// lives inside the flow, so nothing was re-asked after the Esc.
+		expect((m.ctx.ui.select as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
+			3,
+		);
+		expect(inputs).toHaveLength(0);
+		expect(restarts).toBe(1);
+		// Prompt count: 4 wizard inputs + the paste + the recovery input = 6.
+		expect((m.ctx.ui.input as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
+			6,
+		);
+		expect(m.out()).toContain("Cancelled. Re-run /api oauth init wzdp.invalid");
+		expect(
+			readPendingFlow("wzdp.invalid", "authorization_code", TOKEN_URL),
+		).not.toBeNull();
+		expect(readToken("wzdp.invalid", "authorization_code", TOKEN_URL)).toBeNull();
 	});
 
 	it("wizard with no provisioned secrets aborts with the /api secrets nudge", async () => {

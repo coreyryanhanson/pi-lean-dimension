@@ -517,6 +517,169 @@ describe("mintAuthCodeToken", () => {
 		expect(warned).toContain("state mismatch");
 	});
 
+	// The recovery input (opened by Esc at the paste) is routed by TITLE —
+	// keying a double on pending-flow state would feed a synthetic paste into
+	// it and mask the restart path instead of exercising it.
+	const RECOVERY_TITLE = "Redirect URI — Enter to keep";
+
+	it.each([
+		["empty Enter", ""],
+		// a prefilling client submits the default on plain Enter — same keep path
+		["a re-typed identical URI", REDIRECT_URI],
+	])(
+		"recovery input: %s keeps the flow — paste re-prompts, pending unchanged, already-issued code stays valid",
+		async (_label, keep) => {
+			const auth = makeAuthCodeAuth();
+			writeSecret("oauth.recovery", "client_id", "MY_CLIENT");
+			stubTokenEndpoint(() =>
+				tokenResponse({ access_token: "REPASTE", expires_in: 3600 }),
+			);
+			let firstState: string | undefined;
+			let recoveryCalls = 0;
+			const notify = vi.fn();
+			const ctx = {
+				hasUI: true,
+				ui: {
+					notify,
+					input: async (title: string) => {
+						if (title.includes(RECOVERY_TITLE)) {
+							recoveryCalls++;
+							// The current redirect URI is what's being kept or replaced.
+							expect(title).toContain(REDIRECT_URI);
+							return keep; // keep → paste again
+						}
+						const pending = readPendingFlow(
+							"oauth.recovery",
+							"authorization_code",
+							TOKEN_URL,
+						);
+						if (!firstState) {
+							firstState = pending?.state;
+							return undefined; // Esc at the paste → recovery input
+						}
+						// Same verifier/state as the first paste — nothing was rewritten.
+						expect(pending?.state).toBe(firstState);
+						return `http://127.0.0.1/callback?code=CB&state=${pending?.state}`;
+					},
+				},
+			} as any;
+
+			const token = await mintAuthCodeToken(auth, "oauth.recovery", ctx, {});
+			expect(token.accessToken).toBe("REPASTE");
+			expect(recoveryCalls).toBe(1);
+			// No second authorize-URL build — the keep re-prompts the paste only.
+			expect(
+				notify.mock.calls.filter((c: unknown[]) =>
+					String(c[0]).includes("code_challenge"),
+				),
+			).toHaveLength(1);
+		},
+	);
+
+	it("recovery input: a typed URI restarts the flow — regenerated pending, second authorize build, edited URI persisted", async () => {
+		const auth = makeAuthCodeAuth();
+		writeSecret("oauth.restart", "client_id", "MY_CLIENT");
+		const CUSTOM = "http://localhost:5173/callback";
+		const seenBodies: string[] = [];
+		stubTokenEndpoint((_url, init) => {
+			seenBodies.push(String(init.body));
+			return tokenResponse({ access_token: "RESTARTED", expires_in: 3600 });
+		});
+		let firstState: string | undefined;
+		const notify = vi.fn();
+		const ctx = {
+			hasUI: true,
+			ui: {
+				notify,
+				input: async (title: string) => {
+					if (title.includes(RECOVERY_TITLE)) {
+						expect(title).toContain(REDIRECT_URI);
+						return CUSTOM;
+					}
+					const pending = readPendingFlow(
+						"oauth.restart",
+						"authorization_code",
+						TOKEN_URL,
+					);
+					if (!firstState) {
+						firstState = pending?.state;
+						return undefined; // Esc at the paste → recovery input
+					}
+					// Restart regenerated the pending flow and persisted the edit.
+					expect(pending?.state).not.toBe(firstState);
+					expect(pending?.redirectUri).toBe(CUSTOM);
+					return `${CUSTOM}?code=CB&state=${pending?.state}`;
+				},
+			},
+		} as any;
+
+		const token = await mintAuthCodeToken(auth, "oauth.restart", ctx, {});
+		expect(token.accessToken).toBe("RESTARTED");
+		// Second authorize-URL build (the restart).
+		expect(
+			notify.mock.calls.filter((c: unknown[]) =>
+				String(c[0]).includes("code_challenge"),
+			),
+		).toHaveLength(2);
+		// The exchange used the edited URI (RFC 6749 §4.1.3).
+		expect(seenBodies[0]).toContain("redirect_uri=" + encodeURIComponent(CUSTOM));
+	});
+
+	it("recovery input: Esc there falls through to the existing cancel path; the pending flow survives", async () => {
+		const auth = makeAuthCodeAuth();
+		writeSecret("oauth.recesc", "client_id", "MY_CLIENT");
+		let recoveryCalls = 0;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				notify: vi.fn(),
+				input: async (title: string) => {
+					if (title.includes(RECOVERY_TITLE)) recoveryCalls++;
+					return undefined; // Esc at the paste, then Esc at recovery
+				},
+			},
+		} as any;
+
+		await expect(
+			mintAuthCodeToken(auth, "oauth.recesc", ctx, {}),
+		).rejects.toBeInstanceOf(OAuthTokenMissingError);
+		// The aborted Esc was the recovery input's, not the paste's.
+		expect(recoveryCalls).toBe(1);
+		expect(
+			readPendingFlow("oauth.recesc", "authorization_code", TOKEN_URL),
+		).not.toBeNull();
+	});
+
+	it("recovery input: the failed-paste retry notify offers recovery options, not a plain cancel", async () => {
+		const auth = makeAuthCodeAuth();
+		writeSecret("oauth.reccopy", "client_id", "MY_CLIENT");
+		let firstPaste = true;
+		const ctx = {
+			hasUI: true,
+			ui: {
+				notify: vi.fn(),
+				input: async (title: string) => {
+					if (title.includes(RECOVERY_TITLE)) return undefined; // Esc → abort
+					if (firstPaste) {
+						firstPaste = false;
+						// A failed paste (wrong state) fires the retry notify.
+						return "http://127.0.0.1/callback?code=CB&state=WRONG";
+					}
+					return undefined; // Esc at the second paste
+				},
+			},
+		} as any;
+
+		await expect(
+			mintAuthCodeToken(auth, "oauth.reccopy", ctx, {}),
+		).rejects.toBeInstanceOf(OAuthTokenMissingError);
+		const warned = (ctx.ui.notify as ReturnType<typeof vi.fn>).mock.calls
+			.map((c: unknown[]) => String(c[0]))
+			.join("\n");
+		expect(warned).toContain("escape for recovery options");
+		expect(warned).not.toContain("escape to cancel");
+	});
+
 	it("pending flows are slot-isolated: two issuers on one domain don't consume each other's verifier", async () => {
 		const TT2 = "https://other-issuer.example.com/oauth/token";
 		const authA = makeAuthCodeAuth(); // tokenUrl = TOKEN_URL

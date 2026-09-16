@@ -316,20 +316,36 @@ async function startAuthCodeFlow(
 		// wrap) so they never have to hunt for it in the scrollback above.
 		// Retry loop: a bad paste (typo, state mismatch, exchange hiccup) just
 		// re-prompts — the pending flow (verifier + state) is unchanged, so a
-		// retry is always safe. Escape/cancel exits to the --code nudge below.
+		// retry is always safe. Escape opens the recovery input below.
 		for (;;) {
 			const pasted = await ctx.ui.input(
 				`Open this URL in YOUR browser and authorize, then paste the redirect URL (or just the code) for '${storeDomain}':\n` +
 					printableAuthorizeUrl(authorizeUrl),
 				"paste the address-bar URL after consenting",
 			);
-			// Cancelled → fall through to the --code nudge (pending flow survives).
-			if (pasted === undefined) break;
+			if (pasted === undefined) {
+				// Esc at the paste: one recovery input instead of a hard cancel.
+				// Empty Enter (or a re-typed identical URI — a prefilling client
+				// submits the default on plain Enter) → paste again; the pending flow
+				// was never touched, so resuming is free and any code already issued
+				// against this authorize URL stays valid. A different typed URI →
+				// restart the flow with it (fresh PKCE/state/authorize URL, wizard
+				// answers intact since the mint call never returned). Esc → the
+				// --code nudge, pending survives.
+				const recovery = await ctx.ui.input(
+					`Redirect URI — Enter to keep ${redirectUri} and try the paste again, or type a corrected URI (Esc to abort)`,
+					redirectUri,
+				);
+				if (recovery === undefined) break;
+				const typed = recovery.trim();
+				if (typed === "" || typed === redirectUri) continue;
+				return startAuthCodeFlow(auth, storeDomain, ctx, typed);
+			}
 			try {
 				return await completePastedCode(auth, storeDomain, pasted);
 			} catch (err) {
 				ctx.ui.notify(
-					`🔑 ${err instanceof Error ? err.message : String(err)} — paste again, or escape to cancel.`,
+					`🔑 ${err instanceof Error ? err.message : String(err)} — paste again, or escape for recovery options.`,
 					"warning",
 				);
 			}
