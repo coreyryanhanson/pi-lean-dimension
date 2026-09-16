@@ -38,6 +38,7 @@ contexts across tasks.
 """
 
 import base64
+import contextlib
 import json
 import os
 import re
@@ -299,13 +300,14 @@ class PlaywrightBridge:
     _csp_safe_readonly_via_init_script: bool = False
 
     #: When non-zero, ``_wait_for_navigation_settle`` uses this as the
-    #: settle poll budget (ms) instead of the default 400.  Stealth backends
+    #: settle poll budget (ms) instead of the default.  Stealth backends
     #: whose patched browser fires navigation events with higher latency
     #: (e.g. Camoufox's Juggler) set a larger value to avoid settling before
-    #: the navigation commit is observable.  Default 400 matches the
-    #: historical hard-coded value so shipped chromium-py / firefox-py are
-    #: unchanged.
-    _settle_budget_ms: int = 400
+    #: the navigation commit is observable.  Default reads
+    #: ``navSettle.settleTimeoutMs`` from the shared TS↔Python parity JSON
+    #: (``browser-data.json``) so both runtimes stay in lockstep; shipped
+    #: chromium-py / firefox-py are unchanged.
+    _settle_budget_ms: int = NAV_SETTLE["settleTimeoutMs"]
 
     #: When True, ``_wait_for_navigation_settle`` switches the no-nav
     #: polling branch from a fixed budget to "URL stable for 150 ms **or**
@@ -448,10 +450,8 @@ class PlaywrightBridge:
             self._log("captureUA", success=False, ua="(fallback)")
         finally:
             if page is not None:
-                try:
+                with contextlib.suppress(Exception):
                     page.close()
-                except Exception:
-                    pass
 
     # ── Debug logging ───────────────────────────────────────────
 
@@ -518,15 +518,11 @@ class PlaywrightBridge:
     def _maybe_stop_playwright(self) -> None:
         """Stop the shared Playwright if no sessions remain."""
         if not self.sessions and self._pw is not None:
-            try:
-                if self._browser:
+            if self._browser:
+                with contextlib.suppress(Exception):
                     self._browser.close()
-            except Exception:
-                pass
-            try:
+            with contextlib.suppress(Exception):
                 self._pw.stop()
-            except Exception:
-                pass
             self._pw = None
             self._browser = None
 
@@ -577,7 +573,7 @@ class PlaywrightBridge:
         # Start Playwright trace capture if BROWSER_TRACE_DIR is set.
         _trace_dir = os.environ.get("BROWSER_TRACE_DIR")
         if _trace_dir:
-            try:
+            with contextlib.suppress(Exception):
                 context.tracing.start(
                     screenshots=True,
                     snapshots=True,
@@ -588,9 +584,7 @@ class PlaywrightBridge:
                     taskId=config.get("_task_id", "shared"),
                     action="start",
                     dir=_trace_dir,
-                )
-            except Exception:
-                pass  # Best-effort
+                )  # Best-effort
 
         # CSP-safe read-only eval path (see _csp_safe_readonly_via_init_script).
         # Registers an init script that stashes the EXTRACTOR_SCRIPT result in
@@ -749,12 +743,10 @@ class PlaywrightBridge:
         if session is not None:
             context: Any = session.get("context")
 
-            try:
-                page: Any = session.get("page")
-                if page and not page.is_closed():
+            page: Any = session.get("page")
+            if page and not page.is_closed():
+                with contextlib.suppress(Exception):
                     page.close()
-            except Exception:
-                pass
 
             # Stop and save Playwright trace if BROWSER_TRACE_DIR is set.
             _trace_dir = os.environ.get("BROWSER_TRACE_DIR")
@@ -767,14 +759,15 @@ class PlaywrightBridge:
                     )
                     context.tracing.stop(path=_trace_path)
                     self._log("tracing", taskId=task_id, action="stop", dir=_trace_dir)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Best-effort: a failed trace save must not fail cleanup.
+                    self._log(
+                        "tracing", taskId=task_id, action="stop-failed", error=str(exc)
+                    )
 
-            try:
-                if context:
+            if context:
+                with contextlib.suppress(Exception):
                     context.close()
-            except Exception:
-                pass
 
         # Remove session + element cache
         self.sessions.pop(task_id, None)
@@ -926,15 +919,11 @@ class PlaywrightBridge:
                 stealth patched-Firefox binaries don't fire it reliably and
                 loitering for it can deadlock the Juggler driver.
         """
-        try:
+        with contextlib.suppress(Exception):
             page.wait_for_load_state("load", timeout=timeout_ms)
-        except Exception:
-            pass
         if not skip_networkidle:
-            try:
+            with contextlib.suppress(Exception):
                 page.wait_for_load_state("networkidle", timeout=timeout_ms)
-            except Exception:
-                pass
 
     def _wait_for_navigation_settle(
         self,
@@ -974,8 +963,10 @@ class PlaywrightBridge:
         page.on("framenavigated", _on_nav)
 
         try:
-            # Wait for a potential navigation to start (150 ms window)
-            page.wait_for_timeout(150)
+            # Wait for a potential navigation to start (shared race window,
+            # ``navSettle.settleRaceMs`` in browser-data.json — same value
+            # the TS nav-settle races against ``framenavigated``).
+            page.wait_for_timeout(NAV_SETTLE["settleRaceMs"])
 
             waited_for_load = False
             if navigated:
@@ -1099,13 +1090,12 @@ class PlaywrightBridge:
                     break
 
         # ── DOM stabilization wait ──────────────────────────────
-        try:
+        # Stabilization timeout is best-effort — proceed.
+        with contextlib.suppress(Exception):
             page.wait_for_function(
                 _DOM_STABILIZE_JS,
                 timeout=NAV_SETTLE["navTimeoutMs"],
             )
-        except Exception:
-            pass  # Stabilization timed out — proceed
 
         # ── Bot detection ───────────────────────────────────────
         bot_detected = check_bot_detection(page)
@@ -1331,11 +1321,9 @@ class PlaywrightBridge:
 
             new_url: str | None = None
             new_title: str | None = None
-            try:
+            with contextlib.suppress(Exception):
                 new_url = page.url
                 new_title = page.title()
-            except Exception:
-                pass
 
             extra: dict[str, Any] = {}
             if new_url is not None:
@@ -1554,20 +1542,18 @@ class PlaywrightBridge:
             # ponytail: single retry, no backoff — challenge pages settle in
             # one load cycle; add exponential backoff if a real challenge
             # needs >1 retry.
-            # Nested ifs (rather than
-            # `self._wrap_mw_eval_in_eval and "Execution context was destroyed" in err_msg`)
-            # keep the no-boolean-in-except lint calm; behavior is identical.
+            retry_destroyed = False
             if self._wrap_mw_eval_in_eval:
-                if "Execution context was destroyed" in err_msg:
-                    try:
-                        page.wait_for_load_state("load")
-                    except Exception:
-                        pass  # Best-effort: proceed to retry even if wait fails
-                    try:
-                        result = page.evaluate(effective_expression)
-                        return {"success": True, "result": result}
-                    except Exception as retry_exc:
-                        return {"success": False, "error": str(retry_exc)}
+                retry_destroyed = "Execution context was destroyed" in err_msg
+            if retry_destroyed:
+                # Best-effort: proceed to retry even if wait fails
+                with contextlib.suppress(Exception):
+                    page.wait_for_load_state("load")
+                try:
+                    result = page.evaluate(effective_expression)
+                    return {"success": True, "result": result}
+                except Exception as retry_exc:
+                    return {"success": False, "error": str(retry_exc)}
             return {
                 "success": False,
                 "error": err_msg,

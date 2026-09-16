@@ -2,8 +2,6 @@ import { getProfileLabel } from "./storage-state.js";
 
 /**
  * Session manager — tracks browser session lifecycle per task_id.
-
-
  *
  * Design: sessions track metadata; browsers and contexts are managed
  * entirely by the plugin. The session manager is Playwright-agnostic.
@@ -112,7 +110,7 @@ class SessionManager {
 		this.#lastNav.delete(taskId);
 	}
 
-	async removeAll(): Promise<void> {
+	removeAll(): void {
 		this.#sessions.clear();
 		this.#lastNav.clear();
 	}

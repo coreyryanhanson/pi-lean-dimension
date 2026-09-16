@@ -15,7 +15,7 @@ import type { PythonBridgeConfig } from "./backends/python-adapter.js";
 import { sessionManager } from "./core/shared/session-manager.js";
 import { removeAllSnapshotFiles } from "./core/shared/snapshot-cache.js";
 import initBrowserToggle from "./browser-toggle.js";
-import { updateFooterStatus, getLastCtx, setLastCtx } from "./tools/utils.js";
+import { updateFooterStatus, setLastCtx } from "./tools/utils.js";
 import { deleteSessionKey, resetTaskIds } from "./core/shared/task-id.js";
 import { resetToggleModuleState } from "./browser-toggle.js";
 import { registerGuideProvider } from "./core/guides.js";
@@ -213,23 +213,6 @@ export default function (pi: ExtensionAPI) {
 
 	// --- Register commands ------------------------------------------
 	initBrowserToggle(pi);
-
-	// --- Profile change callback for TUI status updates ------------
-	router.setOnProfileChange((taskId, profileName, profileMode) => {
-		// Update TUI status bar on any profile lifecycle event
-		const lastCtx = getLastCtx();
-		if (lastCtx) {
-			updateFooterStatus(lastCtx);
-		}
-
-		// Debug logging when BROWSER_DEBUG is set
-		if (process.env.BROWSER_DEBUG) {
-			const parts = [`[browser] profile_changed: task=${taskId}`];
-			if (profileName) parts.push(`profile=${profileName}`);
-			if (profileMode) parts.push(`mode=${profileMode}`);
-			console.error(parts.join(" "));
-		}
-	});
 
 	// --- Startup ----------------------------------------------------
 	pi.on("session_start", async (_event, ctx) => {

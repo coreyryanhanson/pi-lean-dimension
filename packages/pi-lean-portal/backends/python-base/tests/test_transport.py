@@ -5,32 +5,27 @@ Tests use ``io.StringIO`` to mock stdin/stdout for the I/O functions,
 while the response builder functions are pure and tested directly.
 """
 
-
 import io
 import json
-import sys
 
 import pytest
 
 from pi_browser_bridge.transport import (
-    read_request,
-    write_response,
-    make_success_response,
-    make_error_response,
-    make_parse_error,
-    make_invalid_request,
-    make_internal_error,
-    make_application_error,
-    PARSE_ERROR,
+    APPLICATION_ERROR,
+    INVALID_PARAMS,
     INVALID_REQUEST,
     METHOD_NOT_FOUND,
-    INVALID_PARAMS,
-    INTERNAL_ERROR,
-    APPLICATION_ERROR,
-    TIMEOUT_ERROR,
+    PARSE_ERROR,
     SESSION_ERROR,
+    TIMEOUT_ERROR,
+    make_application_error,
+    make_error_response,
+    make_invalid_request,
+    make_parse_error,
+    make_success_response,
+    read_request,
+    write_response,
 )
-
 
 # ═════════════════════════════════════════════════════════════════════
 #  Response builders (pure functions, no I/O)
@@ -89,19 +84,6 @@ class TestMakeInvalidRequest:
         assert "Invalid Request" in resp["error"]["message"]
 
 
-class TestMakeInternalError:
-    def test_includes_traceback(self) -> None:
-        try:
-            raise RuntimeError("test error")
-        except RuntimeError as exc:
-            resp = make_internal_error(1, exc)
-
-        assert resp["error"]["code"] == INTERNAL_ERROR
-        assert "test error" in resp["error"]["message"]
-        assert "traceback" in resp["error"]["data"]
-        assert "RuntimeError" in resp["error"]["data"]["traceback"]
-
-
 class TestMakeApplicationError:
     def test_basic(self) -> None:
         resp = make_application_error(1, "app error")
@@ -130,7 +112,6 @@ class TestErrorCodes:
         assert INVALID_REQUEST == -32600
         assert METHOD_NOT_FOUND == -32601
         assert INVALID_PARAMS == -32602
-        assert INTERNAL_ERROR == -32603
 
     def test_custom_codes(self) -> None:
         assert APPLICATION_ERROR == -32000
@@ -138,8 +119,7 @@ class TestErrorCodes:
         assert SESSION_ERROR == -32002
 
     def test_no_overlap(self) -> None:
-        standard = {PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND,
-                    INVALID_PARAMS, INTERNAL_ERROR}
+        standard = {PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS}
         custom = {APPLICATION_ERROR, TIMEOUT_ERROR, SESSION_ERROR}
         assert standard.isdisjoint(custom)
 
@@ -178,17 +158,13 @@ class TestReadRequest:
         with pytest.raises(ValueError, match="Failed to parse"):
             read_request()
 
-    def test_missing_jsonrpc_field(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_jsonrpc_field(self, monkeypatch: pytest.MonkeyPatch) -> None:
         request = {"method": "ping", "id": 1}
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(request) + "\n"))
         with pytest.raises(ValueError, match='jsonrpc.*"2.0"'):
             read_request()
 
-    def test_wrong_jsonrpc_version(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_wrong_jsonrpc_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
         request = {"jsonrpc": "1.0", "method": "ping", "id": 1}
         monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(request) + "\n"))
         with pytest.raises(ValueError, match='jsonrpc.*"2.0"'):
@@ -211,9 +187,7 @@ class TestReadRequest:
         with pytest.raises(ValueError, match="JSON object"):
             read_request()
 
-    def test_works_after_whitespace_line(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_works_after_whitespace_line(self, monkeypatch: pytest.MonkeyPatch) -> None:
         request = {"jsonrpc": "2.0", "method": "browser.navigate", "id": 2}
         monkeypatch.setattr(
             "sys.stdin",

@@ -35,7 +35,7 @@ With search + host installed, the suite totals **20 tools + 3 commands** (portal
 ```bash
 npm test                                           # vitest run — all workspace tests (may hang if browser binaries missing)
 npm run test:ci                                     # Structural + contributed-backend contract tests (excludes chromium/firefox/bench). Runs contributed/* contract tests when backends are installed — expect 2-3 min on a dev machine with backends; use 300s+ timeout if wrapping.
-npm run test:py-bridge                              # Python bridge unit tests (pytest, 248 pure-logic tests under packages/pi-lean-portal/backends/python-base/tests/ — needs only `pytest>=9.0`, no browser). Uses the package-local .venv if present, else system `python3`.
+npm run test:py-bridge                              # Python bridge unit tests (pytest, 250 pure-logic tests under packages/pi-lean-portal/backends/python-base/tests/ — needs only `pytest>=9.0`, no browser). Uses the package-local .venv if present, else system `python3`.
 npm run test:miniwob                                # MiniWoB++ cross-engine test suite (host: 130 tasks × 4 backends + smoke, auto-skips)
 npm run setup:miniwob                               # one-time clone of MiniWoB++ content
 # (no dedicated venv needed — the driver uses the plugin's Python path)
@@ -117,7 +117,7 @@ Co-activation with `web-search` is **search-owned**: `pi-lean-search` mirrors `p
 | Category | Location | Files (~) | Tests (~) | Requires browser? |
 |----------|----------|-----------|-----------|-------------------|
 | Portal structural | `pi-lean-portal/__tests__/` + package root (`ship-manifest`) | 25 | ~655 | No |
-| Python bridge unit | `pi-lean-portal/backends/python-base/tests/` | 6 | 248 | No (pytest only) |
+| Python bridge unit | `pi-lean-portal/backends/python-base/tests/` | 6 | 250 | No (pytest only) |
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 8 | varies | Per-backend (auto-skip) |
 | MiniWoB behavioral | `bench/miniwob/suites/` | 8 | 130 tasks × 4 + user-backends + smoke* | Chromium + Firefox + Python + MiniWoB content |
 | Search | `pi-lean-search/` | 2 | 32 | No |
@@ -146,7 +146,7 @@ run only hits structural; push/PR always runs both
 3. **Install dependencies** via `npm ci`
 4. **Run structural tests** via `npm run test:ci` (excludes `**/chromium*.test.ts`, `**/firefox*.test.ts`, `**/bench/**`)
 5. **Setup Python 3.12** + install `pytest>=9.0`
-6. **Run Python bridge unit tests** via `npm run test:py-bridge` (248 pure-logic pytest tests under `packages/pi-lean-portal/backends/python-base/tests/` — no Playwright wheel or browser binaries required)
+6. **Run Python bridge unit tests** via `npm run test:py-bridge` (250 pure-logic pytest tests under `packages/pi-lean-portal/backends/python-base/tests/` — no Playwright wheel or browser binaries required)
 
 **`miniwob` job (cross-engine browser tests, depends on structural):**
 

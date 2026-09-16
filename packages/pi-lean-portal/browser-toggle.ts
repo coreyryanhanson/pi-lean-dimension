@@ -2,7 +2,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { updateFooterStatus } from "./tools/utils.js";
+import { updateFooterStatus, getLastCtx, setLastCtx } from "./tools/utils.js";
 import {
 	defineToolset,
 	TOOLSET_EVENTS,
@@ -51,9 +51,6 @@ let _lastToggleState = true;
 
 /** @internal Last known learn state for status bar coloring. */
 let _lastLearnState = false;
-
-/** @internal Last captured ExtensionContext for event-driven status-bar rendering. */
-let _lastCtx: ExtensionContext | null = null;
 
 export function getToggleState(): boolean {
 	return _lastToggleState;
@@ -105,7 +102,6 @@ function restoreProfile(_pi: ExtensionAPI, ctx: ExtensionContext): void {
 export function resetToggleModuleState(): void {
 	_lastToggleState = true;
 	_lastLearnState = false;
-	_lastCtx = null;
 	_conversationDefaultProfile = undefined;
 }
 
@@ -125,8 +121,9 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 	const syncCachedState = () => {
 		_lastToggleState = webToolset.isEnabled(pi);
 		_lastLearnState = learnToolset.isEnabled(pi);
-		if (_lastCtx) {
-			updateFooterStatus(_lastCtx);
+		const ctx = getLastCtx();
+		if (ctx) {
+			updateFooterStatus(ctx);
 		}
 	};
 
@@ -222,17 +219,17 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 	// ── Session handlers: restore profile + render status bar ─
 	pi.on("session_start", async (_event, ctx) => {
 		restoreProfile(pi, ctx);
-		_lastCtx = ctx;
+		setLastCtx(ctx);
 		syncCachedState();
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
 		restoreProfile(pi, ctx);
-		_lastCtx = ctx;
+		setLastCtx(ctx);
 		syncCachedState();
 	});
 
 	pi.on("session_shutdown", async () => {
-		_lastCtx = null;
+		setLastCtx(null);
 	});
 }

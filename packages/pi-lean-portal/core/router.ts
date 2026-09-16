@@ -83,36 +83,6 @@ export interface NavigateOptions {
 	piSessionId?: string;
 }
 
-// ─── Profile Change Callback ───────────────────────────────────────
-
-/**
- * Simple nullable callback for profile changes.
- * Used by index.ts to update the TUI status bar.
- */
-let _onProfileChange:
-	| ((
-			taskId: string,
-			profileName?: string,
-			profileMode?: "none" | "session" | "named",
-	  ) => void)
-	| null = null;
-
-/**
- * Set the profile change callback.
- * Called once at extension startup from index.ts.
- */
-export function setOnProfileChange(
-	handler:
-		| ((
-				taskId: string,
-				profileName?: string,
-				profileMode?: "none" | "session" | "named",
-		  ) => void)
-		| null,
-): void {
-	_onProfileChange = handler;
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 /**
@@ -489,8 +459,13 @@ export async function navigate(
 		resolvedProfileName = profileInput;
 	}
 
-	// ── Notify profile change callback ─────────────────────
-	_onProfileChange?.(taskId, resolvedProfileName, profileMode);
+	// ── Notify profile change ─────────────────────
+	if (process.env.BROWSER_DEBUG) {
+		const parts = [`[browser] profile_changed: task=${taskId}`];
+		if (resolvedProfileName) parts.push(`profile=${resolvedProfileName}`);
+		if (profileMode) parts.push(`mode=${profileMode}`);
+		console.error(parts.join(" "));
+	}
 
 	// ── Create session and navigate ───────────────────────────
 	sessionManager.createSession(taskId, plugin.name);

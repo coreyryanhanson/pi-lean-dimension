@@ -17,13 +17,13 @@ These are pure-logic tests — no Playwright browser required.  A small
 fake page/context mocks the few Playwright methods the code paths touch.
 """
 
+import inspect
 import sys
 from typing import Any
 
 import pytest
 
 from pi_browser_bridge.playwright_base import PlaywrightBridge
-
 
 # ═══════════════════════════════════════════════════════════════════════
 #  Fakes
@@ -167,9 +167,7 @@ class TestPluginConfig:
     def test_init_handler_on_playwright_bridge(self):
         """The handler is available on a plain PlaywrightBridge without Playwright."""
         bridge = PlaywrightBridge()
-        result = bridge.handle_command(
-            "browser.init", {"config": {"x": 1}}, cmd_id=7
-        )
+        result = bridge.handle_command("browser.init", {"config": {"x": 1}}, cmd_id=7)
         assert result["result"] == {"ok": True}
         assert bridge.plugin_config == {"x": 1}
 
@@ -180,7 +178,9 @@ class TestPluginConfig:
 
 
 class TestFingerprintManagedContext:
-    @pytest.mark.parametrize("flag,has_viewport,has_ua", [(False, True, True), (True, False, False)])
+    @pytest.mark.parametrize(
+        "flag,has_viewport,has_ua", [(False, True, True), (True, False, False)]
+    )
     def test_context_viewport_and_user_agent_presence(self, flag, has_viewport, has_ua):
         bridge = _FakePlaywrightBridge()
         bridge._fingerprint_managed_context = flag
@@ -294,11 +294,14 @@ class TestScrollViaWheel:
 
 
 class TestEvalPrefix:
-    @pytest.mark.parametrize("prefix,expression,eval_key,expected_result", [
-        ("", "() => 1 + 1", "1 + 1", 2),
-        ("mw:", "() => 1 + 1", "mw:", 2),
-        ("mw:", "() => navigator.userAgent", "mw:", "UA-string"),
-    ])
+    @pytest.mark.parametrize(
+        "prefix,expression,eval_key,expected_result",
+        [
+            ("", "() => 1 + 1", "1 + 1", 2),
+            ("mw:", "() => 1 + 1", "mw:", 2),
+            ("mw:", "() => navigator.userAgent", "mw:", "UA-string"),
+        ],
+    )
     def test_eval_prefix(self, prefix, expression, eval_key, expected_result):
         # Prefix is prepended unconditionally — writes and reads both get it.
         bridge = _FakePlaywrightBridge()
@@ -320,12 +323,12 @@ class TestEvalPrefix:
 class TestQuirksDefaultOff:
     def test_all_quirks_default_off(self):
         bridge = _FakePlaywrightBridge()
-        assert bridge._fingerprint_managed_context == False
+        assert not bridge._fingerprint_managed_context
         assert bridge._eval_prefix == ""
-        assert bridge._scroll_via_wheel == False
-        assert bridge._skip_default_viewport == False
-        assert bridge._skip_networkidle == False
-        assert bridge._wrap_mw_eval_in_eval == False
+        assert not bridge._scroll_via_wheel
+        assert not bridge._skip_default_viewport
+        assert not bridge._skip_networkidle
+        assert not bridge._wrap_mw_eval_in_eval
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -340,7 +343,9 @@ class TestWrapMwEvalInEval:
     ``let _s = (${script})`` main-world wrapper.
     """
 
-    @pytest.mark.parametrize("prefix,expected", [("", "let x = 5; x + 1"), ("mw:", "mw:let x = 5; x + 1")])
+    @pytest.mark.parametrize(
+        "prefix,expected", [("", "let x = 5; x + 1"), ("mw:", "mw:let x = 5; x + 1")]
+    )
     def test_default_off_expression_unwrapped(self, prefix, expected):
         """Default off: expression is passed through unwrapped (bit-identical),
         with only the prefix prepended when set."""
@@ -352,12 +357,17 @@ class TestWrapMwEvalInEval:
         assert page.eval_calls[0][0] == expected
         assert len(page.eval_calls) == 1
 
-    @pytest.mark.parametrize("prefix,script,expected_expr,eval_key,expected_result", [
-        ("", "let x = 5; x + 1", 'eval("let x = 5; x + 1")', None, None),
-        ("mw:", "let x = 5; x + 1", 'mw:eval("let x = 5; x + 1")', None, None),
-        ("mw:", "3 + 4", 'mw:eval("3 + 4")', "eval(", 7),
-    ])
-    def test_flag_on_wraps_in_eval(self, prefix, script, expected_expr, eval_key, expected_result):
+    @pytest.mark.parametrize(
+        "prefix,script,expected_expr,eval_key,expected_result",
+        [
+            ("", "let x = 5; x + 1", 'eval("let x = 5; x + 1")', None, None),
+            ("mw:", "let x = 5; x + 1", 'mw:eval("let x = 5; x + 1")', None, None),
+            ("mw:", "3 + 4", 'mw:eval("3 + 4")', "eval(", 7),
+        ],
+    )
+    def test_flag_on_wraps_in_eval(
+        self, prefix, script, expected_expr, eval_key, expected_result
+    ):
         """Flag on: expression becomes ``eval(<json>)`` (with ``_eval_prefix``
         prepended when set) — the production shape; a plain expression still
         round-trips its value."""
@@ -372,7 +382,7 @@ class TestWrapMwEvalInEval:
         assert page.eval_calls[0][0] == expected_expr
         assert len(page.eval_calls) == 1
         if expected_result is not None:
-            assert result["success"] == True
+            assert result["success"] is True
             assert result["result"] == expected_result
 
     def test_flag_on_escapes_special_characters(self):
@@ -391,7 +401,8 @@ class TestWrapMwEvalInEval:
         assert sent.endswith(")")
         # The inner literal must be a valid JSON string (round-trips to script)
         import json as _json
-        literal = sent[len("mw:eval("):-1]
+
+        literal = sent[len("mw:eval(") : -1]
         assert _json.loads(literal) == script
 
     def test_no_retry_on_syntax_error(self):
@@ -407,7 +418,7 @@ class TestWrapMwEvalInEval:
         page._eval_raise_error = "SyntaxError: Unexpected identifier"
         _bind_session(bridge, page)
         result = bridge.do_evaluate("t", "let x = 5; x + 1")
-        assert result["success"] == False
+        assert result["success"] is False
         assert "syntaxerror" in result["error"].lower()
         assert len(page.eval_calls) == 1  # no retry
         assert page.wait_for_load_state_calls == []  # no recovery machinery
@@ -420,11 +431,13 @@ class TestWrapMwEvalInEval:
         bridge._wrap_mw_eval_in_eval = True
         bridge._eval_prefix = "mw:"
         page = _FakePage()
-        page._eval_raise_once_error = "Execution context was destroyed, most likely because of a navigation."
+        page._eval_raise_once_error = (
+            "Execution context was destroyed, most likely because of a navigation."
+        )
         page.eval_results = {"eval(": "retry_success"}
         _bind_session(bridge, page)
         result = bridge.do_evaluate("t", "let x = 5; x + 1")
-        assert result["success"] == True
+        assert result["success"]
         assert result["result"] == "retry_success"
         assert len(page.eval_calls) == 2  # first raise, retry succeeds
         assert len(page.wait_for_load_state_calls) == 1
@@ -444,20 +457,55 @@ class TestDescribeQuirks:
     flags correctly, including default values.
     """
 
-    @pytest.mark.parametrize("overrides,expected", [
-        (
-            {},
-            {"fingerprint_managed_context": False, "eval_prefix": "", "scroll_via_wheel": False, "skip_default_viewport": False, "skip_networkidle": False, "wrap_mw_eval_in_eval": False, "csp_safe_readonly_via_init_script": False},
-        ),
-        (
-            {"_fingerprint_managed_context": True, "_eval_prefix": "mw:", "_scroll_via_wheel": True, "_skip_default_viewport": True, "_skip_networkidle": True, "_wrap_mw_eval_in_eval": True, "_csp_safe_readonly_via_init_script": True},
-            {"fingerprint_managed_context": True, "eval_prefix": "mw:", "scroll_via_wheel": True, "skip_default_viewport": True, "skip_networkidle": True, "wrap_mw_eval_in_eval": True, "csp_safe_readonly_via_init_script": True},
-        ),
-        (
-            {"_scroll_via_wheel": True, "_eval_prefix": "mw:"},
-            {"scroll_via_wheel": True, "eval_prefix": "mw:", "fingerprint_managed_context": False, "skip_default_viewport": False, "skip_networkidle": False, "wrap_mw_eval_in_eval": False, "csp_safe_readonly_via_init_script": False},
-        ),
-    ])
+    @pytest.mark.parametrize(
+        "overrides,expected",
+        [
+            (
+                {},
+                {
+                    "fingerprint_managed_context": False,
+                    "eval_prefix": "",
+                    "scroll_via_wheel": False,
+                    "skip_default_viewport": False,
+                    "skip_networkidle": False,
+                    "wrap_mw_eval_in_eval": False,
+                    "csp_safe_readonly_via_init_script": False,
+                },
+            ),
+            (
+                {
+                    "_fingerprint_managed_context": True,
+                    "_eval_prefix": "mw:",
+                    "_scroll_via_wheel": True,
+                    "_skip_default_viewport": True,
+                    "_skip_networkidle": True,
+                    "_wrap_mw_eval_in_eval": True,
+                    "_csp_safe_readonly_via_init_script": True,
+                },
+                {
+                    "fingerprint_managed_context": True,
+                    "eval_prefix": "mw:",
+                    "scroll_via_wheel": True,
+                    "skip_default_viewport": True,
+                    "skip_networkidle": True,
+                    "wrap_mw_eval_in_eval": True,
+                    "csp_safe_readonly_via_init_script": True,
+                },
+            ),
+            (
+                {"_scroll_via_wheel": True, "_eval_prefix": "mw:"},
+                {
+                    "scroll_via_wheel": True,
+                    "eval_prefix": "mw:",
+                    "fingerprint_managed_context": False,
+                    "skip_default_viewport": False,
+                    "skip_networkidle": False,
+                    "wrap_mw_eval_in_eval": False,
+                    "csp_safe_readonly_via_init_script": False,
+                },
+            ),
+        ],
+    )
     def test_describe_quirks_surfaces_overrides(self, overrides, expected):
         """The handler surfaces overridden quirks alongside the defaults."""
         bridge = _FakePlaywrightBridge()
@@ -473,13 +521,13 @@ class TestDescribeQuirks:
         result = bridge.handle_command("browser.describeQuirks", {}, 4)
         assert "result" in result
         q = result["result"]
-        assert q["fingerprint_managed_context"] == False
+        assert q["fingerprint_managed_context"] is False
         assert q["eval_prefix"] == ""
-        assert q["scroll_via_wheel"] == False
-        assert q["skip_default_viewport"] == False
-        assert q["skip_networkidle"] == False
-        assert q["wrap_mw_eval_in_eval"] == False
-        assert q["csp_safe_readonly_via_init_script"] == False
+        assert q["scroll_via_wheel"] is False
+        assert q["skip_default_viewport"] is False
+        assert q["skip_networkidle"] is False
+        assert q["wrap_mw_eval_in_eval"] is False
+        assert q["csp_safe_readonly_via_init_script"] is False
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -493,11 +541,16 @@ class TestReadOnlyEval:
     context instead of the main-world (``mw:``) context.
     """
 
-    @pytest.mark.parametrize("prefix,wrap,eval_key,expected_result", [
-        ("mw:", True, None, None),      # bypasses prefix and wrap
-        ("", False, "1 + 1", 2),         # bit-identical to read_only=False
-    ])
-    def test_read_only_bypasses_prefix_and_wrap(self, prefix, wrap, eval_key, expected_result):
+    @pytest.mark.parametrize(
+        "prefix,wrap,eval_key,expected_result",
+        [
+            ("mw:", True, None, None),  # bypasses prefix and wrap
+            ("", False, "1 + 1", 2),  # bit-identical to read_only=False
+        ],
+    )
+    def test_read_only_bypasses_prefix_and_wrap(
+        self, prefix, wrap, eval_key, expected_result
+    ):
         """read_only=True: no mw: prefix, no eval() wrap — raw expression."""
         bridge = _FakePlaywrightBridge()
         bridge._eval_prefix = prefix
@@ -512,10 +565,13 @@ class TestReadOnlyEval:
             assert result["success"]
             assert result["result"] == expected_result
 
-    @pytest.mark.parametrize("prefix,read_only,expected_expr", [
-        ("", None, 'eval("let x = 5; x + 1")'),         # default (no read_only arg)
-        ("mw:", False, 'mw:eval("let x = 5; x + 1")'),   # explicit False
-    ])
+    @pytest.mark.parametrize(
+        "prefix,read_only,expected_expr",
+        [
+            ("", None, 'eval("let x = 5; x + 1")'),  # default (no read_only arg)
+            ("mw:", False, 'mw:eval("let x = 5; x + 1")'),  # explicit False
+        ],
+    )
     def test_write_path_unchanged(self, prefix, read_only, expected_expr):
         """The write path (read_only unset or False) still applies the eval wrap."""
         bridge = _FakePlaywrightBridge()
@@ -531,7 +587,7 @@ class TestReadOnlyEval:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-#  stdout hygiene (Change 2 — Camoufox launch pollution)
+#  stdout hygiene (Camoufox launch pollution)
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -681,7 +737,7 @@ class TestCspSafeReadonlyViaInitScript:
         # not fire from the isolated world on the affected binary).
         assert "DOMContentLoaded" in wrapper
         assert "addEventListener('load'" not in wrapper
-        assert "addEventListener(\"load\"" not in wrapper
+        assert 'addEventListener("load"' not in wrapper
         # Writes to the known meta tag.
         assert "__pi-extract" in wrapper
 
@@ -689,6 +745,7 @@ class TestCspSafeReadonlyViaInitScript:
         """``do_evaluate(read_only=True)`` with the matching expression reads
         the stashed meta and returns the urldecoded JSON — no ``page.evaluate``."""
         from urllib.parse import quote
+
         bridge = _FakePlaywrightBridge()
         bridge._csp_safe_readonly_via_init_script = True
         script = "(() => { return JSON.stringify({title: 'x'}); })();"
@@ -699,26 +756,36 @@ class TestCspSafeReadonlyViaInitScript:
         page = _CspFakePage(meta_content=quote(payload))
         _bind_session(bridge, page)
         res = bridge.do_evaluate("t", script, read_only=True)
-        assert res["success"] == True
+        assert res["success"] is True
         assert res["result"] == payload
         # The meta was read via the native query_selector (CSP-free).
         assert page.query_calls == ["meta#__pi-extract"]
         # page.evaluate was NOT called (CSP would block it).
         assert page.eval_calls == []
 
-    @pytest.mark.parametrize("registered_script,sent_expression,eval_key,expected_result,expect_query", [
-        # Expression doesn't match the gate → query_selector skipped → eval.
-        ("REAL_EXTRACTOR;", "other expression", "other", "ok", False),
-        # Expression matches the gate but meta is absent → eval best-effort.
-        (
-            "(() => { return JSON.stringify({a:1}); })();",
-            "(() => { return JSON.stringify({a:1}); })();",
-            "(() => { return JSON.stringify({a:1}); })();",
-            "fallback",
-            True,
-        ),
-    ])
-    def test_do_evaluate_read_only_falls_through_to_eval(self, registered_script, sent_expression, eval_key, expected_result, expect_query):
+    @pytest.mark.parametrize(
+        "registered_script,sent_expression,eval_key,expected_result,expect_query",
+        [
+            # Expression doesn't match the gate → query_selector skipped → eval.
+            ("REAL_EXTRACTOR;", "other expression", "other", "ok", False),
+            # Expression matches the gate but meta is absent → eval best-effort.
+            (
+                "(() => { return JSON.stringify({a:1}); })();",
+                "(() => { return JSON.stringify({a:1}); })();",
+                "(() => { return JSON.stringify({a:1}); })();",
+                "fallback",
+                True,
+            ),
+        ],
+    )
+    def test_do_evaluate_read_only_falls_through_to_eval(
+        self,
+        registered_script,
+        sent_expression,
+        eval_key,
+        expected_result,
+        expect_query,
+    ):
         """A read_only eval that can't be served from the meta (expression
         doesn't match the gate, or the meta is absent) falls through to
         ``page.evaluate`` — no silent stale-meta return."""
@@ -730,9 +797,26 @@ class TestCspSafeReadonlyViaInitScript:
         page.eval_results[eval_key] = expected_result
         _bind_session(bridge, page)
         res = bridge.do_evaluate("t", sent_expression, read_only=True)
-        assert res["success"] == True
+        assert res["success"] is True
         assert res["result"] == expected_result
         if expect_query:
             assert page.query_calls == ["meta#__pi-extract"]
         else:
             assert page.query_calls == []
+
+
+class TestSettleDefaultsFromSharedJson:
+    """Settle defaults derive from ``browser-data.json`` (navSettle) so the
+    TS and Python settles stay in lockstep — no hard-coded copies."""
+
+    def test_settle_budget_default_matches_shared_json(self):
+        from pi_browser_bridge.browser_data import NAV_SETTLE
+
+        assert PlaywrightBridge._settle_budget_ms == NAV_SETTLE["settleTimeoutMs"]
+
+    def test_race_window_uses_shared_settle_race_ms(self):
+        from pi_browser_bridge import playwright_base as pb
+
+        source = inspect.getsource(pb.PlaywrightBridge._wait_for_navigation_settle)
+        assert 'NAV_SETTLE["settleRaceMs"]' in source
+        assert "wait_for_timeout(150)" not in source

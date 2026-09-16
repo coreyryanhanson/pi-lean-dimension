@@ -21,9 +21,7 @@ Error response::
 
 import json
 import sys
-import traceback
-from typing import Any, Optional
-
+from typing import Any
 
 # ─── Standard JSON-RPC error codes ────────────────────────────────────
 
@@ -31,7 +29,6 @@ PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
 METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
-INTERNAL_ERROR = -32603
 
 # Custom error codes (application-level)
 APPLICATION_ERROR = -32000
@@ -50,7 +47,8 @@ class InvalidRequestError(ValueError):
 
 # ─── Reading requests ─────────────────────────────────────────────────
 
-def read_request() -> Optional[dict[str, Any]]:
+
+def read_request() -> dict[str, Any] | None:
     """Read one JSON-RPC request from stdin (line-delimited).
 
     Returns the parsed request dict, or None on EOF.
@@ -86,6 +84,7 @@ def read_request() -> Optional[dict[str, Any]]:
 
 # ─── Writing responses ────────────────────────────────────────────────
 
+
 def write_response(response: dict[str, Any]) -> None:
     """Write a JSON-RPC response to stdout as a single JSON line, then flush.
 
@@ -110,7 +109,7 @@ def make_error_response(
     request_id: Any,
     code: int,
     message: str,
-    data: Optional[dict[str, Any]] = None,
+    data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-RPC error response."""
     error: dict[str, Any] = {
@@ -136,24 +135,10 @@ def make_invalid_request(request_id: Any = None) -> dict[str, Any]:
     return make_error_response(request_id, INVALID_REQUEST, "Invalid Request")
 
 
-def make_internal_error(
-    request_id: Any,
-    exc: Exception,
-) -> dict[str, Any]:
-    """Build an internal error response including Python traceback."""
-    tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
-    return make_error_response(
-        request_id,
-        INTERNAL_ERROR,
-        f"Internal error: {exc}",
-        data={"traceback": "".join(tb)},
-    )
-
-
 def make_application_error(
     request_id: Any,
     message: str,
-    traceback_str: Optional[str] = None,
+    traceback_str: str | None = None,
 ) -> dict[str, Any]:
     """Build an application-level error response."""
     data: dict[str, Any] = {}

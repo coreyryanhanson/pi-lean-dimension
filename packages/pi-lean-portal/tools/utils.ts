@@ -29,10 +29,9 @@ export function contentText(
 // ─── Status bar ─────────────────────────────────────────────────
 
 /**
- * Retained reference to the most recent extension context for use by
- * the browser.profile event listener (which fires asynchronously from
- * tool execution contexts). Updated on session_start and cleared on
- * session_shutdown.
+ * Retained reference to the most recent extension context, so event
+ * handlers that fire outside a tool/ctx scope (e.g. browser-toggle's
+ * toolset changed/restored listeners) can still repaint the status bar.
  */
 let _lastCtx: {
 	ui: {
@@ -62,12 +61,12 @@ export function updateFooterStatus(ctx: {
 	ctx.ui.setStatus("browser", `${dot} ${body}`);
 }
 
-/** @internal — used by index.ts's profile event listener */
+/** @internal — read by browser-toggle's event-driven status repaint */
 export function getLastCtx(): typeof _lastCtx {
 	return _lastCtx;
 }
 
-/** @internal — set by index.ts on startup/shutdown */
+/** @internal — updated on session_start/session_tree, cleared on shutdown */
 export function setLastCtx(ctx: typeof _lastCtx): void {
 	_lastCtx = ctx;
 }
