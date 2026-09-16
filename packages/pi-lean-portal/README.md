@@ -18,7 +18,7 @@
 pi install npm:pi-lean-portal
 ```
 
-then, inside pi, run **`/web install`** once to download the browser binaries.
+Then run **`/web install`** inside pi to download browser binaries (these are not installed via npm).
 
 Once loaded, you'll see a notification like:
 
@@ -27,12 +27,6 @@ Once loaded, you'll see a notification like:
 The browser tools are **enabled by default**: `web-fetch` for static pages,
 `browser-navigate` (plus click/type/scroll/screenshots via `@e` refs) for
 interactive browsing.
-
-> **Playwright browser binaries are not downloaded during `npm install`.**
-> Run `/web install` inside pi to fetch them (checkbox dialog in the TUI;
-> `/web install chromium|firefox` for a single engine). If a browser tool
-> runs without them, it fails with `Browser not installed. Run /web install
-> to install it.`
 
 ---
 
