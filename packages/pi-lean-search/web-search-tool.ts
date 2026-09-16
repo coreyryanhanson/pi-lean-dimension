@@ -393,6 +393,19 @@ export const webSearchTool = defineTool({
 			controller.abort();
 		}, timeoutSeconds * 1000);
 
+		// Abort can surface in either fetch or the body read; label it correctly.
+		const abortFail = () => {
+			if (timedOut) {
+				return fail(
+					`Web search timed out after ${timeoutSeconds}s. ` +
+						`The SearXNG instance at \`${searxngUrl}\` may be slow ` +
+						"or unresponsive.",
+					{ timedOut: true, timeout: timeoutSeconds },
+				);
+			}
+			return fail("Web search was cancelled.", { cancelled: true });
+		};
+
 		try {
 			// ── Layer 1: Connection-level error handling ──
 			let response: Response;
@@ -402,20 +415,11 @@ export const webSearchTool = defineTool({
 					headers: { Accept: "application/json" },
 				});
 			} catch (connectionErr) {
-				clearTimeout(timeoutId);
 				if (
 					connectionErr instanceof DOMException &&
 					connectionErr.name === "AbortError"
 				) {
-					if (timedOut) {
-						return fail(
-							`Web search timed out after ${timeoutSeconds}s. ` +
-								`The SearXNG instance at \`${searxngUrl}\` may be slow ` +
-								"or unresponsive.",
-							{ timedOut: true, timeout: timeoutSeconds },
-						);
-					}
-					return fail("Web search was cancelled.", { cancelled: true });
+					return abortFail();
 				}
 				return fail(
 					"Web search connection failed: " +
@@ -425,8 +429,6 @@ export const webSearchTool = defineTool({
 					{ connectionError: true },
 				);
 			}
-
-			clearTimeout(timeoutId);
 
 			// ── Layer 2: HTTP error handling ──
 			if (!response.ok) {
@@ -444,6 +446,10 @@ export const webSearchTool = defineTool({
 					? (JSON.parse(text) as SearXNGResponse)
 					: { results: [], answers: [], suggestions: [] };
 			} catch (parseErr) {
+				// Abort can surface here if the body read stalls past the timeout.
+				if (parseErr instanceof DOMException && parseErr.name === "AbortError") {
+					return abortFail();
+				}
 				return fail(
 					"Web search returned unexpected response format. " +
 						"SearXNG may be misconfigured. Error: " +
@@ -545,7 +551,6 @@ export const webSearchTool = defineTool({
 				},
 			};
 		} catch (unexpectedErr) {
-			clearTimeout(timeoutId);
 			return fail(
 				"An unexpected error occurred during web search: " +
 					(unexpectedErr instanceof Error
@@ -553,6 +558,10 @@ export const webSearchTool = defineTool({
 						: String(unexpectedErr)),
 				{ unexpectedError: true },
 			);
+		} finally {
+			// Timer stays armed through the body read, so `timeout` bounds the
+			// whole request, not just the response headers.
+			clearTimeout(timeoutId);
 		}
 	},
 

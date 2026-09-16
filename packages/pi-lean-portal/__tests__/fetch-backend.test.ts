@@ -33,6 +33,11 @@ interface MockFetchOpts {
 	 * Only meaningful when delayMs is not set.
 	 */
 	abortOnly?: boolean;
+	/**
+	 * If true, respond with headers immediately but keep the body open until
+	 * aborted (for body-phase timeout tests). Takes precedence over delayMs.
+	 */
+	bodyStall?: boolean;
 }
 
 /**
@@ -67,6 +72,31 @@ function mockFetch(opts: MockFetchOpts): void {
 
 				if (opts.abortOnly) {
 					// Never respond — rely on abort to reject
+					return;
+				}
+
+				if (opts.bodyStall) {
+					// Headers arrive at once; the body read only settles on abort.
+					resolve(
+						new Response(
+							new ReadableStream({
+								start(streamController) {
+									signal?.addEventListener(
+										"abort",
+										() =>
+											streamController.error(
+												new DOMException(
+													"The operation was aborted",
+													"AbortError",
+												),
+											),
+										{ once: true },
+									);
+								},
+							}),
+							{ status: 200, headers: { "Content-Type": "text/html" } },
+						),
+					);
 					return;
 				}
 
@@ -370,5 +400,26 @@ describe("webFetch — timeout", () => {
 
 		expect(result.success).toBe(false);
 		expect(result.error).toBe("timeout");
+	});
+
+	it("times out when the body stalls after the headers arrive", async () => {
+		vi.useFakeTimers();
+		try {
+			mockFetch({ body: "", bodyStall: true });
+
+			const pending = webFetch({
+				url: "http://example.com/stalled-body",
+				timeout: 1,
+			});
+
+			// Fire the abort timer deterministically instead of waiting on it.
+			await vi.advanceTimersByTimeAsync(1000);
+			const result = await pending;
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe("timeout");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

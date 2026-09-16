@@ -111,8 +111,6 @@ async function performFetch(
 			redirect: "follow",
 		});
 
-		clearTimeout(timeoutId);
-
 		if (!response.ok) {
 			throw new Error(`HTTP ${response.status} ${response.statusText ?? ""}`);
 		}
@@ -128,6 +126,8 @@ async function performFetch(
 
 		return { title, needsJavaScript, root };
 	} finally {
+		// Timer stays armed through the body read, so `timeout` bounds the
+		// whole request, not just the response headers.
 		clearTimeout(timeoutId);
 	}
 }

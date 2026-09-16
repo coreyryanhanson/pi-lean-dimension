@@ -51,6 +51,23 @@
   (one cautioned `npx` footnote stays for CI/non-TUI setups), and the
   command tables gain the `install` entry.
 
+### Fixed
+
+- **Request timeouts now bound the response body, not just the headers** —
+  in `web-search` (`pi-lean-search`) and `web-fetch`'s `performFetch`
+  (`pi-lean-portal`), the abort timer was disarmed as soon as `fetch()`
+  resolved — i.e. when response **headers** arrived — so a server that
+  sent headers and then stalled the body hung the body read with no
+  deadline, far past the advertised `timeout` budget (only undici's
+  internal ~300s idle limit stopped it). The timer now stays armed
+  through the body read and is cleared in a `finally`. In `web-search`
+  an abort raised during the body read previously surfaced in the
+  JSON-parse catch and would have been mislabeled `parseError:
+  "SearXNG may be misconfigured"`; both catches now route aborts through
+  one shared handler that reports the timeout/cancel correctly. Portal's
+  caller already labeled body-phase aborts as timeouts, so its fix is
+  the timer coverage alone.
+
 ## [0.5.0] - 2026-09-11
 
 ### Added

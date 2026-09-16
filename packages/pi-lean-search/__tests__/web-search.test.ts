@@ -357,6 +357,58 @@ describe("execute answer rendering", () => {
 			}),
 		);
 
+	// Headers arrive at once; the body read only settles on abort.
+	const mockStallingFetch = () =>
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockImplementation(
+				(_url: string, init: { signal?: AbortSignal }) =>
+					Promise.resolve({
+						ok: true,
+						status: 200,
+						text: () =>
+							new Promise((_resolve, reject) => {
+								init.signal?.addEventListener(
+									"abort",
+									() =>
+										reject(
+											new DOMException(
+												"The operation was aborted",
+												"AbortError",
+											),
+										),
+									{ once: true },
+								);
+							}),
+					}),
+			),
+		);
+
+	it("times out when the body stalls after the headers arrive", async () => {
+		vi.useFakeTimers();
+		try {
+			mockStallingFetch();
+
+			const pending = webSearchTool.execute(
+				"call-stall",
+				{ query: "stalled", timeout: 1 },
+				undefined,
+				undefined,
+				{} as any,
+			);
+
+			// Fire the abort timer deterministically instead of waiting on it.
+			await vi.advanceTimersByTimeAsync(1000);
+			const result = await pending;
+
+			const r = result as any;
+			expect(r.details.timedOut).toBe(true);
+			expect(r.content[0].text).toContain("timed out after 1s");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("legacy answer renders + bypasses empty-results early return", async () => {
 		mockFetch({
 			results: [],
