@@ -1,6 +1,6 @@
 {
 	"name": "pi-lean-portal",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"description": "Interactive Playwright web browsing for Pi. Chromium and Firefox built in; author stealth backends on either engine. Snapshots and screenshots cache to disk, saving context. Configurable profiles/cookies. Agents write site guides, auto-matched by domain.",
 	"keywords": [
 		"pi-package",

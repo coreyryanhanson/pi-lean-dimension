@@ -1,6 +1,6 @@
 {
 	"name": "pi-lean-host",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"description": "Read-only REST API client for Pi. Your agent authors and calls YAML recipes handling the tedious parts: pagination, OAuth2, rate limits, backoff. Credentials live in a local store, injected in code, never in agent context. Churn-free research + retrieval",
 	"keywords": [
 		"pi-package",

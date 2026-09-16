@@ -1,6 +1,6 @@
 {
 	"name": "pi-lean-dimension",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"description": "Bundles pi-lean-portal, pi-lean-search, and pi-lean-host: web browsing on Chromium or Firefox, extendable with any Playwright-based stealth backend, keyless SearXNG search, and REST API recipes with OAuth and local secrets. /web and /api toggles.",
 	"keywords": [
 		"pi-package",
@@ -33,9 +33,9 @@
 		]
 	},
 	"dependencies": {
-		"pi-lean-portal": "^0.5.0",
-		"pi-lean-search": "^0.5.0",
-		"pi-lean-host": "^0.5.0"
+		"pi-lean-portal": "^0.6.0",
+		"pi-lean-search": "^0.6.0",
+		"pi-lean-host": "^0.6.0"
 	},
 	"bundledDependencies": [
 		"pi-lean-portal",
