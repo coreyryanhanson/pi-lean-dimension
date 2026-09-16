@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`pi-lean-portal` — `/web install` browser installer** — a
+  user-triggered command that downloads the Node-backend browsers
+  through the **bundled** Playwright CLI, so the revisions always match
+  the Playwright version the backends actually run (the `npx` advice
+  could resolve a different copy and install mismatched revisions). Bare
+  `/web install` opens a TUI checklist — missing engines pre-checked,
+  downloaded engines listed and toggleable — while
+  `/web install chromium|firefox` installs directly. Detection is
+  shell-aware: Chromium is verified via its
+  `chromium_headless_shell-<rev>` directory and Playwright's
+  `INSTALLATION_COMPLETE` marker rather than the full-browser path, so a
+  full-chromium-only cache correctly reports "missing". Non-TUI contexts
+  print the resolved manual command instead of hanging on a silent
+  download. Playwright resolves lazily, so a corrupt install degrades to
+  that manual command rather than breaking `/web`.
+
+### Changed
+
+- **`pi-lean-portal` — missing-browser hints now point at `/web install`** —
+  the install hints in the Chromium and Firefox backends, the
+  `browser-navigate` failure notify, and the abstract `installHint` JSDoc
+  now read `Browser not installed. Run /web install to install it.`
+  (the `not installed` substring is load-bearing — `browser-navigate`
+  gates its notify on it). `/web status` gains a `Browsers:` line showing
+  per-engine state with a `(run /web install)` hint when something is
+  missing. READMEs shift from `npx playwright install` to `/web install`
+  (one cautioned `npx` footnote stays for CI/non-TUI setups), and the
+  command tables gain the `install` entry.
+
 ## [0.5.0] - 2026-09-11
 
 ### Added

@@ -137,7 +137,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 	pi.registerCommand("web", {
 		description:
 			"Enable/disable browser automation tools. " +
-			"Usage: /web on | off | learn | status",
+			"Usage: /web on | off | learn | install | status",
 		handler: async (args, ctx) => {
 			const cmd = args.trim().toLowerCase();
 
@@ -187,6 +187,10 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 				const sub = cmd.slice("cookies".length).trim();
 				const { handleCookiesSubcommand } = await import("./browser-cookies.js");
 				await handleCookiesSubcommand(sub, ctx);
+			} else if (cmd === "install" || cmd.startsWith("install ")) {
+				const sub = cmd.slice("install".length).trim();
+				const { handleInstallSubcommand } = await import("./browser-install.js");
+				await handleInstallSubcommand(sub, ctx);
 			} else if (cmd === "status") {
 				const { handleStatusSubcommand } = await import("./browser-status.js");
 				handleStatusSubcommand(
@@ -203,6 +207,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 						`📖 Learn mode: ${learnOn}\n` +
 						`   /web profile     manage browser profiles\n` +
 						`   /web cookies     inspect or clear session cookies\n` +
+						`   /web install     install browser binaries (bundled playwright CLI)\n` +
 						`   /web off         disable all browser tools\n` +
 						`   /web on          enable browsing only\n` +
 						`   /web learn       enable browsing + guide-saving\n` +

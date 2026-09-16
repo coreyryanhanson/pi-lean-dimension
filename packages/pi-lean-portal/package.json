@@ -32,6 +32,7 @@
 		"browser-profile.ts",
 		"browser-cookies.ts",
 		"browser-status.ts",
+		"browser-install.ts",
 		"LICENSE",
 		"backends/",
 		"!backends/python-base/.venv/",

@@ -44,6 +44,12 @@ vi.mock("../core/shared/storage-state.js", () => ({
 	isSessionProfile: vi.fn((name: string) => name.startsWith("_session-")),
 }));
 
+vi.mock("../browser-install.js", () => ({
+	ENGINES: ["chromium", "firefox"],
+	resolveBundledPlaywright: vi.fn(() => ({ pw: {} })),
+	detectInstalledBrowsers: vi.fn(() => ({ chromium: true, firefox: false })),
+}));
+
 // ─── Type shortcuts ─────────────────────────────────────────────
 
 type MockSession = {
@@ -82,7 +88,9 @@ describe("handleStatusSubcommand", () => {
 	let notifySpy: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
-		vi.clearAllMocks();
+		// restoreAllMocks (not clearAllMocks): per-test mockReturnValue/mockImplementation
+		// overrides (e.g. the throwing resolveBundledPlaywright) must not leak into later tests.
+		vi.restoreAllMocks();
 		ctx = mockCtx();
 		notifySpy = ctx.ui.notify as ReturnType<typeof vi.fn>;
 		// Default: empty session-manager state, idle status
@@ -107,6 +115,44 @@ describe("handleStatusSubcommand", () => {
 		const msg = notifySpy.mock.lastCall?.[0] as string;
 		expect(msg).toContain("🌐 Browser tools: ❌ off");
 		expect(msg).toContain("📖 Learn mode: ❌ off");
+	});
+
+	// ── Browser-binary detection line ───────────────────────
+
+	it("shows per-engine browser detection with install hint when missing", async () => {
+		const { detectInstalledBrowsers } = await import("../browser-install.js");
+		vi.mocked(detectInstalledBrowsers).mockReturnValue({
+			chromium: true,
+			firefox: false,
+		});
+		handleStatusSubcommand(ctx, true, false);
+
+		const msg = notifySpy.mock.lastCall?.[0] as string;
+		expect(msg).toContain("Browsers: chromium ✓ firefox ✗ (run /web install)");
+	});
+
+	it("omits the install hint when all Node-backend browsers are present", async () => {
+		const { detectInstalledBrowsers } = await import("../browser-install.js");
+		vi.mocked(detectInstalledBrowsers).mockReturnValue({
+			chromium: true,
+			firefox: true,
+		});
+		handleStatusSubcommand(ctx, true, false);
+
+		const msg = notifySpy.mock.lastCall?.[0] as string;
+		expect(msg).toContain("Browsers: chromium ✓ firefox ✓");
+		expect(msg).not.toContain("run /web install");
+	});
+
+	it("omits the Browsers line when playwright is unresolvable", async () => {
+		const { resolveBundledPlaywright } = await import("../browser-install.js");
+		vi.mocked(resolveBundledPlaywright).mockImplementation(() => {
+			throw new Error("Cannot find module 'playwright'");
+		});
+		expect(() => handleStatusSubcommand(ctx, true, false)).not.toThrow();
+
+		const msg = notifySpy.mock.lastCall?.[0] as string;
+		expect(msg).not.toContain("Browsers:");
 	});
 
 	// ── Plugin listing ─────────────────────────────────────────

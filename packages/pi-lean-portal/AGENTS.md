@@ -239,13 +239,13 @@ Playwright Firefox (Juggler) and Playwright Chromium (CDP) serialize ARIA trees 
 - `core/shared/` — utilities used by both framework and plugins
 - Plugins import from `../../core/plugin-api.js` and `../../core/shared/*.js`
 - The router imports from `../../core/plugin-api.js` and `../../core/shared/*.js`
-- `browser-cookies.ts`, `browser-profile.ts`, `browser-status.ts` live at the portal package root and import from `core/` — they're command handlers, not plugins.
+- `browser-cookies.ts`, `browser-profile.ts`, `browser-status.ts` live at the portal package root and import from `core/` — they're command handlers, not plugins. `browser-install.ts` is also a package-root command handler, but imports only node builtins and peer packages (playwright resolution happens at call time via `createRequire`).
 
 ## Testing (portal detail)
 
 The monorepo root owns the test split principle and the summary counts table; this section is the per-file detail for tests that live in this package.
 
-**Portal structural (22 files):** router-dispatch, browser-toggle, browser-toggle-profile, browser-navigate, browser-status, session-manager, browser-data, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, plugin-loading, snapshot-cache, browser-inspect, web-guides, router-session, storage-state, nav-settle, probe-user-backend, ship-manifest
+**Portal structural (25 files; `ship-manifest` lives at the package root, the rest in `__tests__/`):** router-dispatch, browser-toggle, browser-toggle-profile, browser-install, browser-navigate, browser-status, session-manager, browser-data, plugin-registry, plugin-contract, plugin-config-browser, python-adapter, fetch-backend, accessibility-tree, plugin-loading, snapshot-cache, browser-inspect, web-guides, guide-providers, router-session, settings-reader, storage-state, nav-settle, probe-user-backend, ship-manifest
 
 **Python bridge unit tests (6 files, pytest):** test_accessibility, test_bot_detection, test_transport, test_browser_data, test_py_bridges, test_playwright_base_quirks (the stealth-quirk flags: `_fingerprint_managed_context`, `_skip_default_viewport`, `_scroll_via_wheel`, `_eval_prefix`)
 

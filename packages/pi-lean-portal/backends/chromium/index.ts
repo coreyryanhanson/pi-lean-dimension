@@ -35,7 +35,7 @@ export class ChromiumPlugin extends PlaywrightPluginBase {
 	}
 
 	protected get installHint(): string {
-		return "Browser not installed. Run: npx playwright install chromium firefox";
+		return "Browser not installed. Run /web install to install it.";
 	}
 }
 

@@ -15,8 +15,10 @@ SearXNG instance.
 ```bash
 pi install npm:pi-lean-portal
 pi install npm:pi-lean-host
-npx playwright install chromium firefox
 ```
+
+then, inside pi, run **`/web install`** once to download the Chromium/Firefox
+browser binaries.
 
 Once installed, the core browsing and API tools are enabled by default; the guide-authoring tools stay off until you opt in (see Commands
 below). To set a different default for **new** sessions, add a
@@ -49,7 +51,7 @@ The Quick start above shows a common mix (portal + host). Install any combinatio
 | [`pi-lean-host`](https://github.com/coreyryanhanson/pi-lean-dimension/tree/main/packages/pi-lean-host) | Declarative API tools + `/api` command | none |
 | [`pi-lean-search`](https://github.com/coreyryanhanson/pi-lean-dimension/tree/main/packages/pi-lean-search) | `web-search` + `/searxng-status` | a SearXNG server[^2] |
 
-[^1]: **Browser binaries aren't downloaded during `npm install`.** The first `browser-navigate` call prompts you to install them if they're missing.
+[^1]: **Browser binaries aren't downloaded during `npm install`.** Run `/web install` inside pi to fetch them (or `/web install chromium|firefox` for a single engine). If you'd rather download manually, run the bundled-CLI command `/web install` prints — a bare `npx playwright install chromium firefox` may resolve a different playwright copy and install revisions the backends don't match.
 [^2]: **SearXNG is only required by `pi-lean-search`.** The browser works immediately without it; `web-search` returns a clear setup message on first call. When you do run it, point the suite at your instance in Pi settings with `{ "searxng": { "url": "http://localhost:8888" } }`.
 
 ### Tools
@@ -93,7 +95,7 @@ The Quick start above shows a common mix (portal + host). Install any combinatio
 
 | Command | Owner | Description |
 |---|---|---|
-| `/web on\|off\|learn\|cookies\|profile\|status` | portal | Unified toggle and management |
+| `/web on\|off\|learn\|install\|cookies\|profile\|status` | portal | Unified toggle, browser-binary install, and management |
 | `/searxng-status` | search | Test SearXNG connection and update status glyph |
 | `/api on\|off\|learn\|status\|helpers\|secrets\|verify\|delete\|oauth\|bootstrap` | host | Independent API tools toggle, guide verification, secrets, management, OAuth2 token mint/status, and agent-driven OAuth2 bootstrap |
 

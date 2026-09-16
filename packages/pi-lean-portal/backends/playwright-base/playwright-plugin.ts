@@ -83,7 +83,7 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 
 	/**
 	 * Engine-specific install hint, shown when the browser executable
-	 * is not installed. Example: "Run: npx playwright install firefox".
+	 * is not installed, e.g. "Browser not installed. Run /web install to install it".
 	 */
 	protected abstract get installHint(): string;
 

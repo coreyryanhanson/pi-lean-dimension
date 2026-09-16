@@ -16,8 +16,9 @@
 
 ```bash
 pi install npm:pi-lean-portal
-npx playwright install chromium firefox
 ```
+
+then, inside pi, run **`/web install`** once to download the browser binaries.
 
 Once loaded, you'll see a notification like:
 
@@ -28,8 +29,10 @@ The browser tools are **enabled by default**: `web-fetch` for static pages,
 interactive browsing.
 
 > **Playwright browser binaries are not downloaded during `npm install`.**
-> Run `npx playwright install chromium firefox` separately. On first
-> `browser-navigate` without them, you'll be prompted with the exact command.
+> Run `/web install` inside pi to fetch them (checkbox dialog in the TUI;
+> `/web install chromium|firefox` for a single engine). If a browser tool
+> runs without them, it fails with `Browser not installed. Run /web install
+> to install it.`
 
 ---
 
@@ -51,13 +54,16 @@ toggles guide-saving mode, and manages browser profiles.
 | Command | Effect |
 | ------- | ------ |
 | `/web` | Show current toggle status and available sub-commands. |
-| `/web status` | **Detailed runtime status** including toggle state, plugin health, active sessions, and profiles on disk. |
+| `/web status` | **Detailed runtime status** including toggle state, plugin health, browser-binary presence, active sessions, and profiles on disk. |
+| `/web install` | **Install browser binaries** via the bundled playwright CLI (checkbox dialog in the TUI; prints the manual command elsewhere). |
+| `/web install chromium\|firefox` | Directly download one engine, no dialog. |
 
 ```text
 🌐 Browser tools: ✅ on  |  📖 Learn mode: ❌ off
 ────────────────────────────────────────
 Status: idle
 Plugins: chromium, firefox, chromium-py (disabled), firefox-py (disabled)
+Browsers: chromium ✓ firefox ✓
 Use web-fetch for stateless HTTP fetches.
 Active sessions: 1
   PW [chromium] https://example.com — Example Domain [profile: session]
@@ -225,9 +231,9 @@ and the router dispatches tool calls to the right plugin based on a
 | `chromium-py` | Chromium | Python/Playwright | Disabled |
 | `firefox-py` | Firefox | Python/Playwright | Disabled |
 
-> **Install Firefox:** `npx playwright install firefox` to use the Node
-> `firefox` backend. For the Python parity backends, install Playwright
-> inside `backends/python-base/.venv`.
+> **Install Firefox:** run `/web install firefox` inside pi to download the
+> Firefox binary for the Node `firefox` backend. For the Python parity
+> backends, install Playwright inside `backends/python-base/.venv`.
 
 All four shipped backends support screenshots (viewport-sized, not
 full-page), console capture, JS evaluation, bot detection, and dialog

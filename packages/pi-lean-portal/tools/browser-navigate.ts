@@ -137,9 +137,13 @@ export const browserNavigateTool = defineTool({
 			// If the browser executable is not installed, notify the user with install instructions.
 			const isInstallError =
 				result.error && result.error.toLowerCase().includes("not installed");
-			if (isInstallError) {
+			// Python backends (chromium-py, firefox-py, stealth -py backends) report a
+			// missing venv Playwright wheel — their error already carries the accurate
+			// pip install hint, and /web install cannot fix that, so stay quiet.
+			const isPythonBackend = result.backendUsed?.endsWith("-py") ?? false;
+			if (isInstallError && !isPythonBackend) {
 				ctx?.ui?.notify(
-					"Browser not installed. Run: npx playwright install chromium firefox",
+					"Browser not installed. Run /web install to install it.",
 					"warning",
 				);
 			}

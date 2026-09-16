@@ -89,7 +89,7 @@ Portal dispatches through a `PluginRegistry` + typed `BrowserPlugin` interface; 
 
 ### Registered Commands
 
-**Portal:** `/web on|off|learn|cookies|profile|status` — `/web on` (browsing only), `/web off` (all disabled), `/web learn` (browsing + guide-saving via web-learn), `/web cookies list|clear` (inspect/clear session cookies), `/web profile` (list/load profiles), `/web status` (backends + sessions + profiles), `/web` (show current state).
+**Portal:** `/web on|off|learn|install|cookies|profile|status` — `/web on` (browsing only), `/web off` (all disabled), `/web learn` (browsing + guide-saving via web-learn), `/web install` (browser binaries via the bundled playwright CLI; `chromium|firefox` for a single engine, dialog in TUI, manual command printed elsewhere), `/web cookies list|clear` (inspect/clear session cookies), `/web profile` (list/load profiles), `/web status` (backends + browsers + sessions + profiles), `/web` (show current state).
 
 **Search:** `/searxng-status` — test the full SearXNG search pipeline and update the status bar glyph.
 
@@ -116,7 +116,7 @@ The toggle also manages a `SIBLING_TOOL_NAMES` set populated with `"web-search"`
 
 | Category | Location | Files (~) | Tests (~) | Requires browser? |
 |----------|----------|-----------|-----------|-------------------|
-| Portal structural | `pi-lean-portal/__tests__/` | 30 | ~590 | No |
+| Portal structural | `pi-lean-portal/__tests__/` + package root (`ship-manifest`) | 25 | ~655 | No |
 | Python bridge unit | `pi-lean-portal/backends/python-base/tests/` | 6 | 248 | No (pytest only) |
 | Portal contract/backend | `pi-lean-portal/__tests__/` | 8 | varies | Per-backend (auto-skip) |
 | MiniWoB behavioral | `bench/miniwob/suites/` | 8 | 130 tasks × 4 + user-backends + smoke* | Chromium + Firefox + Python + MiniWoB content |

@@ -10,6 +10,11 @@ import { sessionManager } from "./core/shared/session-manager.js";
 import { pluginRegistry } from "./core/plugin-registry.js";
 import { listProfiles } from "./browser-profile.js";
 import { isSessionProfile } from "./core/shared/storage-state.js";
+import {
+	ENGINES,
+	detectInstalledBrowsers,
+	resolveBundledPlaywright,
+} from "./browser-install.js";
 
 /**
  * Show detailed browser runtime status.
@@ -41,6 +46,22 @@ export function handleStatusSubcommand(
 		}
 	}
 	msg += `\nPlugins: ${backendLines.join(", ")}`;
+
+	// Browser-binary presence for the Node backends, via the same detection
+	// /web install uses. Resolution failure (corrupt install) just omits the
+	// line — /web install reports the fallback command in that case.
+	try {
+		const bundled = resolveBundledPlaywright();
+		const detected = detectInstalledBrowsers(bundled.pw);
+		const states = ENGINES.map((e) => `${e} ${detected[e] ? "✓" : "✗"}`).join(
+			" ",
+		);
+		const anyMissing = ENGINES.some((e) => !detected[e]);
+		msg += `\nBrowsers: ${states}${anyMissing ? " (run /web install)" : ""}`;
+	} catch {
+		/* playwright unresolvable — omit */
+	}
+
 	msg += `\nUse web-fetch for stateless HTTP fetches.`;
 
 	if (active.length > 0) {

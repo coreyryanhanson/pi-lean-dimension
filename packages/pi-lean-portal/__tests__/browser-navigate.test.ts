@@ -6,6 +6,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { browserNavigateTool } from "../tools/browser-navigate.js";
 
 // ─── Mock router ─────────────────────────────────────────────────
@@ -16,7 +19,7 @@ const mockNavigateResult = {
 	title: "",
 	snapshot: "",
 	elementCount: 0,
-	error: "Browser not installed. Run: npx playwright install chromium firefox",
+	error: "Browser not installed. Run /web install to install it.",
 	backendUsed: "chromium",
 };
 
@@ -112,7 +115,7 @@ describe("browser-navigate notify path", () => {
 		// notify should have been called with the install command
 		expect(notifySpy).toHaveBeenCalledTimes(1);
 		expect(notifySpy).toHaveBeenCalledWith(
-			"Browser not installed. Run: npx playwright install chromium firefox",
+			"Browser not installed. Run /web install to install it.",
 			"warning",
 		);
 	});
@@ -141,4 +144,32 @@ describe("browser-navigate notify path", () => {
 		// notify should NOT have been called
 		expect(notifySpy).not.toHaveBeenCalled();
 	});
+});
+
+// ─── Structural: hint-string coupling ───────────────────────────
+
+// The navigate notify is gated on result.error containing "not installed"
+// (see the isInstallError check in browser-navigate.ts), and that error is
+// the backend `installHint` string. A hint that loses the substring silently
+// disables the notify — and the mocked-error tests above cannot catch it,
+// because they control result.error themselves. These source-level checks
+// pin the coupling.
+
+describe("installHint string coupling", () => {
+	const portalRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+	const hintSources = [
+		join(portalRoot, "backends", "chromium", "index.ts"),
+		join(portalRoot, "backends", "firefox", "index.ts"),
+		join(portalRoot, "tools", "browser-navigate.ts"),
+	];
+
+	for (const src of hintSources) {
+		it(`${src.split(/[\\/]/).slice(-2).join("/")} hint contains "not installed" and no npx advice`, () => {
+			const text = readFileSync(src, "utf8");
+			expect(text).toContain(
+				'"Browser not installed. Run /web install to install it."',
+			);
+			expect(text).not.toContain("npx playwright install");
+		});
+	}
 });

@@ -118,6 +118,7 @@ function mockCtx(overrides: Partial<ExtensionContext> = {}): any {
 			setStatus: vi.fn(),
 			theme: { fg: (_c: string, t: string) => t },
 			notify: vi.fn(),
+			custom: vi.fn(async () => undefined), // dialog opens → Esc cancels
 		},
 		mode: "tui",
 		cwd: "/mock",
@@ -371,7 +372,7 @@ describe("/web focus-mode guard", () => {
 		browserToggle(pi);
 		focusAllowlistForTest();
 
-		for (const sub of ["status", "profile", "cookies", ""]) {
+		for (const sub of ["status", "profile", "cookies", "install", ""]) {
 			const ctx = mockCtx();
 			await captureWebHandler(pi)(sub, ctx);
 
