@@ -417,7 +417,7 @@ speculatively.
   checklist → paste prompt → mint/stamp; cancel throws the two-call
   `init … --code` escape-hatch hint), `api-store.ts` (the learn-gated
   read-only both-stores inspection — see the tool bullet above;
-  `TokenSlotMeta`/`collectDomainReport`/`collectUnscoped`), `api-probe.ts`, `utils.ts`, `index.ts`.
+  `TokenSlotMeta`/`collectDomainReport`/`collectUnscoped`), `api-probe.ts`, `utils.ts`.
 - `__tests__/` — framework structural tests (no network): `smoke`,
   `parse-api-guide`, `guide-catalog` (projectToGuide/slug/loader/catalog/
   frontmatter-stamp — split out of parse-api-guide), `all-guides-parse` (every bundled `guide.md` parses

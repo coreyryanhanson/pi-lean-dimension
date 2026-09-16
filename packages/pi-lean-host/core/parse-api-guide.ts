@@ -780,9 +780,8 @@ function validateResponseShape(
 
 /**
  * Validate a `Record<string, string>` auth sub-field (headers, secretRefs,
- * secretQueryRefs, headerPrefixes). Returns the parsed record, or a ParseError
- * when `raw` is absent/null/non-object/an array, or a value fails `valueOk`
- * (default: any string; `headerPrefixes` passes a non-empty check).
+ * secretQueryRefs). Returns the parsed record, or a ParseError when `raw` is
+ * absent/null/non-object/an array or any value is not a string.
  */
 function parseStringRecord(
 	raw: unknown,
@@ -790,13 +789,12 @@ function parseStringRecord(
 	fm: string,
 	field: string,
 	expect: string,
-	valueOk: (v: unknown) => boolean = (v) => typeof v === "string",
 ): Record<string, string> | ParseApiGuideResult {
 	if (
 		raw === null ||
 		typeof raw !== "object" ||
 		Array.isArray(raw) ||
-		Object.values(raw).some((v) => !valueOk(v))
+		Object.values(raw).some((v) => typeof v !== "string")
 	) {
 		return fail(file, field, expect, describeFound(raw), {
 			snippet: snippetFor(fm, "auth"),

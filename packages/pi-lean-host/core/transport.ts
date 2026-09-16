@@ -231,7 +231,7 @@ function cacheKey(url: string, opts?: FetchOptions): string {
  * normalized by this). Defined here so the transport layer — the one place
  * that holds a raw request URL and may embed it in an error message — can
  * self-redact instead of relying on callers to remember. `helpers.ts`
- * re-exports it for the capture points it owns (result.url, urls[],
+ * uses it for the capture points it owns (result.url, urls[],
  * HelperError.url).
  */
 export function redactSecretParams(
