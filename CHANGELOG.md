@@ -2,15 +2,6 @@
 
 ## [Unreleased]
 
-### Changed
-
-- **`pi-lean-host` — org header on all tool-channel disambiguation menus** —
-  when a domain is claimed by multiple guides sharing one `organization:`, the
-  `api-learn` and `api-scaffold` menus now show the `(organization: X)` header
-  like `api-guide`'s menu already did, giving the agent the same ownership
-  signal when picking between sibling recipes. Shared menu/error rendering
-  extracted to one helper (no other behavior change).
-
 ### Added
 
 - **`pi-lean-host` — OAuth paste-prompt recovery** — Esc at the auth-code
@@ -39,6 +30,13 @@
   that manual command rather than breaking `/web`.
 
 ### Changed
+
+- **`pi-lean-host` — org header on all tool-channel disambiguation menus** —
+  when a domain is claimed by multiple guides sharing one `organization:`, the
+  `api-learn` and `api-scaffold` menus now show the `(organization: X)` header
+  like `api-guide`'s menu already did, giving the agent the same ownership
+  signal when picking between sibling recipes. Shared menu/error rendering
+  extracted to one helper (no other behavior change).
 
 - **`pi-lean-portal` — missing-browser hints now point at `/web install`** —
   the install hints in the Chromium and Firefox backends, the

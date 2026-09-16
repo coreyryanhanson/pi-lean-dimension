@@ -47,7 +47,7 @@ Search owns the `search` status bar slot, shown only when `pi-lean-search` is in
 - `○ searxng` — search tools off
 - *(no slot)* — unconfigured: no `searxng.url` in settings; a one-time warning notify on Pi process boot (`session_start` `reason: "startup"` only, not `/new`/`/resume`/`/fork`) points at the setting
 
-Search probes SearXNG reachability on `session_start` and `/searxng-status` and sets the glyph color. Portal writes the `○ searxng` off state when `/web off` is called — search overrides with the health-colored glyph on the next probe. (The `browser` slot is owned by `pi-lean-portal`; see that package's `AGENTS.md`.)
+Search probes SearXNG reachability on `session_start` and `/searxng-status` and sets the glyph color. Search itself writes the `○ searxng` off state: its `/web off` co-activation mirror (see "Peer relationship") disables the `pi-lean-dimension.search` toolset, and the resulting `changed` event re-renders the glyph; the health-colored glyph returns on the next probe. (The `browser` slot is owned by `pi-lean-portal`; see that package's `AGENTS.md`.)
 
 ## Graceful degradation
 
@@ -64,5 +64,7 @@ notify at Pi startup (boot only, not `/new`/`/resume`/`/fork`) points at the
 `pi-lean-search` declares `pi-lean-portal` as a **soft peer**
 (`peerDependencies` + `peerDependenciesMeta.optional: true`). Search-only
 installs are valid — the tool works standalone, it just doesn't get a `/web`
-toggle. Portal lists `"web-search"` in its `SIBLING_TOOL_NAMES` set so
-`/web on|off` picks it up automatically when both are installed.
+toggle. Co-activation is search-owned: search listens on `pi-tool-masking`'s
+`TOOLSET_EVENTS.changed` and mirrors `pi-lean-dimension.web`, so `/web on|off`
+enables/disables search's own toolset when both are installed (portal has no
+reference to `web-search`).

@@ -177,9 +177,6 @@ export { _resetStateForTest };
 // ─── Extension entry point ───────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
-	// Read config at startup
-	_searxngUrl = readSearxngUrl();
-
 	// ── Register the web-search tool ─────────────────────────
 	pi.registerTool(webSearchTool);
 

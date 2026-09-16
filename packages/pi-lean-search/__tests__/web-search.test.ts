@@ -23,7 +23,6 @@ function mockSearchPi(initialActive?: string[]) {
 	let active = initialActive ?? ["web-search"];
 	const eventEmitter = new EventEmitter();
 	const handlers = new Map<string, Array<(...args: any[]) => void>>();
-	const entryCalls: Array<{ customType: string; data: unknown }> = [];
 
 	// A minimal mock of the ExtensionAPI. We intentionally don't mock
 	// _everything_ — only the methods the extension code actually calls.
@@ -33,9 +32,7 @@ function mockSearchPi(initialActive?: string[]) {
 		setActiveTools: vi.fn((names: string[]) => {
 			active = [...names];
 		}),
-		appendEntry: vi.fn((customType: string, data?: unknown) => {
-			entryCalls.push({ customType, data });
-		}),
+		appendEntry: vi.fn(),
 		registerCommand: vi.fn(),
 		registerTool: vi.fn(),
 		on: vi.fn(<T>(event: string, handler: (event: T, ctx: any) => void) => {
@@ -54,7 +51,7 @@ function mockSearchPi(initialActive?: string[]) {
 		},
 	} as unknown as ExtensionAPI;
 
-	return { pi, events: eventEmitter, handlers, entryCalls };
+	return { pi, events: eventEmitter, handlers };
 }
 
 // ─── Config reader (mocked fs) ──────────────────────────────────
@@ -158,8 +155,8 @@ describe("readSearxngUrl", () => {
 // ─── Tool definition structural checks ──────────────────────────
 
 describe("webSearchTool", () => {
-	// The exact name is a cross-package contract: portal's SIBLING_TOOL_NAMES and
-	// SEARCH_WEB_SPEC.names use Set.has() on it for the /web on|off toggle.
+	// The exact name is load-bearing: SEARCH_WEB_SPEC.names uses Set.has()
+	// membership to mask/restore it with the /web co-activation toggle.
 	it("has the correct name", () => {
 		expect(webSearchTool.name).toBe("web-search");
 	});
@@ -361,26 +358,20 @@ describe("execute answer rendering", () => {
 	const mockStallingFetch = () =>
 		vi.stubGlobal(
 			"fetch",
-			vi.fn().mockImplementation(
-				(_url: string, init: { signal?: AbortSignal }) =>
-					Promise.resolve({
-						ok: true,
-						status: 200,
-						text: () =>
-							new Promise((_resolve, reject) => {
-								init.signal?.addEventListener(
-									"abort",
-									() =>
-										reject(
-											new DOMException(
-												"The operation was aborted",
-												"AbortError",
-											),
-										),
-									{ once: true },
-								);
-							}),
-					}),
+			vi.fn().mockImplementation((_url: string, init: { signal?: AbortSignal }) =>
+				Promise.resolve({
+					ok: true,
+					status: 200,
+					text: () =>
+						new Promise((_resolve, reject) => {
+							init.signal?.addEventListener(
+								"abort",
+								() =>
+									reject(new DOMException("The operation was aborted", "AbortError")),
+								{ once: true },
+							);
+						}),
+				}),
 			),
 		);
 
