@@ -655,7 +655,6 @@ describe("pickBrowsersToInstall", () => {
 describe("/web install dispatcher wiring", () => {
 	const REGISTRY_KEY = "__piToolMaskingRegistry";
 	const RESTORE_EVENT_KEY = "__piToolMaskingLastRestoreEvent";
-	const MODULE_STATE_KEY = "__piToolMaskingModuleState";
 
 	const ALL_TOOLS = [
 		{ name: "web-fetch", description: "fetch" },
@@ -691,7 +690,6 @@ describe("/web install dispatcher wiring", () => {
 	beforeEach(() => {
 		delete (globalThis as any)[REGISTRY_KEY];
 		delete (globalThis as any)[RESTORE_EVENT_KEY];
-		delete (globalThis as any)[MODULE_STATE_KEY];
 	});
 
 	it("'/web install chromium' routes the engine to the install handler", async () => {

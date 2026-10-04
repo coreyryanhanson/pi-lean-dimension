@@ -34,13 +34,11 @@ vi.mock("../core/delete-command.js", () => ({
 // Clean globalThis registry between test files
 const REGISTRY_KEY = "__piToolMaskingRegistry";
 const RESTORE_EVENT_KEY = "__piToolMaskingLastRestoreEvent";
-const MODULE_STATE_KEY = "__piToolMaskingModuleState";
 
 beforeEach(() => {
 	_resetToggleStateForTest();
 	delete (globalThis as any)[REGISTRY_KEY];
 	delete (globalThis as any)[RESTORE_EVENT_KEY];
-	delete (globalThis as any)[MODULE_STATE_KEY];
 });
 
 // ─── Fixtures ────────────────────────────────────────────────────
@@ -58,13 +56,22 @@ const ALL_TOOLS = [
 
 const API_TOOL_NAMES = new Set(["api-guide", "api-fetch"]);
 
-// Seed the masking library's module state directly: the focus guard reads
-// getDefaultResolutionMode() from this same global, so tests can hold focus
-// without the deprecated setDefaultResolutionMode entry write.
-function focusAllowlistForTest(ids: string[]): void {
-	(globalThis as any)[MODULE_STATE_KEY] = {
-		defaultResolutionMode: "allowlist",
-		activeAllowlist: [...ids],
+// Under 2.0.0 the branch's mode entry is the authority — an allowlist
+// governance entry makes every toggle throw AllowlistModeError, which the
+// command handler catches and renders as the friendly refusal.
+function focusAllowlistCtx(ids: string[]): any {
+	const ctx = mockCtx();
+	return {
+		...ctx,
+		sessionManager: {
+			getBranch: () => [
+				{
+					type: "custom",
+					customType: "toolset-resolution-mode",
+					data: { mode: "allowlist", allowlist: [...ids] },
+				},
+			],
+		},
 	};
 }
 
@@ -391,11 +398,10 @@ describe("/api focus-mode guard", () => {
 	it("refuses /api on/off/learn while allowlist focus is active", async () => {
 		const { pi } = mockPi([]);
 		initApiToggle(pi);
-		focusAllowlistForTest(["pi-lean-dimension.api"]);
 
 		for (const sub of ["on", "off", "learn"]) {
 			(pi.setActiveTools as any).mockClear();
-			const ctx = mockCtx();
+			const ctx = focusAllowlistCtx(["pi-lean-dimension.api"]);
 			await captureApiHandler(pi)(sub, ctx);
 
 			expect(ctx.ui.notify).toHaveBeenCalledWith(
@@ -409,10 +415,9 @@ describe("/api focus-mode guard", () => {
 	it("read-only subcommands unaffected by allowlist focus", async () => {
 		const { pi } = mockPi([]);
 		initApiToggle(pi);
-		focusAllowlistForTest(["pi-lean-dimension.api"]);
 
 		for (const sub of ["status", "helpers", ""]) {
-			const ctx = mockCtx();
+			const ctx = focusAllowlistCtx(["pi-lean-dimension.api"]);
 			await captureApiHandler(pi)(sub, ctx);
 
 			expect(ctx.ui.notify).not.toHaveBeenCalledWith(

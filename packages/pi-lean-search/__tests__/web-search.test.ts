@@ -458,9 +458,45 @@ beforeEach(() => {
 //  Toolset wiring: pi-lean-dimension.web ↔ pi-lean-dimension.search co-activation mirror
 // ==================================================================
 describe("pi-lean-dimension.web co-activation mirror", () => {
+	// The mirror is registered inside session_start, after the live
+	// sessionManager is stored — there is no mirror (and no reader) before it.
+	function mockSessionCtx(branch: unknown[] = []) {
+		return {
+			sessionManager: { getBranch: () => branch },
+			signal: undefined,
+			ui: {
+				setStatus: vi.fn(),
+				notify: vi.fn(),
+				theme: { fg: (_c: string, t: string) => t },
+			},
+		} as any;
+	}
+
+	async function fireSessionStart(pi: ReturnType<typeof mockSearchPi>["pi"], ctx: unknown) {
+		// index.ts registers its session_start handler after defineToolset's
+		// restore handler, so it's last.
+		await (pi as any).on.mock.calls
+			.filter(([event]: any) => event === "session_start")
+			.at(-1)![1]({ reason: "startup" }, ctx);
+	}
+
+	it("does not listen before session_start (no toggle call, no throw)", async () => {
+		const { pi, events } = mockSearchPi([]);
+		searchExtension(pi);
+
+		expect(() =>
+			events.emit(TOOLSET_EVENTS.changed, {
+				id: "pi-lean-dimension.web",
+				enabled: true,
+			}),
+		).not.toThrow();
+		expect(pi.setActiveTools).not.toHaveBeenCalled();
+	});
+
 	it("disables pi-lean-dimension.search when pi-lean-dimension.web changed fires with enabled: false", async () => {
 		const { pi, events } = mockSearchPi();
 		searchExtension(pi);
+		await fireSessionStart(pi, mockSessionCtx());
 
 		events.emit(TOOLSET_EVENTS.changed, {
 			id: "pi-lean-dimension.web",
@@ -473,8 +509,20 @@ describe("pi-lean-dimension.web co-activation mirror", () => {
 	});
 
 	it("enables pi-lean-dimension.search when pi-lean-dimension.web changed fires with enabled: true", async () => {
+		// Ledger says search is off (persisted off entry), so the enable is a
+		// genuine intent change rather than a silent same-state no-op.
 		const { pi, events } = mockSearchPi([]);
 		searchExtension(pi);
+		await fireSessionStart(
+			pi,
+			mockSessionCtx([
+				{
+					type: "custom",
+					customType: "toolset-state:pi-lean-dimension.search",
+					data: { enabled: false },
+				},
+			]),
+		);
 
 		events.emit(TOOLSET_EVENTS.changed, {
 			id: "pi-lean-dimension.web",
@@ -487,15 +535,22 @@ describe("pi-lean-dimension.web co-activation mirror", () => {
 	});
 
 	// Allowlist focus (an upstream pi-tool-masking consumer) holds the line —
-	// the mirror must not co-activate, so a stale library `doRestore` emitting
-	// a web `changed` during resume can't disable search or write a {enabled}
-	// entry. Set the shared module state directly.
+	// the branch's mode entry is the authority: every toggle throws
+	// AllowlistModeError, which the mirror catches and treats as "refused,
+	// nothing changed" — no co-activation, no {enabled} entry write.
 	it("skips co-activation while allowlist focus is active", async () => {
 		const { pi, events } = mockSearchPi(["web-search"]);
 		searchExtension(pi);
-		(globalThis as any)["__piToolMaskingModuleState"] = {
-			defaultResolutionMode: "allowlist",
-		};
+		await fireSessionStart(
+			pi,
+			mockSessionCtx([
+				{
+					type: "custom",
+					customType: "toolset-resolution-mode",
+					data: { mode: "allowlist", allowlist: ["pi-lean-dimension.web"] },
+				},
+			]),
+		);
 
 		(pi.setActiveTools as any).mockClear();
 		events.emit(TOOLSET_EVENTS.changed, {

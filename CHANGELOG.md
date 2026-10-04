@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`pi-tool-masking` 2.0.0 migration** — all three extensions (portal, search,
+  host) migrate to pi-tool-masking 2.0.0's intent-delta toggle gate, which
+  requires a branch reader (`ctx.sessionManager`) on every
+  `Toolset.enable`/`disable` call and replaces the `getDefaultResolutionMode()`
+  focus-mode pre-check with thrown `AllowlistModeError` refusals (caught per
+  toggle by name, never `instanceof`, and rendered as the friendly
+  "Focus mode (allowlist) is active" notify — once per command, not once per
+  toggle). `/web` (portal) and `/api` (host) command behavior is unchanged
+  apart from refusal timing; search's co-activation mirror now registers
+  inside `session_start` so its reader always exists (no branchless window).
+  Same-value toggle repeats become silent no-ops in the library — the
+  `/web`/`/api` state cascade and persistence contract are unchanged.
+  **Ships in the same release window as `pi-tool-masking` 2.0.0** — the
+  dependency break fails typecheck until both sides land together.
+
 ## [0.6.0] - 2026-09-16
 
 ### Added
