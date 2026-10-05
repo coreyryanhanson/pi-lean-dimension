@@ -4,8 +4,8 @@
 
 ### Changed
 
-- **`pi-tool-masking` 2.0.0 migration** — all three extensions (portal, search,
-  host) migrate to pi-tool-masking 2.0.0's intent-delta toggle gate, which
+- **`pi-tool-masking` 2.0.1 migration** — all three extensions (portal, search,
+  host) migrate to pi-tool-masking 2.0.1's intent-delta toggle gate, which
   requires a branch reader (`ctx.sessionManager`) on every
   `Toolset.enable`/`disable` call and replaces the `getDefaultResolutionMode()`
   focus-mode pre-check with thrown `AllowlistModeError` refusals (caught by
@@ -24,7 +24,7 @@
   packaged default) with no mirroring, so asymmetric `web`/`search`
   configurations now survive startup as configured; the mirror re-syncs on
   the first `/web on|off`.
-  **Ships in the same release window as `pi-tool-masking` 2.0.0**.
+  **Ships in the same release window as `pi-tool-masking` 2.0.1**.
 
 ## [0.6.0] - 2026-09-16
 
