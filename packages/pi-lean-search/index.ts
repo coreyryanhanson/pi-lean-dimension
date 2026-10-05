@@ -191,6 +191,15 @@ export { _resetStateForTest };
 // ─── Extension entry point ───────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
+	// --- Ensure idempotent re-invocation ----------------------------
+	// pi reuses the cached extension factory on /resume (same cwd),
+	// which re-invokes this function with the same module-level
+	// singletons. Reset the mirror state so the second load doesn't
+	// skip re-registration behind a stale _offMirror.
+	_offMirror?.();
+	_offMirror = null;
+	_sessionManager = null;
+
 	// ── Register the web-search tool ─────────────────────────
 	pi.registerTool(webSearchTool);
 
@@ -201,7 +210,7 @@ export default function (pi: ExtensionAPI) {
 	// ── Co-activation: mirror pi-lean-dimension.web changed events ─
 	// Listen on changed ONLY, not restored. Registered inside session_start
 	// (after _sessionManager is stored) so the reader always exists when the
-	// mirror runs — there is no branchless window.
+	// mirror runs — there is no reader-less window.
 	const mirrorWebChanged = (data: unknown) => {
 		const event = data as ToolsetChangedEvent;
 		if (event.id !== "pi-lean-dimension.web") return;
