@@ -173,24 +173,16 @@ describe("/web command dispatch", () => {
 		expect(finalActive).toContain("web-learn");
 	});
 
-	it("handles unknown arg — shows status, no state change", async () => {
+	it("handles unknown or empty args — shows status, no state change", async () => {
 		const { pi } = mockPi([]);
 		browserToggle(pi);
 
-		(pi.setActiveTools as any).mockClear();
-		await captureWebHandler(pi)("xyz", mockCtx());
+		for (const args of ["xyz", ""]) {
+			(pi.setActiveTools as any).mockClear();
+			await captureWebHandler(pi)(args, mockCtx());
 
-		expect(pi.setActiveTools).not.toHaveBeenCalled();
-	});
-
-	it("handles empty args — shows status, no state change", async () => {
-		const { pi } = mockPi([]);
-		browserToggle(pi);
-
-		(pi.setActiveTools as any).mockClear();
-		await captureWebHandler(pi)("", mockCtx());
-
-		expect(pi.setActiveTools).not.toHaveBeenCalled();
+			expect(pi.setActiveTools).not.toHaveBeenCalled();
+		}
 	});
 });
 

@@ -322,54 +322,39 @@ describe("session_start integration", () => {
 });
 
 // ==================================================================
-//  Focus-mode guard — /api on/off/learn refuse while focus holds
+//  /api verify / delete dispatch — routing, never toolset actuation
 // ==================================================================
 describe("/api verify dispatch", () => {
-	it("recognizes verify and routes to handleVerifySubcommand", async () => {
+	it("verify routes to handleVerifySubcommand regardless of tool masking (no toolset actuation)", async () => {
+		// Verify is a command that calls the executor/auth/transport directly,
+		// so masking api-fetch/api-guide is irrelevant — routing never actuates.
 		const { pi } = mockPi([]);
 		initApiToggle(pi);
 		const ctx = mockCtx();
 		await captureApiHandler(pi)("verify verify.test", ctx);
+
 		const { handleVerifySubcommand } = await import("../core/verify-command.js");
 		expect(handleVerifySubcommand).toHaveBeenCalledWith("verify.test", ctx);
-	});
-
-	it("verify routes regardless of tool masking (no toolset actuation)", async () => {
-		// No tools active — verify is a command that calls the executor/
-		// auth/transport directly, so masking api-fetch/api-guide is irrelevant.
-		const { pi } = mockPi([]);
-		initApiToggle(pi);
-		const ctx = mockCtx();
-		await captureApiHandler(pi)("verify verify.test", ctx);
-
-		const { handleVerifySubcommand } = await import("../core/verify-command.js");
-		expect(handleVerifySubcommand).toHaveBeenCalled();
 		expect(pi.setActiveTools).not.toHaveBeenCalled();
 	});
 });
 
 describe("/api delete dispatch", () => {
-	it("recognizes delete and routes to handleDeleteSubcommand", async () => {
+	it("delete routes to handleDeleteSubcommand regardless of tool masking (no toolset actuation)", async () => {
 		const { pi } = mockPi([]);
 		initApiToggle(pi);
 		const ctx = mockCtx();
 		await captureApiHandler(pi)("delete delete.test", ctx);
+
 		const { handleDeleteSubcommand } = await import("../core/delete-command.js");
 		expect(handleDeleteSubcommand).toHaveBeenCalledWith("delete.test", ctx);
-	});
-
-	it("delete routes regardless of tool masking (no toolset actuation)", async () => {
-		const { pi } = mockPi([]);
-		initApiToggle(pi);
-		const ctx = mockCtx();
-		await captureApiHandler(pi)("delete delete.test", ctx);
-
-		const { handleDeleteSubcommand } = await import("../core/delete-command.js");
-		expect(handleDeleteSubcommand).toHaveBeenCalled();
 		expect(pi.setActiveTools).not.toHaveBeenCalled();
 	});
 });
 
+// ==================================================================
+//  Focus-mode guard — /api on/off/learn refuse while focus holds
+// ==================================================================
 describe("/api focus-mode guard", () => {
 	it("refuses /api on/off/learn while allowlist focus is active", async () => {
 		const { pi } = mockPi([]);
@@ -394,7 +379,9 @@ describe("/api focus-mode guard", () => {
 		const { pi } = mockPi([]);
 		initApiToggle(pi);
 
-		for (const sub of ["status", "helpers", ""]) {
+		// verify/delete never actuate a toolset, so they stay unguarded —
+		// pinned here since their dedicated focus tests are gone.
+		for (const sub of ["status", "helpers", "verify verify.test", "delete delete.test", ""]) {
 			const ctx = focusAllowlistCtx(["pi-lean-dimension.api"]);
 			await captureApiHandler(pi)(sub, ctx);
 
