@@ -61,10 +61,12 @@ const API_TOOL_NAMES = new Set(["api-guide", "api-fetch"]);
 // command handler catches and renders as the friendly refusal.
 function focusAllowlistCtx(ids: string[]): any {
 	const ctx = mockCtx();
+	const baseBranch = ctx.sessionManager.getBranch();
 	return {
 		...ctx,
 		sessionManager: {
 			getBranch: () => [
+				...baseBranch,
 				{
 					type: "custom",
 					customType: "toolset-resolution-mode",

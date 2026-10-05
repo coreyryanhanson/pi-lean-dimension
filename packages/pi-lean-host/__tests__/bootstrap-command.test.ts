@@ -35,10 +35,12 @@ const RESTORE_EVENT_KEY = "__piToolMaskingLastRestoreEvent";
 // bootstrap hook's catch renders as the friendly refusal.
 function focusAllowlistCtx(ids: string[]): any {
 	const ctx = mockCtx();
+	const baseBranch = ctx.sessionManager.getBranch();
 	return {
 		...ctx,
 		sessionManager: {
 			getBranch: () => [
+				...baseBranch,
 				{
 					type: "custom",
 					customType: "toolset-resolution-mode",
