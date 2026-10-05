@@ -425,24 +425,17 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 			const sub = parts[0]?.toLowerCase() ?? "";
 			const rest = parts.slice(1).join(" ");
 
-			// Focus-mode handling: allowlist refusals are caught per toggle
-			// (refuseOnAllowlist) — a caught AllowlistModeError means "refused,
+			// Focus-mode handling: allowlist refusals are caught by
+			// refuseOnAllowlist — a caught AllowlistModeError means "refused,
 			// nothing changed". Non-actuating subcommands (status/helpers/bare
 			// /api) never toggle, so they need no guard.
 			switch (sub) {
 				case "on": {
-					// Refusal is mode-global — after one refusal the second toggle
-					// would refuse identically, so stop after the first notify.
 					if (
-						!refuseOnAllowlist(ctx, () =>
-							apiToolset.enable(pi, ctx.sessionManager),
-						)
-					)
-						return;
-					if (
-						!refuseOnAllowlist(ctx, () =>
-							learnToolset.disable(pi, ctx.sessionManager),
-						)
+						!refuseOnAllowlist(ctx, () => {
+							apiToolset.enable(pi, ctx.sessionManager);
+							learnToolset.disable(pi, ctx.sessionManager);
+						})
 					)
 						return;
 					ctx.ui.notify(

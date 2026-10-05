@@ -149,18 +149,11 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 			const cmd = args.trim().toLowerCase();
 
 			if (cmd === "on") {
-				// Refusal is mode-global — after one refusal the second toggle
-				// would refuse identically, so stop after the first notify.
 				if (
-					!refuseOnAllowlist(ctx, () =>
-						webToolset.enable(pi, ctx.sessionManager),
-					)
-				)
-					return;
-				if (
-					!refuseOnAllowlist(ctx, () =>
-						learnToolset.disable(pi, ctx.sessionManager),
-					)
+					!refuseOnAllowlist(ctx, () => {
+						webToolset.enable(pi, ctx.sessionManager);
+						learnToolset.disable(pi, ctx.sessionManager);
+					})
 				)
 					return;
 				ctx.ui.notify(

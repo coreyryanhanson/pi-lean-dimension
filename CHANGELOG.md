@@ -8,8 +8,8 @@
   host) migrate to pi-tool-masking 2.0.0's intent-delta toggle gate, which
   requires a branch reader (`ctx.sessionManager`) on every
   `Toolset.enable`/`disable` call and replaces the `getDefaultResolutionMode()`
-  focus-mode pre-check with thrown `AllowlistModeError` refusals (caught per
-  toggle by name, never `instanceof`, and rendered as the friendly
+  focus-mode pre-check with thrown `AllowlistModeError` refusals (caught by
+  name, never `instanceof`, and rendered as the friendly
   "Focus mode (allowlist) is active" notify — once per command, not once per
   toggle). `/web` (portal) and `/api` (host) command behavior is unchanged
   apart from refusal timing; search's co-activation mirror now registers
