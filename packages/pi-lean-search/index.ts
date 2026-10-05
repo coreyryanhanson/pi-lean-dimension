@@ -214,10 +214,9 @@ export default function (pi: ExtensionAPI) {
 	const mirrorWebChanged = (data: unknown) => {
 		const event = data as ToolsetChangedEvent;
 		if (event.id !== "pi-lean-dimension.web") return;
-		// Allowlist refusals arrive as thrown errors (never `instanceof` —
-		// the handle may come from a different library copy via the shared
-		// registry); a caught AllowlistModeError means "refused, nothing
-		// changed" — skip co-activation.
+		// Catch AllowlistModeError by name, never `instanceof` — the handle
+		// may come from a different library copy via the shared registry;
+		// refusal means "nothing changed" — skip co-activation.
 		try {
 			if (event.enabled) {
 				searchToolset.enable(pi, _sessionManager!);

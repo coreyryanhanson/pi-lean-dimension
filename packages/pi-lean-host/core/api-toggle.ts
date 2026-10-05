@@ -34,10 +34,9 @@ import { getAllHelpers, getDisabledHelperDomains } from "./local-helpers.js";
 import { resolveProvisionedParentDomain } from "./auth.js";
 import { listNames } from "./secrets-store.js";
 
-// Allowlist refusals arrive as thrown errors (never `instanceof` — the
-// handle may come from a different library copy via the shared registry);
-// a caught AllowlistModeError means "refused, nothing changed". Returns
-// true when the toggle ran, false when it was refused.
+// Catch AllowlistModeError by name, never `instanceof` — the handle may come
+// from a different library copy via the shared registry. Returns true when
+// the toggle ran, false when it was refused (nothing changed).
 function refuseOnAllowlist(
 	ctx: ExtensionCommandContext,
 	toggle: () => unknown,
