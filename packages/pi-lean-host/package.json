@@ -86,7 +86,7 @@
 	},
 	"dependencies": {
 		"fast-xml-parser": "^5.7.0",
-		"pi-tool-masking": "file:../../masking/pi-tool-masking",
+		"pi-tool-masking": "file:../../../masking/pi-tool-masking",
 		"undici": "^8.0.0",
 		"yaml": "^2.7.0"
 	},

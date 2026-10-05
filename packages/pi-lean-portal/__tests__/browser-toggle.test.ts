@@ -344,6 +344,8 @@ describe("/web focus-mode guard", () => {
 				expect.stringContaining("Focus mode (allowlist) is active"),
 				"warning",
 			);
+			// Refusal must not be followed by the subcommand's success notify.
+			expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
 			expect(pi.setActiveTools).not.toHaveBeenCalled();
 		}
 	});

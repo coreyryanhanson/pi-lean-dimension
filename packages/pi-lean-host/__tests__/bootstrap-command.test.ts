@@ -258,6 +258,8 @@ describe("bootstrap — inject-and-exit", () => {
 		const ctx = focusAllowlistCtx(["pi-lean-dimension.api"]);
 		await captureApiHandler(pi)("bootstrap oauth osm.invalid https://docs", ctx);
 		expect(out.call(null, ctx)).toContain("Focus mode (allowlist)");
+		// Refusal must not be followed by the flip notify.
+		expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
 		expect(sendUserMessage).not.toHaveBeenCalled();
 		expect(setActiveTools).not.toHaveBeenCalled();
 	});

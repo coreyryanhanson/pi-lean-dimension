@@ -165,19 +165,25 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 					"info",
 				);
 			} else if (cmd === "learn") {
-				refuseOnAllowlist(
-					ctx,
-					() => learnToolset.enable(pi, ctx.sessionManager), // cascades web on via requires
-				);
+				if (
+					!refuseOnAllowlist(
+						ctx,
+						() => learnToolset.enable(pi, ctx.sessionManager), // cascades web on via requires
+					)
+				)
+					return;
 				ctx.ui.notify(
 					"📖 web-learn tool is now available. Agent will save/update guides when asked.",
 					"info",
 				);
 			} else if (cmd === "off") {
-				refuseOnAllowlist(
-					ctx,
-					() => webToolset.disable(pi, ctx.sessionManager), // cascades learn off via requires
-				);
+				if (
+					!refuseOnAllowlist(
+						ctx,
+						() => webToolset.disable(pi, ctx.sessionManager), // cascades learn off via requires
+					)
+				)
+					return;
 				ctx.ui.notify("🌐 Browser tools disabled. /web on to re-enable.", "info");
 			} else if (cmd === "profile" || cmd.startsWith("profile ")) {
 				const sub = cmd.slice("profile".length).trim();

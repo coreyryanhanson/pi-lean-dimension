@@ -450,18 +450,24 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 				}
 
 				case "off": {
-					refuseOnAllowlist(ctx, () =>
-						apiToolset.disable(pi, ctx.sessionManager), // cascades learn off via requires
-					);
+					if (
+						!refuseOnAllowlist(ctx, () =>
+							apiToolset.disable(pi, ctx.sessionManager), // cascades learn off via requires
+						)
+					)
+						return;
 					ctx.ui.notify("📡 API tools disabled. /api on to re-enable.", "info");
 					return;
 				}
 
 				case "learn": {
-					refuseOnAllowlist(
-						ctx,
-						() => learnToolset.enable(pi, ctx.sessionManager), // cascades api on via requires
-					);
+					if (
+						!refuseOnAllowlist(
+							ctx,
+							() => learnToolset.enable(pi, ctx.sessionManager), // cascades api on via requires
+						)
+					)
+						return;
 					ctx.ui.notify(
 						`📖 ${learnToolNames()} tools are now available. ` +
 							"Agent will discover shapes and save/update guides when asked.",
