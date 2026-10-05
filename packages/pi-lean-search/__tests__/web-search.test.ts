@@ -533,6 +533,57 @@ describe("pi-lean-dimension.web co-activation mirror", () => {
 		);
 	});
 
+	// session_shutdown unsubscribes the mirror — a later web change must not
+	// toggle search.
+	it("tears the mirror down on session_shutdown", async () => {
+		const { pi, events, handlers } = mockSearchPi();
+		searchExtension(pi);
+		await fireSessionStart(pi, mockSessionCtx());
+
+		// Sanity: mirror is live — a genuine disable toggles.
+		events.emit(TOOLSET_EVENTS.changed, {
+			id: "pi-lean-dimension.web",
+			enabled: false,
+		});
+		expect(pi.setActiveTools).toHaveBeenCalledWith(
+			expect.not.arrayContaining(["web-search"]),
+		);
+
+		await handlers.get("session_shutdown")!.at(-1)!({}, mockSessionCtx());
+		(pi.setActiveTools as any).mockClear();
+
+		// Web back on → search enable would be a genuine change, but the
+		// mirror is unsubscribed, so nothing toggles.
+		events.emit(TOOLSET_EVENTS.changed, {
+			id: "pi-lean-dimension.web",
+			enabled: true,
+		});
+		expect(pi.setActiveTools).not.toHaveBeenCalled();
+	});
+
+	// Re-fires of session_start for the same instance must not stack mirror
+	// listeners behind the dedup gate.
+	it("dedups mirror registration across session_start re-fires", async () => {
+		const { pi, events } = mockSearchPi();
+		searchExtension(pi);
+		// syncSearchState is registered at factory time — the only changed
+		// listener before session_start.
+		const base = events.listenerCount(TOOLSET_EVENTS.changed);
+
+		await fireSessionStart(pi, mockSessionCtx());
+		expect(events.listenerCount(TOOLSET_EVENTS.changed)).toBe(base + 1);
+
+		await fireSessionStart(pi, mockSessionCtx());
+		expect(events.listenerCount(TOOLSET_EVENTS.changed)).toBe(base + 1);
+
+		// The single mirror still works after the re-fire.
+		events.emit(TOOLSET_EVENTS.changed, {
+			id: "pi-lean-dimension.web",
+			enabled: false,
+		});
+		expect(pi.setActiveTools).toHaveBeenCalledTimes(1);
+	});
+
 	// Allowlist focus (an upstream pi-tool-masking consumer) holds the line —
 	// the branch's mode entry is the authority: every toggle throws
 	// AllowlistModeError, which the mirror catches and treats as "refused,

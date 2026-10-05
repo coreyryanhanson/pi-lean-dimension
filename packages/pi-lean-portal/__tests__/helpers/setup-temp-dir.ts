@@ -17,10 +17,11 @@ import { rmSync } from "node:fs";
 const dir = `${tmpdir()}/pi-lean-portal-test-${process.pid}`;
 process.env.PI_BROWSER_TEMP_DIR = dir;
 
-// A pi host that started this process as a deferred child sets
+// Repo-wide test env hygiene (this is the shared vitest setupFiles entry):
+// a pi host that started this process as a deferred child sets
 // PI_TOOLMASKING_DEFER to its own pid, which makes every pi-tool-masking
 // toggle a silent no-op. Test workers are not deferring children — clear it
-// so toggle paths actually actuate.
+// so toggle paths in every package actually actuate.
 delete process.env.PI_TOOLMASKING_DEFER;
 
 process.on("exit", () => {
