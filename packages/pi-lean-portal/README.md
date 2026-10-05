@@ -331,8 +331,8 @@ the toolset's packaged default:
 - Omit a `toolsetDefaults` key to use the toolset's packaged default (`web`
   and `search` default `true`; `web-learn` defaults `false`).
 - The `search` key only applies when `pi-lean-search` is installed.
-- Pins do not apply in spawned subagent children (see pi-tool-masking
-  1.3.0's `piToolMasking.childPolicy` for the opt-out).
+- Pins do not apply in spawned subagent children (see pi-tool-masking's
+  `piToolMasking.childPolicy` for the opt-out).
 
 ### `browser.maxStorageStateSize`
 
