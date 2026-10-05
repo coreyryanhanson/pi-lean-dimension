@@ -19,8 +19,12 @@
   search co-activation mirror consequently fires only on real `web` deltas:
   if another surface disabled search while web stayed on, a redundant
   `/web on` no longer re-coactivates it — run `/web off` then `/web on`.
-  **Ships in the same release window as `pi-tool-masking` 2.0.0** — the
-  dependency break fails typecheck until both sides land together.
+  Restore-time co-activation is also gone: at session start each toolset
+  restores to its own configured state (branch entry → settings pin →
+  packaged default) with no mirroring, so asymmetric `web`/`search`
+  configurations now survive startup as configured; the mirror re-syncs on
+  the first `/web on|off`.
+  **Ships in the same release window as `pi-tool-masking` 2.0.0**.
 
 ## [0.6.0] - 2026-09-16
 
