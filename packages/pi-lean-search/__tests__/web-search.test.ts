@@ -451,7 +451,6 @@ describe("execute answer rendering", () => {
 beforeEach(() => {
 	_resetStateForTest();
 	delete (globalThis as any)[REGISTRY_KEY];
-	delete (globalThis as any)["__piToolMaskingModuleState"];
 });
 
 // ==================================================================

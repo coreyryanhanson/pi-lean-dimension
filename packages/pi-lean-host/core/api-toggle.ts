@@ -427,8 +427,8 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 
 			// Focus-mode handling: allowlist refusals are caught per toggle
 			// (refuseOnAllowlist) — a caught AllowlistModeError means "refused,
-			// nothing changed". Read-only subcommands (status/helpers/bare /api)
-			// never toggle, so they need no guard.
+			// nothing changed". Non-actuating subcommands (status/helpers/bare
+			// /api) never toggle, so they need no guard.
 			switch (sub) {
 				case "on": {
 					// Refusal is mode-global — after one refusal the second toggle
@@ -439,9 +439,12 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 						)
 					)
 						return;
-					refuseOnAllowlist(ctx, () =>
-						learnToolset.disable(pi, ctx.sessionManager),
-					);
+					if (
+						!refuseOnAllowlist(ctx, () =>
+							learnToolset.disable(pi, ctx.sessionManager),
+						)
+					)
+						return;
 					ctx.ui.notify(
 						`📡 API tools enabled. /api learn to make ${learnToolNames()} available.`,
 						"info",

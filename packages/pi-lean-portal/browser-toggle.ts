@@ -157,9 +157,12 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 					)
 				)
 					return;
-				refuseOnAllowlist(ctx, () =>
-					learnToolset.disable(pi, ctx.sessionManager),
-				);
+				if (
+					!refuseOnAllowlist(ctx, () =>
+						learnToolset.disable(pi, ctx.sessionManager),
+					)
+				)
+					return;
 				ctx.ui.notify(
 					"🌐 Browser tools enabled. /web learn to make web-learn available.",
 					"info",

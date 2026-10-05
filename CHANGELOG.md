@@ -13,7 +13,7 @@
   "Focus mode (allowlist) is active" notify — once per command, not once per
   toggle). `/web` (portal) and `/api` (host) command behavior is unchanged
   apart from refusal timing; search's co-activation mirror now registers
-  inside `session_start` so its reader always exists (no branchless window).
+  inside `session_start` so its reader always exists (no reader-less window).
   Same-value toggle repeats become silent no-ops in the library — the
   `/web`/`/api` state cascade and persistence contract are unchanged.
   **Ships in the same release window as `pi-tool-masking` 2.0.0** — the
