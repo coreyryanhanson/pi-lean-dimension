@@ -19,9 +19,12 @@ import type {
 import {
 	defineToolset,
 	TOOLSET_EVENTS,
-	getDefaultResolutionMode,
 } from "pi-tool-masking";
-import type { ToolsetSpec, ToolsetChangedEvent } from "pi-tool-masking";
+import type {
+	ToolsetSpec,
+	ToolsetChangedEvent,
+	BranchReader,
+} from "pi-tool-masking";
 import { readSearxngUrl } from "./search-config.js";
 import { webSearchTool, normalizeBaseUrl } from "./web-search-tool.js";
 
@@ -50,6 +53,21 @@ let _lastDegraded = false;
 
 /** Cached ExtensionContext for event-driven glyph rendering. */
 let _lastCtx: ExtensionContext | null = null;
+
+/** Live sessionManager reference for the co-activation mirror — stored at
+ *  session_start; the library invokes getBranch() fresh per apply, so the
+ *  stored reference stays correct across cascades and external writes. */
+let _sessionManager: BranchReader | null = null;
+
+/** Unsubscribe for the co-activation mirror (registered inside session_start,
+ *  torn down in session_shutdown so re-fires don't stack listeners). */
+let _offMirror: (() => void) | null = null;
+
+/** Unsubscribers for the factory-time glyph-sync listeners — pi re-invokes
+ *  the cached extension factory per load pass, so these are re-registered
+ *  each time and torn down in the reset block / session_shutdown to avoid
+ *  stacking duplicate listeners on the shared event bus. */
+let _offSync: (() => void)[] = [];
 
 // ─── Health probes ───────────────────────────────────────────────
 
@@ -170,6 +188,8 @@ function _resetStateForTest(): void {
 	_lastHealth = null;
 	_lastDegraded = false;
 	_lastCtx = null;
+	_sessionManager = null;
+	_offMirror = null;
 }
 
 export { _resetStateForTest };
@@ -177,6 +197,17 @@ export { _resetStateForTest };
 // ─── Extension entry point ───────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
+	// --- Ensure idempotent re-invocation ----------------------------
+	// pi reuses the cached extension factory on /resume (same cwd),
+	// which re-invokes this function with the same module-level
+	// singletons. Reset the mirror state so the second load doesn't
+	// skip re-registration behind a stale _offMirror.
+	_offMirror?.();
+	_offMirror = null;
+	_sessionManager = null;
+	for (const off of _offSync) off();
+	_offSync = [];
+
 	// ── Register the web-search tool ─────────────────────────
 	pi.registerTool(webSearchTool);
 
@@ -185,23 +216,27 @@ export default function (pi: ExtensionAPI) {
 	const searchToolset = defineToolset(pi, SEARCH_WEB_SPEC);
 
 	// ── Co-activation: mirror pi-lean-dimension.web changed events ─
-	// Listen on changed ONLY, not restored.
-	//
-	// Focus-mode guard: while allowlist focus holds the line, skip
-	// co-activation. The focus set is authoritative, so a web `changed` event
-	// — including one a stale library `doRestore` emits during resume — must
-	// not disable search or write a focus-indistinguishable {enabled} entry.
-	pi.events.on(TOOLSET_EVENTS.changed, (data: unknown) => {
+	// Listen on changed ONLY, not restored. Registered inside session_start
+	// (after _sessionManager is stored) so the reader always exists when the
+	// mirror runs — there is no reader-less window.
+	const mirrorWebChanged = (data: unknown) => {
 		const event = data as ToolsetChangedEvent;
-		if (event.id === "pi-lean-dimension.web") {
-			if (getDefaultResolutionMode() === "allowlist") return;
+		if (event.id !== "pi-lean-dimension.web") return;
+		// Catch AllowlistModeError by name, never `instanceof` — the handle
+		// may come from a different library copy via the shared registry;
+		// refusal means "nothing changed" — skip co-activation.
+		try {
 			if (event.enabled) {
-				searchToolset.enable(pi);
+				searchToolset.enable(pi, _sessionManager!);
 			} else {
-				searchToolset.disable(pi);
+				searchToolset.disable(pi, _sessionManager!);
+			}
+		} catch (err) {
+			if ((err as { name?: string } | undefined)?.name !== "AllowlistModeError") {
+				throw err;
 			}
 		}
-	});
+	};
 
 	// ── Keep cached state in sync with library events ────────
 	const syncSearchState = (data: unknown) => {
@@ -211,12 +246,21 @@ export default function (pi: ExtensionAPI) {
 			if (_lastCtx) renderSearchGlyph(_lastCtx);
 		}
 	};
-	pi.events.on(TOOLSET_EVENTS.changed, syncSearchState);
-	pi.events.on(TOOLSET_EVENTS.restored, syncSearchState);
+	_offSync = [
+		pi.events.on(TOOLSET_EVENTS.changed, syncSearchState),
+		pi.events.on(TOOLSET_EVENTS.restored, syncSearchState),
+	];
 
 	// ── Session start: health probe + glyph ──────────────────
 	pi.on("session_start", async (event, ctx) => {
+		_sessionManager = ctx.sessionManager;
 		_lastCtx = ctx;
+
+		// Register the co-activation mirror once, after the reader is stored
+		// (dedup across re-fires of session_start for the same instance).
+		if (!_offMirror) {
+			_offMirror = pi.events.on(TOOLSET_EVENTS.changed, mirrorWebChanged);
+		}
 
 		// Re-read config in case it changed between sessions
 		_searxngUrl = readSearxngUrl();
@@ -271,7 +315,12 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Session shutdown: clean up ───────────────────────────
 	pi.on("session_shutdown", async (_event, ctx) => {
+		_offMirror?.();
+		_offMirror = null;
+		for (const off of _offSync) off();
+		_offSync = [];
 		_lastCtx = null;
+		_sessionManager = null;
 		try {
 			ctx?.ui?.setStatus?.("search", "");
 		} catch {

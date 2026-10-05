@@ -34,13 +34,11 @@ vi.mock("../core/delete-command.js", () => ({
 // Clean globalThis registry between test files
 const REGISTRY_KEY = "__piToolMaskingRegistry";
 const RESTORE_EVENT_KEY = "__piToolMaskingLastRestoreEvent";
-const MODULE_STATE_KEY = "__piToolMaskingModuleState";
 
 beforeEach(() => {
 	_resetToggleStateForTest();
 	delete (globalThis as any)[REGISTRY_KEY];
 	delete (globalThis as any)[RESTORE_EVENT_KEY];
-	delete (globalThis as any)[MODULE_STATE_KEY];
 });
 
 // ─── Fixtures ────────────────────────────────────────────────────
@@ -58,13 +56,24 @@ const ALL_TOOLS = [
 
 const API_TOOL_NAMES = new Set(["api-guide", "api-fetch"]);
 
-// Seed the masking library's module state directly: the focus guard reads
-// getDefaultResolutionMode() from this same global, so tests can hold focus
-// without the deprecated setDefaultResolutionMode entry write.
-function focusAllowlistForTest(ids: string[]): void {
-	(globalThis as any)[MODULE_STATE_KEY] = {
-		defaultResolutionMode: "allowlist",
-		activeAllowlist: [...ids],
+// Under 2.0.0 the branch's mode entry is the authority — an allowlist
+// governance entry makes every toggle throw AllowlistModeError, which the
+// command handler catches and renders as the friendly refusal.
+function focusAllowlistCtx(ids: string[]): any {
+	const ctx = mockCtx();
+	const baseBranch = ctx.sessionManager.getBranch();
+	return {
+		...ctx,
+		sessionManager: {
+			getBranch: () => [
+				...baseBranch,
+				{
+					type: "custom",
+					customType: "toolset-resolution-mode",
+					data: { mode: "allowlist", allowlist: [...ids] },
+				},
+			],
+		},
 	};
 }
 
@@ -313,95 +322,55 @@ describe("session_start integration", () => {
 });
 
 // ==================================================================
-//  Focus-mode guard — /api on/off/learn refuse while focus holds
+//  /api verify / delete dispatch — routing, never toolset actuation
 // ==================================================================
 describe("/api verify dispatch", () => {
-	it("recognizes verify and routes to handleVerifySubcommand", async () => {
+	it("verify routes to handleVerifySubcommand regardless of tool masking (no toolset actuation)", async () => {
+		// Verify is a command that calls the executor/auth/transport directly,
+		// so masking api-fetch/api-guide is irrelevant — routing never actuates.
 		const { pi } = mockPi([]);
 		initApiToggle(pi);
 		const ctx = mockCtx();
 		await captureApiHandler(pi)("verify verify.test", ctx);
+
 		const { handleVerifySubcommand } = await import("../core/verify-command.js");
 		expect(handleVerifySubcommand).toHaveBeenCalledWith("verify.test", ctx);
-	});
-
-	it("verify is not refused by the focus-mode guard (writes no toolset state)", async () => {
-		const { pi } = mockPi([]);
-		initApiToggle(pi);
-		const ctx = mockCtx();
-		await captureApiHandler(pi)("verify verify.test", ctx);
-
-		expect(ctx.ui.notify).not.toHaveBeenCalledWith(
-			expect.stringContaining("Focus mode (allowlist) is active"),
-			"warning",
-		);
-		expect(pi.setActiveTools).not.toHaveBeenCalled();
-	});
-
-	it("verify routes regardless of tool masking (no toolset actuation)", async () => {
-		// No tools active — verify is a command that calls the executor/
-		// auth/transport directly, so masking api-fetch/api-guide is irrelevant.
-		const { pi } = mockPi([]);
-		initApiToggle(pi);
-		const ctx = mockCtx();
-		await captureApiHandler(pi)("verify verify.test", ctx);
-
-		const { handleVerifySubcommand } = await import("../core/verify-command.js");
-		expect(handleVerifySubcommand).toHaveBeenCalled();
 		expect(pi.setActiveTools).not.toHaveBeenCalled();
 	});
 });
 
 describe("/api delete dispatch", () => {
-	it("recognizes delete and routes to handleDeleteSubcommand", async () => {
+	it("delete routes to handleDeleteSubcommand regardless of tool masking (no toolset actuation)", async () => {
 		const { pi } = mockPi([]);
 		initApiToggle(pi);
 		const ctx = mockCtx();
 		await captureApiHandler(pi)("delete delete.test", ctx);
+
 		const { handleDeleteSubcommand } = await import("../core/delete-command.js");
 		expect(handleDeleteSubcommand).toHaveBeenCalledWith("delete.test", ctx);
-	});
-
-	it("delete is not refused by the focus-mode guard (writes no toolset state)", async () => {
-		const { pi } = mockPi([]);
-		initApiToggle(pi);
-		const ctx = mockCtx();
-		await captureApiHandler(pi)("delete delete.test", ctx);
-
-		expect(ctx.ui.notify).not.toHaveBeenCalledWith(
-			expect.stringContaining("Focus mode (allowlist) is active"),
-			"warning",
-		);
-		expect(pi.setActiveTools).not.toHaveBeenCalled();
-	});
-
-	it("delete routes regardless of tool masking (no toolset actuation)", async () => {
-		const { pi } = mockPi([]);
-		initApiToggle(pi);
-		const ctx = mockCtx();
-		await captureApiHandler(pi)("delete delete.test", ctx);
-
-		const { handleDeleteSubcommand } = await import("../core/delete-command.js");
-		expect(handleDeleteSubcommand).toHaveBeenCalled();
 		expect(pi.setActiveTools).not.toHaveBeenCalled();
 	});
 });
 
+// ==================================================================
+//  Focus-mode guard — /api on/off/learn refuse while focus holds
+// ==================================================================
 describe("/api focus-mode guard", () => {
 	it("refuses /api on/off/learn while allowlist focus is active", async () => {
 		const { pi } = mockPi([]);
 		initApiToggle(pi);
-		focusAllowlistForTest(["pi-lean-dimension.api"]);
 
 		for (const sub of ["on", "off", "learn"]) {
 			(pi.setActiveTools as any).mockClear();
-			const ctx = mockCtx();
+			const ctx = focusAllowlistCtx(["pi-lean-dimension.api"]);
 			await captureApiHandler(pi)(sub, ctx);
 
 			expect(ctx.ui.notify).toHaveBeenCalledWith(
 				expect.stringContaining("Focus mode (allowlist) is active"),
 				"warning",
 			);
+			// Refusal must not be followed by the subcommand's success notify.
+			expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
 			expect(pi.setActiveTools).not.toHaveBeenCalled();
 		}
 	});
@@ -409,10 +378,11 @@ describe("/api focus-mode guard", () => {
 	it("read-only subcommands unaffected by allowlist focus", async () => {
 		const { pi } = mockPi([]);
 		initApiToggle(pi);
-		focusAllowlistForTest(["pi-lean-dimension.api"]);
 
-		for (const sub of ["status", "helpers", ""]) {
-			const ctx = mockCtx();
+		// verify/delete never actuate a toolset, so they stay unguarded —
+		// pinned here since their dedicated focus tests are gone.
+		for (const sub of ["status", "helpers", "verify verify.test", "delete delete.test", ""]) {
+			const ctx = focusAllowlistCtx(["pi-lean-dimension.api"]);
 			await captureApiHandler(pi)(sub, ctx);
 
 			expect(ctx.ui.notify).not.toHaveBeenCalledWith(

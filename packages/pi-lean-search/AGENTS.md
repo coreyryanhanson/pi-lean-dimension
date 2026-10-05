@@ -67,4 +67,7 @@ installs are valid — the tool works standalone, it just doesn't get a `/web`
 toggle. Co-activation is search-owned: search listens on `pi-tool-masking`'s
 `TOOLSET_EVENTS.changed` and mirrors `pi-lean-dimension.web`, so `/web on|off`
 enables/disables search's own toolset when both are installed (portal has no
-reference to `web-search`).
+reference to `web-search`). The mirror is registered inside `session_start` —
+after the live `sessionManager` is stored as the toggle's branch reader — and
+torn down in `session_shutdown`; `web` `changed` events emitted before that
+registration are ignored (no reader to toggle with).

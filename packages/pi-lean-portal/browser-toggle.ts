@@ -3,17 +3,26 @@ import type {
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { updateFooterStatus, getLastCtx, setLastCtx } from "./tools/utils.js";
-import {
-	defineToolset,
-	TOOLSET_EVENTS,
-	getDefaultResolutionMode,
-} from "pi-tool-masking";
+import { defineToolset, TOOLSET_EVENTS } from "pi-tool-masking";
 import type { ToolsetSpec } from "pi-tool-masking";
 
-// Focus-mode guard: refuse actuating subcommands while allowlist focus is
-// holding the line (an upstream pi-tool-masking consumer).
-function isFocusHolding(): boolean {
-	return getDefaultResolutionMode() === "allowlist";
+// Catch AllowlistModeError by name, never `instanceof` — the handle may come
+// from a different library copy via the shared registry. Returns true when
+// the toggle ran, false when it was refused (nothing changed).
+function refuseOnAllowlist(ctx: ExtensionContext, toggle: () => unknown): boolean {
+	try {
+		toggle();
+		return true;
+	} catch (err) {
+		if ((err as { name?: string } | undefined)?.name === "AllowlistModeError") {
+			ctx.ui.notify(
+				"Focus mode (allowlist) is active — this toolset can't be toggled while focus is holding the line. Exit focus there first.",
+				"warning",
+			);
+			return false;
+		}
+		throw err;
+	}
 }
 
 // ---- Toolset specs -----------------------------------------------
@@ -138,36 +147,38 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 		handler: async (args, ctx) => {
 			const cmd = args.trim().toLowerCase();
 
-			// Focus-mode guard: refuse actuating subcommands while allowlist
-			// focus holds the line (an upstream pi-tool-masking consumer) —
-			// a sibling toggle must not write a focus-indistinguishable
-			// {enabled} entry.
-			// Read-only subcommands (status/profile/cookies/bare /web) stay
-			// unguarded, matching the focus controller's treatment of its own
-			// read-only commands.
-			if (["on", "off", "learn"].includes(cmd) && isFocusHolding()) {
-				ctx.ui.notify(
-					"Focus mode (allowlist) is active — this toolset can't be toggled while focus is holding the line. Exit focus there first.",
-					"warning",
-				);
-				return;
-			}
-
 			if (cmd === "on") {
-				webToolset.enable(pi);
-				learnToolset.disable(pi);
+				if (
+					!refuseOnAllowlist(ctx, () => {
+						webToolset.enable(pi, ctx.sessionManager);
+						learnToolset.disable(pi, ctx.sessionManager);
+					})
+				)
+					return;
 				ctx.ui.notify(
 					"🌐 Browser tools enabled. /web learn to make web-learn available.",
 					"info",
 				);
 			} else if (cmd === "learn") {
-				learnToolset.enable(pi); // cascades web on via requires
+				if (
+					!refuseOnAllowlist(
+						ctx,
+						() => learnToolset.enable(pi, ctx.sessionManager), // cascades web on via requires
+					)
+				)
+					return;
 				ctx.ui.notify(
 					"📖 web-learn tool is now available. Agent will save/update guides when asked.",
 					"info",
 				);
 			} else if (cmd === "off") {
-				webToolset.disable(pi); // cascades learn off via requires
+				if (
+					!refuseOnAllowlist(
+						ctx,
+						() => webToolset.disable(pi, ctx.sessionManager), // cascades learn off via requires
+					)
+				)
+					return;
 				ctx.ui.notify("🌐 Browser tools disabled. /web on to re-enable.", "info");
 			} else if (cmd === "profile" || cmd.startsWith("profile ")) {
 				const sub = cmd.slice("profile".length).trim();

@@ -22,11 +22,7 @@ import type {
 	ExtensionContext,
 	ThemeColor,
 } from "@earendil-works/pi-coding-agent";
-import {
-	defineToolset,
-	TOOLSET_EVENTS,
-	getDefaultResolutionMode,
-} from "pi-tool-masking";
+import { defineToolset, TOOLSET_EVENTS } from "pi-tool-masking";
 import type { ToolsetSpec } from "pi-tool-masking";
 import { handleHelpersSubcommand } from "./helpers-command.js";
 import { handleSecretsSubcommand } from "./secrets-command.js";
@@ -38,11 +34,24 @@ import { getAllHelpers, getDisabledHelperDomains } from "./local-helpers.js";
 import { resolveProvisionedParentDomain } from "./auth.js";
 import { listNames } from "./secrets-store.js";
 
-// Focus-mode guard: refuse actuating subcommands while allowlist focus holds
-// (an upstream pi-tool-masking consumer). A sibling toggle must not write a
-// focus-indistinguishable {enabled} entry.
-function isFocusHolding(): boolean {
-	return getDefaultResolutionMode() === "allowlist";
+// Catch AllowlistModeError by name, never `instanceof` — the handle may come
+// from a different library copy via the shared registry. Returns true when
+// the toggle ran, false when it was refused (nothing changed).
+function refuseOnAllowlist(
+	ctx: ExtensionCommandContext,
+	toggle: () => unknown,
+	message = "Focus mode (allowlist) is active — this toolset can't be toggled while focus is holding the line. Exit focus there first.",
+): boolean {
+	try {
+		toggle();
+		return true;
+	} catch (err) {
+		if ((err as { name?: string } | undefined)?.name === "AllowlistModeError") {
+			ctx.ui.notify(message, "warning");
+			return false;
+		}
+		throw err;
+	}
 }
 
 // ---- Toolset specs -----------------------------------------------
@@ -316,7 +325,7 @@ user.`;
  */
 async function handleBootstrapSubcommand(
 	args: string,
-	hooks: { learnEnabled: () => boolean; enableLearn: () => void },
+	hooks: { learnEnabled: () => boolean; enableLearn: () => boolean },
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
 ): Promise<void> {
@@ -361,16 +370,10 @@ async function handleBootstrapSubcommand(
 	}
 
 	// F5: auto-enable learn when off (same as the user running /api learn);
-	// loud fail if the focus-mode guard blocks the enable. Learn stays off.
+	// a refused enable (allowlist focus) leaves learn off and returns after
+	// the hook's own refusal notify.
 	if (!hooks.learnEnabled()) {
-		if (isFocusHolding()) {
-			ctx.ui.notify(
-				"Focus mode (allowlist) is active — bootstrap needs to enable learn mode, which can't be toggled while focus is holding the line. Exit focus there first.",
-				"warning",
-			);
-			return;
-		}
-		hooks.enableLearn();
+		if (!hooks.enableLearn()) return;
 		// A mode flip the user didn't ask for must not be silent (inject-and-exit
 		// otherwise produces no output).
 		ctx.ui.notify(
@@ -421,22 +424,19 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 			const sub = parts[0]?.toLowerCase() ?? "";
 			const rest = parts.slice(1).join(" ");
 
-			// Focus-mode guard: refuse actuating subcommands while allowlist
-			// focus holds (an upstream pi-tool-masking consumer) — a sibling
-			// toggle must not write a focus-indistinguishable {enabled} entry.
-			// Read-only subcommands (status/helpers/bare /api) stay unguarded.
-			if (["on", "off", "learn"].includes(sub) && isFocusHolding()) {
-				ctx.ui.notify(
-					"Focus mode (allowlist) is active — this toolset can't be toggled while focus is holding the line. Exit focus there first.",
-					"warning",
-				);
-				return;
-			}
-
+			// Focus-mode handling: allowlist refusals are caught by
+			// refuseOnAllowlist — a caught AllowlistModeError means "refused,
+			// nothing changed". Non-actuating subcommands (status/helpers/bare
+			// /api) never toggle, so they need no guard.
 			switch (sub) {
 				case "on": {
-					apiToolset.enable(pi);
-					learnToolset.disable(pi);
+					if (
+						!refuseOnAllowlist(ctx, () => {
+							apiToolset.enable(pi, ctx.sessionManager);
+							learnToolset.disable(pi, ctx.sessionManager);
+						})
+					)
+						return;
 					ctx.ui.notify(
 						`📡 API tools enabled. /api learn to make ${learnToolNames()} available.`,
 						"info",
@@ -445,13 +445,24 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 				}
 
 				case "off": {
-					apiToolset.disable(pi); // cascades learn off via requires
+					if (
+						!refuseOnAllowlist(ctx, () =>
+							apiToolset.disable(pi, ctx.sessionManager), // cascades learn off via requires
+						)
+					)
+						return;
 					ctx.ui.notify("📡 API tools disabled. /api on to re-enable.", "info");
 					return;
 				}
 
 				case "learn": {
-					learnToolset.enable(pi); // cascades api on via requires
+					if (
+						!refuseOnAllowlist(
+							ctx,
+							() => learnToolset.enable(pi, ctx.sessionManager), // cascades api on via requires
+						)
+					)
+						return;
 					ctx.ui.notify(
 						`📖 ${learnToolNames()} tools are now available. ` +
 							"Agent will discover shapes and save/update guides when asked.",
@@ -512,7 +523,12 @@ export default function initApiToggle(pi: ExtensionAPI): void {
 						rest,
 						{
 							learnEnabled: () => learnToolset.isEnabled(pi),
-							enableLearn: () => learnToolset.enable(pi), // cascades api on via requires
+							enableLearn: () =>
+								refuseOnAllowlist(
+									ctx,
+									() => learnToolset.enable(pi, ctx.sessionManager), // cascades api on via requires
+									"Focus mode (allowlist) is active — bootstrap needs to enable learn mode, which can't be toggled while focus is holding the line. Exit focus there first.",
+								),
 						},
 						pi,
 						ctx,

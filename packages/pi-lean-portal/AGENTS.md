@@ -278,6 +278,14 @@ The monorepo root owns the test split principle and the summary counts table; th
 - **`dialogDetected` is resolved from element cache**: computed from the parsed `ElementCache` via `Array.some()` matching `role="dialog"` or `role="alertdialog"`. Not affected by snapshot truncation (unlike the old string-scan approach).
 - **Guide staleness**: no builtin site guides shipped — entirely user-authored via `~/.pi/agent/pi-lean-portal/web-guides/*.md`. User `.md` files override builtins by name collision (the file name minus `.md` becomes the guide key; a user `bot-detection.md` shadows the builtin `bot-detection` pattern). Guides carry `updated` date and `currentDate` timestamp in output.
 - **Learn mode toggle**: `/web learn` enables `web-learn` tool; `/web on` removes it. Agent never calls `web-learn` unprompted. Default is off on fresh sessions.
+- **Focus-mode guard**: `/web on`/`off`/`learn` are refused while
+  `pi-tool-masking` holds allowlist focus — the library throws
+  `AllowlistModeError` before any write, and `refuseOnAllowlist` in
+  `browser-toggle.ts` catches it **by `err.name`, never `instanceof`**
+  (the shared registry may hand the toggle a different library copy),
+  rendering a single warning per command. Non-actuating subcommands (no
+  toolset state: `status`, `profile`, `cookies`, `install`, bare `/web`)
+  stay unguarded.
 - **Navigation settle** (`core/shared/nav-settle.ts`): after click or press, detects page navigation via a `framenavigated` listener and waits for `load + networkidle` (capped, errors swallowed) before reading URL/title/snapshot. Replaces the old fixed `waitForTimeout(300)` pattern that caused URL/DOM mismatches. Framework-agnostic via a lightweight `NavigationSettlePage` interface for testability.
 - **Stealth backends are user-managed, not shipped** — they live under `~/.pi/agent/pi-lean-portal/user-backends/`, are never in the npm tarball, and the extension never auto-downloads them. The user-side install burden is real: a per-engine venv, a ~100 MB patched-binary fetch, and an explicit `settings.json` entry with an **absolute** `pythonPath`. See `contributed/README.md` for the install flow.
 - **Fingerprint-managed context** — a stealth backend sets `_fingerprint_managed_context = True` so `create_browser_context()` skips the hardcoded `viewport`/`user_agent` and lets the fingerprint package set them. Camoufox injects the fingerprint at **browser launch** via `camoufox.NewBrowser`, so standard `browser.new_context()` is correct (a `_context_factory` / `NewContext` path was attempted and dropped — `camoufox.NewContext` is broken on the current binary).

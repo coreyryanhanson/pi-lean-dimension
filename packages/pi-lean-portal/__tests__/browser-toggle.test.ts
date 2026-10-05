@@ -24,13 +24,11 @@ import browserToggle, {
 // Clean globalThis registry between test files
 const REGISTRY_KEY = "__piToolMaskingRegistry";
 const RESTORE_EVENT_KEY = "__piToolMaskingLastRestoreEvent";
-const MODULE_STATE_KEY = "__piToolMaskingModuleState";
 
 beforeEach(() => {
 	resetToggleModuleState();
 	delete (globalThis as any)[REGISTRY_KEY];
 	delete (globalThis as any)[RESTORE_EVENT_KEY];
-	delete (globalThis as any)[MODULE_STATE_KEY];
 });
 
 // ─── Fixtures ────────────────────────────────────────────────────
@@ -175,24 +173,16 @@ describe("/web command dispatch", () => {
 		expect(finalActive).toContain("web-learn");
 	});
 
-	it("handles unknown arg — shows status, no state change", async () => {
+	it("handles unknown or empty args — shows status, no state change", async () => {
 		const { pi } = mockPi([]);
 		browserToggle(pi);
 
-		(pi.setActiveTools as any).mockClear();
-		await captureWebHandler(pi)("xyz", mockCtx());
+		for (const args of ["xyz", ""]) {
+			(pi.setActiveTools as any).mockClear();
+			await captureWebHandler(pi)(args, mockCtx());
 
-		expect(pi.setActiveTools).not.toHaveBeenCalled();
-	});
-
-	it("handles empty args — shows status, no state change", async () => {
-		const { pi } = mockPi([]);
-		browserToggle(pi);
-
-		(pi.setActiveTools as any).mockClear();
-		await captureWebHandler(pi)("", mockCtx());
-
-		expect(pi.setActiveTools).not.toHaveBeenCalled();
+			expect(pi.setActiveTools).not.toHaveBeenCalled();
+		}
 	});
 });
 
@@ -313,29 +303,41 @@ describe("getConversationDefaultProfile", () => {
 //  Focus-mode guard — /web on/off/learn refuse during allowlist focus
 // ==================================================================
 describe("/web focus-mode guard", () => {
-	// The published library type doesn't name "allowlist", so we set the
-	// shared module state directly — mirroring what an allowlist-capable
-	// consumer's restore writes into globalThis.
-	function focusAllowlistForTest(): void {
-		(globalThis as any)[MODULE_STATE_KEY] = {
-			defaultResolutionMode: "allowlist",
+	// Under 2.0.0 the branch's mode entry is the authority — an allowlist
+	// governance entry makes every toggle throw AllowlistModeError, which the
+	// command handler catches and renders as the friendly refusal.
+	function focusAllowlistForTest(ctx: any): any {
+		const baseBranch = ctx.sessionManager.getBranch();
+		return {
+			...ctx,
+			sessionManager: {
+				getBranch: () => [
+					...baseBranch,
+					{
+						type: "custom",
+						customType: "toolset-resolution-mode",
+						data: { mode: "allowlist", allowlist: [] },
+					},
+				],
+			},
 		};
 	}
 
 	it("refuses /web on/off/learn while allowlist focus is active", async () => {
 		const { pi } = mockPi([]);
 		browserToggle(pi);
-		focusAllowlistForTest();
 
 		for (const sub of ["on", "off", "learn"]) {
 			(pi.setActiveTools as any).mockClear();
-			const ctx = mockCtx();
+			const ctx = focusAllowlistForTest(mockCtx());
 			await captureWebHandler(pi)(sub, ctx);
 
 			expect(ctx.ui.notify).toHaveBeenCalledWith(
 				expect.stringContaining("Focus mode (allowlist) is active"),
 				"warning",
 			);
+			// Refusal must not be followed by the subcommand's success notify.
+			expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
 			expect(pi.setActiveTools).not.toHaveBeenCalled();
 		}
 	});
@@ -343,10 +345,9 @@ describe("/web focus-mode guard", () => {
 	it("read-only subcommands unaffected by allowlist focus", async () => {
 		const { pi } = mockPi([]);
 		browserToggle(pi);
-		focusAllowlistForTest();
 
 		for (const sub of ["status", "profile", "cookies", "install", ""]) {
-			const ctx = mockCtx();
+			const ctx = focusAllowlistForTest(mockCtx());
 			await captureWebHandler(pi)(sub, ctx);
 
 			expect(ctx.ui.notify).not.toHaveBeenCalledWith(

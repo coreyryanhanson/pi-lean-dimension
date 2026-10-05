@@ -29,15 +29,25 @@ import { captureApiHandler } from "./test-utils.js";
 // Clean globalThis registry between test files (same as api-toggle.test.ts).
 const REGISTRY_KEY = "__piToolMaskingRegistry";
 const RESTORE_EVENT_KEY = "__piToolMaskingLastRestoreEvent";
-const MODULE_STATE_KEY = "__piToolMaskingModuleState";
 
-// Seed the masking library's module state directly: the focus guard reads
-// getDefaultResolutionMode() from this same global, so tests can hold focus
-// without the deprecated setDefaultResolutionMode entry write.
-function focusAllowlistForTest(ids: string[]): void {
-	(globalThis as any)[MODULE_STATE_KEY] = {
-		defaultResolutionMode: "allowlist",
-		activeAllowlist: [...ids],
+// Under 2.0.0 the branch's mode entry is the authority — an allowlist
+// governance entry makes every toggle throw AllowlistModeError, which the
+// bootstrap hook's catch renders as the friendly refusal.
+function focusAllowlistCtx(ids: string[]): any {
+	const ctx = mockCtx();
+	const baseBranch = ctx.sessionManager.getBranch();
+	return {
+		...ctx,
+		sessionManager: {
+			getBranch: () => [
+				...baseBranch,
+				{
+					type: "custom",
+					customType: "toolset-resolution-mode",
+					data: { mode: "allowlist", allowlist: [...ids] },
+				},
+			],
+		},
 	};
 }
 
@@ -48,7 +58,6 @@ beforeEach(() => {
 	_resetToggleStateForTest();
 	delete (globalThis as any)[REGISTRY_KEY];
 	delete (globalThis as any)[RESTORE_EVENT_KEY];
-	delete (globalThis as any)[MODULE_STATE_KEY];
 	// Point the secrets store at a temp dir so the provisioned-secrets brief
 	// injection never reads the developer's real store.
 	savedSecretsDir = getSecretsDir();
@@ -247,20 +256,20 @@ describe("bootstrap — inject-and-exit", () => {
 
 	it("focus-mode holding + learn off → loud fail, no injection, no toolset write", async () => {
 		const { pi, sendUserMessage, setActiveTools } = mockPi([]);
-		focusAllowlistForTest(["pi-lean-dimension.api"]);
 		initApiToggle(pi);
-		const ctx = mockCtx();
+		const ctx = focusAllowlistCtx(["pi-lean-dimension.api"]);
 		await captureApiHandler(pi)("bootstrap oauth osm.invalid https://docs", ctx);
 		expect(out.call(null, ctx)).toContain("Focus mode (allowlist)");
+		// Refusal must not be followed by the flip notify.
+		expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
 		expect(sendUserMessage).not.toHaveBeenCalled();
 		expect(setActiveTools).not.toHaveBeenCalled();
 	});
 
 	it("focus-mode holding + learn already on → proceeds (flip is the only guarded actuation)", async () => {
 		const { pi, sendUserMessage, setActiveTools } = mockPi(); // learn on
-		focusAllowlistForTest(["pi-lean-dimension.api"]);
 		initApiToggle(pi);
-		const ctx = mockCtx();
+		const ctx = focusAllowlistCtx(["pi-lean-dimension.api"]);
 		await captureApiHandler(pi)("bootstrap oauth osm.invalid https://docs", ctx);
 		expect(sendUserMessage).toHaveBeenCalledTimes(1);
 		expect(setActiveTools).not.toHaveBeenCalled();
