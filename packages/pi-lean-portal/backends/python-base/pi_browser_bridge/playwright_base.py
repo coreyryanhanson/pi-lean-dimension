@@ -1260,7 +1260,7 @@ class PlaywrightBridge:
 
         try:
             locator.click(timeout=5_000)  # Focus first
-            locator.fill(text)
+            locator.fill(text, timeout=5_000)
 
             result = self._build_interaction_result(task_id, page)
         except Exception as exc:
