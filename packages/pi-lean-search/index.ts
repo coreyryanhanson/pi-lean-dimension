@@ -63,6 +63,12 @@ let _sessionManager: BranchReader | null = null;
  *  torn down in session_shutdown so re-fires don't stack listeners). */
 let _offMirror: (() => void) | null = null;
 
+/** Unsubscribers for the factory-time glyph-sync listeners — pi re-invokes
+ *  the cached extension factory per load pass, so these are re-registered
+ *  each time and torn down in the reset block / session_shutdown to avoid
+ *  stacking duplicate listeners on the shared event bus. */
+let _offSync: (() => void)[] = [];
+
 // ─── Health probes ───────────────────────────────────────────────
 
 /**
@@ -199,6 +205,8 @@ export default function (pi: ExtensionAPI) {
 	_offMirror?.();
 	_offMirror = null;
 	_sessionManager = null;
+	for (const off of _offSync) off();
+	_offSync = [];
 
 	// ── Register the web-search tool ─────────────────────────
 	pi.registerTool(webSearchTool);
@@ -238,8 +246,10 @@ export default function (pi: ExtensionAPI) {
 			if (_lastCtx) renderSearchGlyph(_lastCtx);
 		}
 	};
-	pi.events.on(TOOLSET_EVENTS.changed, syncSearchState);
-	pi.events.on(TOOLSET_EVENTS.restored, syncSearchState);
+	_offSync = [
+		pi.events.on(TOOLSET_EVENTS.changed, syncSearchState),
+		pi.events.on(TOOLSET_EVENTS.restored, syncSearchState),
+	];
 
 	// ── Session start: health probe + glyph ──────────────────
 	pi.on("session_start", async (event, ctx) => {
@@ -307,6 +317,8 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async (_event, ctx) => {
 		_offMirror?.();
 		_offMirror = null;
+		for (const off of _offSync) off();
+		_offSync = [];
 		_lastCtx = null;
 		_sessionManager = null;
 		try {
