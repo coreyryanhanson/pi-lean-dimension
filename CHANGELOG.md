@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/web` now co-activates search unconditionally** — `/web on` enables
+  browsing + search and disables learn mode; `/web learn` enables learn mode
+  + search (browsing follows); `/web off` disables browsing + search (learn
+  follows). Previously co-activation rode search's mirror of web's
+  state-change events, so it only fired when web's own state drifted —
+  `/web on` with web already on left a separately-disabled search off — and
+  web's events clobbered search selections made by other surfaces
+  (disabling web alone un-enabled search, durably across `/reload`; focus
+  release or defaults-restore dragged search to web's default instead of
+  its own pin).
+
+  Contract reversal (supersedes the 0.7.0 note): `/web on|learn` now
+  re-enables search even if another surface disabled it. Non-`/web` toggle
+  paths co-activate nothing, matching boot restore: search ends up off
+  unless explicitly selected. Search remains independently togglable and
+  its glyph reflects its own state. Portal-only installs are unaffected.
+
 ## [0.7.0] - 2026-10-05
 
 ### Changed

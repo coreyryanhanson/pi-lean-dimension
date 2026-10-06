@@ -9,10 +9,17 @@
  *   - cached state (getToggleState / getLearnState) reflects library state
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+	describe,
+	it,
+	expect,
+	vi,
+	beforeEach,
+	afterEach,
+} from "vitest";
 import { EventEmitter } from "node:events";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { TOOLSET_EVENTS } from "pi-tool-masking";
+import { TOOLSET_EVENTS, defineToolset } from "pi-tool-masking";
 import { mockCtx, captureWebHandler } from "./helpers/mock-pi.js";
 import browserToggle, {
 	getToggleState,
@@ -72,14 +79,17 @@ interface MockPi {
 	entryCalls: Array<{ customType: string; data: unknown }>;
 }
 
-function mockPi(initialTools?: string[]): MockPi {
+function mockPi(
+	initialTools?: string[],
+	extraTools: { name: string; description?: string }[] = [],
+): MockPi {
 	let active = initialTools ?? ALL_TOOLS.map((t) => t.name);
 	const eventEmitter = new EventEmitter();
 	const handlers = new Map<string, Array<(...args: any[]) => void>>();
 	const entryCalls: Array<{ customType: string; data: unknown }> = [];
 
 	const pi = {
-		getAllTools: vi.fn(() => ALL_TOOLS as any),
+		getAllTools: vi.fn(() => [...ALL_TOOLS, ...extraTools] as any),
 		getActiveTools: vi.fn(() => [...active]),
 		setActiveTools: vi.fn((names: string[]) => {
 			active = [...names];
@@ -128,51 +138,22 @@ describe("initBrowserToggle", () => {
 		expect(handlers.has("session_start")).toBe(true);
 		expect(handlers.has("session_tree")).toBe(true);
 	});
+
+	// pi re-invokes the factory per load pass; a second invocation must
+	// drain the previous glyph-sync listeners instead of stacking them.
+	it("does not stack glyph-sync listeners across factory re-invocations", () => {
+		const { pi, events } = mockPi();
+		browserToggle(pi);
+		browserToggle(pi);
+		expect(events.listenerCount(TOOLSET_EVENTS.changed)).toBe(1);
+		expect(events.listenerCount(TOOLSET_EVENTS.restored)).toBe(1);
+	});
 });
 
 // ==================================================================
 //  /web command dispatch
 // ==================================================================
 describe("/web command dispatch", () => {
-	it("on — enables web tools, disables learn tools", async () => {
-		const { pi } = mockPi([]);
-		browserToggle(pi);
-
-		await captureWebHandler(pi)("on", mockCtx());
-
-		const finalActive = pi.getActiveTools();
-		for (const name of BROWSER_TOOL_NAMES) {
-			expect(finalActive).toContain(name);
-		}
-		expect(finalActive).not.toContain("web-learn");
-	});
-
-	it("off — disables web tools (learn cascades off via requires)", async () => {
-		const { pi } = mockPi();
-		browserToggle(pi);
-
-		await captureWebHandler(pi)("off", mockCtx());
-
-		const finalActive = pi.getActiveTools();
-		for (const name of BROWSER_TOOL_NAMES) {
-			expect(finalActive).not.toContain(name);
-		}
-		expect(finalActive).not.toContain("web-learn");
-	});
-
-	it("learn — enables both web and learn tools", async () => {
-		const { pi } = mockPi([]);
-		browserToggle(pi);
-
-		await captureWebHandler(pi)("learn", mockCtx());
-
-		const finalActive = pi.getActiveTools();
-		for (const name of BROWSER_TOOL_NAMES) {
-			expect(finalActive).toContain(name);
-		}
-		expect(finalActive).toContain("web-learn");
-	});
-
 	it("handles unknown or empty args — shows status, no state change", async () => {
 		const { pi } = mockPi([]);
 		browserToggle(pi);
@@ -182,6 +163,183 @@ describe("/web command dispatch", () => {
 			await captureWebHandler(pi)(args, mockCtx());
 
 			expect(pi.setActiveTools).not.toHaveBeenCalled();
+		}
+	});
+});
+
+// ==================================================================
+//  /web co-activation batches (search installed)
+// ==================================================================
+describe("/web co-activation batches", () => {
+	// Hermetic settings tier: masking merges toolsetDefaults from the real
+	// ~/.pi/agent/settings.json, which varies per machine and would skew the
+	// delta gate's `before` basis (e.g. a local pin on web off would make a
+	// drift-free /web on emit a web delta). Point the agent dir at a missing
+	// path — masking's never-throw read contributes {} — so seeded branch
+	// entries and packaged spec defaults are the only inputs.
+	beforeEach(() => {
+		process.env.PI_CODING_AGENT_DIR = "/nonexistent-test-agent-dir";
+	});
+	afterEach(() => {
+		delete process.env.PI_CODING_AGENT_DIR;
+	});
+
+	// The harness deletes the shared toolset registry key in beforeEach, so
+	// the stub must be registered per test, not once. masking's loadout adds
+	// filter through getAllTools, so the mock also needs web-search (passed
+	// via extraTools — appending it to ALL_TOOLS would break BROWSER_TOOL_NAMES
+	// and the portal-only /web off expectations).
+	const SEARCH_STUB_SPEC = {
+		id: "pi-lean-dimension.search",
+		names: new Set(["web-search"]),
+		persistKey: "toolset-state:pi-lean-dimension.search",
+		defaultEnabled: true,
+	};
+
+	const searchOffEntry = {
+		type: "custom",
+		customType: "toolset-state:pi-lean-dimension.search",
+		data: { enabled: false },
+	};
+	const webOffEntry = {
+		type: "custom",
+		customType: "toolset-state:pi-lean-dimension.web",
+		data: { enabled: false },
+	};
+
+	function searchInstalledCtx(branch: unknown[] = []) {
+		return mockCtx({ sessionManager: { getBranch: () => branch } });
+	}
+
+	function captureChanged(
+		events: ReturnType<typeof mockPi>["events"],
+	): Array<{ id: string; enabled: boolean }> {
+		const seen: Array<{ id: string; enabled: boolean }> = [];
+		events.on(TOOLSET_EVENTS.changed, (d: any) =>
+			seen.push({ id: d.id, enabled: d.enabled }),
+		);
+		return seen;
+	}
+
+	it("on — one batch turns web and search on, learn off", async () => {
+		const { pi, events } = mockPi([], [
+			{ name: "web-search", description: "search" },
+		]);
+		browserToggle(pi);
+		defineToolset(pi, SEARCH_STUB_SPEC);
+		const seen = captureChanged(events);
+
+		await captureWebHandler(pi)(
+			"on",
+			searchInstalledCtx([webOffEntry, searchOffEntry]),
+		);
+
+		// setActiveTools reflects the union.
+		expect(pi.getActiveTools()).toEqual(
+			expect.arrayContaining([...BROWSER_TOOL_NAMES, "web-search"]),
+		);
+		expect(pi.getActiveTools()).not.toContain("web-learn");
+		// One emit pass: exactly the deltas (learn was already off).
+		expect(seen).toEqual([
+			{ id: "pi-lean-dimension.web", enabled: true },
+			{ id: "pi-lean-dimension.search", enabled: true },
+		]);
+	});
+
+	it("on — co-activates search even when web is already on (drift-free)", async () => {
+		// All tools active: web already enabled. The delta-gated mirror never
+		// fired here; the batch must turn search on unconditionally.
+		const { pi, events } = mockPi(
+			ALL_TOOLS.map((t) => t.name).filter((n) => n !== "web-learn"),
+			[{ name: "web-search", description: "search" }],
+		);
+		browserToggle(pi);
+		defineToolset(pi, SEARCH_STUB_SPEC);
+		const seen = captureChanged(events);
+
+		await captureWebHandler(pi)("on", searchInstalledCtx([searchOffEntry]));
+
+		expect(pi.getActiveTools()).toContain("web-search");
+		// Web had no drift → no web emit; search is the only delta.
+		expect(seen).toEqual([{ id: "pi-lean-dimension.search", enabled: true }]);
+	});
+
+	it("off — web off, learn cascaded off, search off", async () => {
+		const { pi, events } = mockPi([], [{ name: "web-search", description: "search" }]);
+		browserToggle(pi);
+		defineToolset(pi, SEARCH_STUB_SPEC);
+		const handler = captureWebHandler(pi);
+		const seen = captureChanged(events);
+
+		// Seed learn on by running /web learn first.
+		await handler("learn", searchInstalledCtx());
+		await handler("off", searchInstalledCtx());
+
+		const finalActive = pi.getActiveTools();
+		for (const name of [
+			...BROWSER_TOOL_NAMES,
+			"web-learn",
+			"web-search",
+		]) {
+			expect(finalActive).not.toContain(name);
+		}
+		// The search off delta is the event search's glyph re-render rides on.
+		expect(seen).toContainEqual({
+			id: "pi-lean-dimension.search",
+			enabled: false,
+		});
+	});
+
+	it("learn — turns learn and search on without requiring web drift", async () => {
+		const { pi, events } = mockPi(
+			ALL_TOOLS.map((t) => t.name).filter((n) => n !== "web-learn"),
+			[{ name: "web-search", description: "search" }],
+		);
+		browserToggle(pi);
+		defineToolset(pi, SEARCH_STUB_SPEC);
+		const seen = captureChanged(events);
+
+		await captureWebHandler(pi)("learn", searchInstalledCtx([searchOffEntry]));
+
+		expect(getLearnState()).toBe(true);
+		expect(pi.getActiveTools()).toContain("web-search");
+		// No web emit — web stayed on with no drift; only the real deltas fire.
+		expect(seen).toEqual([
+			{ id: "pi-lean-dimension.web-learn", enabled: true },
+			{ id: "pi-lean-dimension.search", enabled: true },
+		]);
+	});
+
+	// Also the only positive /web learn active-set assertion left after the
+	// batch tests: the learn batch test asserts deltas, not the active set.
+	it("on/learn/off — search op filtered on a portal-only install, no throw", async () => {
+		const { pi } = mockPi([]);
+		browserToggle(pi);
+		const handler = captureWebHandler(pi);
+		const ctx = mockCtx();
+
+		await expect(handler("on", ctx)).resolves.toBeUndefined();
+		expect(pi.getActiveTools()).toEqual(
+			expect.arrayContaining([...BROWSER_TOOL_NAMES]),
+		);
+		expect(pi.getActiveTools()).not.toContain("web-learn");
+
+		await expect(handler("learn", ctx)).resolves.toBeUndefined();
+		expect(pi.getActiveTools()).toEqual(
+			expect.arrayContaining([...BROWSER_TOOL_NAMES, "web-learn"]),
+		);
+
+		await expect(handler("off", ctx)).resolves.toBeUndefined();
+		expect(pi.getActiveTools()).toEqual(
+			expect.not.arrayContaining([...BROWSER_TOOL_NAMES, "web-learn"]),
+		);
+
+		// No search delta on a portal-only install — the base notify must
+		// still fire, with no search suffix appended.
+		const notify = ctx.ui.notify as any;
+		expect(notify).toHaveBeenCalledTimes(3);
+		for (const [msg] of notify.mock.calls) {
+			expect(msg).not.toContain("Search");
 		}
 	});
 });

@@ -13,7 +13,7 @@
   **`/searxng-status`** diagnostic command.
 - Registers **no `/web` command** — portal owns `/web` outright. Search is a
   silent leaf; portal discovers `web-search` by exact-name `Set.has()`
-  membership and toggles it via `/web on|off`.
+  membership and toggles it via `/web on|off|learn`.
 - Manages the **`search` status bar slot** (see "Status Bar" below).
 
 ## Files
@@ -22,7 +22,7 @@
 - `web-search-tool.ts` — `defineTool` for `web-search` (execute + TUI rendering).
 - `search-config.ts` — settings reader for `searxng.url`.
 - `__tests__/ship-manifest.test.ts` — production `.ts` coverage check (reuses the portal helper at `pi-lean-portal/__tests__/helpers/ship-manifest.ts`).
-- `__tests__/web-search.test.ts` — config reader + tool structure tests.
+- `__tests__/web-search.test.ts` — config reader, tool structure, and glyph-sync tests (co-activation is portal-owned; search listens to no web events — see `index.ts` glyph-sync comment).
 - `README.md` — user-facing docs (install, config, graceful degradation).
 
 ## Configuration
@@ -47,7 +47,7 @@ Search owns the `search` status bar slot, shown only when `pi-lean-search` is in
 - `○ searxng` — search tools off
 - *(no slot)* — unconfigured: no `searxng.url` in settings; a one-time warning notify on Pi process boot (`session_start` `reason: "startup"` only, not `/new`/`/resume`/`/fork`) points at the setting
 
-Search probes SearXNG reachability on `session_start` and `/searxng-status` and sets the glyph color. Search itself writes the `○ searxng` off state: its `/web off` co-activation mirror (see "Peer relationship") disables the `pi-lean-dimension.search` toolset, and the resulting `changed` event re-renders the glyph; the health-colored glyph returns on the next probe. (The `browser` slot is owned by `pi-lean-portal`; see that package's `AGENTS.md`.)
+Search probes SearXNG reachability on `session_start` and `/searxng-status` and sets the glyph color. The `○ searxng` off state follows `changed`/`restored` on search's own `pi-lean-dimension.search` id: when portal's `/web off` batch disables the toolset, the resulting `changed` event re-renders the glyph; the health-colored glyph returns on the next probe. (The `browser` slot is owned by `pi-lean-portal`; see that package's `AGENTS.md`.)
 
 ## Graceful degradation
 
@@ -64,10 +64,13 @@ notify at Pi startup (boot only, not `/new`/`/resume`/`/fork`) points at the
 `pi-lean-search` declares `pi-lean-portal` as a **soft peer**
 (`peerDependencies` + `peerDependenciesMeta.optional: true`). Search-only
 installs are valid — the tool works standalone, it just doesn't get a `/web`
-toggle. Co-activation is search-owned: search listens on `pi-tool-masking`'s
-`TOOLSET_EVENTS.changed` and mirrors `pi-lean-dimension.web`, so `/web on|off`
-enables/disables search's own toolset when both are installed (portal has no
-reference to `web-search`). The mirror is registered inside `session_start` —
-after the live `sessionManager` is stored as the toggle's branch reader — and
-torn down in `session_shutdown`; `web` `changed` events emitted before that
-registration are ignored (no reader to toggle with).
+toggle. Co-activation is **portal-owned**: portal's `/web on|off|learn`
+handler issues one `toggleBatch` that names `pi-lean-dimension.search`
+directly (as a string constant in portal's `browser-toggle.ts` — portal
+imports nothing from search), so `/web` sets search's toolset
+unconditionally, even when web itself hasn't drifted. On a portal-only
+install the search op is filtered out via masking's
+`getRegisteredToolsets()`. Search itself listens to no web events:
+non-`/web` paths (`/tbox`, groups, focus, restore) affect only the
+toolsets they name, and search remains independently togglable via
+`/tbox +pi-lean-dimension.search on|off`.

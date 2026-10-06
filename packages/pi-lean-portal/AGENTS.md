@@ -277,6 +277,16 @@ The monorepo root owns the test split principle and the summary counts table; th
 - **`parentRef` on `AriaCachedNode`**: enables `subtree=...` queries in `browser-inspect`. Set by the depth-based parent stack in `parseSnapshot()`'s single pass — it is the nearest *interactive* ancestor, only recorded when that ancestor is at the immediately enclosing level. Informational wrappers (`main`, `region`, `group`, `complementary`) get no `@e` ref, so they create a gap and the wrapped element's `parentRef` is `undefined`.
 - **`dialogDetected` is resolved from element cache**: computed from the parsed `ElementCache` via `Array.some()` matching `role="dialog"` or `role="alertdialog"`. Not affected by snapshot truncation (unlike the old string-scan approach).
 - **Guide staleness**: no builtin site guides shipped — entirely user-authored via `~/.pi/agent/pi-lean-portal/web-guides/*.md`. User `.md` files override builtins by name collision (the file name minus `.md` becomes the guide key; a user `bot-detection.md` shadows the builtin `bot-detection` pattern). Guides carry `updated` date and `currentDate` timestamp in output.
+- **Search co-activation**: `/web on|off|learn` each issue one `toggleBatch`
+  naming the ids that subcommand needs (`on`: web + search + web-learn;
+  `learn`: web-learn + search, web cascades on; `off`: web + search,
+  web-learn cascades off) — search (when `pi-lean-search` is installed and
+  its toolset registered) is dragged along unconditionally, even when web
+  itself hasn't drifted. The search id is a string constant
+  (`SEARCH_TOOLSET_ID` in `browser-toggle.ts`); batch ops for unregistered
+  toolsets are filtered via masking's `getRegisteredToolsets()`. Non-`/web`
+  paths (`/tbox`, groups, focus, restore) apply only to the toolsets they
+  name.
 - **Learn mode toggle**: `/web learn` enables `web-learn` tool; `/web on` removes it. Agent never calls `web-learn` unprompted. Default is off on fresh sessions.
 - **Focus-mode guard**: `/web on`/`off`/`learn` are refused while
   `pi-tool-masking` holds allowlist focus — the library throws

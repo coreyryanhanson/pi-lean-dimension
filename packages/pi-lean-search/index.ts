@@ -4,11 +4,15 @@
  * Registers the `web-search` tool and a `/searxng-status` diagnostic command.
  * Manages the `search` status bar slot with health-colored glyphs.
  *
- * Owns the `pi-lean-dimension.search` toolset (co-activated off `pi-lean-dimension.web`):
+ * Owns the `pi-lean-dimension.search` toolset:
  *   ● searxng  (accent/blue)    — healthy and reachable
  *   ● searxng  (warning/yellow)  — server up but pipeline degraded
  *   ● searxng  (error/red)      — unreachable
  *   ○ searxng                    — search tools off
+ *
+ * Co-activation with the web workflow is portal-owned: `/web on|off|learn`
+ * batches the search toolset id directly. Search is independently togglable
+ * via /tbox and focus.
  */
 
 import type {
@@ -23,7 +27,6 @@ import {
 import type {
 	ToolsetSpec,
 	ToolsetChangedEvent,
-	BranchReader,
 } from "pi-tool-masking";
 import { readSearxngUrl } from "./search-config.js";
 import { webSearchTool, normalizeBaseUrl } from "./web-search-tool.js";
@@ -54,18 +57,9 @@ let _lastDegraded = false;
 /** Cached ExtensionContext for event-driven glyph rendering. */
 let _lastCtx: ExtensionContext | null = null;
 
-/** Live sessionManager reference for the co-activation mirror — stored at
- *  session_start; the library invokes getBranch() fresh per apply, so the
- *  stored reference stays correct across cascades and external writes. */
-let _sessionManager: BranchReader | null = null;
-
-/** Unsubscribe for the co-activation mirror (registered inside session_start,
- *  torn down in session_shutdown so re-fires don't stack listeners). */
-let _offMirror: (() => void) | null = null;
-
 /** Unsubscribers for the factory-time glyph-sync listeners — pi re-invokes
  *  the cached extension factory per load pass, so these are re-registered
- *  each time and torn down in the reset block / session_shutdown to avoid
+ *  each time and torn down in the factory prologue / session_shutdown to avoid
  *  stacking duplicate listeners on the shared event bus. */
 let _offSync: (() => void)[] = [];
 
@@ -188,8 +182,6 @@ function _resetStateForTest(): void {
 	_lastHealth = null;
 	_lastDegraded = false;
 	_lastCtx = null;
-	_sessionManager = null;
-	_offMirror = null;
 }
 
 export { _resetStateForTest };
@@ -200,11 +192,7 @@ export default function (pi: ExtensionAPI) {
 	// --- Ensure idempotent re-invocation ----------------------------
 	// pi reuses the cached extension factory on /resume (same cwd),
 	// which re-invokes this function with the same module-level
-	// singletons. Reset the mirror state so the second load doesn't
-	// skip re-registration behind a stale _offMirror.
-	_offMirror?.();
-	_offMirror = null;
-	_sessionManager = null;
+	// singletons.
 	for (const off of _offSync) off();
 	_offSync = [];
 
@@ -213,32 +201,11 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Define the pi-lean-dimension.search toolset ───────────
 	// Registers restore handler on session_start / session_tree.
-	const searchToolset = defineToolset(pi, SEARCH_WEB_SPEC);
-
-	// ── Co-activation: mirror pi-lean-dimension.web changed events ─
-	// Listen on changed ONLY, not restored. Registered inside session_start
-	// (after _sessionManager is stored) so the reader always exists when the
-	// mirror runs — there is no reader-less window.
-	const mirrorWebChanged = (data: unknown) => {
-		const event = data as ToolsetChangedEvent;
-		if (event.id !== "pi-lean-dimension.web") return;
-		// Catch AllowlistModeError by name, never `instanceof` — the handle
-		// may come from a different library copy via the shared registry;
-		// refusal means "nothing changed" — skip co-activation.
-		try {
-			if (event.enabled) {
-				searchToolset.enable(pi, _sessionManager!);
-			} else {
-				searchToolset.disable(pi, _sessionManager!);
-			}
-		} catch (err) {
-			if ((err as { name?: string } | undefined)?.name !== "AllowlistModeError") {
-				throw err;
-			}
-		}
-	};
+	defineToolset(pi, SEARCH_WEB_SPEC);
 
 	// ── Keep cached state in sync with library events ────────
+	// Glyph cache only — display re-render, not actuation. Co-activation
+	// lives in portal's /web command (it batches this toolset id directly).
 	const syncSearchState = (data: unknown) => {
 		const event = data as ToolsetChangedEvent;
 		if (event.id === "pi-lean-dimension.search") {
@@ -253,14 +220,7 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Session start: health probe + glyph ──────────────────
 	pi.on("session_start", async (event, ctx) => {
-		_sessionManager = ctx.sessionManager;
 		_lastCtx = ctx;
-
-		// Register the co-activation mirror once, after the reader is stored
-		// (dedup across re-fires of session_start for the same instance).
-		if (!_offMirror) {
-			_offMirror = pi.events.on(TOOLSET_EVENTS.changed, mirrorWebChanged);
-		}
 
 		// Re-read config in case it changed between sessions
 		_searxngUrl = readSearxngUrl();
@@ -315,12 +275,9 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Session shutdown: clean up ───────────────────────────
 	pi.on("session_shutdown", async (_event, ctx) => {
-		_offMirror?.();
-		_offMirror = null;
 		for (const off of _offSync) off();
 		_offSync = [];
 		_lastCtx = null;
-		_sessionManager = null;
 		try {
 			ctx?.ui?.setStatus?.("search", "");
 		} catch {

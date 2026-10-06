@@ -3,8 +3,13 @@ import type {
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { updateFooterStatus, getLastCtx, setLastCtx } from "./tools/utils.js";
-import { defineToolset, TOOLSET_EVENTS } from "pi-tool-masking";
-import type { ToolsetSpec } from "pi-tool-masking";
+import {
+	defineToolset,
+	toggleBatch,
+	getRegisteredToolsets,
+	TOOLSET_EVENTS,
+} from "pi-tool-masking";
+import type { ToolsetSpec, BatchOp } from "pi-tool-masking";
 
 // Catch AllowlistModeError by name, never `instanceof` — the handle may come
 // from a different library copy via the shared registry. Returns true when
@@ -27,8 +32,14 @@ function refuseOnAllowlist(ctx: ExtensionContext, toggle: () => unknown): boolea
 
 // ---- Toolset specs -----------------------------------------------
 
+const WEB_TOOLSET_ID = "pi-lean-dimension.web";
+const LEARN_TOOLSET_ID = "pi-lean-dimension.web-learn";
+// The one new coupling line: portal names search's toolset id as a string
+// constant (search imports nothing back — see /web handler below).
+const SEARCH_TOOLSET_ID = "pi-lean-dimension.search";
+
 const PORTAL_WEB_SPEC: ToolsetSpec = {
-	id: "pi-lean-dimension.web",
+	id: WEB_TOOLSET_ID,
 	names: new Set([
 		"web-fetch",
 		"browser-navigate",
@@ -46,7 +57,7 @@ const PORTAL_WEB_SPEC: ToolsetSpec = {
 };
 
 const PORTAL_LEARN_SPEC: ToolsetSpec = {
-	id: "pi-lean-dimension.web-learn",
+	id: LEARN_TOOLSET_ID,
 	names: new Set(["web-learn"]),
 	persistKey: "toolset-state:pi-lean-dimension.web-learn",
 	defaultEnabled: false,
@@ -114,9 +125,48 @@ export function resetToggleModuleState(): void {
 	_conversationDefaultProfile = undefined;
 }
 
+// ---- /web batch ops ----------------------------------------------
+
+/** toggleBatch throws on an explicit unregistered op — on a portal-only
+ *  install the search id isn't registered, so filter it out. Only the search
+ *  op can ever drop out; web and web-learn are registered by this factory. */
+function registeredOps(ops: readonly BatchOp[]) {
+	const registered = new Set(
+		getRegisteredToolsets().map((entry) => entry.spec.id),
+	);
+	return ops.filter((op) => registered.has(op.id));
+}
+
+/** Run one /web batch. `ran` is false only when the allowlist refusal
+ *  aborted the subcommand (nothing changed). `searchDelta` is the direction
+ *  of the search delta the batch produced — "on" when a separately-disabled
+ *  search was just switched back on, "off" when search was just disabled —
+ *  and undefined when search didn't drift (already in desired state, or the
+ *  op was filtered out on a portal-only install). */
+function applyWebBatch(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	ops: readonly BatchOp[],
+): { ran: boolean; searchDelta?: "on" | "off" | undefined } {
+	let searchDelta: "on" | "off" | undefined;
+	const ran = refuseOnAllowlist(ctx, () => {
+		const hit = toggleBatch(pi, ctx.sessionManager, registeredOps(ops)).find(
+			(r) => r.id === SEARCH_TOOLSET_ID,
+		);
+		searchDelta = hit ? (hit.enabled ? "on" : "off") : undefined;
+	});
+	return { ran, searchDelta };
+}
+
 // ---- Toggle initializer ------------------------------------------
 
+// Unsubscribers for the glyph-sync listeners — pi re-invokes the factory
+// per load pass, so drain the previous pair before re-registering.
+let _offSync: (() => void)[] = [];
+
 export default function initBrowserToggle(pi: ExtensionAPI) {
+	for (const off of _offSync) off();
+	_offSync = [];
 	// Settings-based toolset defaults (`toolsetDefaults` tier) are read by
 	// pi-tool-masking itself inside defineToolset/restore — pass the packaged
 	// spec straight through.
@@ -136,8 +186,10 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 		}
 	};
 
-	pi.events.on(TOOLSET_EVENTS.changed, syncCachedState);
-	pi.events.on(TOOLSET_EVENTS.restored, syncCachedState);
+	_offSync = [
+		pi.events.on(TOOLSET_EVENTS.changed, syncCachedState),
+		pi.events.on(TOOLSET_EVENTS.restored, syncCachedState),
+	];
 
 	// ── /web command ──────────────────────────────────────────
 	pi.registerCommand("web", {
@@ -148,38 +200,46 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 			const cmd = args.trim().toLowerCase();
 
 			if (cmd === "on") {
-				if (
-					!refuseOnAllowlist(ctx, () => {
-						webToolset.enable(pi, ctx.sessionManager);
-						learnToolset.disable(pi, ctx.sessionManager);
-					})
-				)
-					return;
+				// One batch = the whole web workflow: web on, search dragged
+				// along unconditionally, learn explicitly off (the historic
+				// semantic — not leaned on the requires cascade).
+				const { ran, searchDelta } = applyWebBatch(pi, ctx, [
+					{ id: WEB_TOOLSET_ID, desired: true },
+					{ id: SEARCH_TOOLSET_ID, desired: true },
+					{ id: LEARN_TOOLSET_ID, desired: false },
+				]);
+				if (!ran) return;
 				ctx.ui.notify(
-					"🌐 Browser tools enabled. /web learn to make web-learn available.",
+					"🌐 Browser tools enabled. /web learn to make web-learn available." +
+						(searchDelta === "on" ? " Search re-enabled." : ""),
 					"info",
 				);
 			} else if (cmd === "learn") {
-				if (
-					!refuseOnAllowlist(
-						ctx,
-						() => learnToolset.enable(pi, ctx.sessionManager), // cascades web on via requires
-					)
-				)
-					return;
+				// web-learn's requires cascades web on; search co-activates
+				// unconditionally (no drift required).
+				const { ran, searchDelta } = applyWebBatch(pi, ctx, [
+					{ id: LEARN_TOOLSET_ID, desired: true },
+					{ id: SEARCH_TOOLSET_ID, desired: true },
+				]);
+				if (!ran) return;
 				ctx.ui.notify(
-					"📖 web-learn tool is now available. Agent will save/update guides when asked.",
+					"📖 web-learn tool is now available. Agent will save/update guides when asked." +
+						(searchDelta === "on" ? " Search re-enabled." : ""),
 					"info",
 				);
 			} else if (cmd === "off") {
-				if (
-					!refuseOnAllowlist(
-						ctx,
-						() => webToolset.disable(pi, ctx.sessionManager), // cascades learn off via requires
-					)
-				)
-					return;
-				ctx.ui.notify("🌐 Browser tools disabled. /web on to re-enable.", "info");
+				// web-learn follows web off via its requires cascade inside
+				// the batch.
+				const { ran, searchDelta } = applyWebBatch(pi, ctx, [
+					{ id: WEB_TOOLSET_ID, desired: false },
+					{ id: SEARCH_TOOLSET_ID, desired: false },
+				]);
+				if (!ran) return;
+				ctx.ui.notify(
+					"🌐 Browser tools disabled. /web on to re-enable." +
+						(searchDelta === "off" ? " Search disabled." : ""),
+					"info",
+				);
 			} else if (cmd === "profile" || cmd.startsWith("profile ")) {
 				const sub = cmd.slice("profile".length).trim();
 				const { handleProfileSubcommand } = await import("./browser-profile.js");

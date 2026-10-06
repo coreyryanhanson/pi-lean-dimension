@@ -454,164 +454,43 @@ beforeEach(() => {
 });
 
 // ==================================================================
-//  Toolset wiring: pi-lean-dimension.web ↔ pi-lean-dimension.search co-activation mirror
+//  Glyph sync — the search glyph follows search's own toolset state
 // ==================================================================
-describe("pi-lean-dimension.web co-activation mirror", () => {
-	// The mirror is registered inside session_start, after the live
-	// sessionManager is stored — there is no mirror (and no reader) before it.
-	function mockSessionCtx(branch: unknown[] = []) {
-		return {
-			sessionManager: { getBranch: () => branch },
-			signal: undefined,
+describe("search glyph sync", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	// A /web off batch emits changed(pi-lean-dimension.search, false) in its
+	// one pass; the glyph must render the off state from that event alone.
+	it("renders ○ searxng after search turns off", async () => {
+		vi
+			.mocked(readFileSync)
+			.mockReturnValue(
+				JSON.stringify({ searxng: { url: "http://localhost:8888" } }),
+			);
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+
+		const { pi, events, handlers } = mockSearchPi();
+		searchExtension(pi);
+		const setStatus = vi.fn();
+		const ctx = {
 			ui: {
-				setStatus: vi.fn(),
+				setStatus,
 				notify: vi.fn(),
 				theme: { fg: (_c: string, t: string) => t },
 			},
 		} as any;
-	}
-
-	async function fireSessionStart(pi: ReturnType<typeof mockSearchPi>["pi"], ctx: unknown) {
-		// index.ts registers its session_start handler after defineToolset's
-		// restore handler, so it's last.
-		await (pi as any).on.mock.calls
-			.filter(([event]: any) => event === "session_start")
-			.at(-1)![1]({ reason: "startup" }, ctx);
-	}
-
-	it("does not listen before session_start (no toggle call, no throw)", async () => {
-		const { pi, events } = mockSearchPi([]);
-		searchExtension(pi);
-
-		expect(() =>
-			events.emit(TOOLSET_EVENTS.changed, {
-				id: "pi-lean-dimension.web",
-				enabled: true,
-			}),
-		).not.toThrow();
-		expect(pi.setActiveTools).not.toHaveBeenCalled();
-	});
-
-	it("disables pi-lean-dimension.search when pi-lean-dimension.web changed fires with enabled: false", async () => {
-		const { pi, events } = mockSearchPi();
-		searchExtension(pi);
-		await fireSessionStart(pi, mockSessionCtx());
+		await handlers.get("session_start")!.at(-1)!({ reason: "startup" }, ctx);
 
 		events.emit(TOOLSET_EVENTS.changed, {
-			id: "pi-lean-dimension.web",
+			id: "pi-lean-dimension.search",
 			enabled: false,
 		});
 
-		expect(pi.setActiveTools).toHaveBeenCalledWith(
-			expect.not.arrayContaining(["web-search"]),
-		);
-	});
-
-	it("enables pi-lean-dimension.search when pi-lean-dimension.web changed fires with enabled: true", async () => {
-		// Ledger says search is off (persisted off entry), so the enable is a
-		// genuine intent change rather than a silent same-state no-op.
-		const { pi, events } = mockSearchPi([]);
-		searchExtension(pi);
-		await fireSessionStart(
-			pi,
-			mockSessionCtx([
-				{
-					type: "custom",
-					customType: "toolset-state:pi-lean-dimension.search",
-					data: { enabled: false },
-				},
-			]),
-		);
-
-		events.emit(TOOLSET_EVENTS.changed, {
-			id: "pi-lean-dimension.web",
-			enabled: true,
-		});
-
-		expect(pi.setActiveTools).toHaveBeenCalledWith(
-			expect.arrayContaining(["web-search"]),
-		);
-	});
-
-	// session_shutdown unsubscribes the mirror — a later web change must not
-	// toggle search.
-	it("tears the mirror down on session_shutdown", async () => {
-		const { pi, events, handlers } = mockSearchPi();
-		searchExtension(pi);
-		await fireSessionStart(pi, mockSessionCtx());
-
-		// Sanity: mirror is live — a genuine disable toggles.
-		events.emit(TOOLSET_EVENTS.changed, {
-			id: "pi-lean-dimension.web",
-			enabled: false,
-		});
-		expect(pi.setActiveTools).toHaveBeenCalledWith(
-			expect.not.arrayContaining(["web-search"]),
-		);
-
-		await handlers.get("session_shutdown")!.at(-1)!({}, mockSessionCtx());
-		(pi.setActiveTools as any).mockClear();
-
-		// Web back on → search enable would be a genuine change, but the
-		// mirror is unsubscribed, so nothing toggles.
-		events.emit(TOOLSET_EVENTS.changed, {
-			id: "pi-lean-dimension.web",
-			enabled: true,
-		});
-		expect(pi.setActiveTools).not.toHaveBeenCalled();
-	});
-
-	// Re-fires of session_start for the same instance must not stack mirror
-	// listeners behind the dedup gate.
-	it("dedups mirror registration across session_start re-fires", async () => {
-		const { pi, events } = mockSearchPi();
-		searchExtension(pi);
-		// syncSearchState is registered at factory time — the only changed
-		// listener before session_start.
-		const base = events.listenerCount(TOOLSET_EVENTS.changed);
-
-		await fireSessionStart(pi, mockSessionCtx());
-		expect(events.listenerCount(TOOLSET_EVENTS.changed)).toBe(base + 1);
-
-		await fireSessionStart(pi, mockSessionCtx());
-		expect(events.listenerCount(TOOLSET_EVENTS.changed)).toBe(base + 1);
-
-		// The single mirror still works after the re-fire.
-		events.emit(TOOLSET_EVENTS.changed, {
-			id: "pi-lean-dimension.web",
-			enabled: false,
-		});
-		expect(pi.setActiveTools).toHaveBeenCalledTimes(1);
-	});
-
-	// Allowlist focus (an upstream pi-tool-masking consumer) holds the line —
-	// the branch's mode entry is the authority: every toggle throws
-	// AllowlistModeError, which the mirror catches and treats as "refused,
-	// nothing changed" — no co-activation, no {enabled} entry write.
-	it("skips co-activation while allowlist focus is active", async () => {
-		const { pi, events } = mockSearchPi(["web-search"]);
-		searchExtension(pi);
-		await fireSessionStart(
-			pi,
-			mockSessionCtx([
-				{
-					type: "custom",
-					customType: "toolset-resolution-mode",
-					data: { mode: "allowlist", allowlist: ["pi-lean-dimension.web"] },
-				},
-			]),
-		);
-
-		(pi.setActiveTools as any).mockClear();
-		events.emit(TOOLSET_EVENTS.changed, {
-			id: "pi-lean-dimension.web",
-			enabled: false,
-		});
-
-		expect(pi.setActiveTools).not.toHaveBeenCalled();
+		expect(setStatus).toHaveBeenLastCalledWith("search", "○ searxng");
 	});
 });
-
 // ─── session_start: health probe + status glyph ──────────────
 
 describe("session_start glyph", () => {
