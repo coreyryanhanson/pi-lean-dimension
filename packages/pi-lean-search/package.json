@@ -1,6 +1,6 @@
 {
 	"name": "pi-lean-search",
-	"version": "0.7.1",
+	"version": "0.7.2",
 	"description": "SearXNG web search for Pi. Self-hosted or public instance, no API keys or quotas; returns a setup message instead of erroring when unreachable. Pairs with pi-lean-portal's /web toggle or works standalone.",
 	"keywords": [
 		"pi-package",
