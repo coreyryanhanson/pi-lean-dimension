@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- All three extensions (portal, search, host) raise their `pi-tool-masking`
+  floor from `^2.0.1` to `^2.1.0`. No code changes; no extension behavior
+  change.
+
 ## [0.7.1] - 2026-10-06
 
 ### Fixed

@@ -55,7 +55,7 @@
 	},
 	"dependencies": {
 		"node-html-parser": "^6.1.0",
-		"pi-tool-masking": "^2.0.1",
+		"pi-tool-masking": "^2.1.0",
 		"playwright": "^1.60.0",
 		"turndown": "^7.2.0"
 	},
