@@ -143,6 +143,9 @@ class PlaywrightBridge:
       is disabled or fails)
     * ``_capture_user_agent`` — bool; when True the real UA is
       dynamically probed from an about:blank page at lazy browser init
+    * ``_local_network_access`` — bool; Chromium-family bridges must set
+      True so pages can fetch localhost helper servers on Chrome 138+
+      (see the attribute docstring below)
     * ``_install_hint`` — shown when the browser executable is missing
     * ``_launch_browser()`` — factory for creating the Playwright
       Browser; called from ``_ensure_playwright()`` with the
@@ -164,6 +167,12 @@ class PlaywrightBridge:
     #: When True, dynamically probes the real UA from an about:blank page at lazy browser init.
     #: Set for engines (like Firefox) whose UA may change across Playwright versions.
     _capture_user_agent: bool = False
+
+    #: When True, ``create_browser_context`` grants Chrome's Local Network
+    #: Access permission context-wide so pages can fetch local helper servers
+    #: (Chrome 138+ gates this behind a prompt headless cannot answer).
+    #: Chromium-family engines only; Firefox does not gate localhost fetches.
+    _local_network_access: bool = False
 
     #: Engine-specific install hint (shown when browser executable missing).
     _install_hint: str = ""
@@ -569,6 +578,12 @@ class PlaywrightBridge:
             context_kwargs["storage_state"] = storage_state
 
         context = browser.new_context(**context_kwargs)
+
+        if self._local_network_access:
+            try:
+                context.grant_permissions(["local-network-access"])
+            except Exception as e:  # pre-LNA Chromium: nothing to grant
+                self._log("grantLocalNetworkAccess", success=False, error=str(e))
 
         # Start Playwright trace capture if BROWSER_TRACE_DIR is set.
         _trace_dir = os.environ.get("BROWSER_TRACE_DIR")

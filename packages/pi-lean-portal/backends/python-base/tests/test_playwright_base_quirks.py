@@ -78,19 +78,27 @@ class _FakePage:
 class _FakeBrowser:
     """Records ``new_context`` kwargs so we can assert what was passed."""
 
-    def __init__(self) -> None:
+    def __init__(self, raise_on_grant: bool = False) -> None:
         self.new_context_calls: list[dict[str, Any]] = []
+        self._raise_on_grant = raise_on_grant
 
     def new_context(self, **kwargs: Any) -> "_FakeContext":
         self.new_context_calls.append(kwargs)
-        return _FakeContext()
+        return _FakeContext(raise_on_grant=self._raise_on_grant)
 
 
 class _FakeContext:
-    """Minimal BrowserContext stand-in (tracing no-op)."""
+    """Minimal BrowserContext stand-in (tracing no-op, grant recorder)."""
 
-    def __init__(self) -> None:
+    def __init__(self, raise_on_grant: bool = False) -> None:
         self.tracing = _FakeTracing()
+        self.grant_calls: list[list[str]] = []
+        self._raise_on_grant = raise_on_grant
+
+    def grant_permissions(self, permissions: list[str], **_kwargs: Any) -> None:
+        if self._raise_on_grant:
+            raise Exception("Unknown permission: local-network-access")
+        self.grant_calls.append(permissions)
 
     def new_page(self) -> _FakePage:
         return _FakePage()
@@ -120,9 +128,9 @@ class _FakePlaywrightBridge(PlaywrightBridge):
     _plugin_name = "fake-py"
     _install_hint = "install hint"
 
-    def __init__(self) -> None:
+    def __init__(self, raise_on_grant: bool = False) -> None:
         super().__init__()
-        self._fake_browser = _FakeBrowser()
+        self._fake_browser = _FakeBrowser(raise_on_grant=raise_on_grant)
 
     def _ensure_playwright(self) -> tuple[Any, Any]:
         # Return (pw, browser); pw is unused by the code paths under test.
@@ -255,6 +263,33 @@ class TestSkipDefaultViewport:
         call = bridge._fake_browser.new_context_calls[-1]
         assert call["no_viewport"]
         assert call["storage_state"] is state
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  _local_network_access
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestLocalNetworkAccess:
+    """``create_browser_context`` grants LNA only when the flag is on,
+    and a raising grant (pre-LNA Chromium / older Playwright) is
+    suppressed so context creation still succeeds."""
+
+    def test_flag_off_does_not_grant(self):
+        context = _FakePlaywrightBridge().create_browser_context({})
+        assert context.grant_calls == []
+
+    def test_flag_on_grants_lna(self):
+        bridge = _FakePlaywrightBridge()
+        bridge._local_network_access = True
+        context = bridge.create_browser_context({})
+        assert context.grant_calls == [["local-network-access"]]
+
+    def test_raising_grant_is_suppressed(self):
+        bridge = _FakePlaywrightBridge(raise_on_grant=True)
+        bridge._local_network_access = True
+        context = bridge.create_browser_context({})
+        assert context.grant_calls == []
 
 
 # ═══════════════════════════════════════════════════════════════════════

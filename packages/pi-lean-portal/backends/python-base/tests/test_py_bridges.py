@@ -20,6 +20,8 @@ class TestChromiumPyBridgeConstruction:
         bridge = Cls()
         assert bridge.sessions == {}
         assert bridge.element_caches == {}
+        # Shipped chromium-py opts into LNA (Chrome 138+ localhost fetch gate).
+        assert bridge._local_network_access is True
 
 
 class TestFirefoxPyBridgeConstruction:

@@ -1,0 +1,3 @@
+{
+	"extraPaths": ["packages/pi-lean-portal/backends/python-base"]
+}

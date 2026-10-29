@@ -95,6 +95,13 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	 */
 	protected readonly captureUserAgent: boolean = false;
 
+	/**
+	 * Set to true to grant Chrome's Local Network Access permission on every
+	 * new context (Chrome 138+ gates public -> localhost fetches behind a
+	 * prompt headless can't answer). Chromium keeps this true.
+	 */
+	protected readonly localNetworkAccess: boolean = false;
+
 	private readonly _debug = process.env.BROWSER_DEBUG === "1";
 
 	private _log(event: string, data: Record<string, unknown>): void {
@@ -316,6 +323,21 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		}
 
 		const context = await this._browser.newContext(contextOptions);
+
+		// Grant LNA context-wide so pages can reach local helper servers
+		// (flag-gated: Firefox does not gate localhost fetches today).
+		if (this.localNetworkAccess) {
+			try {
+				await context.grantPermissions(["local-network-access"]);
+			} catch (e) {
+				// Pre-LNA Chromium: nothing to grant. Logged under BROWSER_DEBUG
+				// so the cause is diagnosable.
+				this._log("grantLocalNetworkAccess", {
+					success: false,
+					error: String(e),
+				});
+			}
+		}
 
 		// Start Playwright trace capture if BROWSER_TRACE_DIR is set.
 		const traceDir = process.env.BROWSER_TRACE_DIR;

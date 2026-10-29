@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pi-lean-portal` — page → localhost fetches work again on Chromium** —
+  Chrome 138 gates these behind a Local Network Access prompt headless can't
+  answer, so they failed with a bare `Failed to fetch`. Chromium contexts
+  (`chromium` + `chromium-py`) now grant `local-network-access` context-wide;
+  no-op on pre-LNA builds, failures logged under `BROWSER_DEBUG`. Trade-off:
+  browsed pages can probe unauthenticated localhost/LAN services (reads stay
+  CORS-gated) — Firefox parity, not a new hole.
+
 ## [0.7.2] - 2026-10-07
 
 ### Changed

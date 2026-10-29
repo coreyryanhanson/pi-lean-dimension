@@ -151,8 +151,9 @@ vite.config.ts.timestamp-*
 # Python pycache
 __pycache__
 
-# Python virtual environments
-.venv/
+# Python virtual environments (incl. the root-level symlink to
+# packages/pi-lean-portal/backends/python-base/.venv used for pyright discovery)
+.venv
 
 # Egg info
 **/*.egg-info
