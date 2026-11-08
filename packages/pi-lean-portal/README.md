@@ -148,6 +148,14 @@ Both file paths are surfaced as hints in the tool output, which the agent can fo
 
 [^1]: Not full-page.
 
+> 💡 **Tip — capturing raw authenticated page content:** the accessibility
+> tree is not the wire bytes. When a capture must be as-received (evidence,
+> fixtures, parser development), use `browser-console` to
+> `fetch(location.href, {credentials: "include"})` in the page context, then
+> deliver via a programmatic `<a download>` blob click — see the
+> `raw-capture` pattern guide (`web-guide guide="raw-capture"`) for the full
+> recipe and gotchas.
+
 ---
 
 ## Navigation Guides
@@ -162,6 +170,7 @@ Both file paths are surfaced as hints in the tool output, which the agent can fo
 | `cookie-consent` | Dialog detected (`dialogDetected`) | Accept/Reject buttons, Escape key, verification |
 | `pagination` | On-demand | Next buttons, infinite scroll, pages |
 | `search` | On-demand | Search boxes, comboboxes, result lists |
+| `raw-capture` | On-demand | Saving as-received HTML / large payloads from a live session (in-page `fetch` + download blob) |
 
 ### Overriding Built-in Guides
 

@@ -640,6 +640,7 @@ describe("BUILTIN_GUIDES structure", () => {
 			"cookie-consent": { icon: "🍪", shortName: "consent" },
 			pagination: { icon: "📄", shortName: "pagination" },
 			search: { icon: "🔍", shortName: "search" },
+			"raw-capture": { icon: "📥", shortName: "raw capture" },
 		};
 		for (const [name, expectedValues] of Object.entries(expected)) {
 			const guide = BUILTIN_GUIDES[name]!;
@@ -656,8 +657,8 @@ describe("BUILTIN_GUIDES structure", () => {
 		expect(cookieGuide.triggerSignal).toBe("dialogDetected");
 	});
 
-	it("pattern guides (pagination, search) have no trigger (on-demand)", () => {
-		const onDemandPatterns = ["pagination", "search"];
+	it("pattern guides (pagination, search, raw-capture) have no trigger (on-demand)", () => {
+		const onDemandPatterns = ["pagination", "search", "raw-capture"];
 		for (const name of onDemandPatterns) {
 			const guide = BUILTIN_GUIDES[name]!;
 			expect(guide.category).toBe("pattern");

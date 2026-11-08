@@ -176,6 +176,33 @@ export const BUILTIN_GUIDES: Record<string, Guide> = {
 			"- Pagination controls follow the patterns in the pagination guide",
 		].join("\n"),
 	},
+
+	"raw-capture": {
+		category: "pattern",
+		source: "builtin",
+		updated: "2026-10-29",
+		icon: "📥",
+		shortName: "raw capture",
+		content: [
+			"## Capturing Raw Page Content from a Live Session",
+			"",
+			"### Getting As-Received HTML (Not DOM Snapshots)",
+			'- `document.documentElement.outerHTML` is the browser\'s re-serialization: JS-mutated, entity-renormalized, ~2× larger than what the server sent',
+			'- For byte-accurate captures, fetch in the page context instead: `(async () => { const r = await fetch(location.href, {credentials: "include"}); window.__raw = await r.text(); return r.status + " " + r.text().length; })()` — uses the session\'s cookies automatically',
+			'- This is the right source for evidence/fixtures: same bytes `curl` would get, authenticated',
+			"",
+			"### Getting Large Payloads to Disk",
+			"- `browser-console` output truncates (~150K chars), so chunked retrieval of big HTML is slow and lossy",
+			'- Trigger a download instead: wrap the payload in a Blob, point an `<a download="name.html">` at `URL.createObjectURL(...)`, click it programmatically — one call, no truncation',
+			"- The file lands in the browser\'s download directory (for Playwright-backed sessions, check `/tmp/playwright-artifacts-*/`); move it into place with bash",
+			"- Freeze mutable content first (`window.__raw = ...` in one call) so later calls operate on one consistent snapshot",
+			"",
+			"### Gotchas",
+			"- A fetch/download call can fail with a stale session — re-run `browser-navigate` first, then retry",
+			"- For gzip efficiency on repetitive HTML, pipe the string through `new CompressionStream(\"gzip\")` before encoding — but the download-blob path usually removes the need",
+			"- Downloads are one-shot per click; name each capture distinctly to avoid overwrites in the artifacts dir",
+		].join("\n"),
+	},
 };
 
 // ═══════════════════════════════════════════════════════════════════
