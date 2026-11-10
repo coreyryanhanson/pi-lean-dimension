@@ -16,6 +16,9 @@ import { rmSync } from "node:fs";
 
 const dir = `${tmpdir()}/pi-lean-portal-test-${process.pid}`;
 process.env.PI_BROWSER_TEMP_DIR = dir;
+// Profile-state tests create/remove real profile dirs; keep them off the
+// user's actual ~/.pi/agent/pi-lean-portal/browser-state tree.
+process.env.PI_PORTAL_PROFILE_DIR = `${dir}/browser-state`;
 
 // Repo-wide test env hygiene (this is the shared vitest setupFiles entry):
 // a pi host that started this process as a deferred child sets
@@ -23,6 +26,14 @@ process.env.PI_BROWSER_TEMP_DIR = dir;
 // toggle a silent no-op. Test workers are not deferring children — clear it
 // so toggle paths in every package actually actuate.
 delete process.env.PI_TOOLMASKING_DEFER;
+
+/**
+ * Make a unique profile name for each test to avoid cross-test
+ * filesystem contamination.
+ */
+export function uniqueName(base: string): string {
+	return `${base}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 process.on("exit", () => {
 	try {

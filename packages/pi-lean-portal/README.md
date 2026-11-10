@@ -88,6 +88,10 @@ localStorage) across calls, conversations, and even across different subagents.
 | Session | `"session"` (default) | Persists state for the current conversation; survives `/reload` and `/resume` |
 | Named | `"shopping"`, `"work"`, etc. | Shared across conversations and subagents, similar to browser tabs sharing a profile |
 
+An explicitly passed `profile="<name>"` must already exist — create it with
+`/web profile create`. Profiles declared as the settings `defaultProfile` or a
+conversation default are created automatically on first use.
+
 ### Managing Profiles with `/web profile`
 
 | Sub-command | Effect |
@@ -99,6 +103,7 @@ localStorage) across calls, conversations, and even across different subagents.
 | `/web profile shopping` | Switch default profile to an existing named profile |
 | `/web profile clear shopping` | Delete the saved state for a profile (keeps the directory) |
 | `/web profile clear-all --confirm` | Clear ALL profile states |
+| `/web profile delete shopping` | Remove a named profile entirely (directory + saved state); resets the conversation default if it pointed there |
 | `/web profile prune --confirm` | Remove stale session profiles for ended conversations |
 
 > **How it works:** Profile state is stored at

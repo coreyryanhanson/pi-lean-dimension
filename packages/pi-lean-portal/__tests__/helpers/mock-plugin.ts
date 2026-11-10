@@ -10,6 +10,7 @@ import type {
 	BrowserPlugin,
 	PluginCapabilities,
 	NavigateResult,
+	PluginNavigateOptions,
 	SnapshotResult,
 	InteractionResult,
 	ScreenshotResult,
@@ -75,7 +76,7 @@ export class MockPlugin implements BrowserPlugin {
 		url: string,
 		taskId: string,
 		timeoutMs: number,
-		options?: { signal?: AbortSignal; storageState?: unknown },
+		options?: PluginNavigateOptions,
 	): Promise<NavigateResult> {
 		this.record("navigate", [url, taskId, timeoutMs, options]);
 		if (this.shouldThrow.has("navigate")) throw new Error("navigate failed");

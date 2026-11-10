@@ -101,6 +101,9 @@ function persistProfile(pi: ExtensionAPI, profile: string): void {
 }
 
 function restoreProfile(_pi: ExtensionAPI, ctx: ExtensionContext): void {
+	// Start clean: a branch with no profile entry must not inherit the
+	// previous conversation's default.
+	_conversationDefaultProfile = undefined;
 	// getBranch() is chronological root→leaf, so keep walking and the last
 	// entry wins (newest /web profile choice on /reload, /resume, /tree).
 	for (const entry of ctx.sessionManager.getBranch()) {
@@ -243,14 +246,17 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 			} else if (cmd === "profile" || cmd.startsWith("profile ")) {
 				const sub = cmd.slice("profile".length).trim();
 				const { handleProfileSubcommand } = await import("./browser-profile.js");
-				await handleProfileSubcommand(sub, ctx, pi, (profile: string) => {
-					if (profile === "none") {
-						_conversationDefaultProfile = undefined;
-					} else {
+				await handleProfileSubcommand(
+					sub,
+					ctx,
+					(profile: string) => {
+						// "none" round-trips as a value so a settings default can't
+						// silently override an explicit /web profile none.
 						_conversationDefaultProfile = profile;
-					}
-					persistProfile(pi, profile);
-				});
+						persistProfile(pi, profile);
+					},
+					getConversationDefaultProfile(),
+				);
 			} else if (cmd === "cookies" || cmd.startsWith("cookies ")) {
 				const sub = cmd.slice("cookies".length).trim();
 				const { handleCookiesSubcommand } = await import("./browser-cookies.js");

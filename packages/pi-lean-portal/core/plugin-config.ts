@@ -10,6 +10,7 @@ import { join, isAbsolute } from "node:path";
 import { USER_BACKENDS_DIR } from "./shared/paths.js";
 import {
 	sanitizeProfileName,
+	isSessionProfile,
 	DEFAULT_MAX_STORAGE_STATE_SIZE,
 } from "./shared/storage-state.js";
 import { readMergedSettings } from "./shared/settings-reader.js";
@@ -113,6 +114,11 @@ function parseBrowserConfig(
 			// Validate: "none", "session", or a named profile
 			if (v === "none" || v === "session") {
 				config.defaultProfile = v;
+			} else if (isSessionProfile(v)) {
+				// Conversation-scoped — a settings default naming one would refuse every navigate.
+				errors.push(
+					`browser.defaultProfile: '${v}' is a session profile; use "session" instead.`,
+				);
 			} else {
 				try {
 					config.defaultProfile = sanitizeProfileName(v);

@@ -2,8 +2,52 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`pi-lean-portal` — `/web profile delete <name>`** — removes a named profile's
+  directory including any saved state. Refuses `_session-*` names (use
+  `/web profile prune`), no-ops when the profile doesn't exist, and resets the
+  conversation default to `session` when it pointed at the deleted profile.
+  `delete` is now a reserved profile name.
+
+### Changed
+
+- **`pi-lean-portal` — profile switches can no longer cross-contaminate saved cookies** —
+  storage-state saves are keyed to the profile that created the browser context
+  (passed to the plugin as a navigate option) instead of the live session record,
+  and the router retires the old context on a profile switch before flipping the
+  session. Previously, `browser-navigate` from profile `"work"` to `"shopping"`
+  could write work's cookies into shopping's saved state (and a switch to
+  `"none"` dropped the named profile's final cookies entirely).
+- **`pi-lean-portal` — `/web profile none` now beats a named settings default** —
+  the conversation default round-trips `"none"` as a value, so an explicit
+  `/web profile none` is honored on every navigate in the conversation
+  (including after `/reload`/`/resume`) instead of falling through to
+  `browser.defaultProfile` until the session restarts.
+- **`pi-lean-portal` — `browser-navigate` refuses nonexistent explicitly-passed named
+  profiles** — `profile="<name>"` no longer lazy-creates the directory, so a typo
+  fails with an agent-actionable error (existing profile names, the
+  `/web profile create` remedy, a labelled `session`/`none` fallback) instead of
+  silently becoming an empty profile. Profiles declared in settings
+  (`browser.defaultProfile`) or as the conversation default still materialize on
+  first use; an explicit `_session-*` name is accepted only when it names the
+  current conversation (and still creates lazily).
+- **`pi-lean-portal` — `/web profile clear` keeps the profile directory** — the
+  directory now stays behind as the profile's existence marker; remove a profile
+  deliberately with `/web profile delete <name>`.
+
 ### Fixed
 
+- **`pi-lean-portal` — cross-backend profile switches no longer lose the old
+  profile's cookies** — when a navigate changes the backend strategy mid-session,
+  the router retires the *previous* plugin's context (captured before the session
+  record is flipped) instead of cleaning up on the new plugin, where the call was
+  a no-op — that leaked the old backend's tab and silently dropped the old
+  profile's final save.
+- **`pi-lean-portal` — `/web profile clear` follows the profile-name policy** — it
+  now refuses `_session-*` names (use `/web profile prune`) and notifies on
+  invalid names instead of throwing, matching `create`/`delete`/`switch`.
+  `clear-all` never touches session profiles.
 - **`pi-lean-portal` — page → localhost fetches work again on Chromium** —
   Chrome 138 gates these behind a Local Network Access prompt headless can't
   answer, so they failed with a bare `Failed to fetch`. Chromium contexts

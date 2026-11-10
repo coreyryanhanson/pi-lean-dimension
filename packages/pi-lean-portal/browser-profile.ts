@@ -1,5 +1,5 @@
 /**
- * Browser Profile management — extracted from browser-toggle.ts.
+ * Browser Profile management.
  *
  * Provides profile listing, formatting, and the `/web profile` subcommand
  * handler.  Stateful operations (setting the conversation-scoped default
@@ -7,20 +7,19 @@
  * with browser-toggle.ts's internal state.
  */
 
-import type {
-	ExtensionContext,
-	ExtensionAPI,
-} from "@earendil-works/pi-coding-agent";
-import { existsSync, readdirSync, statSync, mkdirSync } from "node:fs";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { existsSync, statSync } from "node:fs";
 import {
-	PROFILE_DIR,
 	profileFilePath,
+	deleteProfileDir,
 	deleteStorageState,
 	pruneStaleSessionProfiles,
 	isSessionProfile,
 	sanitizeProfileName,
-	profileDir,
+	profileExists,
 	getProfileLabel,
+	ensureProfileDir,
+	listNamedProfiles,
 } from "./core/shared/storage-state.js";
 import { formatBytes } from "./core/shared/paths.js";
 
@@ -50,23 +49,10 @@ export function listProfiles(): Array<{
 	name: string;
 	stateSize: string;
 }> {
-	try {
-		if (!existsSync(PROFILE_DIR)) return [];
-		const entries = readdirSync(PROFILE_DIR, { withFileTypes: true });
-		const profiles = entries.flatMap((e) =>
-			e.isDirectory() && !e.name.startsWith(".")
-				? [{ name: e.name, stateSize: profileStateSize(e.name) }]
-				: [],
-		);
-		profiles.sort((a, b) => a.name.localeCompare(b.name));
-		return profiles;
-	} catch {
-		return [];
-	}
-}
-
-export function profileLabel(name: string): string {
-	return getProfileLabel(name);
+	return listNamedProfiles({ includeSession: true }).map((name) => ({
+		name,
+		stateSize: profileStateSize(name),
+	}));
 }
 
 /**
@@ -80,8 +66,7 @@ export function formatProfileList(
 	}
 	const lines = [`Profiles (${profiles.length}):`];
 	for (const p of profiles) {
-		const sessionBadge = isSessionProfile(p.name) ? " 📋" : "";
-		lines.push(`  ${profileLabel(p.name)}  (${p.stateSize})${sessionBadge}`);
+		lines.push(`  ${getProfileLabel(p.name)}  (${p.stateSize})`);
 	}
 	return lines.join("\n");
 }
@@ -89,18 +74,50 @@ export function formatProfileList(
 // ─── Profile subcommand handler ──────────────────────────────────
 
 /**
+ * Sanitize a profile name, notifying the user on failure.
+ *
+ * Session profiles (`_session-*`) are managed internally — they materialize
+ * at save time and are removed by prune — so they are refused here for every
+ * subcommand, with a per-subcommand hint on what to do instead.
+ */
+function sanitizeOrNotify(
+	ctx: ExtensionContext,
+	name: string,
+	sessionHint = 'Use profile="session" instead.',
+): boolean {
+	if (isSessionProfile(name)) {
+		ctx.ui.notify(
+			`'${name}' is a session profile. ${sessionHint}`,
+			"warning",
+		);
+		return false;
+	}
+	try {
+		sanitizeProfileName(name);
+		return true;
+	} catch (err) {
+		ctx.ui.notify(
+			err instanceof Error ? err.message : String(err),
+			"warning",
+		);
+		return false;
+	}
+}
+
+/**
  * Handle the `/web profile` subcommand.
  *
  * @param sub     The sub-command text after "profile" (e.g. "", "list", "create shopping")
  * @param ctx     The extension context (for UI notifications)
- * @param pi      The ExtensionAPI (for tool state queries)
  * @param setConversationDefaultProfile  Callback setter — accepts "none" or a profile name
+ * @param currentConversationDefault  The conversation default before this command ran
+ *                                    (used by `delete` to detect it removed the default)
  */
 export async function handleProfileSubcommand(
 	sub: string,
 	ctx: ExtensionContext,
-	_pi: ExtensionAPI,
 	setConversationDefaultProfile: (profile: string) => void,
+	currentConversationDefault?: string,
 ): Promise<void> {
 	// --- list (default) ---
 	if (sub === "" || sub === "list") {
@@ -129,21 +146,21 @@ export async function handleProfileSubcommand(
 			ctx.ui.notify(
 				"Usage: /web profile create <name>\n" +
 					"  Profile names must be alphanumeric, hyphens, and underscores only.\n" +
-					"  Reserved names: none, session, create, list, clear, clear-all, prune.",
+					"  Reserved names: none, session, create, list, clear, clear-all, delete, prune.",
 				"warning",
 			);
 			return;
 		}
+		if (!sanitizeOrNotify(ctx, name)) return;
 		try {
-			sanitizeProfileName(name);
-			mkdirSync(profileDir(name), { recursive: true, mode: 0o700 });
+			ensureProfileDir(name);
 			ctx.ui.notify(
 				`Created profile '${name}'. Use browser-navigate profile="${name}" to start.`,
 				"info",
 			);
 		} catch (err) {
 			ctx.ui.notify(
-				`Invalid profile name: ${err instanceof Error ? err.message : String(err)}`,
+				`Failed to create profile '${name}': ${err instanceof Error ? err.message : String(err)}`,
 				"warning",
 			);
 		}
@@ -168,35 +185,41 @@ export async function handleProfileSubcommand(
 			);
 		}
 
-		// --- switch to existing named profile ---
-	} else if (
-		!sub.includes(" ") &&
-		sub !== "clear" &&
-		sub !== "clear-all" &&
-		sub !== "prune"
-	) {
-		// Single word that isn't a known keyword — try as a named profile switch
-		try {
-			const targetDir = profileDir(sub);
-			if (!existsSync(targetDir)) {
-				ctx.ui.notify(
-					`Profile '${sub}' does not exist.\n` +
-						`  Create it first with /web profile create ${sub}`,
-					"warning",
-				);
-				return;
-			}
-			setConversationDefaultProfile(sub);
+		// --- delete <name> ---
+	} else if (sub === "delete" || sub.startsWith("delete ")) {
+		const name = sub === "delete" ? "" : sub.slice("delete ".length).trim();
+		if (!name) {
 			ctx.ui.notify(
-				`Default profile set to '${sub}' (shared across tasks).`,
-				"info",
-			);
-		} catch (err) {
-			ctx.ui.notify(
-				`Invalid profile name: ${err instanceof Error ? err.message : String(err)}`,
+				"Usage: /web profile delete <name> — provide a profile name.",
 				"warning",
 			);
+			return;
 		}
+		if (!sanitizeOrNotify(ctx, name, "Use /web profile prune to remove stale session profiles.")) {
+			return;
+		}
+		if (!profileExists(name)) {
+			ctx.ui.notify(
+				`Profile '${name}' does not exist. Nothing to delete.`,
+				"info",
+			);
+			return;
+		}
+		try {
+			deleteProfileDir(name);
+		} catch (err) {
+			ctx.ui.notify(
+				`Failed to delete profile '${name}': ${err instanceof Error ? err.message : String(err)}`,
+				"warning",
+			);
+			return;
+		}
+		const resetDefault = currentConversationDefault === name;
+		if (resetDefault) setConversationDefaultProfile("session");
+		ctx.ui.notify(
+			`Deleted profile '${name}'.${resetDefault ? " Conversation default reset to 'session'." : ""} Existing sessions using it will re-create it on save — switch any live session off it (profile="none") for this to stick.`,
+			"info",
+		);
 
 		// --- clear <name> ---
 	} else if (sub === "clear" || sub.startsWith("clear ")) {
@@ -206,6 +229,11 @@ export async function handleProfileSubcommand(
 				"Usage: /web profile clear <name> — provide a profile name.",
 				"warning",
 			);
+			return;
+		}
+		if (
+			!sanitizeOrNotify(ctx, name, "Use /web profile prune to remove stale session profiles.")
+		) {
 			return;
 		}
 		const path = profileFilePath(name);
@@ -221,9 +249,13 @@ export async function handleProfileSubcommand(
 
 		// --- clear-all [--confirm] ---
 	} else if (sub === "clear-all" || sub === "clear-all --confirm") {
-		const profiles = listProfiles();
+		// Session profiles are GC'd by prune, never bulk-cleared here.
+		const profiles = listProfiles().filter((p) => !isSessionProfile(p.name));
 		if (profiles.length === 0) {
-			ctx.ui.notify("No profiles to clear.", "info");
+			ctx.ui.notify(
+				"No profiles to clear. (Stale session profiles: /web profile prune.)",
+				"info",
+			);
 			return;
 		}
 		if (sub === "clear-all") {
@@ -242,11 +274,32 @@ export async function handleProfileSubcommand(
 			ctx.ui.notify(`Cleared ${cleared} profile(s).`, "info");
 		}
 
+		// --- switch to existing named profile ---
+		// Ordered last: specific subcommands above win by matching first.
+	} else if (!sub.includes(" ")) {
+		// Single word that didn't match a subcommand — try as a named profile switch
+		// Sanitize first so invalid names report "Invalid profile name" rather
+		// than the generic missing-profile message.
+		if (!sanitizeOrNotify(ctx, sub)) return;
+		if (!profileExists(sub)) {
+			ctx.ui.notify(
+				`Profile '${sub}' does not exist.\n` +
+					`  Create it first with /web profile create ${sub}`,
+				"warning",
+			);
+			return;
+		}
+		setConversationDefaultProfile(sub);
+		ctx.ui.notify(
+			`Default profile set to '${sub}' (shared across tasks).`,
+			"info",
+		);
+
 		// --- unknown ---
 	} else {
 		ctx.ui.notify(
 			`Unknown profile sub-command: "${sub}". ` +
-				`Usage: /web profile [list|create <name>|<name>|none|session|clear <name>|clear-all [--confirm]|prune [--confirm]]`,
+				`Usage: /web profile [list|create <name>|<name>|none|session|clear <name>|clear-all [--confirm]|delete <name>|prune [--confirm]]`,
 			"warning",
 		);
 	}

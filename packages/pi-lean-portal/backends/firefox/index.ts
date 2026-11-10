@@ -17,6 +17,7 @@ import type { Browser } from "playwright";
 import { PlaywrightPluginBase } from "../playwright-base/playwright-plugin.js";
 import {
 	DEFAULT_CAPABILITIES,
+	INSTALL_HINT,
 	type PluginCapabilities,
 } from "../../core/plugin-api.js";
 
@@ -54,7 +55,7 @@ export class FirefoxPlugin extends PlaywrightPluginBase {
 	}
 
 	protected get installHint(): string {
-		return "Browser not installed. Run /web install to install it.";
+		return INSTALL_HINT;
 	}
 }
 

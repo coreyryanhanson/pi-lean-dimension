@@ -10,7 +10,8 @@ import { getProfileLabel } from "./storage-state.js";
 /** Runtime state of a single browsing session */
 export interface BrowserSession {
 	taskId: string;
-	/** Name of the plugin this session is bound to (set once, never changes) */
+	/** Name of the plugin this session is bound to (overwritten when the
+	 *  router resolves a different backend for the task on a later navigate) */
 	pluginName: string;
 	/** The URL currently loaded in this session */
 	currentUrl?: string;
@@ -71,15 +72,19 @@ class SessionManager {
 
 	updateSession(
 		taskId: string,
-		updates: Partial<Omit<BrowserSession, "taskId">>,
+		updates: Omit<Partial<BrowserSession>, "taskId" | "profileName"> & {
+			/** `null` clears the field instead of setting it */
+			profileName?: string | null;
+		},
 	): void {
 		const session = this.#sessions.get(taskId);
 		if (!session) return;
-		// ponytail: the `as any` is bounded by the Partial<Omit<BrowserSession, "taskId">>
-		// type above — only declared session fields can land here. Skip-undefined
-		// preserves existing fields (matches the prior per-field guards).
+		// ponytail: the `as any` is bounded by the updates type — only declared
+		// session fields can land here. Skip-undefined preserves existing fields;
+		// null clears (currently only for profileName).
 		for (const [k, v] of Object.entries(updates)) {
-			if (v !== undefined) (session as any)[k] = v;
+			if (v === null) delete (session as any)[k];
+			else if (v !== undefined) (session as any)[k] = v;
 		}
 	}
 

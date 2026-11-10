@@ -22,7 +22,7 @@ import {
 	afterEach,
 	vi,
 } from "vitest";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { pluginRegistry } from "../core/plugin-registry.js";
 import { sessionManager } from "../core/shared/session-manager.js";
@@ -30,12 +30,36 @@ import {
 	saveStorageState,
 	deleteStorageState,
 	profileDir,
+	ensureProfileDir,
 } from "../core/shared/storage-state.js";
 import { MockPlugin, makeConfig } from "./helpers/mock-plugin.js";
+import { uniqueName } from "./helpers/setup-temp-dir.js";
+
+/** Extract the options object from the single navigate call `mock` recorded. */
+function navOptions(mock: MockPlugin): Record<string, unknown> {
+	const navCalls = mock.calls.get("navigate");
+	expect(navCalls).toHaveLength(1);
+	const [, , , options] = navCalls![0] as [
+		string,
+		string,
+		number,
+		Record<string, unknown>,
+	];
+	return options;
+}
+
+// Partial mock: ensureProfileDir delegates to the real implementation
+// (real fs); the mkdir-failure test overrides it via vi.mocked().
+vi.mock("../core/shared/storage-state.js", async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import("../core/shared/storage-state.js")>();
+	return { ...actual, ensureProfileDir: vi.fn(actual.ensureProfileDir) };
+});
 
 /**
- * Shared piSessionId for tests that use profile="session" or session="last".
- * Simulates the value passed by index.ts from ctx.sessionManager.getSessionId().
+ * Shared piSessionId for tests that use profile="session".
+ * Simulates the value passed by tools/browser-navigate.ts from
+ * ctx.sessionManager.getSessionId().
  */
 const TEST_PI_SESSION_ID = "test-session-001";
 
@@ -60,6 +84,18 @@ import * as router from "../core/router.js";
 describe("Router session / profile dispatch", () => {
 	let mock: MockPlugin;
 
+	// Explicitly-passed named profiles must exist on disk — materialize
+	// the names these tests navigate with.
+	beforeAll(() => {
+		mkdirSync(profileDir("work"), { recursive: true });
+		mkdirSync(profileDir("shopping"), { recursive: true });
+	});
+
+	afterAll(() => {
+		rmSync(profileDir("work"), { recursive: true, force: true });
+		rmSync(profileDir("shopping"), { recursive: true, force: true });
+	});
+
 	beforeEach(() => {
 		pluginRegistry.clear();
 		mock = new MockPlugin("mock");
@@ -71,66 +107,56 @@ describe("Router session / profile dispatch", () => {
 		pluginRegistry.clear();
 	});
 
-	// ─── Default: profile="none" ──────────────────────────────────
+	// ─── Backend errorKind passthrough ────────────────────────────
+
+	describe("backend errorKind passthrough", () => {
+		it("forwards errorKind=not-installed from the plugin failure to the NavResult", async () => {
+			mock.navResult = {
+				success: false,
+				error: "Browser not installed. Run /web install to install it.",
+				errorKind: "not-installed",
+			};
+
+			const result = await router.navigate("https://example.com");
+
+			expect(result.success).toBe(false);
+			expect(result.errorKind).toBe("not-installed");
+		});
+	});
+
+	// ─── Default: profile="none" ──────────────────────────────
 
 	describe("default (no profile)", () => {
-		it("creates session with persistState=false when profile is omitted", async () => {
-			const result = await router.navigate("https://example.com");
+		const noneCases: Array<{ label: string; opts: { profile?: "none" } }> = [
+			{ label: "omitted", opts: {} },
+			{ label: 'explicit "none"', opts: { profile: "none" } },
+		];
+		it.each(noneCases)(
+			"creates session with persistState=false when profile is $label",
+			async ({ opts }) => {
+				const result = await router.navigate("https://example.com", opts);
 
-			expect(result.success).toBe(true);
-			expect(result.profileMode).toBe("none");
-			expect(result.profileName).toBeUndefined();
+				expect(result.success).toBe(true);
+				expect(result.profileMode).toBe("none");
+				expect(result.profileName).toBeUndefined();
 
-			const session = sessionManager.getSession("default");
-			expect(session).toBeDefined();
-			expect(session?.persistState).toBeFalsy();
-			expect(session?.profileName).toBeUndefined();
-		});
+				const session = sessionManager.getSession("default");
+				expect(session).toBeDefined();
+				expect(session?.persistState).toBe(false);
+				expect(session?.profileName).toBeUndefined();
+			},
+		);
 
-		it('creates session with persistState=false for explicit profile="none"', async () => {
-			const result = await router.navigate("https://example.com", {
-				profile: "none",
-			});
-
-			expect(result.success).toBe(true);
-			expect(result.profileMode).toBe("none");
-			expect(result.profileName).toBeUndefined();
-
-			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBe(false);
-		});
-
-		it('calls plugin.cleanup when profile="none" and existing session exists', async () => {
-			// First navigate creates a session
-			await router.navigate("https://example.com");
-			expect(mock.calls.get("navigate")?.length).toBe(1);
-			expect(sessionManager.getSession("default")).toBeDefined();
-			mock.calls.delete("navigate");
-
-			// Second navigate with profile="none" should trigger cleanup
-			await router.navigate("https://example.com/other", {
-				profile: "none",
-			});
-
-			// The old session was cleaned up and a fresh navigate happened
-			expect(mock.calls.get("navigate")?.length).toBe(1);
-		});
-
-		it('sets profileMode="none" when profile is omitted', async () => {
-			const result = await router.navigate("https://example.com");
-			expect(result.profileMode).toBe("none");
-		});
-
-		it('profile="none" destroys existing session with profile', async () => {
-			// First create a session with a named profile
+		// Switching to none tears down the old context for any persistent
+		// starting profile (named or session-scoped).
+		it.each(['work', 'session'] as const)('profile="none" destroys an existing %s session', async (start) => {
 			await router.navigate("https://example.com", {
-				profile: "work",
+				profile: start,
+				...(start === "session" ? { piSessionId: TEST_PI_SESSION_ID } : {}),
 			});
-			expect(sessionManager.getSession("default")?.profileName).toBe("work");
 			expect(sessionManager.getSession("default")?.persistState).toBe(true);
 			mock.calls.delete("navigate");
 
-			// Switch to none — should destroy old context
 			const result = await router.navigate("https://example.com/other", {
 				profile: "none",
 			});
@@ -139,8 +165,12 @@ describe("Router session / profile dispatch", () => {
 			expect(result.profileMode).toBe("none");
 			expect(result.profileName).toBeUndefined();
 
+			// Switching to none retires the old context: cleanup runs (with its
+			// state save under the old profile) before the session is flipped.
+			expect(mock.calls.get("cleanup")?.length).toBe(1);
+
 			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBeFalsy();
+			expect(session?.persistState).toBe(false);
 			expect(session?.profileName).toBeUndefined();
 		});
 	});
@@ -164,16 +194,6 @@ describe("Router session / profile dispatch", () => {
 			expect(session?.profileName).toContain("_session-");
 		});
 
-		it("sets persistState=true on the session for auto-save", async () => {
-			await router.navigate("https://example.com", {
-				profile: "session",
-				piSessionId: TEST_PI_SESSION_ID,
-			});
-
-			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBe(true);
-		});
-
 		it("stores profileName in lastNav for auto-recovery", async () => {
 			await router.navigate("https://example.com", {
 				profile: "session",
@@ -187,32 +207,23 @@ describe("Router session / profile dispatch", () => {
 		});
 
 		it('without piSessionId, profile="session" falls back to "none"', async () => {
-			const result = await router.navigate("https://example.com", {
-				profile: "session",
-			});
+			// The fallback warns — the agent asked for persistence and got none.
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+			try {
+				const result = await router.navigate("https://example.com", {
+					profile: "session",
+				});
 
-			expect(result.success).toBe(true);
-			expect(result.profileMode).toBe("none");
-			expect(result.profileName).toBeUndefined();
+				expect(result.success).toBe(true);
+				expect(result.profileMode).toBe("none");
+				expect(result.profileName).toBeUndefined();
+				expect(warnSpy).toHaveBeenCalled();
 
-			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBeFalsy();
-		});
-
-		it('clears persistState and profileName for profile="none"', async () => {
-			await router.navigate("https://example.com", {
-				profile: "session",
-				piSessionId: TEST_PI_SESSION_ID,
-			});
-			expect(sessionManager.getSession("default")?.persistState).toBe(true);
-
-			await router.navigate("https://example.com/other", {
-				profile: "none",
-			});
-
-			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBe(false);
-			expect(session?.profileName).toBeUndefined();
+				const session = sessionManager.getSession("default");
+				expect(session?.persistState).toBe(false);
+			} finally {
+				warnSpy.mockRestore();
+			}
 		});
 	});
 
@@ -232,15 +243,6 @@ describe("Router session / profile dispatch", () => {
 			expect(session?.profileName).toBe("work");
 		});
 
-		it("sets persistState=true on the session", async () => {
-			await router.navigate("https://example.com", {
-				profile: "shopping",
-			});
-
-			const session = sessionManager.getSession("default");
-			expect(session?.persistState).toBe(true);
-		});
-
 		it("stores profileName in lastNav", async () => {
 			await router.navigate("https://example.com", {
 				profile: "shopping",
@@ -255,57 +257,185 @@ describe("Router session / profile dispatch", () => {
 				profile: "work",
 			});
 			mock.calls.delete("navigate");
+			mock.calls.delete("cleanup");
+
+			// cleanup (and its state save) must run while the session record
+			// still names the OLD profile, before it flips to the new one.
+			let sawProfileAtCleanup: string | null | undefined;
+			const realCleanup = mock.cleanup.bind(mock);
+			vi.spyOn(mock, "cleanup").mockImplementation(async (tid) => {
+				sawProfileAtCleanup = sessionManager.getSession(tid)?.profileName;
+				return realCleanup(tid);
+			});
 
 			// Switch to a different profile — should clean up old context
 			await router.navigate("https://example.com", {
 				profile: "shopping",
 			});
 
-			// Navigate was called again (new context)
-			expect(mock.calls.get("navigate")?.length).toBe(1);
+			// Old context retired before the session flipped to "shopping",
+			// so its cookies persist under "work"
+			expect(mock.calls.get("cleanup")?.length).toBe(1);
+			expect(sawProfileAtCleanup).toBe("work");
+
+			// Navigate was called again (new context), tagged with the new profile
+			const navArgs = mock.calls.get("navigate")?.[0] as unknown[];
+			expect(navArgs[3]).toMatchObject({ profile: "shopping" });
 			const session = sessionManager.getSession("default");
 			expect(session?.profileName).toBe("shopping");
 		});
+
+		// The old backend owns the context, so cleanup — and its state save —
+		// must go to the old plugin, not the newly resolved one. With the
+		// profile unchanged, only the pluginName check triggers retirement.
+		it.each([
+			{ label: "a profile switch", nextProfile: "shopping" },
+			{ label: "the SAME profile", nextProfile: "work" },
+		])(
+			"triggers cleanup on the PRIOR plugin when switching backends with $label",
+			async ({ nextProfile }) => {
+				const other = new MockPlugin("other");
+				pluginRegistry.register(other, makeConfig({ name: "other" }));
+
+				await router.navigate("https://example.com", {
+					strategy: "mock",
+					profile: "work",
+				});
+				mock.calls.delete("cleanup");
+				other.calls.delete("cleanup");
+
+				await router.navigate("https://example.com", {
+					strategy: "other",
+					profile: nextProfile,
+				});
+
+				expect(mock.calls.get("cleanup")?.length).toBe(1);
+				expect(other.calls.get("cleanup")).toBeUndefined();
+				const session = sessionManager.getSession("default");
+				expect(session?.pluginName).toBe("other");
+				expect(session?.profileName).toBe(nextProfile);
+			},
+		);
 	});
 
 	// ─── Invalid profile names ──────────────────────────────────
 
 	describe("invalid profile names", () => {
-		it("returns error for empty profile name", async () => {
+		// Validation rules themselves are pinned in storage-state.test.ts
+		// (sanitizeProfileName); this pins only how a bad name surfaces
+		// through router.navigate.
+		it("refuses an invalid profile name as profile-refusal", async () => {
 			const result = await router.navigate("https://example.com", {
 				profile: "",
 			});
 
 			expect(result.success).toBe(false);
-			expect(result.error).toContain("Profile name");
+			expect(result.error).toContain("Profile name must be a non-empty string");
+			expect(result.errorKind).toBe("profile-refusal");
 		});
+	});
 
-		it("returns error for profile name with special characters", async () => {
+	// ─── Explicit named-profile existence ──────────────────
+
+	describe("explicit named-profile existence", () => {
+		it("refuses a nonexistent explicitly-passed named profile without creating it", async () => {
+			const name = uniqueName("refused");
 			const result = await router.navigate("https://example.com", {
-				profile: "../../etc/passwd",
+				profile: name,
 			});
 
 			expect(result.success).toBe(false);
-			expect(result.error).toContain("Invalid profile name");
+			expect(result.errorKind).toBe("profile-refusal");
+			expect(result.error).toContain(`Profile '${name}' does not exist.`);
+			// Existing named profiles are listed for near-miss self-correction —
+			// the wording/cap/fallback shape is covered by the pure
+			// formatProfileRefusal tests.
+			expect(result.error).toContain("work");
+
+			// The absence is the contract — no lazy-create
+			expect(existsSync(profileDir(name))).toBe(false);
 		});
 
-		it("returns error for profile name with spaces", async () => {
-			const result = await router.navigate("https://example.com", {
-				profile: "my profile",
-			});
+		// Own/foreign _session-* acceptance and refusal are pinned at the unit
+		// level in profile-resolution.test.ts; the invalid-name describe below
+		// pins how a refusal surfaces through router.navigate.
+	});
+});
 
-			expect(result.success).toBe(false);
-			expect(result.error).toContain("Invalid profile name");
+// ─── Non-agent default profile materialization ─────────────────
+// A conversation default (conversationDefault) and a settings default
+// (browser.defaultProfile) take the identical non-agent branch in
+// resolveNavigateProfile, so each behavior is tested once per source.
+
+describe("non-agent default profile materialization", () => {
+	let mock: MockPlugin;
+	let warnSpy: ReturnType<typeof vi.spyOn>;
+
+	// How each source delivers the nonexistent profile name to navigate().
+	const sources: Array<
+		[label: string, opts: (name: string) => { conversationDefault?: string }]
+	> = [
+		[
+			"conversation default",
+			(name) => ({ conversationDefault: name }),
+		],
+		[
+			"settings default",
+			(name) => {
+				mockConfig.defaultProfile = name;
+				return {};
+			},
+		],
+	];
+
+	beforeEach(() => {
+		pluginRegistry.clear();
+		mock = new MockPlugin("mock");
+		pluginRegistry.register(mock, makeConfig({ name: "mock" }));
+		warnSpy = vi.spyOn(console, "warn");
+		warnSpy.mockImplementation(() => {});
+	});
+
+	afterEach(async () => {
+		warnSpy.mockRestore();
+		vi.mocked(ensureProfileDir).mockReset();
+		mockConfig.defaultProfile = "none";
+		await sessionManager.removeAll();
+		pluginRegistry.clear();
+	});
+
+	it.each(sources)("materializes a nonexistent %s named profile", async (_label, opts) => {
+		const name = uniqueName("default-materialize");
+		try {
+			const result = await router.navigate("https://example.com", opts(name));
+
+			expect(result.success).toBe(true);
+			expect(result.profileMode).toBe("named");
+			expect(result.profileName).toBe(name);
+			// The user decision stands — the dir is created, not refused.
+			expect(existsSync(profileDir(name))).toBe(true);
+		} finally {
+			rmSync(profileDir(name), { recursive: true, force: true });
+		}
+	});
+
+	it.each(sources)("falls back to session with a warning when the %s cannot be created", async (_label, opts) => {
+		const name = uniqueName("default-uncreatable");
+		vi.mocked(ensureProfileDir).mockImplementation(() => {
+			throw new Error("EACCES: permission denied");
 		});
 
-		it("returns error for profile name exceeding 64 characters", async () => {
-			const result = await router.navigate("https://example.com", {
-				profile: "a".repeat(65),
-			});
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain("Invalid profile name");
+		const result = await router.navigate("https://example.com", {
+			...opts(name),
+			piSessionId: TEST_PI_SESSION_ID,
 		});
+
+		// The fallback mirrors the one used when profile='session' can't
+		// resolve — the request never lands on a different named profile.
+		expect(result.success).toBe(true);
+		expect(result.profileMode).toBe("session");
+		expect(result.profileName).toContain(TEST_PI_SESSION_ID);
+		expect(warnSpy).toHaveBeenCalled();
 	});
 });
 
@@ -313,6 +443,16 @@ describe("Router session / profile dispatch", () => {
 
 describe("Router defaultProfile config routing", () => {
 	let mock: MockPlugin;
+
+	// "shopping" is used as an explicit named profile in these tests and must
+	// exist on disk.
+	beforeAll(() => {
+		mkdirSync(profileDir("shopping"), { recursive: true });
+	});
+
+	afterAll(() => {
+		rmSync(profileDir("shopping"), { recursive: true, force: true });
+	});
 
 	beforeEach(() => {
 		pluginRegistry.clear();
@@ -341,18 +481,6 @@ describe("Router defaultProfile config routing", () => {
 		expect(session?.persistState).toBe(true);
 	});
 
-	it('defaults to "none" profile when config defaultProfile="session" but piSessionId unavailable', async () => {
-		const result = await router.navigate("https://example.com");
-
-		expect(result.success).toBe(true);
-		expect(result.profileMode).toBe("none");
-		expect(result.profileName).toBeUndefined();
-
-		const session = sessionManager.getSession("default");
-		expect(session?.persistState).toBeFalsy();
-		expect(session?.profileName).toBeUndefined();
-	});
-
 	it("uses explicit profile='none' even when config says 'session'", async () => {
 		const result = await router.navigate("https://example.com", {
 			taskId: "custom-task",
@@ -364,32 +492,7 @@ describe("Router defaultProfile config routing", () => {
 		expect(result.profileName).toBeUndefined();
 
 		const session = sessionManager.getSession("custom-task");
-		expect(session?.persistState).toBeFalsy();
-	});
-
-	it("uses config defaultProfile with custom piSessionId from index.ts", async () => {
-		const result = await router.navigate("https://example.com", {
-			piSessionId: "custom-session",
-		});
-
-		expect(result.success).toBe(true);
-		expect(result.profileName).toContain("_session-");
-		expect(result.profileName).toContain("custom-session");
-
-		const session = sessionManager.getSession("default");
-		expect(session?.persistState).toBe(true);
-		expect(session?.profileName).toContain("_session-");
-	});
-
-	it("uses explicit profile='session' with piSessionId", async () => {
-		const result = await router.navigate("https://example.com", {
-			profile: "session",
-			piSessionId: TEST_PI_SESSION_ID,
-		});
-
-		expect(result.success).toBe(true);
-		expect(result.profileName).toContain("_session-");
-		expect(result.profileMode).toBe("session");
+		expect(session?.persistState).toBe(false);
 	});
 
 	it("still accepts explicit named profile over config default", async () => {
@@ -406,28 +509,36 @@ describe("Router defaultProfile config routing", () => {
 		expect(session?.persistState).toBe(true);
 	});
 
-	it("explicit profile='none' overrides defaultProfile config", async () => {
+	it("navigates when the settings default already exists", async () => {
+		mockConfig.defaultProfile = "shopping";
+
+		const result = await router.navigate("https://example.com");
+
+		expect(result.success).toBe(true);
+		expect(result.profileMode).toBe("named");
+		expect(result.profileName).toBe("shopping");
+	});
+
+	it("conversation default 'none' beats a named settings default", async () => {
+		mockConfig.defaultProfile = "shopping";
+
 		const result = await router.navigate("https://example.com", {
-			profile: "none",
+			conversationDefault: "none",
 		});
 
 		expect(result.success).toBe(true);
 		expect(result.profileMode).toBe("none");
 		expect(result.profileName).toBeUndefined();
-
-		const session = sessionManager.getSession("default");
-		expect(session?.persistState).toBeFalsy();
 	});
 });
 
 // ─── Profile storage state load from disk ──────────────────────
 
 describe("profile storage state load from disk", () => {
-	const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-	const SAVED_PROFILE = `test-persistence-saved-${uid}`;
-	const FRESH_PROFILE = `test-persistence-fresh-${uid}`;
-	const CORRUPT_PROFILE = `test-persistence-corrupt-${uid}`;
-	const LASTNAV_PROFILE = `test-persistence-lastnav-${uid}`;
+	const SAVED_PROFILE = uniqueName("test-persistence-saved");
+	const FRESH_PROFILE = uniqueName("test-persistence-fresh");
+	const CORRUPT_PROFILE = uniqueName("test-persistence-corrupt");
+	const LASTNAV_PROFILE = uniqueName("test-persistence-lastnav");
 
 	const TEST_STATE = {
 		cookies: [
@@ -446,6 +557,10 @@ describe("profile storage state load from disk", () => {
 	};
 
 	beforeAll(() => {
+		// FRESH_PROFILE has an existing but empty dir — literal first use of an
+		// explicitly-passed named profile is a refusal, so "no saved state"
+		// is tested against an existing dir.
+		mkdirSync(profileDir(FRESH_PROFILE), { recursive: true });
 		// Write known state for SAVED_PROFILE
 		saveStorageState(SAVED_PROFILE, TEST_STATE);
 		// Write known state for LASTNAV_PROFILE
@@ -486,68 +601,23 @@ describe("profile storage state load from disk", () => {
 		});
 		expect(result.success).toBe(true);
 
-		const navCalls = mock.calls.get("navigate");
-		expect(navCalls).toHaveLength(1);
-		const [, , , options] = navCalls![0] as [
-			string,
-			string,
-			number,
-			Record<string, unknown>,
-		];
-		expect(options.storageState).toBeDefined();
+		const options = navOptions(mock);
 		const state = options.storageState as { cookies: Array<{ name: string }> };
 		expect(state.cookies).toHaveLength(1);
 		expect(state.cookies[0]!.name).toBe("consent");
 	});
 
-	it("does not pass storageState when named profile has no saved state (first use)", async () => {
-		const result = await router.navigate("https://example.com", {
-			profile: FRESH_PROFILE,
-		});
+	// `loadStorageState` yields no state for all three: no profile requested,
+	// an existing-but-empty dir, and an unreadable state file.
+	it.each([
+		{ label: 'profile="none"', profile: "none" },
+		{ label: "empty profile dir", profile: FRESH_PROFILE },
+		{ label: "corrupt storage-state file", profile: CORRUPT_PROFILE },
+	])("does not pass storageState for $label", async ({ profile }) => {
+		const result = await router.navigate("https://example.com", { profile });
 		expect(result.success).toBe(true);
 
-		const navCalls = mock.calls.get("navigate");
-		expect(navCalls).toHaveLength(1);
-		const [, , , options] = navCalls![0] as [
-			string,
-			string,
-			number,
-			Record<string, unknown>,
-		];
-		expect(options.storageState).toBeUndefined();
-	});
-
-	it('does not pass storageState for profile="none"', async () => {
-		const result = await router.navigate("https://example.com", {
-			profile: "none",
-		});
-		expect(result.success).toBe(true);
-
-		const navCalls = mock.calls.get("navigate");
-		expect(navCalls).toHaveLength(1);
-		const [, , , options] = navCalls![0] as [
-			string,
-			string,
-			number,
-			Record<string, unknown>,
-		];
-		expect(options.storageState).toBeUndefined();
-	});
-
-	it("gracefully handles corrupt storage state file on disk", async () => {
-		const result = await router.navigate("https://example.com", {
-			profile: CORRUPT_PROFILE,
-		});
-		expect(result.success).toBe(true);
-
-		const navCalls = mock.calls.get("navigate");
-		expect(navCalls).toHaveLength(1);
-		const [, , , options] = navCalls![0] as [
-			string,
-			string,
-			number,
-			Record<string, unknown>,
-		];
+		const options = navOptions(mock);
 		expect(options.storageState).toBeUndefined();
 	});
 
@@ -566,14 +636,7 @@ describe("profile storage state load from disk", () => {
 		expect(result.success).toBe(true);
 
 		// Should have navigated with storageState from LASTNAV_PROFILE
-		const navCalls = mock.calls.get("navigate");
-		expect(navCalls).toHaveLength(1);
-		const [, , , options] = navCalls![0] as [
-			string,
-			string,
-			number,
-			Record<string, unknown>,
-		];
+		const options = navOptions(mock);
 		expect(options.storageState).toBeDefined();
 		const state = options.storageState as { cookies: Array<{ name: string }> };
 		expect(state.cookies).toHaveLength(1);
@@ -586,14 +649,34 @@ describe("profile storage state load from disk", () => {
 		const result = await router.snapshot("default");
 		expect(result.success).toBe(true);
 
-		const navCalls = mock.calls.get("navigate");
-		expect(navCalls).toHaveLength(1);
-		const [, , , options] = navCalls![0] as [
-			string,
-			string,
-			number,
-			Record<string, unknown>,
-		];
+		const options = navOptions(mock);
 		expect(options.storageState).toBeUndefined();
+	});
+
+	it("failed auto-recovery suppresses the auto-save", async () => {
+		sessionManager.setLastNav(
+			"default",
+			"https://example.com",
+			"Mock",
+			"mock",
+			LASTNAV_PROFILE,
+		);
+		mock.navResult = { success: false, error: "boom" };
+
+		// A failed recovery nav never validated, so cleanup must run with the
+		// auto-save already suppressed — same policy as the fresh-navigate
+		// failure paths.
+		let persistAtCleanup: boolean | undefined;
+		const realCleanup = mock.cleanup.bind(mock);
+		vi.spyOn(mock, "cleanup").mockImplementation(async (tid) => {
+			persistAtCleanup = sessionManager.getSession(tid)?.persistState;
+			return realCleanup(tid);
+		});
+
+		const result = await router.snapshot("default");
+		expect(result.success).toBe(false);
+		expect(mock.calls.get("cleanup")).toHaveLength(1);
+		expect(persistAtCleanup).toBe(false);
+		expect(sessionManager.getSession("default")).toBeUndefined();
 	});
 });

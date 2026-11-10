@@ -18,6 +18,7 @@ import {
 	unlinkSync,
 	rmSync,
 	readdirSync,
+	statSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -26,7 +27,10 @@ import { PORTAL_DATA_DIR } from "./paths.js";
 
 // ─── Constants ────────────────────────────────────────────────────────
 
-export const PROFILE_DIR = join(PORTAL_DATA_DIR, "browser-state");
+// Narrow env override (test isolation) — do NOT override PORTAL_DATA_DIR;
+// user-backends/ and web-guides/ must keep resolving to the real tree.
+export const PROFILE_DIR =
+	process.env.PI_PORTAL_PROFILE_DIR ?? join(PORTAL_DATA_DIR, "browser-state");
 
 /** Current storage state version. Increment on breaking format changes. */
 const STORAGE_STATE_VERSION = 1;
@@ -44,6 +48,7 @@ const RESERVED_PROFILE_NAMES = new Set([
 	"list",
 	"clear",
 	"clear-all",
+	"delete",
 	"prune", // subcommands
 ]);
 
@@ -92,13 +97,19 @@ export interface StorageStateFile {
 
 // ─── Profile Name Validation ──────────────────────────────────────────
 
+/** Validate the session ID embedded in a `_session-*` profile name — shared by
+ * sanitizeProfileName and sessionProfileName so the two cannot drift. */
+function validSessionId(sessionId: string): boolean {
+	return sessionId.length > 0 && !/[/\\..\s]/.test(sessionId);
+}
+
 /**
  * Validate a profile name.
  *
  * Rules:
  * - Must be 1-64 characters long
  * - Only alphanumeric, hyphens, and underscores allowed
- * - Must not be a reserved keyword ("none", "session", "create", "list", "clear", "clear-all", "prune")
+ * - Must not be a reserved keyword ("none", "session", "create", "list", "clear", "clear-all", "delete", "prune")
  * - Session-scoped names (`_session-*`) are allowed with embedded ID validation
  *
  * @throws {Error} If the name is invalid.
@@ -112,7 +123,7 @@ export function sanitizeProfileName(name: string): string {
 	// Session profiles: validate the embedded session ID, then bypass regex
 	if (name.startsWith(SESSION_PROFILE_PREFIX)) {
 		const sessionId = name.slice(SESSION_PROFILE_PREFIX.length);
-		if (!sessionId || /[/\\..\s]/.test(sessionId)) {
+		if (!validSessionId(sessionId)) {
 			throw new Error(
 				`Invalid session profile name '${name}': embedded session ID must be non-empty ` +
 					"and must not contain path traversal characters.",
@@ -130,7 +141,7 @@ export function sanitizeProfileName(name: string): string {
 
 	if (RESERVED_PROFILE_NAMES.has(name)) {
 		throw new Error(
-			`'${name}' is a reserved session mode and cannot be used as a profile name.`,
+			`'${name}' is a reserved profile name or subcommand and cannot be used as a profile name.`,
 		);
 	}
 
@@ -152,25 +163,84 @@ export function profileFilePath(profileName: string): string {
 	return join(profileDir(profileName), "storage-state.json");
 }
 
+/**
+ * Create a profile's directory if it does not exist (mode 0700).
+ * A no-op when the directory already exists.
+ *
+ * @throws {Error} If the name is invalid or the mkdir fails.
+ */
+export function ensureProfileDir(profileName: string): void {
+	mkdirSync(profileDir(profileName), { recursive: true, mode: 0o700 });
+}
+
+/**
+ * Remove a profile's directory and everything in it.
+ *
+ * @throws {Error} If the name is invalid or the removal fails.
+ */
+export function deleteProfileDir(profileName: string): void {
+	rmSync(profileDir(profileName), { recursive: true, force: true });
+}
+
+/**
+ * List profile names found on disk, sorted.
+ *
+ * By default only named (non-`_session-*`) profiles are returned;
+ * pass `{ includeSession: true }` to include session-scoped ones.
+ * Hidden directories are always skipped.
+ *
+ * @returns Sorted profile names, or `[]` if the profile directory
+ *          is missing or unreadable.
+ */
+export function listNamedProfiles(
+	opts: { includeSession?: boolean } = {},
+): string[] {
+	try {
+		if (!existsSync(PROFILE_DIR)) return [];
+		return readdirSync(PROFILE_DIR, { withFileTypes: true })
+			.filter(
+				(e) =>
+					e.isDirectory() &&
+					!e.name.startsWith(".") &&
+					(opts.includeSession || !isSessionProfile(e.name)),
+			)
+			.map((e) => e.name)
+			.sort((a, b) => a.localeCompare(b));
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Whether a named (non-session) profile dir exists on disk. Matches exact
+ * directory names, so acceptance agrees with `/web profile list` — unlike
+ * a raw `existsSync(profileDir(name))`, which follows filesystem
+ * case-sensitivity and accepts symlinked dirs.
+ */
+export function profileExists(name: string): boolean {
+	return listNamedProfiles().includes(name);
+}
+
 // ─── Read / Write ─────────────────────────────────────────────────────
 
 /**
  * Load storage state for a named profile.
  *
- * Returns `null` if no state file exists (first use).
+ * Returns `null` if no state file exists (first use), the name is invalid,
+ * or the file is unreadable/corrupt.
  * Logs a warning if the version is higher than the current code understands.
  *
  * @param profileName - The profile name.
  * @returns The parsed storage state, or null if no file exists.
  */
 export function loadStorageState(profileName: string): StorageStateFile | null {
-	const path = profileFilePath(profileName);
-
-	if (!existsSync(path)) {
-		return null;
-	}
-
 	try {
+		const path = profileFilePath(profileName);
+
+		if (!existsSync(path)) {
+			return null;
+		}
+
 		const raw = readFileSync(path, "utf-8");
 		const parsed = JSON.parse(raw) as StorageStateFile;
 
@@ -225,22 +295,30 @@ function loadStorageStateRaw(path: string): StorageStateFile | null {
 	}
 }
 
+/** A temp file younger than this may belong to a concurrent writer sitting
+ * between write and rename; only older ones are orphaned crash debris. */
+const TEMP_FILE_SWEEP_MIN_AGE_MS = 60_000;
+
 /**
  * Best-effort sweep of orphaned temp files in a profile directory.
  * These can accumulate if a process crashes between write and rename.
+ * Fresh temp files are left alone (a concurrent writer may be mid-save).
  * Failures are silently ignored.
  */
 function sweepOrphanedTempFiles(dir: string): void {
 	try {
 		if (!existsSync(dir)) return;
-		const entries = readdirSync(dir);
-		for (const entry of entries) {
-			if (entry.startsWith(TEMP_FILE_PREFIX) && entry.endsWith(TEMP_FILE_SUFFIX)) {
-				try {
+		const now = Date.now();
+		for (const entry of readdirSync(dir)) {
+			if (!entry.startsWith(TEMP_FILE_PREFIX) || !entry.endsWith(TEMP_FILE_SUFFIX)) {
+				continue;
+			}
+			try {
+				if (now - statSync(join(dir, entry)).mtimeMs > TEMP_FILE_SWEEP_MIN_AGE_MS) {
 					unlinkSync(join(dir, entry));
-				} catch {
-					/* best-effort */
 				}
+			} catch {
+				/* best-effort */
 			}
 		}
 	} catch {
@@ -358,12 +436,12 @@ export function saveStorageState(
 	state: { cookies: unknown[]; origins: unknown[] },
 	maxSizeBytes: number = DEFAULT_MAX_STORAGE_STATE_SIZE,
 ): boolean {
-	const dir = profileDir(profileName);
-	const path = profileFilePath(profileName);
-
 	try {
+		const dir = profileDir(profileName);
+		const path = profileFilePath(profileName);
+
 		// Create profile directory with restricted permissions
-		mkdirSync(dir, { recursive: true, mode: 0o700 });
+		ensureProfileDir(profileName);
 
 		// Best-effort sweep of orphaned temp files from prior crashes
 		sweepOrphanedTempFiles(dir);
@@ -416,9 +494,10 @@ export function saveStorageState(
 /**
  * Delete the storage state file for a named profile.
  *
- * Also removes the profile directory if it becomes empty (no leftover state
- * files or other artifacts). Does NOT throw — failures are logged and
- * silently ignored.
+ * The profile directory is kept: an on-disk named-profile directory
+ * is the marker that the profile was deliberately declared. Full
+ * removal (directory included) is the `/web profile delete` path.
+ * Does NOT throw — failures are logged and silently ignored.
  *
  * @param profileName - The profile name.
  */
@@ -427,14 +506,6 @@ export function deleteStorageState(profileName: string): void {
 	try {
 		if (existsSync(path)) {
 			unlinkSync(path);
-		}
-		// Clean up the profile directory if it's now empty
-		const dir = profileDir(profileName);
-		if (existsSync(dir)) {
-			const remaining = readdirSync(dir);
-			if (remaining.length === 0) {
-				rmSync(dir, { recursive: true, force: true });
-			}
 		}
 	} catch (err) {
 		console.warn(
@@ -459,30 +530,40 @@ export function deleteStorageState(profileName: string): void {
  * @param session - The session-manager entry, or null/undefined. Only
  *                  sessions with `persistState` true trigger a save.
  * @param getStorageState - Callback that produces the raw storage state.
- * @param viaLabel - Optional backend label inserted into the warning
- *                   (e.g. `"via Python bridge"`) for diagnostic output.
- * @param maxSizeBytes - Optional byte threshold for the size warning
- *                       (defaults to `DEFAULT_MAX_STORAGE_STATE_SIZE` when
- *                       omitted).
+ * @param opts.profileName - Name of the profile that owns the context
+ *                      being saved; the save is keyed to it. A save without
+ *                      an owning profile name is skipped.
+ * @param opts.viaLabel - Optional backend label inserted into the warning
+ *                        (e.g. `"via Python bridge"`) for diagnostic output.
+ * @param opts.maxSizeBytes - Optional byte threshold for the size warning
+ *                            (defaults to `DEFAULT_MAX_STORAGE_STATE_SIZE`
+ *                            when omitted).
  * @returns The raw state object, or `undefined` if the session is
  *          non-persistent or the save failed.
  */
 export async function persistSessionState(
-	session: { persistState?: boolean; profileName?: string } | null | undefined,
+	session: { persistState?: boolean } | null | undefined,
 	getStorageState: () => Promise<{ cookies: unknown[]; origins: unknown[] }>,
-	viaLabel: string = "",
-	maxSizeBytes?: number,
+	opts: {
+		profileName: string | undefined;
+		viaLabel?: string;
+		maxSizeBytes?: number;
+	},
 ): Promise<{ cookies: unknown[]; origins: unknown[] } | undefined> {
+	const { profileName, viaLabel = "", maxSizeBytes } = opts;
 	if (!session?.persistState) return undefined;
-	const name = session.profileName ?? "default";
+	// `persistState` is only set alongside a resolved profile; no owning
+	// profile here would mean a backend bug — saving under an undeclared
+	// profile name would create a profile the user never asked for.
+	if (!profileName) return undefined;
 	try {
 		const state = await getStorageState();
-		saveStorageState(name, state, maxSizeBytes);
+		saveStorageState(profileName, state, maxSizeBytes);
 		return state;
 	} catch (err) {
 		console.warn(
 			`[pi-lean-portal] Failed to auto-save storage state for profile ` +
-				`'${name}'${viaLabel ? ` ${viaLabel}` : ""}: ` +
+				`'${profileName}'${viaLabel ? ` ${viaLabel}` : ""}: ` +
 				`${err instanceof Error ? err.message : String(err)}. ` +
 				"Session state may be lost.",
 		);
@@ -501,7 +582,6 @@ export function getProfileLabel(name: string): string {
 
 /**
  * Check whether a profile name follows the session-scoped naming convention.
-
  *
  * Session profiles start with `SESSION_PROFILE_PREFIX` (`_session-`) and
  * encode the pi session ID. They are auto-created for `profile="session"`
@@ -520,12 +600,12 @@ export function isSessionProfile(name: string): boolean {
  * The returned name follows the `_session-<piSessionId>` convention and
  * can be used with `loadStorageState`/`saveStorageState`.
  *
- * @param piSessionId - The pi session ID (must be non-empty, no path chars).
+ * @param piSessionId - The pi session ID (must be non-empty, no path or whitespace chars).
  * @returns The session-scoped profile name.
  * @throws {Error} If the piSessionId is empty or contains path traversal characters.
  */
 export function sessionProfileName(piSessionId: string): string {
-	if (!piSessionId || /[/\\..]/.test(piSessionId)) {
+	if (!validSessionId(piSessionId)) {
 		throw new Error(`Invalid piSessionId for session profile: '${piSessionId}'`);
 	}
 	return `${SESSION_PROFILE_PREFIX}${piSessionId}`;
@@ -581,8 +661,7 @@ export function pruneStaleSessionProfiles(): {
 
 		try {
 			if (isSessionStale(entry)) {
-				const fullPath = join(PROFILE_DIR, entry);
-				rmSync(fullPath, { recursive: true, force: true });
+				deleteProfileDir(entry);
 				result.pruned.push(entry);
 			} else {
 				result.kept.push(entry);

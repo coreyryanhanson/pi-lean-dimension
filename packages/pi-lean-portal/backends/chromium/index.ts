@@ -11,7 +11,7 @@
 import { chromium } from "playwright";
 import type { Browser } from "playwright";
 import { PlaywrightPluginBase } from "../playwright-base/playwright-plugin.js";
-import { DEFAULT_CAPABILITIES } from "../../core/plugin-api.js";
+import { DEFAULT_CAPABILITIES, INSTALL_HINT } from "../../core/plugin-api.js";
 
 export class ChromiumPlugin extends PlaywrightPluginBase {
 	readonly name = "chromium";
@@ -38,7 +38,7 @@ export class ChromiumPlugin extends PlaywrightPluginBase {
 	}
 
 	protected get installHint(): string {
-		return "Browser not installed. Run /web install to install it.";
+		return INSTALL_HINT;
 	}
 }
 

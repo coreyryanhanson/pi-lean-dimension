@@ -17,12 +17,8 @@ import {
 	SNAPSHOT_TRUNCATE_THRESHOLD,
 	type CacheResult,
 } from "./shared/snapshot-cache.js";
-import {
-	loadStorageState,
-	sanitizeProfileName,
-	sessionProfileName,
-	type StorageStateFile,
-} from "./shared/storage-state.js";
+import { isSessionProfile, loadStorageState } from "./shared/storage-state.js";
+import { resolveNavigateProfile } from "./profile-resolution.js";
 import { loadFullConfig } from "./plugin-config.js";
 import {
 	runExtractor,
@@ -34,8 +30,10 @@ import {
 	type QueryStatus,
 } from "./shared/dom-extractor.js";
 import type {
+	BrowserPlugin,
 	DialogEvent,
 	NavigateResult,
+	PluginNavigateOptions,
 	SnapshotResult,
 	InteractionResult,
 	ConsoleMessagesResult,
@@ -70,16 +68,16 @@ export interface NavigateOptions {
 	signal?: AbortSignal;
 	taskId?: string;
 	/**
-	 * Profile mode or named profile.
-	 * - "none": clean slate, no persistence
-	 * - "session": persist for this conversation
-	 * - A named profile string (e.g. "shopping", "work")
+	 * Profile mode or named profile. Agent-typed names must exist on disk
+	 * (typo protection); defaults materialize on first use — see
+	 * resolveNavigateProfile in core/profile-resolution.ts.
 	 */
 	profile?: "none" | "session" | string;
-	/**
-	 * pi session ID for session-scoped profiles (profile="session").
-	 * Used to derive the internal `_session-<piSessionId>` profile name.
-	 */
+	/** Conversation default profile (/web profile <name>). Ignored when
+	 *  `profile` is set explicitly. */
+	conversationDefault?: string;
+	/** pi session ID used to derive the internal `_session-<piSessionId>`
+	 *  profile name for profile="session". */
 	piSessionId?: string;
 }
 
@@ -105,9 +103,16 @@ function formatDialogEvents(events: DialogEvent[]): string {
  * Navigate result as returned to the agent — the base `NavigateResult`
  * plus the backend that served the request (and the bot-warning flag).
  */
-export type NavResult = NavigateResult & {
+export type NavResult = Omit<NavigateResult, "errorKind"> & {
 	backendUsed: string;
+	/** Router-derived profile metadata — backends never produce these (kept off NavigateResult so the plugin contract stays clean). */
+	profileMode?: "none" | "session" | "named";
+	/** Which profile was resolved for this session (if any) */
+	profileName?: string;
 	botDetectionWarning?: boolean;
+	/** Failure classification: "profile-refusal" is agent-actionable validation,
+	 *  "not-installed" an environment problem fixable via /web install. */
+	errorKind?: "profile-refusal" | "not-installed";
 };
 
 /**
@@ -124,6 +129,7 @@ function navFailure(
 		error?: string | undefined;
 		title?: string;
 		botDetectionWarning?: boolean | undefined;
+		errorKind?: "profile-refusal" | "not-installed" | undefined;
 	},
 ): NavResult {
 	return {
@@ -135,23 +141,45 @@ function navFailure(
 		backendUsed,
 		...(extra?.error ? { error: extra.error } : {}),
 		...(extra?.botDetectionWarning ? { botDetectionWarning: true } : {}),
+		...(extra?.errorKind ? { errorKind: extra.errorKind } : {}),
 	};
 }
 
 /**
- * Load saved storage state for a named/session profile (if any).
- * Returns undefined when there's no profile or the file is unreadable.
+ * Build plugin navigate options for a resolved profile: load the profile's
+ * saved storage state (if any) and pass the profile name so the backend keys
+ * its context and saves to it. Shared by the fresh-navigate and auto-recovery
+ * paths so the two can't drift on what they hand a backend.
  */
-function loadProfileStorageState(
+function navOptionsFor(
 	profileName: string | undefined,
-): StorageStateFile | undefined {
-	if (!profileName) return undefined;
-	try {
-		return loadStorageState(profileName) ?? undefined;
-	} catch {
-		// Corrupt/unreadable file — proceed with fresh state
-		return undefined;
+	extra?: { signal?: AbortSignal | undefined },
+): PluginNavigateOptions {
+	const navOptions: PluginNavigateOptions = {};
+	if (extra?.signal) navOptions.signal = extra.signal;
+	if (profileName) {
+		// null for missing, corrupt, or invalid names — proceed with fresh state.
+		const state = loadStorageState(profileName);
+		if (state) navOptions.storageState = state;
+		navOptions.profile = profileName;
 	}
+	return navOptions;
+}
+
+/**
+ * Abandon a task's session after a failed navigation: suppress the auto-save,
+ * clean up on the plugin, and drop the session record and snapshot files.
+ *
+ * Skip auto-save: the nav never produced a validated page, so persisting
+ * would write a near-empty state (and materialize the profile dir) for a
+ * session the agent never actually used. Saves merge, so nothing already on
+ * disk is at risk.
+ */
+async function abandon(taskId: string, plugin: BrowserPlugin): Promise<void> {
+	sessionManager.updateSession(taskId, { persistState: false });
+	await plugin.cleanup(taskId).catch(() => {});
+	sessionManager.removeSession(taskId);
+	removeSnapshotFiles(taskId);
 }
 
 /**
@@ -202,19 +230,12 @@ async function requireInteractiveSession(taskId: string): Promise<{
 		});
 	}
 
-	// ── Load saved storage state for the profile (if any) ────────────
-	const loadedStorageState = loadProfileStorageState(lastNav.profileName);
-
 	// Navigate — plugin loads its own storage state if needed
-	const navOptions: { signal?: AbortSignal; storageState?: unknown } = {};
-	if (loadedStorageState !== undefined) {
-		navOptions.storageState = loadedStorageState;
-	}
 	const navResult = await plugin.navigate(
 		lastNav.url,
 		taskId,
 		30_000,
-		navOptions,
+		navOptionsFor(lastNav.profileName),
 	);
 	if (navResult.success) {
 		sessionManager.updateSession(taskId, {
@@ -228,17 +249,15 @@ async function requireInteractiveSession(taskId: string): Promise<{
 		};
 	}
 
-	// Failed — clean up
-	await plugin.cleanup(taskId).catch(() => {});
-	sessionManager.removeSession(taskId);
-	removeSnapshotFiles(taskId);
+	// Failed — clean up (save suppressed: a failed recovery nav never validated)
+	await abandon(taskId, plugin);
 	return null;
 }
 
 interface ResolvedSession {
 	tid: string;
 	session: BrowserSession;
-	plugin: import("./plugin-api.js").BrowserPlugin;
+	plugin: BrowserPlugin;
 	wasAutoCreated: boolean;
 }
 
@@ -324,7 +343,7 @@ function renderSnapshotBlock(
 async function refBasedInteractionOrSnapshot(
 	taskId: string,
 	wasAutoCreated: boolean,
-	plugin: import("./plugin-api.js").BrowserPlugin,
+	plugin: BrowserPlugin,
 	action: () => Promise<InteractionResult>,
 ): Promise<InteractionResult> {
 	if (!wasAutoCreated) {
@@ -425,84 +444,77 @@ export async function navigate(
 	}
 
 	// ── Resolve profile mode ───────────────────────────────────
-	let resolvedProfileName: string | undefined;
-	let profileMode: "none" | "session" | "named" | undefined;
-
-	const browserConfig = loadFullConfig().browser;
-	const profileInput = options.profile ?? browserConfig.defaultProfile;
-
-	if (profileInput === "none") {
-		profileMode = "none";
-	} else if (profileInput === "session") {
-		profileMode = "session";
-		const piSessionId = options.piSessionId;
-		if (piSessionId) {
-			resolvedProfileName = sessionProfileName(piSessionId);
-		} else {
-			// Can't resolve session profile without piSessionId — fall back with warning
-			console.warn(
-				"[pi-lean-portal] profile='session' requested but piSessionId unavailable. " +
-					"Falling back to profile='none'.",
-			);
-			profileMode = "none";
-		}
-	} else {
-		// Named profile
-		profileMode = "named";
-		try {
-			sanitizeProfileName(profileInput);
-		} catch (err) {
-			return navFailure(plugin.name, normalizedUrl, {
-				error: `Invalid profile name: ${err instanceof Error ? err.message : String(err)}`,
-			});
-		}
-		resolvedProfileName = profileInput;
+	// Precedence: explicit param > conversation default > settings default.
+	const profileInput =
+		options.profile ??
+		options.conversationDefault ??
+		loadFullConfig().browser.defaultProfile;
+	// An explicit profile is agent-typed (refused when missing); any default
+	// is materialized on first use.
+	const profileSource =
+		options.profile !== undefined ? "agent" : "conversation";
+	const resolution = resolveNavigateProfile(
+		profileInput,
+		profileSource,
+		options.piSessionId,
+	);
+	if ("refusal" in resolution) {
+		// The resolver reports the refusal; the router owns the failure taxonomy.
+		return navFailure(plugin.name, normalizedUrl, {
+			error: resolution.refusal.error,
+			errorKind: "profile-refusal",
+		});
 	}
+	const resolvedProfileName = resolution.profileName;
+	// Mode is a pure derivation of the name, computed in one place so the
+	// recorded name and the mode cannot disagree.
+	const profileMode =
+		resolvedProfileName === undefined
+			? "none"
+			: isSessionProfile(resolvedProfileName)
+				? "session"
+				: "named";
 
-	// ── Notify profile change ─────────────────────
+	// ── Debug: resolved profile ───────────────────
 	if (process.env.BROWSER_DEBUG) {
-		const parts = [`[browser] profile_changed: task=${taskId}`];
+		const parts = [`[browser] profile: task=${taskId}`];
 		if (resolvedProfileName) parts.push(`profile=${resolvedProfileName}`);
-		if (profileMode) parts.push(`mode=${profileMode}`);
+		parts.push(`mode=${profileMode}`);
 		console.error(parts.join(" "));
 	}
 
 	// ── Create session and navigate ───────────────────────────
-	sessionManager.createSession(taskId, plugin.name);
+	// Retire the old context (if any) before the session record flips, on the
+	// plugin that owns it: cleanup persists the old profile's state to disk
+	// first, so a profile/backend switch never mislabels cookies and the new
+	// profile's storage state loads into a fresh context.
+	const priorSession = sessionManager.getSession(taskId);
+	const priorPlugin = priorSession ? pluginRegistry.get(priorSession.pluginName) : undefined;
+	const retireOldContext =
+		priorSession !== undefined &&
+		(priorSession.pluginName !== plugin.name ||
+			priorSession.profileName !== resolvedProfileName);
+	if (retireOldContext) {
+		// Only the prior plugin owns the old context; if it's no longer
+		// registered there is nothing to retire, and cleaning up on the new
+		// plugin would target a task it never saw.
+		if (priorPlugin) await priorPlugin.cleanup(taskId).catch(() => {});
+	}
+	const session = sessionManager.createSession(taskId, plugin.name);
 	sessionManager.updateSession(taskId, {
 		currentUrl: normalizedUrl,
 		persistState: resolvedProfileName !== undefined,
+		profileName: resolvedProfileName ?? null,
 		...(options.piSessionId === undefined
 			? {}
 			: { piSessionId: options.piSessionId }),
 	});
 
-	// Set/clear profileName directly
-	const session = sessionManager.getSession(taskId)!;
-	if (session) {
-		if (resolvedProfileName === undefined) {
-			delete session.profileName;
-		} else {
-			session.profileName = resolvedProfileName;
-		}
-	}
-
-	// ── Load saved storage state for the profile (if any) ────────────
-	const loadedStorageState = loadProfileStorageState(resolvedProfileName);
-
-	const navOptions: {
-		signal?: AbortSignal;
-		storageState?: unknown;
-	} = {};
-	if (options.signal) navOptions.signal = options.signal;
-	if (loadedStorageState !== undefined) {
-		navOptions.storageState = loadedStorageState;
-	}
 	const result = await plugin.navigate(
 		normalizedUrl,
 		taskId,
 		timeoutMs,
-		navOptions,
+		navOptionsFor(resolvedProfileName, { signal: options.signal }),
 	);
 
 	if (result.success) {
@@ -527,13 +539,7 @@ export async function navigate(
 		// it's likely a challenge/block page. Downgrade to failure so the
 		// agent gets a clear signal rather than a misleading partial page.
 		if (botWarn && result.elementCount < 5) {
-			// Prevent auto-save of empty/blocked-page state which would
-			// overwrite previously saved good state
-			sessionManager.updateSession(taskId, { persistState: false });
-
-			await plugin.cleanup(taskId).catch(() => {});
-			sessionManager.removeSession(taskId);
-			removeSnapshotFiles(taskId);
+			await abandon(taskId, plugin);
 			return navFailure(plugin.name, result.url, {
 				title: result.title,
 				error:
@@ -586,26 +592,20 @@ export async function navigate(
 			dialogDetected,
 			backendUsed: plugin.name,
 		};
-		if (profileMode !== undefined) successResult.profileMode = profileMode;
+		successResult.profileMode = profileMode;
 		if (resolvedProfileName !== undefined)
 			successResult.profileName = resolvedProfileName;
 		if (botWarn) successResult.botDetectionWarning = true;
 		return successResult;
 	}
 
-	// Navigation failed — clean up
-	// Prevent auto-save of empty state which would overwrite
-	// previously saved good state from a prior successful session
-	if (session) {
-		sessionManager.updateSession(taskId, { persistState: false });
-	}
-
-	await plugin.cleanup(taskId).catch(() => {});
-	sessionManager.removeSession(taskId);
-	removeSnapshotFiles(taskId);
+	// Navigation failed — `session` comes from createSession above, so it
+	// always exists.
+	await abandon(taskId, plugin);
 
 	return navFailure(plugin.name, result.url || normalizedUrl, {
 		error: result.error,
+		...(result.errorKind ? { errorKind: result.errorKind } : {}),
 		botDetectionWarning: result.botDetected,
 	});
 }
@@ -656,7 +656,7 @@ export async function snapshot(
 async function wrapInteraction(
 	taskId: string | undefined,
 	run: (
-		plugin: import("./plugin-api.js").BrowserPlugin,
+		plugin: BrowserPlugin,
 		tid: string,
 	) => Promise<InteractionResult>,
 ): Promise<InteractionResult> {

@@ -38,6 +38,7 @@ import type {
 	PluginCapabilities,
 	DialogEvent,
 	NavigateResult,
+	PluginNavigateOptions,
 	SnapshotResult,
 	InteractionResult,
 	ScreenshotResult,
@@ -55,9 +56,19 @@ import type {
 type PageEntry = {
 	context: BrowserContext;
 	page: Page;
+	/** Profile that created this context; storage-state saves key off it */
+	profileName?: string | undefined;
 };
 
 // ─── PlaywrightPluginBase ─────────────────────────────────────────
+
+/**
+ * Thrown when the browser executable is missing. Carries the engine-specific
+ * install hint as its message; navigate() tags the failure result with
+ * `errorKind: "not-installed"` so the tool layer can offer /web install
+ * without string-sniffing the error text.
+ */
+class InstallError extends Error {}
 
 export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	// ── Subclass contract ──────────────────────────────────────
@@ -83,7 +94,7 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 
 	/**
 	 * Engine-specific install hint, shown when the browser executable
-	 * is not installed, e.g. "Browser not installed. Run /web install to install it".
+	 * is not installed. Shipped backends return `INSTALL_HINT`.
 	 */
 	protected abstract get installHint(): string;
 
@@ -184,7 +195,8 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 
 	/**
 	 * Launch the browser engine with install-error wrapping.
-	 * If the executable is missing, re-throws with the engine-specific install hint.
+	 * If the executable is missing, re-throws as an InstallError carrying the
+	 * engine-specific install hint.
 	 */
 	private async _launchWithHint(): Promise<Browser> {
 		try {
@@ -194,7 +206,7 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				err instanceof Error &&
 				/Executable doesn't exist|browserType\.launch/i.test(err.message)
 			) {
-				throw new Error(this.installHint);
+				throw new InstallError(this.installHint);
 			}
 			throw err;
 		}
@@ -229,9 +241,7 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	 */
 	private async getOrCreateContext(
 		taskId: string,
-		options?: {
-			storageState?: unknown;
-		},
+		options?: Pick<PluginNavigateOptions, "storageState" | "profile">,
 	): Promise<{
 		context: BrowserContext;
 		page: Page;
@@ -242,9 +252,11 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		let savedState: { cookies: unknown[]; origins: unknown[] } | undefined;
 		if (existing) {
 			// ── Save storage state before closing (persistent profiles) ─
-			savedState = await this._persistState(taskId, existing.context).catch(
-				() => undefined,
-			);
+			savedState = await this._persistState(
+				taskId,
+				existing.context,
+				existing.profileName,
+			).catch(() => undefined);
 			try {
 				await existing.page.close();
 			} catch {
@@ -259,18 +271,27 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 			this._elementCache.delete(taskId);
 		}
 
-		// 2. Determine effective storage state:
-		//    - The router may pass pre-loaded state via options.storageState
-		//    - If not provided, use the state we just saved (in-memory, no disk read)
-		//    - This ensures a re-navigate immediately picks up cookies set during
-		//      the just-ended session without waiting for a future disk load.
-		const effectiveStorageState = options?.storageState ?? savedState;
+		// 2. Determine effective storage state. A context that was alive until a
+		//    moment ago is always fresher than any disk read (the router reads disk
+		//    before the save below happened), so on a same-profile re-navigate the
+		//    just-saved state wins, falling back to the router's preload if the
+		//    save failed. A fresh context (first navigate, or a profile/backend
+		//    switch — the router retires the old context first) trusts the
+		//    router's preload.
+		const effectiveStorageState =
+			existing?.profileName === options?.profile
+				? (savedState ?? options?.storageState)
+				: options?.storageState;
 
 		// 3. Create fresh context
 		const context = await this._newBrowserContext(effectiveStorageState);
 		const page = await context.newPage();
 
-		const pageEntry: PageEntry = { context, page };
+		const pageEntry: PageEntry = {
+			context,
+			page,
+			profileName: options?.profile,
+		};
 		this._pages.set(taskId, pageEntry);
 		installDialogHandlers(taskId, page);
 		this._elementCache.set(taskId, new Map());
@@ -425,19 +446,29 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 	 *
 	 * @param taskId - The task/session ID.
 	 * @param context - The Playwright BrowserContext to snapshot.
+	 * @param profileName - Name of the profile that owns `context`; the save is
+	 *                      keyed to it, not the session record (the router
+	 *                      retires before flipping, so the two agree on the
+	 *                      router path, but direct `plugin.navigate` callers
+	 *                      that skip cleanup rely on this field). Callers pass
+	 *                      the profile from the map entry they already hold, so
+	 *                      the save is correct regardless of map mutation order.
 	 * @returns The raw storage state object (cookies + origins), or undefined
 	 *          if the session is non-persistent or the save failed.
 	 */
 	private async _persistState(
 		taskId: string,
 		context: BrowserContext,
+		profileName: string | undefined,
 	): Promise<{ cookies: unknown[]; origins: unknown[] } | undefined> {
 		const session = sessionManager.getSession(taskId);
 		return persistSessionState(
 			session,
 			() => context.storageState(),
-			"",
-			loadFullConfig().browser.maxStorageStateSize,
+			{
+				profileName,
+				maxSizeBytes: loadFullConfig().browser.maxStorageStateSize,
+			},
 		);
 	}
 
@@ -514,17 +545,13 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		url: string,
 		taskId: string,
 		timeoutMs: number = 30_000,
-		options?: {
-			signal?: AbortSignal;
-			storageState?: unknown;
-		},
+		options?: PluginNavigateOptions,
 	): Promise<NavigateResult> {
 		try {
-			const ctxOpts: {
-				storageState?: unknown;
-			} = {};
+			const ctxOpts: Pick<PluginNavigateOptions, "storageState" | "profile"> = {};
 			if (options?.storageState !== undefined)
 				ctxOpts.storageState = options.storageState;
+			if (options?.profile !== undefined) ctxOpts.profile = options.profile;
 			const { page } = await this.getOrCreateContext(taskId, ctxOpts);
 
 			// Wire up abort
@@ -650,6 +677,9 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 				elementCount: 0,
 				botDetected,
 				error: msg,
+				...(err instanceof InstallError
+					? { errorKind: "not-installed" as const }
+					: {}),
 			};
 		}
 	}
@@ -1109,7 +1139,9 @@ export abstract class PlaywrightPluginBase implements BrowserPlugin {
 		const { context, page } = entry;
 
 		// ── Auto-save storage state for persistent profiles ──────────
-		await this._persistState(taskId, context).catch(() => {});
+		await this._persistState(taskId, context, entry.profileName).catch(
+			() => {},
+		);
 
 		// ── Tracing: stop before closing (if enabled) ────────────────
 		const traceDir = process.env.BROWSER_TRACE_DIR;

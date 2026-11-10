@@ -6,20 +6,25 @@
  * - profileDir() / profileFilePath() — path construction
  * - save/load round-trip — cookies, origins, version headers
  * - deleteStorageState() — removal and graceful missing-file handling
+ *   (keeps the profile directory — it marks deliberate declaration)
  * - isSessionProfile() — prefix detection
  * - sessionProfileName() — generation and validation
  * - isSessionStale() — session-file existence checks
  * - pruneStaleSessionProfiles() — bulk stale-profile cleanup
+ * - orphaned temp-file sweep on save — fresh tmp files survive (concurrent
+ *   writer may be mid-save), stale ones are removed
  */
 
 import { describe, it, expect, afterEach } from "vitest";
 import {
 	sanitizeProfileName,
+	PROFILE_DIR,
 	profileDir,
 	profileFilePath,
 	loadStorageState,
 	saveStorageState,
 	deleteStorageState,
+	profileExists,
 	isSessionProfile,
 	sessionProfileName,
 	isSessionStale,
@@ -33,17 +38,25 @@ import {
 	unlinkSync,
 	mkdirSync,
 	readFileSync,
+	rmSync,
+	utimesSync,
 } from "node:fs";
 import { join } from "node:path";
+import { uniqueName } from "./helpers/setup-temp-dir.js";
 
 // ─── Helpers ────────────────────────────────────────────────
 
 /**
- * Make a unique profile name for each test to avoid cross-test
- * filesystem contamination.
+ * Full cleanup: remove the state file *and* the profile directory.
+ * `deleteStorageState` alone intentionally keeps the directory.
  */
-function uniqueName(base: string): string {
-	return `${base}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+function fullyRemoveProfile(name: string): void {
+	try {
+		deleteStorageState(name);
+		rmSync(profileDir(name), { recursive: true, force: true });
+	} catch {
+		/* ignore */
+	}
 }
 
 const TEST_STATE = {
@@ -102,10 +115,11 @@ describe("sanitizeProfileName()", () => {
 		expect(() => sanitizeProfileName("")).toThrow("non-empty string");
 	});
 
-	it("rejects reserved names 'none', 'session', 'create'", () => {
+	it("rejects reserved names 'none', 'session', 'create', 'delete'", () => {
 		expect(() => sanitizeProfileName("none")).toThrow("reserved");
 		expect(() => sanitizeProfileName("session")).toThrow("reserved");
 		expect(() => sanitizeProfileName("create")).toThrow("reserved");
+		expect(() => sanitizeProfileName("delete")).toThrow("reserved");
 	});
 
 	it("rejects names with special characters", () => {
@@ -170,9 +184,7 @@ describe("sanitizeProfileName()", () => {
 describe("profileDir() / profileFilePath()", () => {
 	it("returns expected path for valid name", () => {
 		const dir = profileDir("test-profile");
-		expect(dir).toContain(
-			".pi/agent/pi-lean-portal/browser-state/test-profile",
-		);
+		expect(dir).toContain(join(PROFILE_DIR, "test-profile"));
 	});
 
 	it("rejects invalid names", () => {
@@ -186,9 +198,7 @@ describe("profileDir() / profileFilePath()", () => {
 
 	it("returns expected path for session profile", () => {
 		const dir = profileDir("_session-abc123");
-		expect(dir).toContain(
-			".pi/agent/pi-lean-portal/browser-state/_session-abc123",
-		);
+		expect(dir).toContain(join(PROFILE_DIR, "_session-abc123"));
 	});
 });
 
@@ -200,7 +210,7 @@ describe("save / load round-trip", () => {
 	const testProfile = uniqueName("_test_save_load");
 
 	afterEach(() => {
-		deleteStorageState(testProfile);
+		fullyRemoveProfile(testProfile);
 	});
 
 	it("saves and loads storage state", () => {
@@ -392,12 +402,79 @@ describe("deleteStorageState()", () => {
 
 		deleteStorageState(profile);
 		expect(existsSync(profileFilePath(profile))).toBe(false);
+
+		// The dir is kept — remove it so it doesn't pollute the shared
+		// browser-state dir (and the profile list other suites assert on).
+		fullyRemoveProfile(profile);
 	});
 
 	it("does not throw for non-existent file", () => {
 		expect(() =>
 			deleteStorageState(uniqueName("_test_delete_nonexistent")),
 		).not.toThrow();
+	});
+
+	it("keeps the profile directory when it becomes empty", () => {
+		// The directory is the deliberate-declaration marker: clearing
+		// state must not un-declare the profile.
+		const profile = uniqueName("_test_delete_keeps_dir");
+		saveStorageState(profile, { cookies: [], origins: [] });
+		expect(existsSync(profileDir(profile))).toBe(true);
+
+		deleteStorageState(profile);
+		expect(existsSync(profileFilePath(profile))).toBe(false);
+		expect(existsSync(profileDir(profile))).toBe(true);
+
+		// Deleting again (no state file left) still keeps the directory.
+		deleteStorageState(profile);
+		expect(existsSync(profileDir(profile))).toBe(true);
+
+		fullyRemoveProfile(profile);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════
+// profileExists()
+// ═══════════════════════════════════════════════════════════
+
+describe("orphaned temp-file sweep on save", () => {
+	const name = uniqueName("test-sweep");
+
+	afterEach(() => {
+		rmSync(profileDir(name), { recursive: true, force: true });
+	});
+
+	it("removes stale temp files but leaves fresh ones (a concurrent writer may be mid-save)", () => {
+		mkdirSync(profileDir(name), { recursive: true, mode: 0o700 });
+		const fresh = join(profileDir(name), ".storage-state.fresh.tmp");
+		const stale = join(profileDir(name), ".storage-state.stale.tmp");
+		writeFileSync(fresh, "{}");
+		writeFileSync(stale, "{}");
+		const old = new Date(Date.now() - 120_000);
+		utimesSync(stale, old, old);
+
+		expect(saveStorageState(name, { cookies: [], origins: [] })).toBe(true);
+
+		expect(existsSync(fresh)).toBe(true);
+		expect(existsSync(stale)).toBe(false);
+	});
+});
+
+describe("profileExists()", () => {
+	const name = uniqueName("test-exists");
+
+	afterEach(() => {
+		rmSync(profileDir(name), { recursive: true, force: true });
+	});
+
+	it("returns true for an existing named profile dir", () => {
+		mkdirSync(profileDir(name), { recursive: true });
+		expect(profileExists(name)).toBe(true);
+	});
+
+	it("returns false for a missing dir and for session-prefixed names", () => {
+		expect(profileExists(name)).toBe(false);
+		expect(profileExists("_session-whatever")).toBe(false);
 	});
 });
 
@@ -439,6 +516,11 @@ describe("sessionProfileName()", () => {
 
 	it("rejects piSessionId with backward slash", () => {
 		expect(() => sessionProfileName("abc\\def")).toThrow("Invalid piSessionId");
+	});
+
+	// Same embedded-ID rule sanitizeProfileName enforces — one validator, no drift.
+	it("rejects piSessionId with whitespace", () => {
+		expect(() => sessionProfileName("abc def")).toThrow("Invalid piSessionId");
 	});
 
 	it("rejects piSessionId with dotdot", () => {
@@ -517,7 +599,7 @@ describe("pruneStaleSessionProfiles()", () => {
 		expect(existsSync(profileFilePath(activeProfile))).toBe(true);
 
 		// Cleanup
-		deleteStorageState(activeProfile);
+		fullyRemoveProfile(activeProfile);
 		removeSessionFile(activeId);
 	});
 
@@ -534,15 +616,6 @@ describe("pruneStaleSessionProfiles()", () => {
 		// State file should still exist
 		expect(existsSync(profileFilePath(namedProfile))).toBe(true);
 
-		deleteStorageState(namedProfile);
-	});
-
-	it("handles missing profile directory gracefully", () => {
-		// This test validates that pruneStaleSessionProfiles does not crash
-		// even if the profile dir is in an unexpected state.
-		const result = pruneStaleSessionProfiles();
-		expect(result).toBeDefined();
-		expect(Array.isArray(result.pruned)).toBe(true);
-		expect(Array.isArray(result.kept)).toBe(true);
+		fullyRemoveProfile(namedProfile);
 	});
 });

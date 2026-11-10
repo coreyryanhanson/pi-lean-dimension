@@ -21,6 +21,7 @@ import {
 	type PluginCapabilities,
 	type DialogEvent,
 	type NavigateResult,
+	type PluginNavigateOptions,
 	type SnapshotResult,
 	type InteractionResult,
 	type ScreenshotResult,
@@ -192,9 +193,10 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	private _elementCaches = new Map<string, Map<string, AriaCachedNode>>();
 
 	/**
-	 * TaskIds with a live page session in the bridge.
+	 * TaskIds with a live page session in the bridge, with the profile that
+	 * created each context (storage-state saves key off it).
 	 */
-	private _pages = new Set<string>();
+	private _pages = new Map<string, { profileName?: string | undefined }>();
 
 	/**
 	 * @param name  Unique plugin identifier (e.g. "chromium-py").
@@ -259,7 +261,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	 * Clean up ALL resources.  Closes all pages, then sends ``shutdown`` to the bridge.
 	 */
 	async cleanupAll(): Promise<void> {
-		for (const taskId of [...this._pages]) {
+		for (const taskId of [...this._pages.keys()]) {
 			await this.cleanup(taskId).catch(() => {});
 		}
 		await this._stopProcess();
@@ -696,10 +698,7 @@ export class PythonPluginAdapter implements BrowserPlugin {
 		url: string,
 		taskId: string,
 		timeoutMs: number = 30_000,
-		options?: {
-			signal?: AbortSignal;
-			storageState?: unknown;
-		},
+		options?: PluginNavigateOptions,
 	): Promise<NavigateResult> {
 		// AbortSignal not wired through JSON-RPC; accepted for interface compatibility.
 
@@ -713,8 +712,11 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			// If the task already has a page entry, this is a re-navigate.
 			// Save the current storage state to disk so it survives
 			// process restarts (crash, reload, resume).
-			if (this._pages.has(taskId)) {
-				await this._persistState(taskId).catch(() => {});
+			const existing = this._pages.get(taskId);
+			if (existing) {
+				await this._persistState(taskId, existing.profileName).catch(
+					() => {},
+				);
 			}
 
 			// Give the bridge slightly more time so navigation timeouts
@@ -729,8 +731,12 @@ export class PythonPluginAdapter implements BrowserPlugin {
 			const result = raw as Record<string, unknown>;
 			const success = Boolean(result.success);
 
-			// Track this task for cleanup
-			this._pages.add(taskId);
+			// Track this task for cleanup, recording the profile that owns the
+			// new context. Keep an existing entry's profile — a re-navigate
+			// within one profile reuses the same context.
+			if (!this._pages.has(taskId)) {
+				this._pages.set(taskId, { profileName: options?.profile });
+			}
 
 			// Update session manager
 			if (success) {
@@ -1020,13 +1026,14 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	// ═════════════════════════════════════════════════════════════════
 
 	async cleanup(taskId: string): Promise<void> {
-		if (!this._pages.has(taskId)) {
+		const entry = this._pages.get(taskId);
+		if (!entry) {
 			this._elementCaches.delete(taskId);
 			return;
 		}
 
 		// ── Auto-save storage state for persistent profiles ──────────
-		await this._persistState(taskId).catch(() => {});
+		await this._persistState(taskId, entry.profileName).catch(() => {});
 
 		// Clean up local state and tell the bridge to close the context
 		this._elementCaches.delete(taskId);
@@ -1073,11 +1080,17 @@ export class PythonPluginAdapter implements BrowserPlugin {
 	 * consistency so callers can optionally use it as a fallback.
 	 *
 	 * @param taskId - The task/session ID.
+	 * @param profileName - Name of the profile that owns the bridge context;
+	 *                      the save is keyed to it (see `persistSessionState`).
+	 *                      Callers pass the profile from the map entry they
+	 *                      already hold, so the save is correct regardless of
+	 *                      map mutation order.
 	 * @returns The raw storage state object (cookies + origins), or undefined
 	 *          if the session is non-persistent or the save failed.
 	 */
 	private async _persistState(
 		taskId: string,
+		profileName: string | undefined,
 	): Promise<{ cookies: unknown[]; origins: unknown[] } | undefined> {
 		const session = sessionManager.getSession(taskId);
 		return persistSessionState(
@@ -1093,8 +1106,11 @@ export class PythonPluginAdapter implements BrowserPlugin {
 					origins: (result.origins ?? []) as Record<string, unknown>[],
 				};
 			},
-			"via Python bridge",
-			loadFullConfig().browser.maxStorageStateSize,
+			{
+				profileName,
+				viaLabel: "via Python bridge",
+				maxSizeBytes: loadFullConfig().browser.maxStorageStateSize,
+			},
 		);
 	}
 

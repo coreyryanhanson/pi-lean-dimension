@@ -1045,6 +1045,7 @@ describePersistence("_persistState — storage state persistence", () => {
 				"https://example.com/first",
 				"persist-t1",
 				30_000,
+				{ profile: testProfile },
 			);
 			expect(r1.success).toBe(true);
 
@@ -1057,6 +1058,7 @@ describePersistence("_persistState — storage state persistence", () => {
 				"https://example.com/second",
 				"persist-t1",
 				30_000,
+				{ profile: testProfile },
 			);
 			expect(r2.success).toBe(true);
 
@@ -1127,7 +1129,9 @@ describePersistence("_persistState — storage state persistence", () => {
 			session.profileName = testProfile;
 
 			// Navigate first
-			await adapter.navigate("https://example.com/first", "persist-t3", 30_000);
+			await adapter.navigate("https://example.com/first", "persist-t3", 30_000, {
+				profile: testProfile,
+			});
 
 			// Cleanup should call _persistState -> save to disk
 			await adapter.cleanup("persist-t3");
@@ -1178,6 +1182,7 @@ describePersistence("_persistState — storage state persistence", () => {
 				"https://example.com/first",
 				"persist-t5",
 				30_000,
+				{ profile: testProfile },
 			);
 			expect(r.success).toBe(true);
 

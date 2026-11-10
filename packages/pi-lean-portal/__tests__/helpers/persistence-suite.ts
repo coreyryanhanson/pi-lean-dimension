@@ -138,7 +138,9 @@ export function runPersistenceSuite(
 			});
 
 			it(`${name}: navigates — consent dialog is visible`, async () => {
-				const nav = await plugin.navigate(getServerUrl(), TASK_ID, navTimeout);
+				const nav = await plugin.navigate(getServerUrl(), TASK_ID, navTimeout, {
+					profile: TEST_PROFILE,
+				});
 				expect(nav.success).toBe(true);
 				expect(nav.title).toContain("Cookie Persistence Test");
 				expect(nav.snapshot).toContain("Consent");
@@ -175,7 +177,12 @@ export function runPersistenceSuite(
 			});
 
 			it(`${name}: navigates again — consent dialog does NOT reappear (cookies persisted)`, async () => {
-				const nav = await plugin.navigate(getServerUrl(), TASK_ID, navTimeout);
+				// Mirror the router: it preloads storageState from disk on every
+				// navigate, so the plugin's live-context state must win over it.
+				const nav = await plugin.navigate(getServerUrl(), TASK_ID, navTimeout, {
+					profile: TEST_PROFILE,
+					storageState: loadStorageState(TEST_PROFILE) ?? undefined,
+				});
 				expect(nav.success).toBe(true);
 
 				// Consent dialog should NOT be present — cookies survived in-context
@@ -196,7 +203,10 @@ export function runPersistenceSuite(
 			});
 
 			it(`${name}: third navigate also has no consent dialog (persistence confirmed)`, async () => {
-				const nav = await plugin.navigate(getServerUrl(), TASK_ID, navTimeout);
+				const nav = await plugin.navigate(getServerUrl(), TASK_ID, navTimeout, {
+					profile: TEST_PROFILE,
+					storageState: loadStorageState(TEST_PROFILE) ?? undefined,
+				});
 				expect(nav.success).toBe(true);
 
 				// Dialog should still be absent

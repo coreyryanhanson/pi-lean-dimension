@@ -33,6 +33,10 @@ export interface PluginCapabilities {
 	engine: "chromium" | "firefox" | "webkit" | string;
 }
 
+/** Shared install hint for the shipped backends and the tool-layer notify,
+ * so the missing-browser message stays identical everywhere it appears. */
+export const INSTALL_HINT = "Browser not installed. Run /web install to install it.";
+
 /** Default capabilities matching a full-featured Chromium backend. */
 export const DEFAULT_CAPABILITIES: PluginCapabilities = {
 	supportsFullPageScreenshot: true,
@@ -67,6 +71,25 @@ export interface ResultBase {
 	error?: string;
 }
 
+/** Options a plugin's navigate receives — one shared definition so all
+ *  plugins and the router stay in sync. (Distinct from the router's
+ *  tool-facing `NavigateOptions`.) */
+export interface PluginNavigateOptions {
+	signal?: AbortSignal;
+	/** Playwright storage state for profile-based session restoration */
+	storageState?: unknown;
+	/** Name of the profile that owns the created context. Storage-state
+	 *  saves are keyed to it (recorded on the plugin's per-task entry),
+	 *  not to the live session record, so a profile switch mid-session
+	 *  can never mislabel a context's cookies.
+	 *
+	 *  Contract: a navigate whose `profile` matches the context's owning
+	 *  profile must treat the live context's own state as authoritative
+	 *  over any preloaded `storageState`; a navigate for a different
+	 *  profile must start a fresh context from `storageState`. */
+	profile?: string;
+}
+
 export interface NavigateResult extends ResultBase {
 	url: string;
 	title: string;
@@ -75,13 +98,13 @@ export interface NavigateResult extends ResultBase {
 	elementCount: number;
 	/** Plugin-internal signal: page may be blocked by bot detection */
 	botDetected?: boolean;
+	/** Failure classification: the browser executable is missing and
+	 *  `/web install` can fix it. Omitted for every other failure. */
+	errorKind?: "not-installed";
 	/** Whether a dialog (role="dialog" or role="alertdialog") was detected in the parsed element cache */
 	dialogDetected?: boolean;
 	/** Auto-dismissed JavaScript dialogs (alert/confirm/prompt) since last navigate */
 	dialogEvents?: DialogEvent[];
-	profileMode?: "none" | "session" | "named";
-	/** Which profile was loaded for this session (if any) */
-	profileName?: string;
 }
 
 export interface SnapshotResult extends ResultBase {
@@ -189,11 +212,7 @@ export interface BrowserPlugin {
 		url: string,
 		taskId: string,
 		timeoutMs: number,
-		options?: {
-			signal?: AbortSignal;
-			/** Playwright storage state for profile-based session restoration */
-			storageState?: unknown;
-		},
+		options?: PluginNavigateOptions,
 	): Promise<NavigateResult>;
 
 	snapshot(taskId: string): Promise<SnapshotResult>;

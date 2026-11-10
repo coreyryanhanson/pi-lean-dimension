@@ -6,6 +6,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import * as router from "../core/router.js";
+import { INSTALL_HINT } from "../core/plugin-api.js";
 import { resolveApplicableGuides, formatGuideFooter } from "../core/guides.js";
 import type { ApplicableGuide } from "../core/guides.js";
 import { getConversationDefaultProfile } from "../browser-toggle.js";
@@ -75,11 +76,13 @@ export const browserNavigateTool = defineTool({
 			}),
 		),
 		profile: Type.Optional(
-			Type.Union([Type.Literal("none"), Type.Literal("session"), Type.String()], {
+			Type.String({
 				description:
 					"Profile mode: 'session' (default, persist for this conversation), " +
 					"'none' (clean slate), or a named profile (e.g. 'shopping', 'work'). " +
-					"Named profiles share cookies across subagents like browser tabs.",
+					"Named profiles share cookies across subagents like browser tabs. " +
+					"A named profile must already exist (the user creates one with " +
+					"/web profile create <name>) — a nonexistent name is refused.",
 			}),
 		),
 	}),
@@ -116,36 +119,38 @@ export const browserNavigateTool = defineTool({
 		};
 		if (piSessionId) navOptions.piSessionId = piSessionId;
 		if (signal) navOptions.signal = signal;
-		// Profile resolution: explicit param > conversation default > config file default
-		if (profile) {
-			// Explicit user parameter
-			navOptions.profile = profile as "none" | "session" | string;
-		} else {
-			// Conversation-scoped default (set via /web profile <name>)
-			const convDefault = getConversationDefaultProfile();
-			if (convDefault) {
-				navOptions.profile = convDefault as "none" | "session" | string;
-			}
-			// else: router falls back to browserConfig.defaultProfile
-		}
+		// Explicit param wins; the router ignores conversationDefault when
+		// profile is set (see NavigateOptions in core/router.ts).
+		if (profile !== undefined) navOptions.profile = profile;
+		const convDefault = getConversationDefaultProfile();
+		if (convDefault) navOptions.conversationDefault = convDefault;
 
 		const result = await router.navigate(url, navOptions);
 
 		updateFooterStatus(ctx);
 
 		if (!result.success) {
-			// If the browser executable is not installed, notify the user with install instructions.
-			const isInstallError =
-				result.error && result.error.toLowerCase().includes("not installed");
-			// Python backends (chromium-py, firefox-py, stealth -py backends) report a
-			// missing venv Playwright wheel — their error already carries the accurate
-			// pip install hint, and /web install cannot fix that, so stay quiet.
-			const isPythonBackend = result.backendUsed?.endsWith("-py") ?? false;
-			if (isInstallError && !isPythonBackend) {
-				ctx?.ui?.notify(
-					"Browser not installed. Run /web install to install it.",
-					"warning",
-				);
+			// A profile-name refusal is a validation failure, not a site failure —
+			// return the router's agent-actionable text as its own message.
+			if (result.errorKind === "profile-refusal") {
+				return {
+					content: [
+						{ type: "text", text: result.error ?? "unknown error" },
+					],
+					details: {
+						error: true,
+						errorKind: "profile-refusal",
+						backendUsed: result.backendUsed,
+						url: result.url,
+					},
+				};
+			}
+			// A missing browser executable is an environment problem, not a site
+			// failure — tell the user how to fix it. Python backends report a
+			// missing venv Playwright wheel with their own pip hint, which /web
+			// install cannot fix, so they never set this tag.
+			if (result.errorKind === "not-installed") {
+				ctx?.ui?.notify(INSTALL_HINT, "warning");
 			}
 
 			return {
@@ -227,12 +232,14 @@ export const browserNavigateTool = defineTool({
 	renderResult(result, { expanded, isPartial }, theme, _context) {
 		if (isPartial) return new Text(theme.fg("warning", "Navigating…"), 0, 0);
 		const d = result.details as Record<string, unknown> | undefined;
-		if (d?.error)
+		if (d?.error) {
+			const prefix = d.errorKind === "profile-refusal" ? "Refused" : "Failed";
 			return new Text(
-				theme.fg("error", `Failed: ${contentText(result, "?")}`),
+				theme.fg("error", `${prefix}: ${contentText(result, "?")}`),
 				0,
 				0,
 			);
+		}
 
 		const title = (d?.title as string) || "(no title)";
 		const backend = (d?.backendUsed as string) || "?";
@@ -247,8 +254,6 @@ export const browserNavigateTool = defineTool({
 		if (pn) {
 			const modeTag = pm === "session" ? "📋" : "👤";
 			text += ` ${theme.fg("dim", `${modeTag} ${pn}`)}`;
-		} else if (pm === "restored") {
-			text += ` ${theme.fg("accent", "↻ restored")}`;
 		}
 
 		// Guide badge line (dedicated line below via status)

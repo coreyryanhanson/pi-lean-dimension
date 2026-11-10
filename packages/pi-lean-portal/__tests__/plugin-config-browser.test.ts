@@ -158,6 +158,17 @@ describe("loadFullConfig().browser", () => {
 			mockGlobalSettings({ defaultProfile: "../../evil" });
 			expect(loadFullConfig().browser.defaultProfile).toBe("session");
 		});
+
+		it("rejects session-profile names", () => {
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+			mockGlobalSettings({ defaultProfile: "_session-abc123" });
+			const config = loadFullConfig().browser;
+			expect(config.defaultProfile).toBe("session");
+			expect(warnSpy).toHaveBeenCalledWith(
+				expect.stringContaining("is a session profile"),
+			);
+			warnSpy.mockRestore();
+		});
 	});
 
 	// ── Settings merge ─────────────────────────────────────────
@@ -306,7 +317,7 @@ describe("loadPluginConfigFromFile()", () => {
 	});
 
 	it("is one-shot with no caching (consecutive calls read the file each time)", () => {
-		const spy = vi.fn((_: string) =>
+		const spy = vi.fn(() =>
 			JSON.stringify({ browser: { plugins: [] } }),
 		);
 		mockFs.existsSync.mockReturnValue(true);
