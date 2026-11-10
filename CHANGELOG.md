@@ -10,6 +10,11 @@
   conversation default to `session` when it pointed at the deleted profile.
   `delete` is now a reserved profile name.
 
+- **`pi-lean-portal` — `raw-capture` builtin pattern guide** — guidance for capturing
+  as-received HTML (byte-accurate in-page `fetch` with the session's cookies) and saving
+  large payloads to disk (download blob, no truncation) from a live session; retrieve
+  via `web-guide guide="raw-capture"`.
+
 ### Changed
 
 - **`pi-lean-portal` — profile switches can no longer cross-contaminate saved cookies** —
