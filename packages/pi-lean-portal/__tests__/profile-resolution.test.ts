@@ -9,7 +9,10 @@ import {
 	profileDir,
 	sessionProfileName,
 } from "../core/shared/storage-state.js";
-import { resolveNavigateProfile } from "../core/profile-resolution.js";
+import {
+	mergeProfilePrecedence,
+	resolveNavigateProfile,
+} from "../core/profile-resolution.js";
 import { uniqueName } from "./helpers/setup-temp-dir.js";
 
 const PI_SESSION = "test-session-1234";
@@ -56,5 +59,35 @@ describe("resolveNavigateProfile", () => {
 		created.push(name);
 		const r = resolveNavigateProfile(name, "agent", PI_SESSION);
 		expect(r).toEqual({ profileName: name });
+	});
+});
+
+describe("mergeProfilePrecedence", () => {
+	it("applies explicit > live session > conversation default > settings default", () => {
+		const all = mergeProfilePrecedence({
+			explicit: "a",
+			liveSessionProfile: "b",
+			conversationDefault: "c",
+			settingsDefault: "d",
+		});
+		expect(all).toBe("a");
+		expect(
+			mergeProfilePrecedence({
+				liveSessionProfile: "b",
+				conversationDefault: "c",
+				settingsDefault: "d",
+			}),
+		).toBe("b");
+		expect(
+			mergeProfilePrecedence({ conversationDefault: "c", settingsDefault: "d" }),
+		).toBe("c");
+		expect(mergeProfilePrecedence({ settingsDefault: "d" })).toBe("d");
+	});
+
+	it("returns undefined when every tier is empty", () => {
+		expect(mergeProfilePrecedence({})).toBeUndefined();
+		expect(
+			mergeProfilePrecedence({ conversationDefault: undefined, settingsDefault: undefined }),
+		).toBeUndefined();
 	});
 });

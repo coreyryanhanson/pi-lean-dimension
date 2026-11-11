@@ -122,6 +122,12 @@ describe("sanitizeProfileName()", () => {
 		expect(() => sanitizeProfileName("delete")).toThrow("reserved");
 	});
 
+	it("rejects reserved names case-insensitively", () => {
+		expect(() => sanitizeProfileName("None")).toThrow("reserved");
+		expect(() => sanitizeProfileName("SESSION")).toThrow("reserved");
+		expect(() => sanitizeProfileName("Create")).toThrow("reserved");
+	});
+
 	it("rejects names with special characters", () => {
 		expect(() => sanitizeProfileName("../evil")).toThrow(
 			"Invalid profile name",

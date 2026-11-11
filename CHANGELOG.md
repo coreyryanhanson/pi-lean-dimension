@@ -4,6 +4,16 @@
 
 ### Added
 
+- **`pi-lean-portal` — `/web cookies import <file>`** — imports a Netscape
+  `cookies.txt` file (a browser's export) into the active profile
+  (`/web profile <name>` selects it). Merge-only: colliding entries are
+  replaced by `name+domain+path`, nothing already stored is removed;
+  malformed lines are skipped with a report and the only hard failure is
+  zero importable cookies. Values are file-wins (re-export + re-import
+  refreshes a live session) but `httpOnly`/`secure`/`sameSite` are never
+  lowered on a collision; fresh cookies default to `SameSite=Lax`.
+  Matching live sessions are synced best-effort — the already-open page
+  picks up imported cookies on its next reload/navigate.
 - **`pi-lean-portal` — `/web profile delete <name>`** — removes a named profile's
   directory including any saved state. Refuses `_session-*` names (use
   `/web profile prune`), no-ops when the profile doesn't exist, and resets the
@@ -17,6 +27,13 @@
 
 ### Changed
 
+- **`pi-lean-portal` — `/web` subcommand payloads are now case-preserved** —
+  the dispatcher lowercased the entire argument string, so mixed-case file
+  paths and profile names never reached their handler (`/web profile
+  Shopping` silently resolved to `shopping`). Keywords stay
+  case-insensitive; payload text passes through untouched, so
+  `/web profile create FooBar` now creates `FooBar` as a distinct
+  exact-name directory (recoverable via `/web profile delete`).
 - **`pi-lean-portal` — profile switches can no longer cross-contaminate saved cookies** —
   storage-state saves are keyed to the profile that created the browser context
   (passed to the plugin as a navigate option) instead of the live session record,

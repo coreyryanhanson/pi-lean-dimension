@@ -95,7 +95,7 @@ The Quick start above shows a common mix (portal + host). Install any combinatio
 
 | Command | Owner | Description |
 |---|---|---|
-| `/web on\|off\|learn\|install\|cookies\|profile\|status` | portal | Unified toggle, browser-binary install, and management |
+| `/web on\|off\|learn\|install\|cookies\|profile\|status` | portal | Unified toggle, browser-binary install, profile + cookie management (incl. cookie import) |
 | `/searxng-status` | search | Test SearXNG connection and update status glyph |
 | `/api on\|off\|learn\|status\|helpers\|secrets\|verify\|delete\|oauth\|bootstrap` | host | Independent API tools toggle, guide verification, secrets, management, OAuth2 token mint/status, and agent-driven OAuth2 bootstrap |
 

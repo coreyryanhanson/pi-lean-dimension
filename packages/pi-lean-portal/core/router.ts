@@ -18,7 +18,10 @@ import {
 	type CacheResult,
 } from "./shared/snapshot-cache.js";
 import { isSessionProfile, loadStorageState } from "./shared/storage-state.js";
-import { resolveNavigateProfile } from "./profile-resolution.js";
+import {
+	mergeProfilePrecedence,
+	resolveNavigateProfile,
+} from "./profile-resolution.js";
 import { loadFullConfig } from "./plugin-config.js";
 import {
 	runExtractor,
@@ -444,11 +447,11 @@ export async function navigate(
 	}
 
 	// ── Resolve profile mode ───────────────────────────────────
-	// Precedence: explicit param > conversation default > settings default.
-	const profileInput =
-		options.profile ??
-		options.conversationDefault ??
-		loadFullConfig().browser.defaultProfile;
+	const profileInput = mergeProfilePrecedence({
+		explicit: options.profile,
+		conversationDefault: options.conversationDefault,
+		settingsDefault: loadFullConfig().browser.defaultProfile,
+	});
 	// An explicit profile is agent-typed (refused when missing); any default
 	// is materialized on first use.
 	const profileSource =

@@ -4,6 +4,8 @@
  * Invariant tests (peer composition, persist shape, restore) live in the
  * pi-tool-masking library. These tests cover portal-specific wiring:
  *   - /web command dispatch
+ *   - cookies/profile subcommand dispatch casing (payload case preserved,
+ *     keywords lowered, compound literals)
  *   - defaultProfile persistence under portal-conversation-state
  *   - glyph render on session_start
  *   - cached state (getToggleState / getLearnState) reflects library state
@@ -18,9 +20,14 @@ import {
 	afterEach,
 } from "vitest";
 import { EventEmitter } from "node:events";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { TOOLSET_EVENTS, defineToolset } from "pi-tool-masking";
 import { mockCtx, captureWebHandler } from "./helpers/mock-pi.js";
+import { uniqueName } from "./helpers/setup-temp-dir.js";
+import { listNamedProfiles, profileFilePath } from "../core/shared/storage-state.js";
+import { BROWSER_TEMP_DIR } from "../core/shared/paths.js";
 import browserToggle, {
 	getToggleState,
 	getLearnState,
@@ -117,6 +124,14 @@ function mockPi(
 	return { pi, events: eventEmitter, handlers, entryCalls };
 }
 
+// Cookies subcommand dispatch exercises the real handler (browser-cookies.ts),
+// which reaches the router for list/clear — stub those two so the pins can
+// count calls without a live session.
+vi.mock("../core/router.js", () => ({
+	getCookies: vi.fn(async () => ({ success: true, cookies: [] })),
+	clearCookies: vi.fn(async () => ({ success: true })),
+}));
+
 // ==================================================================
 //  Default export
 // ==================================================================
@@ -164,6 +179,149 @@ describe("/web command dispatch", () => {
 
 			expect(pi.setActiveTools).not.toHaveBeenCalled();
 		}
+	});
+});
+
+// Shared dispatch helpers for the subcommand-casing describes below: the
+// /web handler is registered per test and captured for direct invocation.
+async function dispatch(args: string): Promise<ReturnType<typeof mockCtx>> {
+	const { pi } = mockPi();
+	browserToggle(pi);
+	const ctx = mockCtx();
+	await captureWebHandler(pi)(args, ctx);
+	return ctx;
+}
+
+async function dispatchWithPi(
+	args: string,
+): Promise<{ ctx: ReturnType<typeof mockCtx>; entryCalls: Array<{ customType: string; data: unknown }> }> {
+	const { pi, entryCalls } = mockPi();
+	browserToggle(pi);
+	const ctx = mockCtx();
+	await captureWebHandler(pi)(args, ctx);
+	return { ctx, entryCalls };
+}
+
+// The /web dispatcher keeps two strings: `raw` (case-preserved payload —
+// file paths, profile names) and `cmd` (lowercased, keyword dispatch only).
+describe("/web cookies dispatch", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	// Behavior-unchanged pin: the existing literals keep working even though
+	// they now arrive case-preserved and are matched on a lowered kw local.
+	it("treats bare '', 'list', 'LIST' as the list alias via router.getCookies", async () => {
+		const { getCookies } = (await import("../core/router.js")) as any;
+		for (const args of ["cookies", "cookies list", "cookies LIST"]) {
+			(getCookies as ReturnType<typeof vi.fn>).mockClear();
+			await dispatch(args);
+			expect(getCookies).toHaveBeenCalledTimes(1);
+		}
+	});
+
+	it("'clear' warns, 'clear --confirm' clears via router.clearCookies", async () => {
+		const { clearCookies } = (await import("../core/router.js")) as any;
+		const warned = await dispatch("cookies clear");
+		expect(warned.ui.notify).toHaveBeenCalledWith(
+			expect.stringContaining("clear --confirm"),
+			"warning",
+		);
+		expect(clearCookies).not.toHaveBeenCalled();
+
+		const cleared = await dispatch("cookies clear --confirm");
+		expect(clearCookies).toHaveBeenCalledTimes(1);
+		expect(cleared.ui.notify).toHaveBeenCalledWith(
+			"Cleared all cookies for the current session.",
+			"info",
+		);
+	});
+
+	// The dispatcher must hand the case-preserved remainder to the handler —
+	// matched whole-string against the unknown-verb catch-all, not via a
+	// bare `import` prefix (`/web cookies imported.txt` must never import
+	// a file named ed.txt).
+	it("case-preserved payload survives dispatch and unknown verbs still warn", async () => {
+		const { getCookies, clearCookies } = (await import(
+			"../core/router.js"
+		)) as any;
+		const ctx = await dispatch("cookies IMPORTED.TXT");
+		expect(ctx.ui.notify).toHaveBeenCalledWith(
+			expect.stringContaining('Unknown cookies sub-command: "IMPORTED.TXT"'),
+			"warning",
+		);
+		expect(getCookies).not.toHaveBeenCalled();
+		expect(clearCookies).not.toHaveBeenCalled();
+	});
+
+	// The import flow's I/O refusals are pinned in cookies-command.test.ts;
+	// here the pin is the dispatch wiring: a well-formed `/web cookies import`
+	// reaches the real handler and succeeds end-to-end.
+	it("/web cookies import dispatches with the conversation default set via /web profile", async () => {
+		const profile = uniqueName("p");
+		await dispatch(`profile create ${profile}`);
+		await dispatch(`profile ${profile}`);
+		const p = join(BROWSER_TEMP_DIR, uniqueName("cookies"));
+		mkdirSync(BROWSER_TEMP_DIR, { recursive: true });
+		writeFileSync(
+			p,
+			"#HttpOnly_example.com\tTRUE\t/\tTRUE\t1999999999\tsid\tv1\n",
+		);
+		const ctx = await dispatch(`cookies import ${p}`);
+		expect(ctx.ui.notify).toHaveBeenCalledWith(
+			expect.stringContaining(`Imported 1 cookie(s) into profile '${profile}'`),
+			"info",
+		);
+		expect(existsSync(profileFilePath(profile))).toBe(true);
+	});
+});
+
+describe("/web profile dispatch", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		// Tests in one file share the per-worker temp profile tree; start the
+		// profile pins from an empty store so counts are deterministic.
+		rmSync(process.env.PI_PORTAL_PROFILE_DIR!, { recursive: true, force: true });
+	});
+
+	it("/web profile <Name> selects a mixed-case profile by its exact name", async () => {
+		const name = uniqueName("MixedCase");
+		await dispatch(`profile create ${name}`);
+		expect(listNamedProfiles({ includeSession: true })).toContain(name);
+
+		const { entryCalls } = await dispatchWithPi(`profile ${name}`);
+		const persisted = entryCalls.find(
+			(e: { customType: string; data: unknown }) =>
+				e.customType === "portal-conversation-state" &&
+				(e.data as { defaultProfile?: string })?.defaultProfile === name,
+		);
+		expect(persisted).toBeDefined();
+	});
+
+	it("compound literals match case-insensitively: 'Clear-all --confirm' reaches clear-all", async () => {
+		const ctx = await dispatch("profile Clear-all --confirm");
+		expect(ctx.ui.notify).toHaveBeenCalledWith(
+			expect.stringContaining("No profiles to clear"),
+			"info",
+		);
+	});
+
+	it("'create _SESSION-x' is refused as a session profile (case-insensitive)", async () => {
+		const name = uniqueName("_SESSION");
+		const ctx = await dispatch(`profile create ${name}`);
+		expect(ctx.ui.notify).toHaveBeenCalledWith(
+			expect.stringContaining("is a session profile"),
+			"warning",
+		);
+		expect(listNamedProfiles({ includeSession: true })).not.toContain(name);
+	});
+
+	it("'create None' is refused as a reserved name (case-insensitive check)", async () => {
+		const ctx = await dispatch("profile create None");
+		expect(ctx.ui.notify).toHaveBeenCalledWith(
+			expect.stringContaining("reserved profile name"),
+			"warning",
+		);
 	});
 });
 

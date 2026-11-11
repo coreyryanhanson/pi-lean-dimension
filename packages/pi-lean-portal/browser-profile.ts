@@ -119,20 +119,22 @@ export async function handleProfileSubcommand(
 	setConversationDefaultProfile: (profile: string) => void,
 	currentConversationDefault?: string,
 ): Promise<void> {
+	// Keywords are case-insensitive; profile-name payloads keep their case.
+	const kw = sub.toLowerCase();
 	// --- list (default) ---
-	if (sub === "" || sub === "list") {
+	if (kw === "" || kw === "list") {
 		const profiles = listProfiles();
 		const formatted = formatProfileList(profiles);
 		ctx.ui.notify(formatted, "info");
 
 		// --- mode switches (special keywords) ---
-	} else if (sub === "none") {
+	} else if (kw === "none") {
 		setConversationDefaultProfile("none");
 		ctx.ui.notify(
 			"Default profile set to 'none' (ephemeral, no persistence).",
 			"info",
 		);
-	} else if (sub === "session") {
+	} else if (kw === "session") {
 		setConversationDefaultProfile("session");
 		ctx.ui.notify(
 			"Default profile set to 'session' (persists for this conversation).",
@@ -140,7 +142,7 @@ export async function handleProfileSubcommand(
 		);
 
 		// --- create <name> ---
-	} else if (sub === "create" || sub.startsWith("create ")) {
+	} else if (kw === "create" || kw.startsWith("create ")) {
 		const name = sub === "create" ? "" : sub.slice("create ".length).trim();
 		if (!name) {
 			ctx.ui.notify(
@@ -152,6 +154,13 @@ export async function handleProfileSubcommand(
 			return;
 		}
 		if (!sanitizeOrNotify(ctx, name)) return;
+		if (isSessionProfile(name)) {
+			ctx.ui.notify(
+				`'${name}' is a session profile. Use profile="session" instead.`,
+				"warning",
+			);
+			return;
+		}
 		try {
 			ensureProfileDir(name);
 			ctx.ui.notify(
@@ -166,13 +175,13 @@ export async function handleProfileSubcommand(
 		}
 
 		// --- prune [--confirm] ---
-	} else if (sub === "prune" || sub === "prune --confirm") {
+	} else if (kw === "prune" || kw === "prune --confirm") {
 		const result = pruneStaleSessionProfiles();
 		if (result.pruned.length === 0) {
 			ctx.ui.notify("No stale session profiles to prune.", "info");
 			return;
 		}
-		if (sub === "prune") {
+		if (kw === "prune") {
 			ctx.ui.notify(
 				`Found ${result.pruned.length} stale session profile(s): ${result.pruned.join(", ")}\n` +
 					`  Run /web profile prune --confirm to delete.`,
@@ -186,7 +195,7 @@ export async function handleProfileSubcommand(
 		}
 
 		// --- delete <name> ---
-	} else if (sub === "delete" || sub.startsWith("delete ")) {
+	} else if (kw === "delete" || kw.startsWith("delete ")) {
 		const name = sub === "delete" ? "" : sub.slice("delete ".length).trim();
 		if (!name) {
 			ctx.ui.notify(
@@ -222,7 +231,7 @@ export async function handleProfileSubcommand(
 		);
 
 		// --- clear <name> ---
-	} else if (sub === "clear" || sub.startsWith("clear ")) {
+	} else if (kw === "clear" || kw.startsWith("clear ")) {
 		const name = sub === "clear" ? "" : sub.slice("clear ".length).trim();
 		if (!name) {
 			ctx.ui.notify(
@@ -248,7 +257,7 @@ export async function handleProfileSubcommand(
 		ctx.ui.notify(`Cleared profile '${name}' state.`, "info");
 
 		// --- clear-all [--confirm] ---
-	} else if (sub === "clear-all" || sub === "clear-all --confirm") {
+	} else if (kw === "clear-all" || kw === "clear-all --confirm") {
 		// Session profiles are GC'd by prune, never bulk-cleared here.
 		const profiles = listProfiles().filter((p) => !isSessionProfile(p.name));
 		if (profiles.length === 0) {
@@ -258,7 +267,7 @@ export async function handleProfileSubcommand(
 			);
 			return;
 		}
-		if (sub === "clear-all") {
+		if (kw === "clear-all") {
 			const names = profiles.map((p) => p.name).join(", ");
 			ctx.ui.notify(
 				`⚠ This will clear ALL profile states: ${names}\n` +

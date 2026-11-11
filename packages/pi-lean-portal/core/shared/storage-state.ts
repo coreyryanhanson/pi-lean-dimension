@@ -60,7 +60,7 @@ export const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
 // ─── Types ────────────────────────────────────────────────────────────
 
 /** A single cookie as stored by Playwright's storageState. */
-interface StoredCookie {
+export interface StoredCookie {
 	name: string;
 	value: string;
 	domain: string;
@@ -121,7 +121,7 @@ export function sanitizeProfileName(name: string): string {
 	}
 
 	// Session profiles: validate the embedded session ID, then bypass regex
-	if (name.startsWith(SESSION_PROFILE_PREFIX)) {
+	if (name.toLowerCase().startsWith(SESSION_PROFILE_PREFIX)) {
 		const sessionId = name.slice(SESSION_PROFILE_PREFIX.length);
 		if (!validSessionId(sessionId)) {
 			throw new Error(
@@ -139,7 +139,10 @@ export function sanitizeProfileName(name: string): string {
 		);
 	}
 
-	if (RESERVED_PROFILE_NAMES.has(name)) {
+	// Reserved names are tool vocabulary — matched case-insensitively so a
+	// mixed-case variant can't materialize a dir the slash commands can't
+	// address (`create None`, `create SESSION`).
+	if (RESERVED_PROFILE_NAMES.has(name.toLowerCase())) {
 		throw new Error(
 			`'${name}' is a reserved profile name or subcommand and cannot be used as a profile name.`,
 		);
@@ -268,6 +271,22 @@ export function loadStorageState(profileName: string): StorageStateFile | null {
 	}
 }
 
+/** Disambiguate `loadStorageState()`'s null: "no file yet" (fresh profile)
+ * vs "present but unreadable". Callers that must refuse over corrupt state
+ * (e.g. cookie import) probe instead of guessing from null. */
+export function probeStorageState(
+	profileName: string,
+): "missing" | "corrupt" | "ok" {
+	if (!existsSync(profileFilePath(profileName))) {
+		return "missing";
+	}
+	const state = loadStorageState(profileName);
+	if (!state || !Array.isArray(state.cookies)) {
+		return "corrupt";
+	}
+	return "ok";
+}
+
 // ─── Private Helpers ──────────────────────────────────────────────────
 
 const TEMP_FILE_PREFIX = ".storage-state.";
@@ -355,9 +374,16 @@ function atomicWriteFileSync(path: string, serialized: string): void {
 	}
 }
 
-/** Composite key identifying a unique cookie slot by name+domain+path. */
-function cookieKey(c: { name: string; domain: string; path: string }): string {
-	return `${c.name}|${c.domain}|${c.path}`;
+/**
+ * Composite key identifying a unique cookie slot by name+domain+path.
+ * The domain is lowercased — the one normalization the engines themselves
+ * apply, so engine-written state (always lowercase) and hand-edited
+ * uppercase-domain state merge into one slot instead of coexisting.
+ * The leading dot is preserved: it is semantic (host-only vs domain-wide
+ * scope), so dot-variant pairs are distinct cookies.
+ */
+export function cookieKey(c: { name: string; domain: string; path: string }): string {
+	return `${c.name}|${c.domain.toLowerCase()}|${c.path}`;
 }
 
 /**
@@ -591,7 +617,7 @@ export function getProfileLabel(name: string): string {
  * @returns `true` if the name starts with `_session-`.
  */
 export function isSessionProfile(name: string): boolean {
-	return name.startsWith(SESSION_PROFILE_PREFIX);
+	return name.toLowerCase().startsWith(SESSION_PROFILE_PREFIX);
 }
 
 /**

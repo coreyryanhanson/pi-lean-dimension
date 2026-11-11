@@ -16,36 +16,72 @@ type ProfileResolution =
 			refusal: { error: string };
 	  };
 
-/**
- * Resolve the profile for a navigate call. `profileInput` is the merged
- * precedence result — explicit param > conversation default > settings
- * default (browser.defaultProfile) — computed by the caller (the router).
- * `profileSource` says who supplied it: "agent" names are refused when the
- * profile dir doesn't exist, "conversation" names (any default) are
- * materialized. Validation failures and refusals return `refusal` —
- * navigate() turns that into a navFailure without touching session state.
- */
-export function resolveNavigateProfile(
+/** How a caller treats an unresolvable piSessionId in "session" mode:
+ * "refuse" surfaces it as a refusal; "fallback-none" warns and proceeds
+ * without persistence. */
+export type UnresolvableSessionPolicy = "refuse" | "fallback-none";
+
+/** Result of resolving which profile an operation acts on: a resolved
+ * profile name, `mode: "none"` (the caller owns the none policy — navigate
+ * proceeds without persistence, import refuses), or a refusal. */
+export type ActiveProfileResolution =
+	| { profileName: string }
+	| { mode: "none" }
+	| { refusal: { error: string } };
+
+/** Merge the profile-precedence tiers shared by every profile-consuming
+ * operation: explicit parameter > live-session profile > conversation
+ * default > settings default (`browser.defaultProfile`). Pure — callers
+ * read the settings default themselves so tests stay deterministic. */
+export function mergeProfilePrecedence(tiers: {
+	explicit?: string | undefined;
+	liveSessionProfile?: string | undefined;
+	conversationDefault?: string | undefined;
+	settingsDefault?: string | undefined;
+}): string | undefined {
+	return (
+		tiers.explicit ??
+		tiers.liveSessionProfile ??
+		tiers.conversationDefault ??
+		tiers.settingsDefault
+	);
+}
+
+/** Shared mode-resolution core for "which profile does this operation act
+ * on": none / session / named, including the foreign-`_session-*` refusal.
+ * The caller merges the precedence tiers via `mergeProfilePrecedence` and
+ * owns the none policy. */
+export function resolveActiveProfile(
 	profileInput: string | undefined,
-	profileSource: "agent" | "conversation",
 	piSessionId: string | undefined,
-): ProfileResolution {
-	// Normalize agent input; the settings default is already trimmed at config load.
+	onUnresolvableSession: UnresolvableSessionPolicy,
+): ActiveProfileResolution {
 	const input = profileInput?.trim();
 
 	if (input === undefined || input === "none") {
-		return {};
+		return { mode: "none" };
 	}
 	if (input === "session") {
-		if (piSessionId) {
-			return { profileName: sessionProfileName(piSessionId) };
+		try {
+			return { profileName: sessionProfileName(piSessionId ?? "") };
+		} catch (err) {
+			const detail = err instanceof Error ? err.message : String(err);
+			if (onUnresolvableSession === "refuse") {
+				return {
+					refusal: {
+						error:
+							`Cannot resolve the session profile: ${detail}. ` +
+							`Set a named profile instead: /web profile <name>.`,
+					},
+				};
+			}
+			// Can't resolve session profile without piSessionId — fall back with warning
+			console.warn(
+				"[pi-lean-portal] profile='session' requested but piSessionId unavailable. " +
+					"Falling back to profile='none'.",
+			);
+			return { mode: "none" };
 		}
-		// Can't resolve session profile without piSessionId — fall back with warning
-		console.warn(
-			"[pi-lean-portal] profile='session' requested but piSessionId unavailable. " +
-				"Falling back to profile='none'.",
-		);
-		return {};
 	}
 
 	// Named profile
@@ -75,6 +111,36 @@ export function resolveNavigateProfile(
 					`or profile="none" for a clean slate.`,
 			},
 		};
+	}
+	return { profileName: name };
+}
+
+/**
+ * Resolve the profile for a navigate call. `profileInput` is the merged
+ * precedence result — explicit param > conversation default > settings
+ * default (browser.defaultProfile) — computed by the caller (the router).
+ * `profileSource` says who supplied it: "agent" names are refused when the
+ * profile dir doesn't exist, "conversation" names (any default) are
+ * materialized. Validation failures and refusals return `refusal` —
+ * navigate() turns that into a navFailure without touching session state.
+ */
+export function resolveNavigateProfile(
+	profileInput: string | undefined,
+	profileSource: "agent" | "conversation",
+	piSessionId: string | undefined,
+): ProfileResolution {
+	const resolution = resolveActiveProfile(profileInput, piSessionId, "fallback-none");
+	if ("refusal" in resolution) {
+		return resolution;
+	}
+	if ("mode" in resolution) {
+		return {};
+	}
+	const name = resolution.profileName;
+	if (isSessionProfile(name)) {
+		// Own session profile — no existence enforcement (the core refused
+		// foreign `_session-*` names; dirs materialize at save time).
+		return { profileName: name };
 	}
 	const names = listNamedProfiles();
 	if (!names.includes(name)) {

@@ -198,9 +198,12 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 	pi.registerCommand("web", {
 		description:
 			"Enable/disable browser automation tools. " +
-			"Usage: /web on | off | learn | install | status",
+			"Usage: /web on | off | learn | profile | cookies | install | status",
 		handler: async (args, ctx) => {
-			const cmd = args.trim().toLowerCase();
+			// Two strings: `raw` keeps payload case (file paths, profile names),
+			// `cmd` is the lowercased form the keyword dispatch compares against.
+			const raw = args.trim();
+			const cmd = raw.toLowerCase();
 
 			if (cmd === "on") {
 				// One batch = the whole web workflow: web on, search dragged
@@ -244,7 +247,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 					"info",
 				);
 			} else if (cmd === "profile" || cmd.startsWith("profile ")) {
-				const sub = cmd.slice("profile".length).trim();
+				const sub = raw.slice("profile".length).trim();
 				const { handleProfileSubcommand } = await import("./browser-profile.js");
 				await handleProfileSubcommand(
 					sub,
@@ -258,9 +261,13 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 					getConversationDefaultProfile(),
 				);
 			} else if (cmd === "cookies" || cmd.startsWith("cookies ")) {
-				const sub = cmd.slice("cookies".length).trim();
+				const sub = raw.slice("cookies".length).trim();
 				const { handleCookiesSubcommand } = await import("./browser-cookies.js");
-				await handleCookiesSubcommand(sub, ctx);
+				await handleCookiesSubcommand(
+					sub,
+					ctx,
+					getConversationDefaultProfile(),
+				);
 			} else if (cmd === "install" || cmd.startsWith("install ")) {
 				const sub = cmd.slice("install".length).trim();
 				const { handleInstallSubcommand } = await import("./browser-install.js");
@@ -280,7 +287,7 @@ export default function initBrowserToggle(pi: ExtensionAPI) {
 					`🌐 Browser tools: ${webOn}\n` +
 						`📖 Learn mode: ${learnOn}\n` +
 						`   /web profile     manage browser profiles\n` +
-						`   /web cookies     inspect or clear session cookies\n` +
+						`   /web cookies     inspect, import, or clear session cookies\n` +
 						`   /web install     install browser binaries (bundled playwright CLI)\n` +
 						`   /web off         disable all browser tools\n` +
 						`   /web on          enable browsing only\n` +

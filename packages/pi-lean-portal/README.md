@@ -114,16 +114,30 @@ conversation default are created automatically on first use.
 
 ## Cookie Management
 
-The `/web cookies` command lets you inspect and clear session cookies:
+The `/web cookies` command lets you inspect, clear, and import session cookies:
 
 | Sub-command | Effect |
 | ----------- | ------ |
 | `/web cookies list` | List all cookies in the current session (name, value, domain, expiry, flags) |
 | `/web cookies clear --confirm` | Clear ALL cookies for the current session |
+| `/web cookies import <file>` | Import a Netscape `cookies.txt` export (from a browser cookie-export extension) into the active profile |
 
 > Cookies are saved as part of profile state. When you switch profiles,
 > the cookies from the old profile are preserved and the new profile's
 > cookies are loaded.
+
+**`/web cookies import` details:**
+
+- Import is **merge-only**: file cookies replace colliding entries, nothing
+  already saved is removed. Malformed lines are skipped with a per-line
+  report; the only hard failure is zero importable cookies.
+- Security attributes are never lowered on collision: `httpOnly`/`secure`
+  take the higher value, `sameSite` is preserved. Fresh cookies default to
+  `SameSite=Lax` — the Netscape format has no SameSite column.
+- Live sessions on the target profile are synced best-effort; the
+  already-open page picks up imported cookies only after a reload/navigate.
+- Only import files you exported yourself — the file's domains are trusted
+  as the cookie's scope.
 
 ---
 
