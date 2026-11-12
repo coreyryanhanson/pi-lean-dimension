@@ -89,7 +89,7 @@ Portal dispatches through a `PluginRegistry` + typed `BrowserPlugin` interface; 
 
 ### Registered Commands
 
-**Portal:** `/web on|off|learn|install|cookies|profile|status` — `/web on` (browsing only), `/web off` (all disabled), `/web learn` (browsing + guide-saving via web-learn), `/web install` (browser binaries via the bundled playwright CLI; `chromium|firefox` for a single engine, dialog in TUI, manual command printed elsewhere), `/web cookies list|clear|import <file>` (inspect/clear session cookies; import a Netscape cookies.txt file into the active profile), `/web profile` (list/create/delete/clear saved profiles), `/web status` (backends + browsers + sessions + profiles), `/web` (show current state). `/web on|off|learn` co-activate search when `pi-lean-search` is installed.
+**Portal:** `/web on|off|learn|install|cookies|profile|status` — `/web on` (browsing only), `/web off` (all disabled), `/web learn` (browsing + guide-saving via web-learn), `/web install` (browser binaries via the bundled playwright CLI; `chromium|firefox` for a single engine, dialog in TUI, manual command printed elsewhere), `/web cookies list|clear|import [file]` (inspect/clear session cookies; import a Netscape cookies.txt file into the active profile — no file opens a TUI-only paste dialog), `/web profile` (list/create/delete/clear saved profiles), `/web status` (backends + browsers + sessions + profiles), `/web` (show current state). `/web on|off|learn` co-activate search when `pi-lean-search` is installed.
 
 **Search:** `/searxng-status` — test the full SearXNG search pipeline and update the status bar glyph.
 

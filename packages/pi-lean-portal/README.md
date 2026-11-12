@@ -120,24 +120,17 @@ The `/web cookies` command lets you inspect, clear, and import session cookies:
 | ----------- | ------ |
 | `/web cookies list` | List all cookies in the current session (name, value, domain, expiry, flags) |
 | `/web cookies clear --confirm` | Clear ALL cookies for the current session |
-| `/web cookies import <file>` | Import a Netscape `cookies.txt` export (from a browser cookie-export extension) into the active profile |
+| `/web cookies import [file]` | Import a Netscape `cookies.txt` export (from a browser cookie-export extension) into the active profile; with no file, paste the export into an editor dialog (TUI only) |
 
 > Cookies are saved as part of profile state. When you switch profiles,
 > the cookies from the old profile are preserved and the new profile's
 > cookies are loaded.
-
-**`/web cookies import` details:**
-
-- Import is **merge-only**: file cookies replace colliding entries, nothing
-  already saved is removed. Malformed lines are skipped with a per-line
-  report; the only hard failure is zero importable cookies.
-- Security attributes are never lowered on collision: `httpOnly`/`secure`
-  take the higher value, `sameSite` is preserved. Fresh cookies default to
-  `SameSite=Lax` — the Netscape format has no SameSite column.
-- Live sessions on the target profile are synced best-effort; the
-  already-open page picks up imported cookies only after a reload/navigate.
-- Only import files you exported yourself — the file's domains are trusted
-  as the cookie's scope.
+>
+> **Import notes:** merging only — nothing already saved is removed, and
+> `httpOnly`/`secure` are never lowered on collision. Paste mode (TUI) is
+> lossy for values with runs of spaces or trailing spaces — use file mode
+> when exact values matter. Only import files you exported yourself; the
+> file's domains are trusted as cookie scope.
 
 ---
 
@@ -181,7 +174,7 @@ Both file paths are surfaced as hints in the tool output, which the agent can fo
 
 ### Built-in Pattern Guides
 
-`pi-lean-portal` ships with four built-in pattern guides that appear in the guide footer when relevant:
+`pi-lean-portal` ships with five built-in pattern guides that appear in the guide footer when relevant:
 
 | Guide | Trigger | What It Covers |
 | ----- | ------- | -------------- |

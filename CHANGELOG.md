@@ -4,16 +4,14 @@
 
 ### Added
 
-- **`pi-lean-portal` — `/web cookies import <file>`** — imports a Netscape
-  `cookies.txt` file (a browser's export) into the active profile
-  (`/web profile <name>` selects it). Merge-only: colliding entries are
-  replaced by `name+domain+path`, nothing already stored is removed;
-  malformed lines are skipped with a report and the only hard failure is
-  zero importable cookies. Values are file-wins (re-export + re-import
-  refreshes a live session) but `httpOnly`/`secure`/`sameSite` are never
-  lowered on a collision; fresh cookies default to `SameSite=Lax`.
-  Matching live sessions are synced best-effort — the already-open page
-  picks up imported cookies on its next reload/navigate.
+- **`pi-lean-portal` — `/web cookies import [file]`** — imports a Netscape
+  `cookies.txt` export into the active profile (`/web profile <name>`
+  selects it). Merge-only: collisions are keyed by `name+domain+path`,
+  nothing already stored is removed, and `httpOnly`/`secure`/`sameSite`
+  are never lowered on a collision. With no file argument, a TUI paste
+  dialog accepts the pasted export under the same policy. Matching live
+  sessions are synced best-effort — the open page picks up the cookies on
+  its next reload/navigate.
 - **`pi-lean-portal` — `/web profile delete <name>`** — removes a named profile's
   directory including any saved state. Refuses `_session-*` names (use
   `/web profile prune`), no-ops when the profile doesn't exist, and resets the

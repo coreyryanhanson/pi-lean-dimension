@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseCookiesTxt, liftSecurityAttributes } from "../core/shared/cookie-import.js";
+import { parseCookiesTxt, liftSecurityAttributes, restorePastedTabs } from "../core/shared/cookie-import.js";
 import type { StoredCookie } from "../core/shared/storage-state.js";
 
 // Fixed clock so expiry assertions are exact (unix seconds).
@@ -269,6 +269,41 @@ describe("parseCookiesTxt", () => {
 		const result = parseCookiesTxt(text, NOW);
 		expect(result.cookies.map((c) => c.name)).toEqual(["good", "also-good"]);
 		expect(result.skipped).toEqual([{ line: 5, reason: "field-count" }]);
+	});
+});
+
+describe("restorePastedTabs", () => {
+	// A pasted line whose tabs the editor expanded to 4 spaces: the 6
+	// separator runs between the 7 fields. Values carrying short space runs
+	// are appended verbatim in the value field.
+	const pasted = (value: string): string =>
+		`example.com    FALSE    /    FALSE    ${FUTURE}    sid    ${value}`;
+
+	it("refuses runs of 5+ whose length is not a multiple of 4 (ambiguous with an expanded tab)", () => {
+		for (const run of [5, 6, 7, 9]) {
+			const text = pasted("a" + " ".repeat(run) + "b");
+			expect(restorePastedTabs(text)).toEqual({ ok: false });
+		}
+	});
+
+	it("round-trips 1-3 space runs inside a value unchanged (guard's false-positive boundary)", () => {
+		for (const run of [1, 2, 3]) {
+			const result = restorePastedTabs(pasted("a" + " ".repeat(run) + "b"));
+			// Separators become tabs; the value's short runs survive intact.
+			expect(result).toEqual({ ok: true, text: `example.com\tFALSE\t/\tFALSE\t${FUTURE}\tsid\ta${" ".repeat(run)}b` });
+		}
+	});
+
+	it("restores runs of 4, 8 and 12 spaces to one, two and three tabs", () => {
+		for (const [run, tabs] of [[4, 1], [8, 2], [12, 3]] as const) {
+			const result = restorePastedTabs(pasted("a" + " ".repeat(run) + "b"));
+			expect(result).toEqual({ ok: true, text: `example.com\tFALSE\t/\tFALSE\t${FUTURE}\tsid\ta${"\t".repeat(tabs)}b` });
+		}
+	});
+
+	it("returns real-tab text unchanged — no guard, no replace — even with 4-space and 5+ runs", () => {
+		const text = line("example.com", "FALSE", "/", "FALSE", FUTURE, "sid", "a    b     c");
+		expect(restorePastedTabs(text)).toEqual({ ok: true, text });
 	});
 });
 

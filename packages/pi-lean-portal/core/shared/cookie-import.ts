@@ -1,8 +1,8 @@
 /**
  * Cookie import — Netscape `cookies.txt` parsing and the shared
- * security-lift helper for `/web cookies import <file>`.
+ * security-lift and paste-restore helpers for `/web cookies import [file]`.
  *
- * Both exports are pure logic (no I/O):
+ * All exports are pure logic (no I/O):
  *
  * - `parseCookiesTxt` converts a Netscape cookies.txt export into
  *   `StoredCookie[]`, skipping malformed lines with per-line reason codes
@@ -23,10 +23,14 @@ import { cookieKey, type StoredCookie } from "./storage-state.js";
 
 // ─── Constants ────────────────────────────────────────────────────────
 
-/** Hard cap on a single import file, in bytes — checked via stat before the
- * read so a multi-GB path is refused without being slurped. Independent of
- * the save-side size *warning* threshold. */
+/** Hard cap on a single import, in bytes — checked via `stat` for a file
+ * (before the read, so a multi-GB path is refused without being slurped) or
+ * via `Buffer.byteLength` for pasted text. Independent of the save-side
+ * size *warning* threshold. */
 export const MAX_COOKIE_IMPORT_BYTES = 10 * 1024 * 1024;
+
+/** The same cap in whole MB, for user-facing copy. */
+export const MAX_COOKIE_IMPORT_MB = Math.round(MAX_COOKIE_IMPORT_BYTES / (1024 * 1024));
 
 /** Chromium's per-cookie cap (RFC 6265 §6.1) — name+value bytes, exclusive. */
 const MAX_COOKIE_BYTES = 4096;
@@ -219,6 +223,33 @@ export function parseCookiesTxt(
 	}
 
 	return { cookies: [...byKey.values()], skipped, expired, duplicates };
+}
+
+// ─── Paste-mode tab restore ───────────────────────────────────────────
+
+type RestorePastedTabsResult = { ok: true; text: string } | { ok: false };
+
+/** A space run of 5–7 (plus any whole 4-groups) whose length is not a
+ * multiple of 4 — the one shape a pasted-text restore cannot decode. The
+ * anchors make it run-anchored, so 8- and 12-space runs (decodable as two
+ * or three tabs) never match. */
+const AMBIGUOUS_SPACE_RUN_RE = /(?<! ) {5,7}(?: {4})*(?! )/;
+
+/**
+ * Invert pi-tui's paste handling: the editor expands every pasted TAB to
+ * 4 spaces, so a pasted Netscape export loses its delimiters. Runs only
+ * when the text contains no real tab — a real export parses as-is, making
+ * the restore self-disabling. On the restore path a 5+ space run whose
+ * length is not a multiple of 4 could be real spaces plus an expanded tab;
+ * the misparse would be silent, so refuse instead of guessing.
+ *
+ * shortcut: assumes pi-tui expands pasted tabs; when it preserves them,
+ * delete this helper entirely.
+ */
+export function restorePastedTabs(text: string): RestorePastedTabsResult {
+	if (/\t/.test(text)) return { ok: true, text };
+	if (AMBIGUOUS_SPACE_RUN_RE.test(text)) return { ok: false };
+	return { ok: true, text: text.replace(/ {4}/g, "\t") };
 }
 
 // ─── Security lift ────────────────────────────────────────────────────

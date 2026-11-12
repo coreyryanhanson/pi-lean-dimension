@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { MAX_COOKIE_IMPORT_MB } from "../core/shared/cookie-import.js";
 
 vi.mock("../core/router.js", () => ({
 	getCookies: vi.fn(async () => ({ success: true, cookies: [] })),
@@ -189,6 +190,8 @@ describe("/web cookies import", () => {
 		await handleCookiesSubcommand(`import ${arg}`, ctx, uniqueName("p"));
 		// The import succeeded — the resolved path was the one read.
 		expect(lastNotify(ctx)).toContain("Imported 1 cookie(s)");
+		// File mode never opens the paste dialog.
+		expect(ctx.ui.editor).not.toHaveBeenCalled();
 	});
 
 	it("resolves relative paths against ctx.cwd", async () => {
@@ -232,10 +235,14 @@ describe("/web cookies import", () => {
 		expect(lastNotify(ctx)).toContain("not a regular file");
 	});
 
-	it("an empty remainder hits the usage warning and writes nothing", async () => {
-		const ctx = mockCtx();
+	it("bare import under a non-TUI mode falls through to the usage text and writes nothing", async () => {
+		const ctx = mockCtx({ mode: "rpc" });
 		await handleCookiesSubcommand("import", ctx, "p");
-		expect(lastNotify(ctx)).toContain("Usage: /web cookies import <file>");
+		expect(lastNotify(ctx)).toContain("Usage: /web cookies import [file]");
+		// The paste dialog is TUI-only — the hint must still surface here.
+		expect(lastNotify(ctx)).toContain("paste dialog");
+		expect(lastNotify(ctx)).toContain("Nothing was written.");
+		expect(ctx.ui.editor).not.toHaveBeenCalled();
 		expect(existsSync(profileFilePath("p"))).toBe(false);
 	});
 
@@ -613,5 +620,123 @@ describe("/web cookies import", () => {
 		const ctx = await dispatch(`cookies import ${p}`);
 		expect(lastNotify(ctx)).toContain(`'${profile}'`);
 		expect(existsSync(profileFilePath(profile))).toBe(true);
+	});
+
+	// ── Paste mode (bare import, TUI) ──
+	// The mockCtx ui.editor default resolves undefined (= cancel); paste tests
+	// replace it with a one-shot resolver. The mock stands in for
+	// Editor.submitValue() — expandPasteMarkers(text).trim() — so hand it the
+	// post-trim text where a test pins the trim's effect.
+
+	/** Context whose paste dialog submits `pasted` (or rejects with `error`). */
+	function pasteCtx(pasted?: string, error?: Error) {
+		const ctx = mockCtx();
+		ctx.ui.editor = vi.fn(async () => {
+			if (error) throw error;
+			return pasted;
+		});
+		return ctx;
+	}
+
+	it("bare IMPORT (any casing) opens the dialog under the TUI mock", async () => {
+		const ctx = mockCtx();
+		await handleCookiesSubcommand("IMPORT", ctx, "p");
+		expect(ctx.ui.editor).toHaveBeenCalledWith("Paste a Netscape cookies.txt export");
+	});
+
+	it("a cancelled editor writes nothing and notifies nothing", async () => {
+		const profile = uniqueName("p");
+		const ctx = mockCtx(); // default editor resolves undefined = cancel
+		await handleCookiesSubcommand("import", ctx, profile);
+		expect(ctx.ui.notify).not.toHaveBeenCalled();
+		expect(existsSync(profileFilePath(profile))).toBe(false);
+	});
+
+	it("a bare Enter ('') refuses with 'Nothing pasted.' — never the file-mode usage text", async () => {
+		const profile = uniqueName("p");
+		const ctx = pasteCtx("");
+		await handleCookiesSubcommand("import", ctx, profile);
+		expect(lastNotify(ctx)).toBe("Nothing pasted. Nothing was written.");
+		expect(existsSync(profileFilePath(profile))).toBe(false);
+	});
+
+	it("tabs pre-expanded to 4 spaces preprocess to tabs and parse identically to file mode (exact name/value round-trip)", async () => {
+		const profile = uniqueName("paste");
+		const fileProfile = uniqueName("file");
+		const lines = [nsLine("example.com", "sid", "v1"), nsLine("other.com", "tok", "secret-value")];
+		const ctx = pasteCtx(lines.map((l) => l.replace(/\t/g, "    ")).join("\n") + "\n");
+		await handleCookiesSubcommand("import", ctx, profile);
+		expect(lastNotify(ctx)).toContain("Imported 2 cookie(s)");
+		// The equivalent file-mode import must parse to the identical cookies.
+		await handleCookiesSubcommand(
+			`import ${writeFixture(lines.join("\n") + "\n")}`,
+			mockCtx(),
+			fileProfile,
+		);
+		const pick = (cookies: Array<Record<string, unknown>>) =>
+			cookies.map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path }));
+		expect(pick(readState(profile).cookies)).toEqual(pick(readState(fileProfile).cookies));
+		expect(pick(readState(profile).cookies)).toContainEqual({
+			name: "tok",
+			value: "secret-value",
+			domain: ".other.com",
+			path: "/",
+		});
+	});
+
+	it("a final line ending in an empty value arrives 6-field after the editor trim and is skipped — the import proceeds with the rest", async () => {
+		const profile = uniqueName("p");
+		// The submit .trim() eats the final line's trailing delimiter, leaving 6 fields.
+		const pasted =
+			`${nsLine("example.com", "sid", "v1").replace(/\t/g, "    ")}\n` +
+			nsLine("other.com", "s2", "").replace(/\t/g, "    ").trimEnd();
+		const ctx = pasteCtx(pasted);
+		await handleCookiesSubcommand("import", ctx, profile);
+		const msg = lastNotify(ctx);
+		expect(msg).toContain("Imported 1 cookie(s)");
+		expect(msg).toContain("line 2: field-count");
+		const state = readState(profile);
+		expect(findCookie(state, "sid")).toMatchObject({ value: "v1" });
+		expect(findCookie(state, "s2")).toBeUndefined();
+	});
+
+	it("a garbage paste names 'the pasted text' as the source, not ''", async () => {
+		const ctx = pasteCtx("not a cookies file\nanother garbage line\n");
+		await handleCookiesSubcommand("import", ctx, uniqueName("p"));
+		const msg = lastNotify(ctx);
+		expect(msg).toContain("No importable cookies in the pasted text");
+		expect(msg).not.toContain("''");
+	});
+
+	it("an ambiguous space run refuses pre-parse with the fixed copy", async () => {
+		const profile = uniqueName("p");
+		// 5-space run, L % 4 ≠ 0 — indistinguishable from 'real spaces + a tab'.
+		const ctx = pasteCtx(`a     b\n`);
+		await handleCookiesSubcommand("import", ctx, profile);
+		const msg = lastNotify(ctx);
+		expect(msg).toContain("ambiguous space runs");
+		expect(msg).toContain("Nothing was written.");
+		expect(existsSync(profileFilePath(profile))).toBe(false);
+	});
+
+	it("a paste over MAX_COOKIE_IMPORT_BYTES refuses with the shared import-limit copy", async () => {
+		const profile = uniqueName("p");
+		const ctx = pasteCtx("#".repeat(11 * 1024 * 1024));
+		await handleCookiesSubcommand("import", ctx, profile);
+		const msg = lastNotify(ctx);
+		expect(msg).toContain(
+			`Refusing to import the pasted text: it exceeds the ${MAX_COOKIE_IMPORT_MB} MB import limit.`,
+		);
+		expect(msg).toContain("Nothing was written.");
+		expect(existsSync(profileFilePath(profile))).toBe(false);
+	});
+
+	it("a rejected editor() routes through refuse() — 'Nothing was written.' guaranteed", async () => {
+		const profile = uniqueName("p");
+		const ctx = pasteCtx(undefined, new Error("no tty"));
+		await handleCookiesSubcommand("import", ctx, profile);
+		expect(lastNotify(ctx)).toContain("Failed to open the paste dialog: no tty.");
+		expect(lastNotify(ctx)).toContain("Nothing was written.");
+		expect(existsSync(profileFilePath(profile))).toBe(false);
 	});
 });

@@ -68,6 +68,8 @@ export function mockCtx(overrides: Record<string, unknown> = {}): any {
 			setWidget: vi.fn(),
 			theme: { fg: (_c: string, t: string) => t },
 			custom: vi.fn(async () => undefined),
+			// Resolves undefined = editor cancel, so no test silently writes.
+			editor: vi.fn(async () => undefined),
 		},
 		mode: "tui",
 		cwd: "/mock",

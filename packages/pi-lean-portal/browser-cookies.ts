@@ -3,7 +3,8 @@
  *
  * Provides the `/web cookies` subcommand handler: inspecting and clearing
  * session cookies via the router, and importing a Netscape cookies.txt
- * export into the active profile (`import <file>`).
+ * export into the active profile (`import [file]` — from a file path, or
+ * pasted into a TUI editor dialog when the argument is omitted).
  */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -18,7 +19,9 @@ import { sessionManager } from "./core/shared/session-manager.js";
 import {
 	liftSecurityAttributes,
 	MAX_COOKIE_IMPORT_BYTES,
+	MAX_COOKIE_IMPORT_MB,
 	parseCookiesTxt,
+	restorePastedTabs,
 } from "./core/shared/cookie-import.js";
 import {
 	mergeProfilePrecedence,
@@ -113,11 +116,11 @@ export async function handleCookiesSubcommand(
 		const arg = sub === "import" ? "" : sub.slice("import ".length).trim();
 		await importCookies(arg, ctx, conversationDefaultProfile);
 	} else {
-		// shortcut: file-only Netscape import (no paste mode, no JSON format);
-		// upgrade when a non-Netscape exporter ships.
+		// shortcut: Netscape cookies.txt format only — no JSON import; upgrade
+		// when a non-Netscape exporter ships.
 		ctx.ui.notify(
 			`Unknown cookies sub-command: "${sub}". ` +
-				`Usage: /web cookies [list|clear [--confirm]|import <file>]`,
+				`Usage: /web cookies [list|clear [--confirm]|import [file]]`,
 			"warning",
 		);
 	}
@@ -125,15 +128,94 @@ export async function handleCookiesSubcommand(
 
 // ─── Import ──────────────────────────────────────────────────────
 
+/** The import's cookie text, or why acquiring it was refused. */
+type CookieSource =
+	| { ok: true; text: string; label: string }
+	| { ok: false; msg: string };
+
+const refused = (msg: string): CookieSource => ({ ok: false, msg });
+
+// The paste dialog is TUI-only: an RPC host that never answers the editor
+// request would hang this await forever — the same unworked-around upstream
+// class as the /reload disposal noted below.
+async function readPasteSource(
+	ctx: ExtensionContext,
+): Promise<CookieSource | undefined> {
+	if (ctx.mode !== "tui") {
+		return refused(
+			"Usage: /web cookies import [file] — provide the path to a Netscape cookies.txt export. In the TUI, calling it with no file opens a paste dialog instead.",
+		);
+	}
+	// shortcut: a dialog disposed by resetExtensionUI() (/reload, session
+	// invalidation) never resolves this await — upstream pi-tui, not
+	// worked around.
+	let pasted: string | undefined;
+	try {
+		pasted = await ctx.ui.editor("Paste a Netscape cookies.txt export");
+	} catch (err) {
+		return refused(`Failed to open the paste dialog: ${errMessage(err)}.`);
+	}
+	// undefined = cancel; "" = empty submit (refused below) — branch on ===,
+	// not truthiness.
+	if (pasted === undefined) return undefined;
+	if (!pasted.trim()) return refused("Nothing pasted.");
+	if (Buffer.byteLength(pasted, "utf-8") > MAX_COOKIE_IMPORT_BYTES) {
+		return refused(
+			`Refusing to import the pasted text: it exceeds the ${MAX_COOKIE_IMPORT_MB} MB import limit.`,
+		);
+	}
+	const restored = restorePastedTabs(pasted);
+	if (!restored.ok) {
+		return refused(
+			"Refusing to import the pasted text: ambiguous space runs — paste mode cannot distinguish delimiters from real spaces; use import <file> instead.",
+		);
+	}
+	return { ok: true, text: restored.text, label: "the pasted text" };
+}
+
+function readFileSource(arg: string, ctx: ExtensionContext): CookieSource {
+	// Expand a leading `~/` (or bare `~`); `~user/` forms are unsupported and
+	// fail as literal paths. Relative paths resolve against the session's
+	// cwd, not the pi process's launch directory. Never lowercased — real
+	// exports have cased filenames and Linux is case-sensitive.
+	let filePath = arg;
+	if (filePath === "~" || filePath.startsWith("~/")) {
+		filePath = join(homedir(), filePath.slice(1));
+	}
+	filePath = resolve(ctx.cwd, filePath);
+	// Bounded by stat before read — a multi-GB export must not be slurped
+	// and a FIFO/char device must not block readFileSync forever.
+	try {
+		const stats: Stats = statSync(filePath);
+		if (!stats.isFile()) {
+			return refused(`Refusing to import '${arg}': not a regular file.`);
+		}
+		if (stats.size > MAX_COOKIE_IMPORT_BYTES) {
+			return refused(
+				`Refusing to import '${arg}': file exceeds the ${MAX_COOKIE_IMPORT_MB} MB import limit.`,
+			);
+		}
+		return {
+			ok: true,
+			text: readFileSync(filePath, "utf-8"),
+			label: `'${arg}'`,
+		};
+	} catch (err) {
+		return refused(`Failed to read '${arg}': ${errMessage(err)}.`);
+	}
+}
+
 /**
- * Import a Netscape cookies.txt file into the active profile.
- *
- * Flow: read + parse (skip-and-warn, hard abort only on zero importable
- * cookies) → resolve the target profile (live session > conversation
- * default > config default; "none" refused) → preflight the disk state →
- * best-effort live-session sync → fresh disk re-read + security lift →
- * `saveStorageState` (the last write) → counts-only notify. Cookie values
- * never appear in any notify — counts and reason codes only.
+ * Import a Netscape cookies.txt export into the active profile. One flow
+ * whose text comes from a file read (`import <file>`) or the TUI paste
+ * dialog (bare `import`): get the text (paste mode adds pre-parse refusals:
+ * empty submit, size cap, ambiguity guard) → parse (skip-and-warn, hard
+ * abort only on zero importable cookies) → resolve the target profile (live
+ * session > conversation default > config default; "none" refused) →
+ * preflight the disk state → best-effort live-session sync → fresh disk
+ * re-read + security lift → `saveStorageState` (the last write) →
+ * counts-only notify. Cookie values never appear in any notify — counts and
+ * reason codes only.
  */
 async function importCookies(
 	arg: string,
@@ -146,48 +228,17 @@ async function importCookies(
 	const refuse = (msg: string) => {
 		ctx.ui.notify(`${msg} Nothing was written.`, "warning");
 	};
-	if (!arg) {
-		ctx.ui.notify(
-			"Usage: /web cookies import <file> — provide the path to a Netscape cookies.txt export.",
-			"warning",
-		);
-		return;
-	}
+	const source = arg ? readFileSource(arg, ctx) : await readPasteSource(ctx);
+	// undefined = paste dialog cancelled (Esc/Ctrl+C) — silently return.
+	if (!source) return;
+	if (!source.ok) return refuse(source.msg);
 
-	// Expand a leading `~/` (or bare `~`); `~user/` forms are unsupported and
-	// fail as literal paths. Relative paths resolve against the session's
-	// cwd, not the pi process's launch directory. Never lowercased — real
-	// exports have cased filenames and Linux is case-sensitive.
-	let filePath = arg;
-	if (filePath === "~" || filePath.startsWith("~/")) {
-		filePath = join(homedir(), filePath.slice(1));
-	}
-	filePath = resolve(ctx.cwd, filePath);
-
-	// Bounded by stat before read — a multi-GB export must not be slurped
-	// and a FIFO/char device must not block readFileSync forever.
-	let text: string;
-	try {
-		const stats: Stats = statSync(filePath);
-		if (!stats.isFile()) {
-			return refuse(`Refusing to import '${arg}': not a regular file.`);
-		}
-		if (stats.size > MAX_COOKIE_IMPORT_BYTES) {
-			return refuse(
-				`Refusing to import '${arg}': file exceeds the ${Math.round(MAX_COOKIE_IMPORT_BYTES / (1024 * 1024))} MB import limit.`,
-			);
-		}
-		text = readFileSync(filePath, "utf-8");
-	} catch (err) {
-		return refuse(`Failed to read '${arg}': ${errMessage(err)}.`);
-	}
-
-	const parsed = parseCookiesTxt(text);
+	const parsed = parseCookiesTxt(source.text);
 	if (parsed.cookies.length === 0) {
 		// The single hard abort: zero importable cookies signals a wrong or
-		// unreadable file, not a damaged export.
+		// unreadable source, not a damaged export.
 		return refuse(
-			`No importable cookies in '${arg}' (skipped ${parsed.skipped.length} malformed line(s), ${parsed.expired} expired, ${parsed.duplicates} duplicate line(s)) — is this a Netscape cookies.txt export?`,
+			`No importable cookies in ${source.label} (skipped ${parsed.skipped.length} malformed line(s), ${parsed.expired} expired, ${parsed.duplicates} duplicate line(s)) — is this a Netscape cookies.txt export?`,
 		);
 	}
 
